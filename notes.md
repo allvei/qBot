@@ -1,0 +1,1 @@
+each server, a b and c should have their own red and blue channels
