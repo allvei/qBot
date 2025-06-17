@@ -14,18 +14,16 @@ A comprehensive Discord bot for managing 4v4 pickup games (PUGs) for passtime.tf
 ## Commands
 
 ### Player Commands
-- `/queue join` - Join the PUG queue
-- `/queue leave` - Leave the PUG queue  
-- `/queue status` - Check current queue status
+- `/add` - Join the PUG queue
+- `/leave` - Leave the PUG queue
 
 ### Runner Commands
-- `/autogen` - Generate teams automatically from queue
-- `/regen [match_id]` - Regenerate teams for a match
-- `/confirm [match_id]` - Confirm generated teams and start match
+- `/shuffle [match_id]` - Regenerate teams for a match
+- `/start [match_id]` - Confirm generated teams and start match
 - `/end <match_id>` - End a match and return players to queue
 
 ### Admin Commands
-- `/bench <user>` - Bench a player (remove from queue)
+- `/bench <user>` - Bench a player (guarantee a spot in the current session)
 - `/config [key] [value]` - View or modify bot configuration
 
 ## Setup

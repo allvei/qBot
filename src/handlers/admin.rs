@@ -112,10 +112,14 @@ pub async fn handle_config_command(
             "**Current Configuration:**\n\
             Guild ID: `{}`\n\
             Queue Channel: `{}`\n\
-            RED Channel: `{}`\n\
-            BLU Channel: `{}`\n\
+            Server A - RED Channel: `{}`\n\
+            Server A - BLU Channel: `{}`\n\
             Server A Channel: `{}`\n\
+            Server B - RED Channel: `{}`\n\
+            Server B - BLU Channel: `{}`\n\
             Server B Channel: `{}`\n\
+            Server C - RED Channel: `{}`\n\
+            Server C - BLU Channel: `{}`\n\
             Server C Channel: `{}`\n\
             Log Channel: `{}`\n\
             Queue Size: `{}`\n\
@@ -124,10 +128,14 @@ pub async fn handle_config_command(
             Admin Role: `{}`",
             config.guild_id,
             config.queue_channel_id,
-            config.red_channel_id,
-            config.blu_channel_id,
+            config.red_a_channel_id,
+            config.blu_a_channel_id,
             config.server_a_channel_id,
+            config.red_b_channel_id,
+            config.blu_b_channel_id,
             config.server_b_channel_id,
+            config.red_c_channel_id,
+            config.blu_c_channel_id,
             config.server_c_channel_id,
             config.log_channel_id,
             config.queue_size,

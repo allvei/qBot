@@ -20,10 +20,10 @@ impl Database {
     // User operations
     pub async fn create_user(&self, user: CreateUser) -> Result<User> {
         let row = sqlx::query(
-            "INSERT INTO users (discord_id, steam_id, username) VALUES (?, ?, ?) RETURNING id, discord_id, steam_id, username, created_at, updated_at"
+            "INSERT INTO users (discord_id, steam_id64, username) VALUES (?, ?, ?) RETURNING id, discord_id, steam_id64, username, created_at, updated_at"
         )
         .bind(&user.discord_id)
-        .bind(&user.steam_id)
+        .bind(&user.steam_id64)
         .bind(&user.username)
         .fetch_one(&self.pool)
         .await?;
@@ -31,7 +31,7 @@ impl Database {
         Ok(User {
             id: row.get("id"),
             discord_id: row.get("discord_id"),
-            steam_id: row.get("steam_id"),
+            steam_id64: row.get("steam_id64"),
             username: row.get("username"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
@@ -40,7 +40,7 @@ impl Database {
 
     pub async fn get_user_by_discord_id(&self, discord_id: &str) -> Result<Option<User>> {
         let user = sqlx::query_as::<_, User>(
-            "SELECT id, discord_id, steam_id, username, created_at, updated_at FROM users WHERE discord_id = ?"
+            "SELECT id, discord_id, steam_id64, username, created_at, updated_at FROM users WHERE discord_id = ?"
         )
         .bind(discord_id)
         .fetch_optional(&self.pool)
@@ -54,7 +54,7 @@ impl Database {
             // Update username if it changed
             if user.username != username {
                 let updated_user = sqlx::query_as::<_, User>(
-                    "UPDATE users SET username = ?, updated_at = CURRENT_TIMESTAMP WHERE discord_id = ? RETURNING id, discord_id, steam_id, username, created_at, updated_at"
+                    "UPDATE users SET username = ?, updated_at = CURRENT_TIMESTAMP WHERE discord_id = ? RETURNING id, discord_id, steam_id64, username, created_at, updated_at"
                 )
                 .bind(username)
                 .bind(discord_id)
@@ -66,7 +66,7 @@ impl Database {
         } else {
             self.create_user(CreateUser {
                 discord_id: discord_id.to_string(),
-                steam_id: None,
+                steam_id64: None,
                 username: username.to_string(),
             }).await
         }
@@ -104,7 +104,7 @@ impl Database {
         let queue_type_str: String = queue_type.into();
         let rows = sqlx::query(
             r#"
-            SELECT qs.id, qs.user_id, qs.queue_type, qs.joined_at, qs.status, u.id, u.discord_id, u.steam_id, u.username, u.created_at as user_created_at, u.updated_at as user_updated_at
+            SELECT qs.id, qs.user_id, qs.queue_type, qs.joined_at, qs.status, u.id, u.discord_id, u.steam_id64, u.username, u.created_at as user_created_at, u.updated_at as user_updated_at
             FROM queue_sessions qs
             JOIN users u ON qs.user_id = u.id
             WHERE qs.queue_type = ? AND qs.status = 'waiting'
@@ -127,7 +127,7 @@ impl Database {
             let user = User {
                 id: row.get("id"),
                 discord_id: row.get("discord_id"),
-                steam_id: row.get("steam_id"),
+                steam_id64: row.get("steam_id64"),
                 username: row.get("username"),
                 created_at: row.get("user_created_at"),
                 updated_at: row.get("user_updated_at"),
@@ -150,104 +150,87 @@ impl Database {
         Ok(row.get("count"))
     }
 
-    // Match operations
-    pub async fn create_match(&self, create_match: CreateMatch) -> Result<Match> {
-        let match_row = sqlx::query_as::<_, Match>(
-            "INSERT INTO matches (match_uuid, red_team_channel_id, blu_team_channel_id, server_channel) VALUES (?, ?, ?, ?) RETURNING id, match_uuid, red_team_channel_id, blu_team_channel_id, server_channel, status, created_at, confirmed_at, ended_at, confirmed_by"
+    // Session operations
+    pub async fn create_session(&self, red_players: &[User], blu_players: &[User], server: &str) -> Result<Session> {
+        let session_uuid = uuid::Uuid::new_v4().to_string();
+        
+        let mut tx = self.pool.begin().await?;
+        
+        // Create session
+        let session_id = sqlx::query(
+            "INSERT INTO sessions (session_uuid, status, server_assignment) VALUES (?, ?, ?)"
         )
-        .bind(&create_match.match_uuid)
-        .bind(&create_match.red_team_channel_id)
-        .bind(&create_match.blu_team_channel_id)
-        .bind(&create_match.server_channel)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(match_row)
+        .bind(&session_uuid)
+        .bind("hot")
+        .bind(server)
+        .execute(&mut *tx)
+        .await?
+        .last_insert_rowid();
+        
+        // Add players to session
+        for player in red_players {
+            sqlx::query(
+                "INSERT INTO session_players (session_id, user_id, team) VALUES (?, ?, ?)"
+            )
+            .bind(session_id)
+            .bind(player.id)
+            .bind("RED")
+            .execute(&mut *tx)
+            .await?;
+        }
+        
+        for player in blu_players {
+            sqlx::query(
+                "INSERT INTO session_players (session_id, user_id, team) VALUES (?, ?, ?)"
+            )
+            .bind(session_id)
+            .bind(player.id)
+            .bind("BLU")
+            .execute(&mut *tx)
+            .await?;
+        }
+        
+        tx.commit().await?;
+        
+        // Return the created session
+        let session = Session {
+            id: session_id,
+            session_uuid,
+            status: "hot".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            confirmed_at: None,
+            ended_at: None,
+            server_assignment: server.to_string(),
+        };
+        
+        Ok(session)
     }
 
-    pub async fn add_players_to_match(&self, match_id: i64, team_assignment: TeamAssignment) -> Result<()> {
+    pub async fn accept_session(&self, session_id: i64) -> Result<()> {
+        sqlx::query("UPDATE sessions SET status = 'pushing', confirmed_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn end_session(&self, session_id: i64) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        for user_id in team_assignment.red_team {
-            sqlx::query(
-                "INSERT INTO match_players (match_id, user_id, team) VALUES (?, ?, 'RED')"
-            )
-            .bind(match_id)
-            .bind(user_id)
+        sqlx::query("UPDATE sessions SET status = 'waiting', ended_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .bind(session_id)
             .execute(&mut *tx)
             .await?;
-
-            // Update queue status
-            sqlx::query(
-                "UPDATE queue_sessions SET status = 'in_match' WHERE user_id = ?"
-            )
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        for user_id in team_assignment.blu_team {
-            sqlx::query(
-                "INSERT INTO match_players (match_id, user_id, team) VALUES (?, ?, 'BLU')"
-            )
-            .bind(match_id)
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
-
-            // Update queue status
-            sqlx::query(
-                "UPDATE queue_sessions SET status = 'in_match' WHERE user_id = ?"
-            )
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await?;
-        }
 
         tx.commit().await?;
         Ok(())
     }
 
-    pub async fn confirm_match(&self, match_id: i64, confirmed_by: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE matches SET status = 'confirmed', confirmed_at = CURRENT_TIMESTAMP, confirmed_by = ? WHERE id = ?"
-        )
-        .bind(confirmed_by)
-        .bind(match_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    pub async fn end_match(&self, match_id: i64) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        // Update match status
-        sqlx::query(
-            "UPDATE matches SET status = 'ended', ended_at = CURRENT_TIMESTAMP WHERE id = ?"
-        )
-        .bind(match_id)
-        .execute(&mut *tx)
-        .await?;
-
-        // Remove players from queue sessions
-        sqlx::query(
-            "DELETE FROM queue_sessions WHERE user_id IN (SELECT user_id FROM match_players WHERE match_id = ?)"
-        )
-        .bind(match_id)
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-        Ok(())
-    }
-
-    pub async fn get_match_players(&self, match_id: i64) -> Result<Vec<(String, String)>> {
+    pub async fn get_session_players(&self, session_id: i64) -> Result<Vec<(String, String)>> {
         let rows = sqlx::query(
-            "SELECT u.discord_id AS discord_id, mp.team AS team FROM match_players mp JOIN users u ON mp.user_id = u.id WHERE mp.match_id = ?"
+            "SELECT u.discord_id AS discord_id, sp.team AS team FROM session_players sp JOIN users u ON sp.user_id = u.id WHERE sp.session_id = ?"
         )
-        .bind(match_id)
+        .bind(session_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -260,32 +243,32 @@ impl Database {
         Ok(result)
     }
 
-    pub async fn get_match_by_uuid(&self, match_uuid: &str) -> Result<Match> {
-        let m = sqlx::query_as::<_, Match>(
-            "SELECT * FROM matches WHERE match_uuid = ?"
+    pub async fn get_session_by_uuid(&self, session_uuid: &str) -> Result<Session> {
+        let s = sqlx::query_as::<_, Session>(
+            "SELECT * FROM sessions WHERE session_uuid = ?"
         )
-        .bind(match_uuid)
+        .bind(session_uuid)
         .fetch_one(&self.pool)
         .await?;
-        Ok(m)
+        Ok(s)
     }
 
-    pub async fn get_latest_forming_match(&self) -> Result<Match> {
-        let m = sqlx::query_as::<_, Match>(
-            "SELECT * FROM matches WHERE status = 'forming' ORDER BY created_at DESC LIMIT 1"
+    pub async fn get_latest_hot_session(&self) -> Result<Session> {
+        let s = sqlx::query_as::<_, Session>(
+            "SELECT * FROM sessions WHERE status = 'hot' ORDER BY created_at DESC LIMIT 1"
         )
         .fetch_one(&self.pool)
         .await?;
-        Ok(m)
+        Ok(s)
     }
 
-    pub async fn get_latest_confirmed_match(&self) -> Result<Match> {
-        let m = sqlx::query_as::<_, Match>(
-            "SELECT * FROM matches WHERE status = 'confirmed' ORDER BY confirmed_at DESC LIMIT 1"
+    pub async fn get_latest_pushing_session(&self) -> Result<Session> {
+        let s = sqlx::query_as::<_, Session>(
+            "SELECT * FROM sessions WHERE status = 'pushing' ORDER BY created_at DESC LIMIT 1"
         )
         .fetch_one(&self.pool)
         .await?;
-        Ok(m)
+        Ok(s)
     }
 
     // Config operations
@@ -302,16 +285,23 @@ impl Database {
         Ok(BotConfig {
             guild_id: config_map.get("guild_id").unwrap_or(&String::new()).clone(),
             queue_channel_id: config_map.get("queue_channel_id").unwrap_or(&String::new()).clone(),
-            red_channel_id: config_map.get("red_channel_id").unwrap_or(&String::new()).clone(),
-            blu_channel_id: config_map.get("blu_channel_id").unwrap_or(&String::new()).clone(),
-            server_a_channel_id: config_map.get("server_a_channel_id").unwrap_or(&String::new()).clone(),
-            server_b_channel_id: config_map.get("server_b_channel_id").unwrap_or(&String::new()).clone(),
-            server_c_channel_id: config_map.get("server_c_channel_id").unwrap_or(&String::new()).clone(),
             log_channel_id: config_map.get("log_channel_id").unwrap_or(&String::new()).clone(),
             queue_size: config_map.get("queue_size").unwrap_or(&"8".to_string()).parse().unwrap_or(8),
             confirmation_timeout: config_map.get("confirmation_timeout").unwrap_or(&"120".to_string()).parse().unwrap_or(120),
             runner_role_id: config_map.get("runner_role_id").unwrap_or(&String::new()).clone(),
             admin_role_id: config_map.get("admin_role_id").unwrap_or(&String::new()).clone(),
+            // Server A channels
+            red_a_channel_id: config_map.get("red_a_channel_id").unwrap_or(&String::new()).clone(),
+            blu_a_channel_id: config_map.get("blu_a_channel_id").unwrap_or(&String::new()).clone(),
+            server_a_channel_id: config_map.get("server_a_channel_id").unwrap_or(&String::new()).clone(),
+            // Server B channels
+            red_b_channel_id: config_map.get("red_b_channel_id").unwrap_or(&String::new()).clone(),
+            blu_b_channel_id: config_map.get("blu_b_channel_id").unwrap_or(&String::new()).clone(),
+            server_b_channel_id: config_map.get("server_b_channel_id").unwrap_or(&String::new()).clone(),
+            // Server C channels
+            red_c_channel_id: config_map.get("red_c_channel_id").unwrap_or(&String::new()).clone(),
+            blu_c_channel_id: config_map.get("blu_c_channel_id").unwrap_or(&String::new()).clone(),
+            server_c_channel_id: config_map.get("server_c_channel_id").unwrap_or(&String::new()).clone(),
         })
     }
 

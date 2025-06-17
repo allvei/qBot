@@ -17,7 +17,7 @@ use std::{env, sync::Arc};
 use tracing::{error, info};
 
 use database::Database;
-use handlers::*;
+use handlers::{queue, session_handler, admin};
 
 struct Handler {
     database: Arc<Database>,
@@ -31,42 +31,37 @@ impl EventHandler for Handler {
         // Register slash commands globally or for specific guild
         let commands = vec![
             CreateCommand::new("queue")
-                .description("Join or leave the PUG queue")
+                .description("Join or leave the queue")
+                .add_option(CreateCommandOption::new(CommandOptionType::SubCommand, "join", "Join the queue"))
+                .add_option(CreateCommandOption::new(CommandOptionType::SubCommand, "leave", "Leave the queue"))
+                .add_option(CreateCommandOption::new(CommandOptionType::SubCommand, "status", "Check queue status")),
+        
+            CreateCommand::new("shuffle")
+                .description("Generate teams from queue (Runner only)"),
+        
+            CreateCommand::new("accept")
+                .description("Accept/confirm generated teams (Runner only)")
                 .add_option(
-                    CreateCommandOption::new(CommandOptionType::String, "action", "Action to perform")
-                        .required(true)
-                        .add_string_choice("join", "join")
-                        .add_string_choice("leave", "leave")
-                        .add_string_choice("status", "status")
-                ),
-            CreateCommand::new("autogen")
-                .description("Generate teams automatically (Runner only)"),
-            CreateCommand::new("regen")
-                .description("Regenerate teams (Runner only)")
-                .add_option(
-                    CreateCommandOption::new(CommandOptionType::String, "match_id", "Match ID to regenerate")
+                    CreateCommandOption::new(CommandOptionType::String, "session_id", "Session ID to accept (optional)")
                         .required(false)
                 ),
-            CreateCommand::new("confirm")
-                .description("Confirm generated teams (Runner only)")
-                .add_option(
-                    CreateCommandOption::new(CommandOptionType::String, "match_id", "Match ID to confirm")
-                        .required(false)
-                ),
+        
             CreateCommand::new("end")
-                .description("End a match (Runner only)")
+                .description("End a session (Runner only)")
                 .add_option(
-                    CreateCommandOption::new(CommandOptionType::String, "match_id", "Match ID to end")
-                        .required(true)
+                    CreateCommandOption::new(CommandOptionType::String, "session_id", "Session ID to end (optional)")
+                        .required(false)
                 ),
+        
             CreateCommand::new("bench")
                 .description("Bench a player (Admin only)")
                 .add_option(
-                    CreateCommandOption::new(CommandOptionType::User, "user", "User to bench")
+                    CreateCommandOption::new(CommandOptionType::String, "user", "User to bench")
                         .required(true)
                 ),
+        
             CreateCommand::new("config")
-                .description("View or modify bot configuration (Admin only)")
+                .description("View or set bot configuration (Admin only)")
                 .add_option(
                     CreateCommandOption::new(CommandOptionType::String, "key", "Configuration key")
                         .required(false)
@@ -105,60 +100,57 @@ impl EventHandler for Handler {
         if let Interaction::Command(command) = interaction {
             let result = match command.data.name.as_str() {
                 "queue" => {
-                    let action = command.data.options.first()
-                        .and_then(|option| option.value.as_str())
-                        .unwrap_or("status");
-                    
-                    match action {
-                        "join" | "leave" => handle_queue_command(&ctx, &command, self.database.clone()).await,
-                        "status" => handle_queue_status_command(&ctx, &command, self.database.clone()).await,
-                        _ => {
-                            let response = CreateInteractionResponse::Message(
-                                CreateInteractionResponseMessage::new()
-                                    .content("❌ Invalid queue action")
-                                    .ephemeral(true)
-                            );
-                            command.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                    if let Some(subcommand) = command.data.options.first() {
+                        match subcommand.name.as_str() {
+                            "join" | "leave" => queue::handle_queue_command(&ctx, &command, self.database.clone()).await,
+                            "status" => queue::handle_queue_status_command(&ctx, &command, self.database.clone()).await,
+                            _ => Ok(())
                         }
+                    } else {
+                        Ok(())
                     }
-                },
-                "autogen" => handle_autogen_command(&ctx, &command, self.database.clone()).await,
-                "regen" => {
-                    if let Some(cmd_option) = command.data.options.first() {
-                        let _match_id = cmd_option.value.as_str()
-                            .and_then(|s| s.parse::<i64>().ok());
-                    }
-                    handle_autogen_command(&ctx, &command, self.database.clone()).await // For now, regen = autogen
-                },
-                "confirm" => {
-                    let match_id = command.data.options.first()
+                }
+                "shuffle" => {
+                    session_handler::handle_shuffle_command(&ctx, &command, self.database.clone()).await
+                }
+                "accept" => {
+                    let session_id = command.data.options.iter()
+                        .find(|opt| opt.name == "session_id")
                         .and_then(|opt| opt.value.as_str())
                         .map(|s| s.to_string());
-                    handle_confirm_command(&ctx, &command, self.database.clone(), match_id).await
-                },
+                    session_handler::handle_accept_command(&ctx, &command, self.database.clone(), session_id).await
+                }
                 "end" => {
-                    let match_id = command.data.options.first()
+                    let session_id = command.data.options.iter()
+                        .find(|opt| opt.name == "session_id")
                         .and_then(|opt| opt.value.as_str())
                         .map(|s| s.to_string());
-                    handle_end_command(&ctx, &command, self.database.clone(), match_id).await
-                },
+                    session_handler::handle_end_command(&ctx, &command, self.database.clone(), session_id).await
+                }
                 "bench" => {
-                    let user_mention = command.data.options.first()
-                        .and_then(|option| option.value.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    handle_bench_command(&ctx, &command, self.database.clone(), user_mention).await
-                },
+                    if let Some(user_option) = command.data.options.first() {
+                        if let Some(user_id) = user_option.value.as_str() {
+                            admin::handle_bench_command(&ctx, &command, self.database.clone(), user_id.to_string()).await
+                        } else {
+                            Ok(())
+                        }
+                    } else {
+                        Ok(())
+                    }
+                }
                 "config" => {
-                    let key = command.data.options.get(0)
-                        .and_then(|option| option.value.as_str())
+                    let key = command.data.options.iter()
+                        .find(|opt| opt.name == "key")
+                        .and_then(|opt| opt.value.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let value = command.data.options.get(1)
-                        .and_then(|option| option.value.as_str())
+                    let value = command.data.options.iter()
+                        .find(|opt| opt.name == "value")
+                        .and_then(|opt| opt.value.as_str())
                         .map(|s| s.to_string());
-                    handle_config_command(&ctx, &command, self.database.clone(), key, value).await
-                },
+                    
+                    admin::handle_config_command(&ctx, &command, self.database.clone(), key, value).await
+                }
                 _ => {
                     let response = CreateInteractionResponse::Message(
                         CreateInteractionResponseMessage::new()
@@ -169,8 +161,19 @@ impl EventHandler for Handler {
                 }
             };
 
-            if let Err(why) = result {
-                error!("Cannot respond to slash command: {}", why);
+            if let Err(e) = result {
+                error!("Error handling command '{}': {}", command.data.name, e);
+                
+                // Try to respond with an error message if we haven't responded yet
+                let error_response = CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content("❌ An error occurred while processing your command")
+                        .ephemeral(true)
+                );
+                
+                if let Err(response_err) = command.create_response(&ctx.http, error_response).await {
+                    error!("Failed to send error response: {}", response_err);
+                }
             }
         }
     }

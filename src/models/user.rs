@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 pub struct User {
     pub id: i64,
     pub discord_id: String,
-    pub steam_id: Option<String>,
+    pub steam_id64: Option<String>,
     pub username: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -15,6 +15,6 @@ pub struct User {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateUser {
     pub discord_id: String,
-    pub steam_id: Option<String>,
+    pub steam_id64: Option<String>,
     pub username: String,
 }
