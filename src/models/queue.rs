@@ -12,7 +12,7 @@ pub struct QueueSession {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QueueType {
-    Nowbie,
+    Newcomer,
     Journey,
     Default,
 }
@@ -20,7 +20,7 @@ pub enum QueueType {
 impl From<String> for QueueType {
     fn from(s: String) -> Self {
         match s.as_str() {
-            "nowbie" => QueueType::Nowbie,
+            "newcomer" => QueueType::Newcomer,
             "journey" => QueueType::Journey,
             _ => QueueType::Default,
         }
@@ -30,7 +30,7 @@ impl From<String> for QueueType {
 impl From<QueueType> for String {
     fn from(qt: QueueType) -> Self {
         match qt {
-            QueueType::Nowbie => "nowbie".to_string(),
+            QueueType::Newcomer => "newcomer".to_string(),
             QueueType::Journey => "journey".to_string(),
             QueueType::Default => "default".to_string(),
         }
