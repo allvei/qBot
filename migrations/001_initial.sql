@@ -13,10 +13,6 @@ CREATE TABLE IF NOT EXISTS queue_sessions (
     user_id INTEGER NOT NULL,
     channel_id TEXT NOT NULL, -- Discord channel ID where queue was joined
     joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    status TEXT NOT NULL DEFAULT 'waiting', -- 'waiting', 'in_session', 'benched'
-    is_benched BOOLEAN NOT NULL DEFAULT FALSE,
-    benched_by TEXT, -- Discord ID of admin who benched
-    benched_at DATETIME,
     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 );
 
@@ -26,7 +22,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     red_team_channel_id TEXT,
     blu_team_channel_id TEXT,
     server_channel TEXT, -- A, B, or C
-    status TEXT NOT NULL DEFAULT 'hot', -- 'hot', 'pushing', 'playing', 'pulling'
+    status TEXT NOT NULL DEFAULT 'hot', -- 'hot', 'push', 'live', 'pull'
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     accepted_at DATETIME,
     ended_at DATETIME,
@@ -74,7 +70,7 @@ INSERT OR REPLACE INTO config (key, value, description) VALUES
     ('server_c_channel_id', '', 'Server C voice channel ID');
 
 -- Indexes for performance
-CREATE INDEX IF NOT EXISTS idx_queue_sessions_status ON queue_sessions(status);
+
 CREATE INDEX IF NOT EXISTS idx_queue_sessions_channel_id ON queue_sessions(channel_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 CREATE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id);

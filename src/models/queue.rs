@@ -8,18 +8,6 @@ pub struct QueueSession {
     pub user_id: i64,
     pub queue_type: String,
     pub joined_at: DateTime<Utc>,
-    pub status: QueueStatus,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "TEXT")]
-pub enum QueueStatus {
-    #[sqlx(rename = "waiting")]
-    Waiting,
-    #[sqlx(rename = "in_match")]
-    InMatch,
-    #[sqlx(rename = "benched")]
-    Benched,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

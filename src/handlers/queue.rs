@@ -20,7 +20,7 @@ pub async fn handle_queue_command(
     
     // Check if user is already in queue
     let current_queue_count = db.get_queue_count(QueueType::Default).await?;
-    let queue_players = db.get_queue_waiting(QueueType::Default).await?;
+    let queue_players = db.get_queue_idle(QueueType::Default).await?;
     
     let already_in_queue = queue_players.iter().any(|(_, u)| u.discord_id == user_id);
     
@@ -74,7 +74,7 @@ pub async fn handle_queue_status_command(
     interaction: &CommandInteraction,
     db: Arc<Database>,
 ) -> Result<()> {
-    let queue_players = db.get_queue_waiting(QueueType::Default).await?;
+    let queue_players = db.get_queue_idle(QueueType::Default).await?;
     let count = queue_players.len();
     
     let description = if count == 0 {
@@ -109,7 +109,7 @@ async fn trigger_quota_notification(
     _guild_id: GuildId,
 ) -> Result<()> {
     let config = db.get_config().await?;
-    let queue_players = db.get_queue_waiting(QueueType::Default).await?;
+    let queue_players = db.get_queue_idle(QueueType::Default).await?;
     
     if queue_players.len() < 8 {
         return Ok(());
@@ -133,7 +133,7 @@ async fn trigger_quota_notification(
                 player_mentions.join(" ")
             ))
             .color(0xffd43b)
-            .footer(CreateEmbedFooter::new("Waiting for team generation..."));
+            .footer(CreateEmbedFooter::new("Awaiting team generation..."));
         
         channel.send_message(&ctx.http, CreateMessage::new().embed(embed)).await?;
     }

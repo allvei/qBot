@@ -27,7 +27,7 @@ pub async fn handle_shuffle_command(
     }
 
     // Get queued players
-    let queue_players = db.get_queue_waiting(QueueType::Default).await?;
+    let queue_players = db.get_queue_idle(QueueType::Default).await?;
     
     if queue_players.len() < 8 {
         let response = CreateInteractionResponse::Message(
@@ -90,7 +90,7 @@ pub async fn handle_shuffle_command(
                 blu_team_names.join(", ")
             ))
             .color(0x339af0)
-            .footer(CreateEmbedFooter::new("Waiting for acceptance..."));
+            .footer(CreateEmbedFooter::new("Awaiting acceptance..."));
         
         channel.send_message(&ctx.http, serenity::all::CreateMessage::new().embed(log_embed)).await?;
     }
@@ -180,7 +180,7 @@ pub async fn handle_end_command(
     let session = if let Some(id) = session_id {
         db.get_session_by_uuid(&id).await?
     } else {
-        db.get_latest_pushing_session().await?
+        db.get_latest_push_session().await?
     };
 
     // End the session

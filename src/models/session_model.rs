@@ -14,31 +14,33 @@ pub struct Session {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionStatus {
-    Waiting,
+    Idle,
     Hot,
-    Pushing,
-    Playing,
-    Pulling,
+    Push,
+    Live,
+    Pull,
 }
 
 impl SessionStatus {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
-            SessionStatus::Waiting => "waiting",
+            SessionStatus::Idle => "idle",
             SessionStatus::Hot => "hot",
-            SessionStatus::Pushing => "pushing",
-            SessionStatus::Playing => "playing",
-            SessionStatus::Pulling => "pulling",
+            SessionStatus::Push => "push",
+            SessionStatus::Live => "live",
+            SessionStatus::Pull => "pull",
         }
     }
     
+    #[allow(dead_code)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
-            "waiting" => Some(SessionStatus::Waiting),
+            "idle" => Some(SessionStatus::Idle),
             "hot" => Some(SessionStatus::Hot),
-            "pushing" => Some(SessionStatus::Pushing),
-            "playing" => Some(SessionStatus::Playing),
-            "pulling" => Some(SessionStatus::Pulling),
+            "push" => Some(SessionStatus::Push),
+            "live" => Some(SessionStatus::Live),
+            "pull" => Some(SessionStatus::Pull),
             _ => None,
         }
     }
@@ -61,6 +63,7 @@ pub enum Team {
 }
 
 impl Team {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             Team::Red => "RED",
@@ -68,6 +71,7 @@ impl Team {
         }
     }
     
+    #[allow(dead_code)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "RED" => Some(Team::Red),

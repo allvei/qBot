@@ -37,31 +37,31 @@ impl EventHandler for Handler {
                 .add_option(CreateCommandOption::new(CommandOptionType::SubCommand, "status", "Check queue status")),
         
             CreateCommand::new("shuffle")
-                .description("Generate teams from queue (Runner only)"),
+                .description("Generate teams from queue"),
         
             CreateCommand::new("accept")
-                .description("Accept/confirm generated teams (Runner only)")
+                .description("Accept/confirm generated teams")
                 .add_option(
                     CreateCommandOption::new(CommandOptionType::String, "session_id", "Session ID to accept (optional)")
                         .required(false)
                 ),
         
             CreateCommand::new("end")
-                .description("End a session (Runner only)")
+                .description("End a session")
                 .add_option(
                     CreateCommandOption::new(CommandOptionType::String, "session_id", "Session ID to end (optional)")
                         .required(false)
                 ),
         
             CreateCommand::new("bench")
-                .description("Bench a player (Admin only)")
+                .description("Bench a player")
                 .add_option(
                     CreateCommandOption::new(CommandOptionType::String, "user", "User to bench")
                         .required(true)
                 ),
         
             CreateCommand::new("config")
-                .description("View or set bot configuration (Admin only)")
+                .description("View or set bot configuration")
                 .add_option(
                     CreateCommandOption::new(CommandOptionType::String, "key", "Configuration key")
                         .required(false)

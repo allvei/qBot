@@ -79,7 +79,7 @@ impl Database {
 
         let queue_type_str: String = queue_type.into();
         let session = sqlx::query_as::<_, QueueSession>(
-            "INSERT INTO queue_sessions (user_id, queue_type, status) VALUES (?, ?, 'waiting') RETURNING id, user_id, queue_type, joined_at, status"
+            "INSERT INTO queue_sessions (user_id, queue_type) VALUES (?, ?) RETURNING id, user_id, queue_type, joined_at"
         )
         .bind(user_id)
         .bind(queue_type_str)
@@ -91,7 +91,7 @@ impl Database {
 
     pub async fn leave_queue_by_user_id(&self, user_id: i64) -> Result<()> {
         sqlx::query(
-            "DELETE FROM queue_sessions WHERE user_id = ? AND status = 'waiting'"
+            "DELETE FROM queue_sessions WHERE user_id = ?"
         )
         .bind(user_id)
         .execute(&self.pool)
@@ -100,14 +100,14 @@ impl Database {
         Ok(())
     }
 
-    pub async fn get_queue_waiting(&self, queue_type: QueueType) -> Result<Vec<(QueueSession, User)>> {
+    pub async fn get_queue_idle(&self, queue_type: QueueType) -> Result<Vec<(QueueSession, User)>> {
         let queue_type_str: String = queue_type.into();
         let rows = sqlx::query(
             r#"
-            SELECT qs.id, qs.user_id, qs.queue_type, qs.joined_at, qs.status, u.id, u.discord_id, u.steam_id64, u.username, u.created_at as user_created_at, u.updated_at as user_updated_at
+            SELECT qs.id, qs.user_id, qs.queue_type, qs.joined_at, u.id, u.discord_id, u.steam_id64, u.username, u.created_at as user_created_at, u.updated_at as user_updated_at
             FROM queue_sessions qs
             JOIN users u ON qs.user_id = u.id
-            WHERE qs.queue_type = ? AND qs.status = 'waiting'
+            WHERE qs.queue_type = ?
             ORDER BY qs.joined_at ASC
             "#,
         )
@@ -122,7 +122,6 @@ impl Database {
                 user_id: row.get("user_id"),
                 queue_type: row.get("queue_type"),
                 joined_at: row.get("joined_at"),
-                status: QueueStatus::Waiting,
             };
             let user = User {
                 id: row.get("id"),
@@ -141,7 +140,7 @@ impl Database {
     pub async fn get_queue_count(&self, queue_type: QueueType) -> Result<i64> {
         let queue_type_str: String = queue_type.into();
         let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM queue_sessions WHERE queue_type = ? AND status = 'waiting'"
+            "SELECT COUNT(*) as count FROM queue_sessions WHERE queue_type = ?"
         )
         .bind(queue_type_str)
         .fetch_one(&self.pool)
@@ -207,7 +206,7 @@ impl Database {
     }
 
     pub async fn accept_session(&self, session_id: i64) -> Result<()> {
-        sqlx::query("UPDATE sessions SET status = 'pushing', confirmed_at = CURRENT_TIMESTAMP WHERE id = ?")
+        sqlx::query("UPDATE sessions SET status = 'push', confirmed_at = CURRENT_TIMESTAMP WHERE id = ?")
             .bind(session_id)
             .execute(&self.pool)
             .await?;
@@ -217,7 +216,7 @@ impl Database {
     pub async fn end_session(&self, session_id: i64) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("UPDATE sessions SET status = 'waiting', ended_at = CURRENT_TIMESTAMP WHERE id = ?")
+        sqlx::query("UPDATE sessions SET status = 'idle', ended_at = CURRENT_TIMESTAMP WHERE id = ?")
             .bind(session_id)
             .execute(&mut *tx)
             .await?;
@@ -262,9 +261,9 @@ impl Database {
         Ok(s)
     }
 
-    pub async fn get_latest_pushing_session(&self) -> Result<Session> {
+    pub async fn get_latest_push_session(&self) -> Result<Session> {
         let s = sqlx::query_as::<_, Session>(
-            "SELECT * FROM sessions WHERE status = 'pushing' ORDER BY created_at DESC LIMIT 1"
+            "SELECT * FROM sessions WHERE status = 'push' ORDER BY created_at DESC LIMIT 1"
         )
         .fetch_one(&self.pool)
         .await?;

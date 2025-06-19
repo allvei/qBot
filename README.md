@@ -103,7 +103,7 @@ Use `/config` command to set up channel IDs and role IDs:
 The bot uses SQLite to store:
 - User information (Discord ID, username, Steam ID)
 - Queue sessions and status
-- Match history and team compositions  
+- Match history and team compositions
 - Bot configuration settings
 
 ## Development
