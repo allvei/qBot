@@ -84,7 +84,7 @@ async fn test_accept_action() {
     let user_ids = create_test_users(&db, 8).await;
     let mut users = Vec::new();
     for user_id in &user_ids {
-        let user = db.get_or_create_user(&format!("discord_{}", user_id), &format!("user{}", user_id)).await.unwrap();
+        let user = db.get_or_create_user(&format!("{}", user_id), &format!("{}", user_id)).await.unwrap();
         users.push(user);
     }
     
@@ -113,7 +113,7 @@ async fn test_accept_action_with_latest_hot_session() {
     let user_ids = create_test_users(&db, 8).await;
     let mut users = Vec::new();
     for user_id in &user_ids {
-        let user = db.get_or_create_user(&format!("discord_{}", user_id), &format!("user{}", user_id)).await.unwrap();
+        let user = db.get_or_create_user(&format!("{}", user_id), &format!("{}", user_id)).await.unwrap();
         users.push(user);
     }
     
@@ -139,7 +139,7 @@ async fn test_end_action() {
     let user_ids = create_test_users(&db, 8).await;
     let mut users = Vec::new();
     for user_id in &user_ids {
-        let user = db.get_or_create_user(&format!("discord_{}", user_id), &format!("user{}", user_id)).await.unwrap();
+        let user = db.get_or_create_user(&format!("{}", user_id), &format!("{}", user_id)).await.unwrap();
         users.push(user);
     }
     
@@ -168,7 +168,7 @@ async fn test_end_action_with_latest_push_session() {
     let user_ids = create_test_users(&db, 8).await;
     let mut users = Vec::new();
     for user_id in &user_ids {
-        let user = db.get_or_create_user(&format!("discord_{}", user_id), &format!("user{}", user_id)).await.unwrap();
+        let user = db.get_or_create_user(&format!("{}", user_id), &format!("{}", user_id)).await.unwrap();
         users.push(user);
     }
     
@@ -202,12 +202,12 @@ async fn test_session_lifecycle_complete() {
     // Get users for session creation
     let mut users = Vec::new();
     for user_id in &user_ids {
-        let user = db.get_or_create_user(&format!("discord_{}", user_id), &format!("user{}", user_id)).await.unwrap();
+        let user = db.get_or_create_user(&format!("{}", user_id), &format!("{}", user_id)).await.unwrap();
         users.push(user);
     }
     
     let red_team = &users[0..4];
-    let blu_team = &users[4..8];
+    let blu_team = &users[4..8];car
     
     // 1. Create session (shuffle action)
     let session = db.create_session(red_team, blu_team, "server_a").await.unwrap();

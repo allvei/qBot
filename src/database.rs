@@ -18,6 +18,7 @@ impl Database {
     }
     
     // Helper method for tests to execute raw SQL without exposing the pool
+    #[allow(dead_code)]
     pub fn get_connection(&self) -> &SqlitePool {
         &self.pool
     }
@@ -254,6 +255,7 @@ impl Database {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn add_player_to_session(&self, session_id: i64, user_id: i64, team: &str, is_benched: bool) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         
