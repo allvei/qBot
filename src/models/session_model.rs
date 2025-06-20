@@ -1,15 +1,17 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(FromRow)]
 pub struct Session {
     pub id: i64,
     pub session_uuid: String,
     pub status: String,
     pub created_at: String,
-    pub confirmed_at: Option<String>,
+    #[sqlx(rename = "accepted_at")]
+    pub confirmed_at: Option<String>, // Maps to accepted_at in the database
     pub ended_at: Option<String>,
-    pub server_assignment: String,
+    pub server_channel: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

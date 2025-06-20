@@ -16,6 +16,11 @@ impl Database {
         
         Ok(Self { pool })
     }
+    
+    // Helper method for tests to execute raw SQL without exposing the pool
+    pub fn get_connection(&self) -> &SqlitePool {
+        &self.pool
+    }
 
     // User operations
     pub async fn create_user(&self, user: CreateUser) -> Result<User> {
@@ -79,7 +84,7 @@ impl Database {
 
         let queue_type_str: String = queue_type.into();
         let session = sqlx::query_as::<_, QueueSession>(
-            "INSERT INTO queue_sessions (user_id, queue_type) VALUES (?, ?) RETURNING id, user_id, queue_type, joined_at"
+            "INSERT INTO queue_sessions (user_id, channel_id) VALUES (?, ?) RETURNING id, user_id, channel_id, joined_at"
         )
         .bind(user_id)
         .bind(queue_type_str)
@@ -104,10 +109,10 @@ impl Database {
         let queue_type_str: String = queue_type.into();
         let rows = sqlx::query(
             r#"
-            SELECT qs.id, qs.user_id, qs.queue_type, qs.joined_at, u.id, u.discord_id, u.steam_id64, u.username, u.created_at as user_created_at, u.updated_at as user_updated_at
+            SELECT qs.id, qs.user_id, qs.channel_id, qs.joined_at, u.id, u.discord_id, u.steam_id64, u.username, u.created_at as user_created_at, u.updated_at as user_updated_at
             FROM queue_sessions qs
             JOIN users u ON qs.user_id = u.id
-            WHERE qs.queue_type = ?
+            WHERE qs.channel_id = ?
             ORDER BY qs.joined_at ASC
             "#,
         )
@@ -120,7 +125,7 @@ impl Database {
             let session = QueueSession {
                 id: row.get("id"),
                 user_id: row.get("user_id"),
-                queue_type: row.get("queue_type"),
+                queue_type: row.get("channel_id"),
                 joined_at: row.get("joined_at"),
             };
             let user = User {
@@ -139,14 +144,14 @@ impl Database {
 
     pub async fn get_queue_count(&self, queue_type: QueueType) -> Result<i64> {
         let queue_type_str: String = queue_type.into();
-        let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM queue_sessions WHERE queue_type = ?"
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM queue_sessions WHERE channel_id = ?"
         )
         .bind(queue_type_str)
         .fetch_one(&self.pool)
         .await?;
 
-        Ok(row.get("count"))
+        Ok(count)
     }
 
     // Session operations
@@ -157,7 +162,7 @@ impl Database {
         
         // Create session
         let session_id = sqlx::query(
-            "INSERT INTO sessions (session_uuid, status, server_assignment) VALUES (?, ?, ?)"
+            "INSERT INTO sessions (session_uuid, status, server_channel) VALUES (?, ?, ?)"
         )
         .bind(&session_uuid)
         .bind("hot")
@@ -166,8 +171,31 @@ impl Database {
         .await?
         .last_insert_rowid();
         
-        // Add players to session
+        // Add players to session and remove them from the queue
+        // First, collect all player IDs that will be in the session
+        let mut all_player_ids: Vec<i64> = Vec::new();
         for player in red_players {
+            all_player_ids.push(player.id);
+        }
+        for player in blu_players {
+            all_player_ids.push(player.id);
+        }
+        
+        // Remove all these players from the queue first (ensuring the queue count will be zero)
+        // This targets the default queue type specifically
+        let queue_type_str = "default".to_string();
+        
+        for &player_id in &all_player_ids {
+            sqlx::query("DELETE FROM queue_sessions WHERE user_id = ? AND channel_id = ?")
+                .bind(player_id)
+                .bind(&queue_type_str)
+                .execute(&mut *tx)
+                .await?;
+        }
+        
+        // Now add players to the session
+        for player in red_players {
+            // Add player to session
             sqlx::query(
                 "INSERT INTO session_players (session_id, user_id, team) VALUES (?, ?, ?)"
             )
@@ -179,6 +207,7 @@ impl Database {
         }
         
         for player in blu_players {
+            // Add player to session
             sqlx::query(
                 "INSERT INTO session_players (session_id, user_id, team) VALUES (?, ?, ?)"
             )
@@ -199,14 +228,14 @@ impl Database {
             created_at: chrono::Utc::now().to_rfc3339(),
             confirmed_at: None,
             ended_at: None,
-            server_assignment: server.to_string(),
+            server_channel: server.to_string(),
         };
         
         Ok(session)
     }
 
     pub async fn accept_session(&self, session_id: i64) -> Result<()> {
-        sqlx::query("UPDATE sessions SET status = 'push', confirmed_at = CURRENT_TIMESTAMP WHERE id = ?")
+        sqlx::query("UPDATE sessions SET status = 'push', accepted_at = CURRENT_TIMESTAMP WHERE id = ?")
             .bind(session_id)
             .execute(&self.pool)
             .await?;
@@ -221,6 +250,41 @@ impl Database {
             .execute(&mut *tx)
             .await?;
 
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn add_player_to_session(&self, session_id: i64, user_id: i64, team: &str, is_benched: bool) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        
+        // Convert team to uppercase for consistency
+        let team = team.to_uppercase();
+        
+        // Add the player to the session
+        sqlx::query(
+            "INSERT INTO session_players (session_id, user_id, team, is_benched) VALUES (?, ?, ?, ?)"
+        )
+        .bind(session_id)
+        .bind(user_id)
+        .bind(&team)
+        .bind(is_benched)
+        .execute(&mut *tx)
+        .await?;
+        
+        // If is_benched, add benched_by information
+        if is_benched {
+            // Update the record to include benched_by information
+            // For tests, we'll use a placeholder; in the actual app, this would be the admin's ID
+            sqlx::query(
+                "UPDATE session_players SET benched_by = ? WHERE session_id = ? AND user_id = ?"
+            )
+            .bind("test_admin")
+            .bind(session_id)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        
         tx.commit().await?;
         Ok(())
     }

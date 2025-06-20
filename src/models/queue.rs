@@ -6,7 +6,8 @@ use chrono::{DateTime, Utc};
 pub struct QueueSession {
     pub id: i64,
     pub user_id: i64,
-    pub queue_type: String,
+    #[sqlx(rename = "channel_id")]
+    pub queue_type: String, // Legacy name, maps to channel_id in database
     pub joined_at: DateTime<Utc>,
 }
 

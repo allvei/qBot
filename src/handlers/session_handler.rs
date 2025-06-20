@@ -126,7 +126,7 @@ pub async fn handle_accept_command(
     db.accept_session(session.id).await?;
     
     // Move players to team channels
-    move_players_to_team_channels(ctx, &db, session.id, &session.server_assignment, interaction.guild_id.unwrap()).await?;
+    move_players_to_team_channels(ctx, &db, session.id, &session.server_channel, interaction.guild_id.unwrap()).await?;
 
     let response = CreateInteractionResponse::Message(
         CreateInteractionResponseMessage::new()
@@ -148,7 +148,7 @@ pub async fn handle_accept_command(
                 "**Session:** `{}`\n**Accepted by:** {}\n**Server:** {}",
                 session.session_uuid,
                 interaction.user.display_name(),
-                session.server_assignment
+                session.server_channel
             ))
             .color(0x51cf66)
             .footer(CreateEmbedFooter::new("Session in progress..."));
