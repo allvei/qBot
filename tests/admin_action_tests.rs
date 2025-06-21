@@ -27,7 +27,7 @@ async fn test_config_view_action() {
     // Check that all expected configuration keys are present
     assert_eq!(config.queue_channel_id, "");
     assert_eq!(config.log_channel_id, "");
-    assert_eq!(config.queue_size, 8); // This one has a default value of 8
+    assert_eq!(config.queue_quota, 8); // This one has a default value of 8
     assert_eq!(config.confirmation_timeout, 120); // This one has a default value of 120
 }
 

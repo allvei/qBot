@@ -351,22 +351,19 @@ impl Database {
             guild_id: config_map.get("guild_id").unwrap_or(&String::new()).clone(),
             queue_channel_id: config_map.get("queue_channel_id").unwrap_or(&String::new()).clone(),
             log_channel_id: config_map.get("log_channel_id").unwrap_or(&String::new()).clone(),
-            queue_size: config_map.get("queue_size").unwrap_or(&"8".to_string()).parse().unwrap_or(8),
+            queue_quota: config_map.get("queue_size").unwrap_or(&"8".to_string()).parse().unwrap_or(8),
             confirmation_timeout: config_map.get("confirmation_timeout").unwrap_or(&"120".to_string()).parse().unwrap_or(120),
             runner_role_id: config_map.get("runner_role_id").unwrap_or(&String::new()).clone(),
             admin_role_id: config_map.get("admin_role_id").unwrap_or(&String::new()).clone(),
             // Server A channels
             red_a_channel_id: config_map.get("red_a_channel_id").unwrap_or(&String::new()).clone(),
             blu_a_channel_id: config_map.get("blu_a_channel_id").unwrap_or(&String::new()).clone(),
-            server_a_channel_id: config_map.get("server_a_channel_id").unwrap_or(&String::new()).clone(),
             // Server B channels
             red_b_channel_id: config_map.get("red_b_channel_id").unwrap_or(&String::new()).clone(),
             blu_b_channel_id: config_map.get("blu_b_channel_id").unwrap_or(&String::new()).clone(),
-            server_b_channel_id: config_map.get("server_b_channel_id").unwrap_or(&String::new()).clone(),
             // Server C channels
             red_c_channel_id: config_map.get("red_c_channel_id").unwrap_or(&String::new()).clone(),
             blu_c_channel_id: config_map.get("blu_c_channel_id").unwrap_or(&String::new()).clone(),
-            server_c_channel_id: config_map.get("server_c_channel_id").unwrap_or(&String::new()).clone(),
         })
     }
 

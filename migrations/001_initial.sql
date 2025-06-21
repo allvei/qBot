@@ -59,15 +59,12 @@ INSERT OR REPLACE INTO config (key, value, description) VALUES
     -- Server A channels
     ('red_a_channel_id', '', 'RED team voice channel ID for Server A'),
     ('blu_a_channel_id', '', 'BLU team voice channel ID for Server A'),
-    ('server_a_channel_id', '', 'Server A voice channel ID'),
     -- Server B channels
     ('red_b_channel_id', '', 'RED team voice channel ID for Server B'),
     ('blu_b_channel_id', '', 'BLU team voice channel ID for Server B'),
-    ('server_b_channel_id', '', 'Server B voice channel ID'),
     -- Server C channels
     ('red_c_channel_id', '', 'RED team voice channel ID for Server C'),
     ('blu_c_channel_id', '', 'BLU team voice channel ID for Server C'),
-    ('server_c_channel_id', '', 'Server C voice channel ID');
 
 -- Indexes for performance
 

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use SessionChannel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[derive(FromRow)]
@@ -28,7 +29,7 @@ impl SessionStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             SessionStatus::Idle => "idle",
-            SessionStatus::Hot => "hot",
+            SessionStatus::Hot  => "hot",
             SessionStatus::Push => "push",
             SessionStatus::Live => "live",
             SessionStatus::Pull => "pull",
