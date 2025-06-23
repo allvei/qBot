@@ -1,38 +1,44 @@
 use anyhow::Result;
 use serenity::{
-    all::{CommandInteraction, Context, CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage},
+    all::{Context, CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage},
     builder::CreateEmbedFooter,
     model::prelude::*,
 };
 use std::sync::Arc;
 use crate::{database::Database, models::*};
+use tracing::info;
 
-pub async fn handle_queue_command(
-    ctx: &Context,
-    interaction: &CommandInteraction,
-    db: Arc<Database>,
+/// Handles the `/queue` command, which allows players to join or leave the queue.
+/// 
+/// * `ctx`         - Ref to the Serenity context.
+/// * `interaction` - Ref to the command interaction.
+/// * `db`          - Ref to the database.
+pub async fn handle_queue_command<'a>(
+    cc:           &CommandContext<'a>,
 ) -> Result<()> {
-    let user_id = interaction.user.id.to_string();
-    let username = interaction.user.display_name();
+    let user_id: u64 = cc.intax.user.id.into();
+
+    // Get ctx channel
+    let channel = cc.intax.channel_id;
     
-    // Get or create user
-    let user = db.get_or_create_user(&user_id, &username).await?;
+    // Get the current queue
+    let mut queue = cc.db.get_queue(QueueRoleGroup::Journey).await?;
     
     // Check if user is already in queue
-    let current_queue_count = db.get_queue_count(QueueType::Default).await?;
-    let queue_players = db.get_queue_idle(QueueType::Default).await?;
-    
-    let already_in_queue = queue_players.iter().any(|(_, u)| u.discord_id == user_id);
+    let already_in_queue = queue.members.iter().any(|member| member.user.discord_id == user_id);
     
     if already_in_queue {
-        // Leave queue
-        db.leave_queue_by_user_id(user.id).await?;
+        // Remove the user from the queue
+        queue.members.retain(|member| member.user.discord_id != user_id);
+        
+        // Update the queue in the database
+        cc.db.update_queue(&queue).await?;
         
         let embed = CreateEmbed::new()
             .title("Left Queue")
             .description(format!("**{}** left the queue", username))
             .color(0xff6b6b)
-            .footer(CreateEmbedFooter::new(format!("Queue: {}/8", current_queue_count - 1)));
+            .footer(CreateEmbedFooter::new(format!("Queue: {}/8", queue.members.len())));
         
         let response = CreateInteractionResponse::Message(
             CreateInteractionResponseMessage::new()
@@ -40,11 +46,24 @@ pub async fn handle_queue_command(
                 .ephemeral(true)
         );
         
-        interaction.create_response(&ctx.http, response).await?;
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+
+        info!("User {} ({}) left queue", username, user_id);
     } else {
-        // Join queue
-        db.join_queue(user.id, QueueType::Default).await?;
-        let new_count = current_queue_count + 1;
+        // Create a queue member with this player
+        let queue_member = queue::QueueMember {
+            user: player,
+            is_buffered: false,
+            buffered_by: player::Player::new(0),
+        };
+        
+        // Add the member to the queue
+        queue.members.push(queue_member);
+        
+        // Update the queue in the database
+        cc.db.update_queue(&queue).await?;
+        
+        let new_count = queue.members.len();
         
         let embed = CreateEmbed::new()
             .title("Joined Queue")
@@ -58,31 +77,38 @@ pub async fn handle_queue_command(
                 .ephemeral(true)
         );
         
-        interaction.create_response(&ctx.http, response).await?;
-        
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+
+        info!("User {} ({}) joined queue", username, user_id);        
         // Check if we have enough players for a match
         if new_count >= 8 {
-            trigger_quota_notification(ctx, db, interaction.guild_id.unwrap()).await?;
+            trigger_quota_notification(&cc.ctx, cc.db, cc.intax.guild_id.unwrap()).await?;
         }
     }
     
     Ok(())
 }
 
-pub async fn handle_queue_status_command(
-    ctx: &Context,
-    interaction: &CommandInteraction,
-    db: Arc<Database>,
+/// Handles the `/queue status` command, which shows the current queue status.
+/// 
+/// * `ctx`         - Ref to the Serenity context.
+/// * `interaction` - Ref to the command interaction.
+/// * `db`          - Ref to the database.
+pub async fn handle_queue_status_command<'a>(
+    cc:           &CommandContext<'a>,
 ) -> Result<()> {
-    let queue_players = db.get_queue_idle(QueueType::Default).await?;
-    let count = queue_players.len();
+    // Get the current queue
+    let queue = cc.db.get_queue(QueueRoleGroup::Journey).await?;
+    let count = queue.members.len();
     
     let description = if count == 0 {
         "Queue is empty. Use `/queue join` to join!".to_string()
     } else {
         let mut parts = vec![format!("**{} players in queue:**\n", count)];
-        for (i, (_, user)) in queue_players.iter().enumerate() {
-            parts.push(format!("{}. {}", i + 1, user.username));
+        for (i, member) in queue.members.iter().enumerate() {
+            // Use discord_id as display name if needed
+            let name = format!("user_{}", member.user.discord_id);
+            parts.push(format!("{}.{}", i + 1, name));
         }
         parts.join("\n")
     };
@@ -99,31 +125,34 @@ pub async fn handle_queue_status_command(
             .ephemeral(true)
     );
     
-    interaction.create_response(&ctx.http, response).await?;
+    cc.intax.create_response(&cc.ctx.http, response).await?;
     Ok(())
 }
 
+/// Triggers a notification when the queue quota is reached.
+/// 
+/// * `ctx`        - Ref to the Serenity context.
+/// * `db`         - Ref to the database.
+/// * `_guild_id`  - The ID of the guild where the command was issued.
 async fn trigger_quota_notification(
-    ctx: &Context,
-    db: Arc<Database>,
+    ctx:       &Context,
+    db:        Arc<Database>,
     _guild_id: GuildId,
 ) -> Result<()> {
     let config = db.get_config().await?;
-    let queue_players = db.get_queue_idle(QueueType::Default).await?;
+    let queue = db.get_queue(QueueRoleGroup::Journey).await?;
     
-    if queue_players.len() < 8 {
+    if queue.members.len() < 8 {
         return Ok(());
     }
     
     // Send notification to log channel
-    if !config.log_channel_id.is_empty() {
-        let channel_id: u64 = config.log_channel_id.parse()?;
-        let channel = ChannelId::new(channel_id);
+    if config.log_channel_id != 0 {
+        let channel = ChannelId::new(config.log_channel_id);
         
         let mut player_mentions = Vec::new();
-        for (_, user) in &queue_players[..8] {
-            let user_id: u64 = user.discord_id.parse()?;
-            player_mentions.push(format!("<@{}>", user_id));
+        for member in &queue.members[..8] {
+            player_mentions.push(format!("<@{}>", member.user.discord_id));
         }
         
         let embed = CreateEmbed::new()

@@ -1,11 +1,15 @@
-pub mod user;
-pub mod queue;
-pub mod session_model;
-pub mod config;
-pub mod channel;
+#![allow(clippy::missing_docs_in_private_items)]
 
-pub use user::*;
-pub use queue::*;
-pub use session_model::*;
+pub mod player;
+pub mod session;
+pub mod config;
+pub mod command;
+pub mod channel;
+pub mod file;
+
+pub use player::*;
+pub use session::*;
 pub use config::*;
+pub use command::*;
 pub use channel::*;
+pub use file::*;

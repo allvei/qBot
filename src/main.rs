@@ -10,6 +10,7 @@ use serenity::{
         application::{CommandOptionType, Interaction},
         gateway::Ready,
         id::GuildId,
+        event::VoiceStateUpdateEvent,
     },
     prelude::*,
 };
@@ -19,14 +20,16 @@ use tracing::{error, info};
 use database::Database;
 use handlers::{queue, session_handler, admin};
 
+
 struct Handler {
     database: Arc<Database>,
 }
 
+/// Handler for Discord events with database access
 #[async_trait]
 impl EventHandler for Handler {
-    async fn ready(&self, ctx: Context, ready: Ready) {
-        info!("{} is connected!", ready.user.name);
+    async fn ready(&self, ctx: Context, pl: Ready) {
+        info!("{} is connected!", pl.user.name);
         
         // Register slash commands globally or for specific guild
         let commands = vec![
@@ -53,10 +56,10 @@ impl EventHandler for Handler {
                         .required(false)
                 ),
         
-            CreateCommand::new("bench")
-                .description("Bench a player")
+            CreateCommand::new("buffer")
+                .description("Buffer a player")
                 .add_option(
-                    CreateCommandOption::new(CommandOptionType::String, "user", "User to bench")
+                    CreateCommandOption::new(CommandOptionType::String, "user", "User to buffer")
                         .required(true)
                 ),
         
@@ -75,16 +78,14 @@ impl EventHandler for Handler {
         // Try to get guild ID from config first, otherwise register globally
         let config_result = self.database.get_config().await;
         if let Ok(config) = config_result {
-            if !config.guild_id.is_empty() {
-                if let Ok(guild_id) = config.guild_id.parse::<u64>() {
-                    let guild_id = GuildId::new(guild_id);
-                    if let Err(why) = guild_id.set_commands(&ctx.http, commands).await {
-                        error!("Cannot register slash commands for guild: {}", why);
-                    } else {
-                        info!("Registered slash commands for guild {}", guild_id);
-                    }
-                    return;
+            if config.guild_id != 0 {
+                let guild_id = GuildId::new(config.guild_id);
+                if let Err(why) = guild_id.set_commands(&ctx.http, commands).await {
+                    error!("Cannot register slash commands for guild: {}", why);
+                } else {
+                    info!("Registered slash commands for guild {}", guild_id);
                 }
+                return;
             }
         }
 
@@ -96,8 +97,9 @@ impl EventHandler for Handler {
         }
     }
 
-    async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
-        if let Interaction::Command(command) = interaction {
+    /// Handles interaction create events
+    async fn interaction_create(&self, ctx: Context, pl: Interaction) {
+        if let Interaction::Command(command) = pl {
             let result = match command.data.name.as_str() {
                 "queue" => {
                     if let Some(subcommand) = command.data.options.first() {
@@ -127,10 +129,10 @@ impl EventHandler for Handler {
                         .map(|s| s.to_string());
                     session_handler::handle_end_command(&ctx, &command, self.database.clone(), session_id).await
                 }
-                "bench" => {
+                "buffer" => {
                     if let Some(user_option) = command.data.options.first() {
                         if let Some(user_id) = user_option.value.as_str() {
-                            admin::handle_bench_command(&ctx, &command, self.database.clone(), user_id.to_string()).await
+                            admin::handle_buffer_command(&ctx, &command, self.database.clone(), user_id.to_string()).await
                         } else {
                             Ok(())
                         }
@@ -177,8 +179,18 @@ impl EventHandler for Handler {
             }
         }
     }
+    
+    async fn voice_state_update(&self, ctx: Context, pl: VoiceStateUpdateEvent) {
+        let user_id = pl.user_id;
+        let channel_id = pl.channel_id;
+
+        
+    }
 }
 
+/// Main entry point for the PUG bot application.
+/// Sets up tracing, loads environment variables, initializes the database connection,
+/// configures the Discord client with necessary intents, and starts the bot.
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -190,8 +202,8 @@ async fn main() -> Result<()> {
     let token = env::var("DISCORD_TOKEN")
         .expect("Expected a Discord token in the environment");
     
-    let database_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:./pfpug.db".to_string());
+    let db_file = env::var("DATABASE_URL").unwrap_or_else(|_| "./pfpug.db".to_string());
+    let database_url = format!("sqlite:{}", db_file);
 
     // Initialize database
     info!("Connecting to database: {}", database_url);

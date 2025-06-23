@@ -8,7 +8,7 @@ A comprehensive Discord bot for managing 4v4 pickup games (PUGs) for passtime.tf
 - **Automatic Team Generation**: Generates balanced 4v4 teams when 8 players are ready
 - **Voice Channel Management**: Automatically moves players to team-specific voice channels
 - **Match Lifecycle**: Complete match flow from queue → teams → confirmation → play → end
-- **Admin Controls**: Bench players, configure bot settings, view logs
+- **Admin Controls**: Buffer players, configure bot settings, view logs
 - **Role-based Permissions**: Separate permissions for runners and admins
 
 ## Commands
@@ -23,7 +23,7 @@ A comprehensive Discord bot for managing 4v4 pickup games (PUGs) for passtime.tf
 - `/end <match_id>` - End a match and return players to queue
 
 ### Admin Commands
-- `/bench <user>` - Bench a player (guarantee a spot in the current session)
+- `/buffer <user>` - Buffer a player (guarantee a spot in the current session)
 - `/config [key] [value]` - View or modify bot configuration
 
 ## Setup
@@ -72,7 +72,7 @@ Your Discord server should have the following voice channels:
 
 Create the following roles:
 - **Runner** - Can generate teams, confirm matches, end matches
-- **Admin** - Full permissions including config and bench commands
+- **Admin** - Full permissions including config and buffer commands
 
 ### Configuration
 
