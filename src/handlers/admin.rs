@@ -24,17 +24,10 @@ pub async fn handle_buffer_command<'a>(
         return Ok(());
     }
 
-    let user_id = cc.intax.user.id;
-
-    let tgt_user_id = parse_user_mention(&user_mention)?;
+    let userid = cc.intax.user.id;
+    let t_userid = parse_user_mention(&user_mention)?;
     
-    if let Some(user) = tgt_usr {
-        // Remove user from queue and set status to buffered
-        cc.db.leave_queue_by_user_id(user.id).await?;
-        
-        // In a more complete implementation, you'd add a "buffered" status to queue_sessions
-        // For now, we'll just remove them from queue
-        
+    if let Some(user) = t_userid {
         let embed = CreateEmbed::new()
             .title("🔨 Player Buffered")
             .description(format!("**{}** has been buffered by {}", user.username, cc.intax.user.display_name()))

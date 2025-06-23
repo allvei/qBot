@@ -79,8 +79,8 @@ impl Database {
     ///
     /// Returns a `Result` containing the populated `BotConfig` object or an error if the database
     /// query fails.
-    pub async fn get_config(&self) -> Result<BotConfig> {
-        let rows = sqlx::query_as::<_, Config>("SELECT key, value, description FROM config")
+    pub async fn get_config(&self) -> Result<Config> {
+        let rows = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config")
             .fetch_all(&self.pool)
             .await?;
 
@@ -89,17 +89,17 @@ impl Database {
             config_map.insert(row.key, row.value);
         }
 
-        Ok(BotConfig {
-            guild_id:             prscfg!(config_map, "guild_id", 0),
-            queue_channel_id:     prscfg!(config_map, "queue_channel_id", 0),
-            log_channel_id:       prscfg!(config_map, "log_channel_id", 0),
-            queue_quota:          prscfg!(config_map, "queue_size", 8),
+        Ok(Config {
+            queue_channel_id:     prscfg!(config_map, "queue_channel_id",     0),
+            log_channel_id:       prscfg!(config_map, "log_channel_id",       0),
+            queue_quota:          prscfg!(config_map, "queue_size",           8),
             confirmation_timeout: prscfg!(config_map, "confirmation_timeout", 120),
-            runner_role_id:       prscfg!(config_map, "runner_role_id", 0),
-            admin_role_id:        prscfg!(config_map, "admin_role_id", 0),
-            apug:                 prsteam!(config_map, "apug"),
-            bpug:                 prsteam!(config_map, "bpug"),
-            cpug:                 prsteam!(config_map, "cpug"),
+            runner_role_id:       prscfg!(config_map, "runner_role_id",       0),
+            admin_role_id:        prscfg!(config_map, "admin_role_id",        0),
+            queue_channel:        prscfg!(config_map, "queue_channel_id",     0),
+            buffer_channel:       prscfg!(config_map, "buffer_channel_id",    0),
+            red_channel:          prscfg!(config_map, "red_channel_id",       0),
+            blue_channel:         prscfg!(config_map, "blue_channel_id",      0),
         })
     }
 
