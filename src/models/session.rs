@@ -1,29 +1,27 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use std::str::FromStr;
-use anyhow::Error;
-use crate::Channels;
+use crate::ChannelGroup;
 use crate::Player;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[derive(FromRow)]
 pub struct Session {
-    pub id:            Vec<u8>,
-    pub team_channels: Channels,
-    pub role_group:    DivName,
+    pub id:            Vec<u16>,
+    pub channels:      ChannelGroup,
     pub status:        SessionStatus,
     pub players:       Vec<SessionPlayer>,
 }
 
 impl Session {
-    pub fn create() -> Self {
+    pub fn new(
+        channels: ChannelGroup, 
+        status: SessionStatus,
+    ) -> Self {
         Self {
-            id:            0,
-            queue_channel: 0,
-            team_channels: Channels::default(),
-            role_group:    DivName::Newcomer,
-            status:        SessionStatus::Idle,
-            players:       Vec::new(),
+            id: Vec::new(),
+            players: Vec::new(),
+            channels,
+            status,
         }
     }
 
@@ -43,15 +41,15 @@ impl Session {
         self.players.retain(|m| m.player.discord_id != user_id);
     }
 
-    pub fn buffer_member(&mut self, user_id: u64, buffered_by: Player) {
-        self.players.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().is_buffered = true;
-        self.players.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().buffered_by = buffered_by;
+    pub fn buff(&mut self, user_id: u64, buffered_by: Player) {
+        self.players.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().buff(buffered_by);
     }
 
-    pub fn unbuffer_member(&mut self, user_id: u64) {
-        self.players.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().is_buffered = false;
-        self.players.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().buffered_by = Player::new(0);
+    pub fn unbuff(&mut self, user_id: u64) {
+        self.players.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().unbuff();
     }
+
+
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -60,36 +58,28 @@ pub struct SessionPlayer {
     pub team:   Option<Team>,
     pub is_buffered: bool,
     pub buffered_by: Player,
+}wd
+
+impl SessionPlayer {
+    pub fn buff(&mut self, buffered_by: Player) {
+        self.is_buffered = true;
+        self.buffered_by = buffered_by;
+    }
+
+    pub fn unbuff(&mut self) {
+        self.is_buffered = false;
+        self.buffered_by = Player::new(0);
+    }
+
+    pub fn team(&mut self, team: Team) {
+        self.team = Some(team);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Team {
     Red,
     Blu,
-}
-
-impl FromStr for Team {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "RED" => Ok(Team::Red),
-            "BLU" => Ok(Team::Blu),
-            _ => Err(Error::msg(format!("Unknown Team: {}", s))),
-        }
-    }
-}
-
-pub struct SessionDiv {
-    pub name: DivName,
-    pub queue_channel_id:   u64,
-    pub team_channels:      Channels,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum DivName {
-    Newcomer,
-    Journey,
 }
 
 /// Different session statuses

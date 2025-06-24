@@ -30,7 +30,7 @@ pub async fn handle_buffer_command<'a>(
     if let Some(user) = t_userid {
         let embed = CreateEmbed::new()
             .title("🔨 Player Buffered")
-            .description(format!("**{}** has been buffered by {}", user.username, cc.intax.user.display_name()))
+            .description(format!("**{}** has been buffered by {}", user, cc.intax.user.display_name()))
             .colour(Colour::from_rgb(255, 100, 100));
         
         let response = CreateInteractionResponse::Message(
@@ -41,12 +41,12 @@ pub async fn handle_buffer_command<'a>(
         
         // Log to admin channel
         let config = cc.db.get_config().await?;
-        if config.log_channel_id != 0 {
-            let channel = ChannelId::new(config.log_channel_id);
+        if config.cid_log != 0 {
+            let channel = ChannelId::new(config.cid_log);
             
             let log_embed = CreateEmbed::new()
                 .title("🔨 Admin Action: Buffer")
-                .description(format!("**{}** buffered **{}**", cc.intax.user.display_name(), user.username))
+                .description(format!("**{}** buffered **{}**", cc.intax.user.display_name(), user.user))
                 .colour(Colour::from_rgb(255, 100, 100))
                 .timestamp(Timestamp::now());
             
@@ -107,32 +107,22 @@ pub async fn handle_config_command<'a>(
         
         let config_text = format!(
             "**Current Configuration:**\n\
-            Guild ID: `{}`\n\
             Queue Channel: `{}`\n\
-            Server A - RED Channel: `{}`\n\
-            Server A - BLU Channel: `{}`\n\
-            Server B - RED Channel: `{}`\n\
-            Server B - BLU Channel: `{}`\n\
-            Server C - RED Channel: `{}`\n\
-            Server C - BLU Channel: `{}`\n\
+            RED Channel: `{}`\n\
+            BLU Channel: `{}`\n\
             Log Channel: `{}`\n\
             Queue Size: `{}`\n\
             Confirmation Timeout: `{}s`\n\
             Runner Role: `{}`\n\
             Admin Role: `{}`",
-            config.guild_id,
-            config.queue_channel_id,
-            config.apug.red_id,
-            config.apug.blu_id,
-            config.bpug.red_id,
-            config.bpug.blu_id,
-            config.cpug.red_id,
-            config.cpug.blu_id,
-            config.log_channel_id,
+            config.cid_queue,
+            config.cid_red,
+            config.cid_blue,
+            config.cid_log,
             config.queue_quota,
             config.confirmation_timeout,
-            config.runner_role_id,
-            config.admin_role_id
+            config.id_runner,
+            config.id_admin
         );
         
         let embed = CreateEmbed::new()
@@ -160,7 +150,7 @@ async fn is_admin<'a>(
 ) -> Result<bool> {
     let config = cc.db.get_config().await?; // Cache config
     
-    if config.admin_role_id == 0 {
+    if config.id_admin == 0 {
         return Ok(true); // If no admin role configured, allow everyone (for setup)
     }
     
@@ -168,7 +158,7 @@ async fn is_admin<'a>(
     let member   = guild_id.member(&cc.ctx.http, cc.intax.user.id).await?;
     
     // Check if user has admin role
-    let has_admin = member.roles.iter().any(|r| *r == config.admin_role_id);
+    let has_admin = member.roles.iter().any(|r| *r == config.id_admin);
     
     Ok(has_admin)
 }

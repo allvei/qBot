@@ -319,14 +319,14 @@ async fn move_players_to_queue_channel(
     let config = db.get_config().await?;
     let players = db.get_session_players(session_id).await?;
     
-    if config.queue_channel_id != 0 {
+    if config.cid_queue != 0 {
         for (discord_id, _) in players {
             if let Ok(user_id) = discord_id.parse::<u64>() {
                 // Try to move the user back to queue
                 let _ = ctx.http.edit_member(
                     guild_id,
                     UserId::new(user_id),
-                    &serenity::all::EditMember::new().voice_channel(ChannelId::new(config.queue_channel_id)),
+                    &serenity::all::EditMember::new().voice_channel(ChannelId::new(config.cid_queue)),
                     Some("Moving player back to queue voice channel")
                     ).await;
             }
