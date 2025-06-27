@@ -21,7 +21,6 @@ macro_rules! prsteam {
     };
 }
 
-
 /// `Database` struct provides an interface for interacting with the SQLite database.
 /// Manages the database connection pool and provides methods for various data operations.
 pub struct Database {
@@ -35,8 +34,9 @@ impl Database {
     /// 
     /// * `database_url` - The URL of the SQLite database to connect to.
     pub async fn new(database_url: &str) -> Result<Self> {
+        // Get the database path
         let db_path_str = database_url.strip_prefix("sqlite:").unwrap_or(database_url);
-
+        // Check if the database file exists, create it if it doesn't
         if !db_path_str.is_empty() && !db_path_str.contains(":memory:") {
             let db_path = FileManager::normalize_path(db_path_str);
             if !FileManager::file_exists(&db_path) {
@@ -44,13 +44,11 @@ impl Database {
                 FileManager::create_file(&db_path)?;
             }
         }
-
+        // Initialize the database connection pool
         let pool = SqlitePool::connect(database_url).await?;
         
         Ok(Database { pool })
     }
-
-
 
     /// Creates a new user in the database.
     /// 
@@ -71,7 +69,7 @@ impl Database {
         Ok(db_player)
     }
 
-    /// Retrieves all configuration values from the database and constructs a `BotConfig` object.
+    /// Retrieves all configuration values from the database and constructs a `Config` object.
     /// 
     /// This method reads all key-value pairs from the config table and maps them to the
     /// appropriate fields in the BotConfig struct. Default values are used for missing or

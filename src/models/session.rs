@@ -5,7 +5,7 @@ use anyhow::Error;
 use crate::Channels;
 use crate::Player;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// #[derive(Debug, Clone, Serialize, Deserialize)]
 #[derive(FromRow)]
 pub struct Session {
     pub id:            Vec<u8>,
@@ -62,7 +62,7 @@ pub struct SessionPlayer {
     pub buffered_by: Player,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Team {
     Red,
     Blu,
@@ -86,14 +86,14 @@ pub struct SessionDiv {
     pub team_channels:      Channels,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DivName {
     Newcomer,
     Journey,
 }
 
 /// Different session statuses
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionStatus {
     Idle, // Waiting for enough players to join
     Hot,  // Waiting for runners to start the session

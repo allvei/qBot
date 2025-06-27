@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channels {
     pub queue: u64,
     pub buffer: u64,

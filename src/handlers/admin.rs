@@ -6,9 +6,6 @@ use crate::CommandContext;
 
 /// Handles the `/buffer` command, guarantees the player a spot in the next match.
 /// 
-/// * `ctx`          - Ref to the Serenity context.
-/// * `interaction`  - Ref to the command interaction.
-/// * `db`           - Ref to the database.
 /// * `user_mention` - The user mention to buffer.
 pub async fn handle_buffer_command<'a>(
     cc:           &CommandContext<'a>,
@@ -66,9 +63,6 @@ pub async fn handle_buffer_command<'a>(
 
 /// Handles the /config command, which allows admins to modify bot configuration.
 /// 
-/// * `ctx`         - Ref to the Serenity context.
-/// * `interaction` - Ref to the command interaction.
-/// * `db`          - Ref to the database.
 /// * `key`         - The key to modify.
 /// * `value`       - The value to set for the key.
 pub async fn handle_config_command<'a>(
