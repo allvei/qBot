@@ -36,7 +36,7 @@ pub async fn handle_queue_command<'a>(
         
         let embed = CreateEmbed::new()
             .title("Left Queue")
-            .description(format!("**{}** left the queue", username))
+            .description(format!("**{}** left the queue", user))
             .color(0xff6b6b)
             .footer(CreateEmbedFooter::new(format!("Queue: {}/8", queue.members.len())));
         
@@ -48,7 +48,7 @@ pub async fn handle_queue_command<'a>(
         
         cc.intax.create_response(&cc.ctx.http, response).await?;
 
-        info!("User {} ({}) left queue", username, user_id);
+        info!("User {} ({}) left queue", user, user_id);
     } else {
         // Create a queue member with this player
         let queue_member = queue::QueueMember {
@@ -67,7 +67,7 @@ pub async fn handle_queue_command<'a>(
         
         let embed = CreateEmbed::new()
             .title("Joined Queue")
-            .description(format!("**{}** joined the queue", username))
+            .description(format!("**{}** joined the queue", user))
             .color(0x51cf66)
             .footer(CreateEmbedFooter::new(format!("Queue: {}/8", new_count)));
         
@@ -79,7 +79,7 @@ pub async fn handle_queue_command<'a>(
         
         cc.intax.create_response(&cc.ctx.http, response).await?;
 
-        info!("User {} ({}) joined queue", username, user_id);        
+        info!("User {} ({}) joined queue", user, user_id);        
         // Check if we have enough players for a match
         if new_count >= 8 {
             trigger_quota_notification(&cc.ctx, cc.db, cc.intax.guild_id.unwrap()).await?;
@@ -147,8 +147,8 @@ async fn trigger_quota_notification(
     }
     
     // Send notification to log channel
-    if config.log_channel_id != 0 {
-        let channel = ChannelId::new(config.log_channel_id);
+    if config.cid_log != 0 {
+        let channel = ChannelId::new(config.cid_log);
         
         let mut player_mentions = Vec::new();
         for member in &queue.members[..8] {

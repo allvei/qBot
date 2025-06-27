@@ -55,10 +55,10 @@ impl Database {
     /// Returns a `Result` containing the created user, or an `anyhow::Error` if creation fails.
     pub async fn create_user(&self, discord_id: u64) -> Result<Player> {
         let result = sqlx::query(
-            "INSERT INTO users (discord_id, username)
+            "INSERT INTO users (discord_id, user)
             VALUES (?, ?)
-            ON CONFLICT(discord_id) DO UPDATE SET username=excluded.username
-            RETURNING id, discord_id, steam_id64, username, created_at, updated_at"
+            ON CONFLICT(discord_id) DO UPDATE SET user=excluded.user
+            RETURNING id, discord_id, steam_id64, user, created_at, updated_at"
         )
         .bind(discord_id.to_string())
         .fetch_one(&self.pool)
@@ -69,6 +69,7 @@ impl Database {
         Ok(db_player)
     }
 
+    /// Retrieves all configuration values from the database and constructs a `Config` object.
     /// Retrieves all configuration values from the database and constructs a `Config` object.
     /// 
     /// This method reads all key-value pairs from the config table and maps them to the
@@ -87,18 +88,30 @@ impl Database {
             config_map.insert(row.key, row.value);
         }
 
+        // Use macros to parse configuration values from the HashMap with default values
         Ok(Config {
-            queue_channel_id:     prscfg!(config_map, "queue_channel_id",     0),
-            log_channel_id:       prscfg!(config_map, "log_channel_id",       0),
+            cid_queue:            prscfg!(config_map, "queue_channel_id",     0),
+            cid_log:              prscfg!(config_map, "log_channel_id",       0),
             queue_quota:          prscfg!(config_map, "queue_size",           8),
             confirmation_timeout: prscfg!(config_map, "confirmation_timeout", 120),
-            runner_role_id:       prscfg!(config_map, "runner_role_id",       0),
-            admin_role_id:        prscfg!(config_map, "admin_role_id",        0),
-            queue_channel:        prscfg!(config_map, "queue_channel_id",     0),
-            buffer_channel:       prscfg!(config_map, "buffer_channel_id",    0),
-            red_channel:          prscfg!(config_map, "red_channel_id",       0),
-            blue_channel:         prscfg!(config_map, "blue_channel_id",      0),
+            id_runner:            prscfg!(config_map, "runner_role_id",       0),
+            id_admin:             prscfg!(config_map, "admin_role_id",        0),
+            cid_buffer:           prscfg!(config_map, "buffer_channel_id",    0),
+            cid_red:              prscfg!(config_map, "red_channel_id",       0),
+            cid_blue:             prscfg!(config_map, "blue_channel_id",      0),
         })
+    }
+
+    pub async fn create_config(&self) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO config (key, value) VALUES (?, ?)"
+        )
+        .bind("queue_channel_id")
+        .bind("0")
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
     /// Sets or updates a configuration value in the database.
