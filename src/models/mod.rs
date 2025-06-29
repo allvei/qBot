@@ -4,12 +4,12 @@ pub mod player;
 pub mod session;
 pub mod config;
 pub mod command;
-pub mod channel;
 pub mod file;
+pub mod guild;
 
 pub use player::*;
 pub use session::*;
 pub use config::*;
 pub use command::*;
-pub use channel::*;
 pub use file::*;
+pub use guild::*;

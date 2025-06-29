@@ -21,43 +21,9 @@ pub async fn handle_buffer_command<'a>(
         return Ok(());
     }
 
-    let userid = cc.intax.user.id;
-    let t_userid = parse_user_mention(&user_mention)?;
-    
-    if let Some(user) = t_userid {
-        let embed = CreateEmbed::new()
-            .title("🔨 Player Buffered")
-            .description(format!("**{}** has been buffered by {}", user, cc.intax.user.display_name()))
-            .colour(Colour::from_rgb(255, 100, 100));
-        
-        let response = CreateInteractionResponse::Message(
-            CreateInteractionResponseMessage::new().embed(embed)
-        );
-        
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        
-        // Log to admin channel
-        let config = cc.db.get_config().await?;
-        if config.cid_log != 0 {
-            let channel = ChannelId::new(config.cid_log);
-            
-            let log_embed = CreateEmbed::new()
-                .title("🔨 Admin Action: Buffer")
-                .description(format!("**{}** buffered **{}**", cc.intax.user.display_name(), user.user))
-                .colour(Colour::from_rgb(255, 100, 100))
-                .timestamp(Timestamp::now());
-            
-            channel.send_message(&cc.ctx.http, CreateMessage::new().embed(log_embed)).await?;
-        }
-    } else {
-        let response = CreateInteractionResponse::Message(
-            CreateInteractionResponseMessage::new()
-                .content("❌ User not found in database")
-                .ephemeral(true)
-        );
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-    }
-    
+    // Parse the user mention to get the Discord user ID
+    let user_id = parse_user_mention(&user_mention)?;
+
     Ok(())
 }
 
@@ -83,7 +49,7 @@ pub async fn handle_config_command<'a>(
 
     if let Some(val) = value {
         // Set config value
-        cc.db.set_config(&key, &val).await?;
+        cc.db.pull().await?;
         
         let embed = CreateEmbed::new()
             .title("⚙️ Config Updated")
@@ -97,7 +63,7 @@ pub async fn handle_config_command<'a>(
         cc.intax.create_response(&cc.ctx.http, response).await?;
     } else {
         // Get current config
-        let config = cc.db.get_config().await?;
+        let config = cc.db.pull().await?;
         
         let config_text = format!(
             "**Current Configuration:**\n\
@@ -142,7 +108,7 @@ pub async fn handle_config_command<'a>(
 async fn is_admin<'a>(
     cc: &CommandContext<'a>,
 ) -> Result<bool> {
-    let config = cc.db.get_config().await?; // Cache config
+    let config = cc.db.pull().await?; // Cache config
     
     if config.id_admin == 0 {
         return Ok(true); // If no admin role configured, allow everyone (for setup)

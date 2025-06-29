@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use crate::models::Channels;
 
 // Example usage:
 // define_global_ids! {
@@ -34,51 +33,56 @@ define_global_ids! {
   ID_EU_MASTER_ELITE => 1386951327711494204,
   ID_EU_GRANDMASTER  => 1386951360594837544,
 
-  ID_NA_BEGINNER     => 0,
-  ID_NA_NEWCOMER     => 0,
-  ID_NA_NOVICE       => 0,
-  ID_NA_APPRENTICE   => 0,
-  ID_NA_JOURNEYMAN   => 0,
-  ID_NA_MASTER       => 0,
-  ID_NA_MASTER_ELITE => 0,
-  ID_NA_GRANDMASTER  => 0,
+  ID_DASHBOARD       => 1385894822992281701,
+  ID_CHAT            => 1388643261543088208,
+  ID_QUEUE           => 1385893666010300436,
+  ID_RED             => 1385464431185494086,
+  ID_BLU             => 1385464563448680578,
+
+  // ID_NA_BEGINNER     => 0,
+  // ID_NA_NEWCOMER     => 0,
+  // ID_NA_NOVICE       => 0,
+  // ID_NA_APPRENTICE   => 0,
+  // ID_NA_JOURNEYMAN   => 0,
+  // ID_NA_MASTER       => 0,
+  // ID_NA_MASTER_ELITE => 0,
+  // ID_NA_GRANDMASTER  => 0,
 }
 
 /// Configuration key-value pair struct.
-// #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct ConfigFormat {
-    pub key:         String,
-    pub value:       String,
+    pub key: String,
+    pub value: String,
     pub description: Option<String>,
 }
 
 /// Bot configuration struct.
-// #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub cid_queue:            u64,
-    pub cid_log:              u64,
-    pub queue_quota:          u8,
+    pub cid_queue: u64,
+    pub cid_log: u64,
+    pub queue_quota: u8,
     pub confirmation_timeout: u64,
-    pub id_runner:            u64,
-    pub id_admin:             u64,
-    pub cid_buffer:           u64,
-    pub cid_red:              u64,
-    pub cid_blue:             u64,
+    pub id_runner: u64,
+    pub id_admin: u64,
+    pub cid_buffer: u64,
+    pub cid_red: u64,
+    pub cid_blue: u64,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            cid_queue:     0,
-            cid_log:       0,
-            queue_quota:          8,
+            cid_queue: 0,
+            cid_log: 0,
+            queue_quota: 8,
             confirmation_timeout: 120,
-            id_runner:       0,
-            id_admin:        0,
-            cid_queue:        0,
-            cid_buffer:       0,
-            cid_red:          0,
-            cid_blue:         0,
+            id_runner: 0,
+            id_admin: 0,
+            cid_buffer: 0,
+            cid_red: 0,
+            cid_blue: 0,
         }
     }
 }

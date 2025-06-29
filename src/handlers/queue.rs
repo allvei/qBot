@@ -1,11 +1,14 @@
 use anyhow::Result;
 use serenity::{
-    all::{Context, CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage},
+    all::{Context, CreateInteractionResponse, CreateInteractionResponseMessage, GuildId, Interaction, ChannelId, CreateEmbed, CreateMessage},
     builder::CreateEmbedFooter,
     model::prelude::*,
 };
 use std::sync::Arc;
-use crate::{database::Database, models::*};
+use crate::{
+    database::Database,
+    models::{session::{Group, SessionStatus, Session, SessionPlayer}, player::Player as DbUser, command::CommandContext},
+};
 use tracing::info;
 
 /// Handles the `/queue` command, which allows players to join or leave the queue.
@@ -14,31 +17,28 @@ use tracing::info;
 /// * `interaction` - Ref to the command interaction.
 /// * `db`          - Ref to the database.
 pub async fn handle_queue_command<'a>(
-    cc:           &CommandContext<'a>,
+    cc:           &'a CommandContext<'a>,
 ) -> Result<()> {
-    let user_id: u64 = cc.intax.user.id.into();
-
-    // Get ctx channel
-    let channel = cc.intax.channel_id;
+    let client: u64 = cc.intax.user.id.into();
+    let channel   = cc.intax.channel_id;
     
-    // Get the current queue
-    let mut queue = cc.db.get_queue(QueueRoleGroup::Journey).await?;
+    // Get active group with session
+    let mut group = cc.db.get_group_idle().await?;
     
-    // Check if user is already in queue
-    let already_in_queue = queue.members.iter().any(|member| member.user.discord_id == user_id);
+    // Get player info
+    let player = cc.db.get_or_create_player(client).await?;
     
-    if already_in_queue {
-        // Remove the user from the queue
-        queue.members.retain(|member| member.user.discord_id != user_id);
-        
-        // Update the queue in the database
-        cc.db.update_queue(&queue).await?;
+    // Check if player is already in session
+    if group.session.players.iter().any(|sp| sp.player.discord_id == client) {
+        /// Remove a player from the session
+        group.session.remove_member(client);
+        cc.db.update_group(&group).await?;
         
         let embed = CreateEmbed::new()
             .title("Left Queue")
-            .description(format!("**{}** left the queue", user))
+            .description(format!("**{}** left the queue", cc.intax.user.name))
             .color(0xff6b6b)
-            .footer(CreateEmbedFooter::new(format!("Queue: {}/8", queue.members.len())));
+            .footer(CreateEmbedFooter::new(format!("Queue: {}/8", group.session.players.len())));
         
         let response = CreateInteractionResponse::Message(
             CreateInteractionResponseMessage::new()
@@ -48,28 +48,17 @@ pub async fn handle_queue_command<'a>(
         
         cc.intax.create_response(&cc.ctx.http, response).await?;
 
-        info!("User {} ({}) left queue", user, user_id);
+        info!("User {} ({}) left queue", cc.intax.user.name, client);
     } else {
-        // Create a queue member with this player
-        let queue_member = queue::QueueMember {
-            user: player,
-            is_buffered: false,
-            buffered_by: player::Player::new(0),
-        };
-        
-        // Add the member to the queue
-        queue.members.push(queue_member);
-        
-        // Update the queue in the database
-        cc.db.update_queue(&queue).await?;
-        
-        let new_count = queue.members.len();
+        // Add player to session
+        group.session.add_player(player);
+        cc.db.update_group(&group).await?;
         
         let embed = CreateEmbed::new()
             .title("Joined Queue")
-            .description(format!("**{}** joined the queue", user))
+            .description(format!("**{}** joined the queue", cc.intax.user.name))
             .color(0x51cf66)
-            .footer(CreateEmbedFooter::new(format!("Queue: {}/8", new_count)));
+            .footer(CreateEmbedFooter::new(format!("Queue: {}/8", group.session.players.len())));
         
         let response = CreateInteractionResponse::Message(
             CreateInteractionResponseMessage::new()
@@ -79,10 +68,11 @@ pub async fn handle_queue_command<'a>(
         
         cc.intax.create_response(&cc.ctx.http, response).await?;
 
-        info!("User {} ({}) joined queue", user, user_id);        
-        // Check if we have enough players for a match
-        if new_count >= 8 {
-            trigger_quota_notification(&cc.ctx, cc.db, cc.intax.guild_id.unwrap()).await?;
+        info!("User {} ({}) joined queue", cc.intax.user.name, client);
+        
+        // Check if session is full
+        if group.session.players.len() >= 8 {
+            notify_session_ready(&cc.ctx, &cc.db, &group).await?;
         }
     }
     
@@ -95,19 +85,19 @@ pub async fn handle_queue_command<'a>(
 /// * `interaction` - Ref to the command interaction.
 /// * `db`          - Ref to the database.
 pub async fn handle_queue_status_command<'a>(
-    cc:           &CommandContext<'a>,
+    cc:           &'a CommandContext<'a>,
 ) -> Result<()> {
-    // Get the current queue
-    let queue = cc.db.get_queue(QueueRoleGroup::Journey).await?;
-    let count = queue.members.len();
+    // Get active group with session
+    let group = cc.db.get_group_idle().await?;
+    let count = group.session.players.len();
     
     let description = if count == 0 {
         "Queue is empty. Use `/queue join` to join!".to_string()
     } else {
         let mut parts = vec![format!("**{} players in queue:**\n", count)];
-        for (i, member) in queue.members.iter().enumerate() {
+        for (i, member) in group.session.players.iter().enumerate() {
             // Use discord_id as display name if needed
-            let name = format!("user_{}", member.user.discord_id);
+            let name = format!("user_{}", member.player.discord_id);
             parts.push(format!("{}.{}", i + 1, name));
         }
         parts.join("\n")
@@ -129,30 +119,25 @@ pub async fn handle_queue_status_command<'a>(
     Ok(())
 }
 
-/// Triggers a notification when the queue quota is reached.
+/// Notify session ready when the queue quota is reached.
 /// 
 /// * `ctx`        - Ref to the Serenity context.
 /// * `db`         - Ref to the database.
 /// * `_guild_id`  - The ID of the guild where the command was issued.
-async fn trigger_quota_notification(
+async fn notify_session_ready(
     ctx:       &Context,
-    db:        Arc<Database>,
-    _guild_id: GuildId,
+    db:        &Arc<Database>,
+    group:     &Group,
 ) -> Result<()> {
     let config = db.get_config().await?;
-    let queue = db.get_queue(QueueRoleGroup::Journey).await?;
-    
-    if queue.members.len() < 8 {
-        return Ok(());
-    }
     
     // Send notification to log channel
     if config.cid_log != 0 {
         let channel = ChannelId::new(config.cid_log);
         
         let mut player_mentions = Vec::new();
-        for member in &queue.members[..8] {
-            player_mentions.push(format!("<@{}>", member.user.discord_id));
+        for member in &group.session.players[..8] {
+            player_mentions.push(format!("<@{}>", member.player.discord_id));
         }
         
         let embed = CreateEmbed::new()

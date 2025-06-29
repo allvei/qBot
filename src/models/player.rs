@@ -24,15 +24,15 @@ macro_rules! define_ranks {
         $(
             pub const $Variant: u64 = $role_id;
         )*
-
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        
+        #[derive(Debug, Clone, Serialize, Deserialize, Copy, PartialEq, Eq)]
         pub enum Rank {
             $(
                 $(#[$meta])*
                 $Variant { role_id: u64, elo: u32 },
             )*
         }
-
+        
         impl Rank {
             pub fn all() -> &'static [Rank] {
                 static RANKS: [Rank; count_idents!($($Variant),*)] = [
@@ -69,17 +69,18 @@ macro_rules! define_ranks {
     }
 }
 
-// #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Role {
     Runner{id: u64},
     Admin {id: u64},
 }
 
+#[allow(non_snake_case, unreachable_patterns)]
 impl Role {
     pub fn id(&self) -> u64 {
         match self {
-          Role::Runner => ID_RUNNER,
-          Role::Admin  => ID_ADMIN,
+          Runner => ID_RUNNER,
+          Admin  => ID_ADMIN,
         }
     }
 }
@@ -87,35 +88,34 @@ impl Role {
 // #TODO: Add dupe ranks for burgers
 define_ranks! {
     EU_BEGINNER    => { id: ID_EU_BEGINNER,      name: "Beginner",     elo:  10 },
-    NA_BEGINNER    => { id: ID_NA_BEGINNER,      name: "Beginner",     elo:  10 },
     EU_NEWCOMER    => { id: ID_EU_NEWCOMER,      name: "Newcomer",     elo:  30 },
-    NA_NEWCOMER    => { id: ID_NA_NEWCOMER,      name: "Newcomer",     elo:  30 },
     EU_NOVICE      => { id: ID_EU_NOVICE,        name: "Novice",       elo:  40 },
-    NA_NOVICE      => { id: ID_NA_NOVICE,        name: "Novice",       elo:  40 },
     EU_APPRENTICE  => { id: ID_EU_APPRENTICE,    name: "Apprentice",   elo:  50 },
-    NA_APPRENTICE  => { id: ID_NA_APPRENTICE,    name: "Apprentice",   elo:  50 },
     EU_JOURNEYMAN  => { id: ID_EU_JOURNEYMAN,    name: "Journeyman",   elo:  65 },
-    NA_JOURNEYMAN  => { id: ID_NA_JOURNEYMAN,    name: "Journeyman",   elo:  65 },
     EU_MASTER      => { id: ID_EU_MASTER,        name: "Master",       elo:  85 },
-    NA_MASTER      => { id: ID_NA_MASTER,        name: "Master",       elo:  85 },
     EU_MASTERELITE => { id: ID_EU_MASTER_ELITE,  name: "Master Elite", elo:  90 },
-    NA_MASTERELITE => { id: ID_NA_MASTER_ELITE,  name: "Master Elite", elo:  90 },
     EU_GRANDMASTER => { id: ID_EU_GRANDMASTER,   name: "Grandmaster",  elo:  95 },
-    NA_GRANDMASTER => { id: ID_NA_GRANDMASTER,   name: "Grandmaster",  elo:  95 },
+
+    // NA_BEGINNER    => { id: ID_NA_BEGINNER,      name: "Beginner",     elo:  10 },
+    // NA_NEWCOMER    => { id: ID_NA_NEWCOMER,      name: "Newcomer",     elo:  30 },
+    // NA_NOVICE      => { id: ID_NA_NOVICE,        name: "Novice",       elo:  40 },
+    // NA_APPRENTICE  => { id: ID_NA_APPRENTICE,    name: "Apprentice",   elo:  50 },
+    // NA_JOURNEYMAN  => { id: ID_NA_JOURNEYMAN,    name: "Journeyman",   elo:  65 },
+    // NA_MASTER      => { id: ID_NA_MASTER,        name: "Master",       elo:  85 },
+    // NA_MASTERELITE => { id: ID_NA_MASTER_ELITE,  name: "Master Elite", elo:  90 },
+    // NA_GRANDMASTER => { id: ID_NA_GRANDMASTER,   name: "Grandmaster",  elo:  95 },
 }
-
-
 
 /// User data structure representing a player in the system
 /// 
 /// * `discord_id` - Discord user ID
 /// * `steam_id64` - Steam 64-bit ID
 /// * `elo`        - User's Elo rating
-// #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(clippy::missing_docs_in_private_items)]
 pub struct Player {
     pub discord_id: u64,
-    pub steam_id64: u64,
+    pub steam_id:   u64,
     pub rank:       Option<Rank>,
     pub role:       Option<Role>,
 }
@@ -124,15 +124,15 @@ impl Player {
     pub fn new(discord_id: u64) -> Player {
         Player {
             discord_id,
-            steam_id64: 0,
+            steam_id: 0,
             rank:       None,
             role:       None,
         }
     }
 
     pub fn set_rank(&mut self, title: &str) -> Result<(), String> {
-        self.rank = Rank::from_title(title)
-            .ok_or_else(|| format!("No such rank: {}", title))?;
+        self.rank = Some(Rank::from_title(title)
+            .ok_or_else(|| format!("No such rank: {}", title))?);
         Ok(())
     }
 }
