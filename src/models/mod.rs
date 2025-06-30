@@ -10,6 +10,5 @@ pub mod guild;
 pub use player::*;
 pub use session::*;
 pub use config::*;
-pub use command::*;
 pub use file::*;
-pub use guild::*;
+pub use command::*;

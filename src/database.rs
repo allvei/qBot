@@ -196,7 +196,7 @@ impl Database {
     /// Remove a player from the group's session by their Discord user ID
     pub async fn leave_group_by_user_id(&self, group: &mut Group, user_id: u64) -> Result<bool> {
         // Remove player from session
-        group.session.remove_member(user_id);
+        group.session.remove_player(user_id);
         info!("Player {} left group session", user_id);
         Ok(true)
     }

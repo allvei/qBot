@@ -5,6 +5,7 @@ use std::str::FromStr;
 use anyhow::Error;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use tracing::info;
 
 // Local modules
 use crate::Player;
@@ -121,7 +122,7 @@ impl PugManager {
 
 impl Group {
     pub fn new(dashboard: u64, chat: u64, queue: u64, red: u64, blu: u64) -> Self {
-        println!("New group created for {}", dashboard);
+        info!("New group created for {}", dashboard);
         Self {
             dashboard,
             chat,
@@ -151,10 +152,6 @@ impl Session {
         self.players.iter().map(|m| m.player.clone()).collect()
     }
 
-    pub fn add_member(&mut self, member: SessionPlayer) {
-        self.players.push(member);
-    }
-
     pub fn add_player(&mut self, player: Player) {
         let session_player = SessionPlayer {
             player,
@@ -164,8 +161,8 @@ impl Session {
         self.players.push(session_player);
     }
 
-    pub fn remove_member(&mut self, user_id: u64) {
-        self.players.retain(|m| m.player.discord_id != user_id);
+    pub fn remove_player(&mut self, user_id: u64) {
+        self.players.retain(|p| p.player.discord_id != user_id);
     }
 
     pub fn buff(&mut self, user_id: u64, buffered: Option<Player>) {
@@ -174,6 +171,12 @@ impl Session {
 
     pub fn unbuff(&mut self, user_id: u64) {
         self.players.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().unbuff();
+    }
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

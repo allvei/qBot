@@ -3,7 +3,7 @@ mod database;
 mod handlers;
 
 use std::sync::Mutex;
-use serenity::prelude::TypeMapKey;
+use serenity::{all::GuildId, prelude::TypeMapKey};
 use models::*;
 
 use anyhow::Result;
@@ -11,7 +11,7 @@ use serenity::{
     async_trait,
     builder::{CreateCommand, CreateCommandOption, CreateInteractionResponse, CreateInteractionResponseMessage, CreateEmbed, CreateMessage, CreateEmbedFooter},
     model::{
-        application::{CommandOptionType, Interaction}, event::VoiceStateUpdateEvent, gateway::Ready, guild::Guild, id::{GuildId, ChannelId}, voice::VoiceState
+        application::{CommandOptionType, Interaction}, gateway::Ready, guild::Guild, id::ChannelId, voice::VoiceState
     },
     prelude::*,
 };
@@ -20,11 +20,11 @@ use tracing::{error, info};
 
 use database::Database;
 use handlers::{queue, session, admin};
-use models::{config::Config, session::{PugManager, Group}, command::CommandContext, player::Player as DbUser};
+use models::{session::{PugManager, Group}, command::CommandContext};
 
 
 struct Handler {
-    database: Arc<Database>,
+    database:   Arc<Database>,
     pugmanager: Arc<Mutex<PugManager>>,
 }
 
@@ -33,10 +33,9 @@ struct Handler {
 impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
-        
-        if let Err(err) = self.fetch_guilds(&ctx, &ready).await {
-            eprintln!("Failed fetching guilds: {:?}", err);
-        }
+
+        let guilds = ctx.cache.guilds().len();
+        println!("Guilds in the Cache: {}", guilds);
 
         // Register slash commands globally or for specific guild
         let commands = vec![
@@ -320,41 +319,6 @@ impl Handler {
         } else {
             info!("Sent session ready notification to dashboard channel");
         }
-    }
-    
-    async fn fetch_guilds(
-        &self,
-        ctx: &Context,
-        ready: &Ready,
-    ) -> Result<Vec<Guild>, serenity::Error> {
-        let mut guilds = Vec::new();
-        
-        // First, collect available guilds from cache without any async operations
-        let mut missing_guild_ids = Vec::new();
-        for guild_status in &ready.guilds {
-            let id = guild_status.id;
-            if let Some(cached) = ctx.cache.guild(id) {
-                // Extract the guild data immediately
-                let guild_data = cached.clone();
-                guilds.push(guild_data);
-            } else {
-                missing_guild_ids.push(id);
-            }
-        }
-        
-        // Now handle missing guilds with async operations
-        for id in missing_guild_ids {
-            // Try to fetch partial guild
-            if let Ok(_partial) = id.to_partial_guild(&ctx.http).await {
-                // After fetching, check cache again
-                if let Some(guild_from_cache) = ctx.cache.guild(id) {
-                    let guild_data = guild_from_cache.clone();
-                    guilds.push(guild_data);
-                }
-            }
-        }
-        println!("Fetched {} guilds", guilds.len());
-        Ok(guilds)
     }
 }
 

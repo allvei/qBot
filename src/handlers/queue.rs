@@ -1,13 +1,12 @@
 use anyhow::Result;
 use serenity::{
-    all::{Context, CreateInteractionResponse, CreateInteractionResponseMessage, GuildId, Interaction, ChannelId, CreateEmbed, CreateMessage},
+    all::{Context, CreateInteractionResponse, CreateInteractionResponseMessage, ChannelId, CreateEmbed, CreateMessage},
     builder::CreateEmbedFooter,
-    model::prelude::*,
 };
 use std::sync::Arc;
 use crate::{
     database::Database,
-    models::{session::{Group, SessionStatus, Session, SessionPlayer}, player::Player as DbUser, command::CommandContext},
+    models::{session::Group, command::CommandContext},
 };
 use tracing::info;
 
@@ -30,8 +29,8 @@ pub async fn handle_queue_command<'a>(
     
     // Check if player is already in session
     if group.session.players.iter().any(|sp| sp.player.discord_id == client) {
-        /// Remove a player from the session
-        group.session.remove_member(client);
+        // Remove a player from the session
+        group.session.remove_player(client);
         cc.db.update_group(&group).await?;
         
         let embed = CreateEmbed::new()
@@ -72,7 +71,7 @@ pub async fn handle_queue_command<'a>(
         
         // Check if session is full
         if group.session.players.len() >= 8 {
-            notify_session_ready(&cc.ctx, &cc.db, &group).await?;
+            notify_session_ready(cc.ctx, &cc.db, &group).await?;
         }
     }
     

@@ -1,14 +1,12 @@
 use anyhow::{Result, anyhow};
-use serenity::{
-    all::{CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage, Colour, Timestamp, CreateMessage, ChannelId},
-};
+use serenity::all::{CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage, Colour};
 use crate::CommandContext;
 
 /// Handles the `/buffer` command, guarantees the player a spot in the next match.
 /// 
 /// * `user_mention` - The user mention to buffer.
-pub async fn handle_buffer_command<'a>(
-    cc:           &CommandContext<'a>,
+pub async fn handle_buffer_command(
+    cc:           &CommandContext<'_>,
     user_mention: String,
 ) -> Result<()> {
     if !is_admin(cc).await? {
@@ -31,8 +29,8 @@ pub async fn handle_buffer_command<'a>(
 /// 
 /// * `key`         - The key to modify.
 /// * `value`       - The value to set for the key.
-pub async fn handle_config_command<'a>(
-    cc:    &CommandContext<'a>,
+pub async fn handle_config_command(
+    cc:    &CommandContext<'_>,
     key:   String,
     value: Option<String>,
 ) -> Result<()> {
@@ -105,8 +103,8 @@ pub async fn handle_config_command<'a>(
 /// * `ctx`         - Ref to the Serenity context.
 /// * `interaction` - Ref to the command interaction.
 /// * `db`          - Ref to the database.
-async fn is_admin<'a>(
-    cc: &CommandContext<'a>,
+async fn is_admin(
+    cc: &CommandContext<'_>,
 ) -> Result<bool> {
     let config = cc.db.pull().await?; // Cache config
     

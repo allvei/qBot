@@ -1,7 +1,6 @@
 use serenity::{
-    all::GuildId, futures, model::guild::Guild, prelude::*
+    all::GuildId, model::guild::Guild, prelude::*
 };
-use futures::stream::StreamExt;
 
 /// Given a slice of `GuildId`, returns a Vec<Guild> using cache or REST.
 pub async fn fetch_guilds_from_ids(ctx: &Context, guild_ids: &[GuildId]) -> Vec<Guild> {
