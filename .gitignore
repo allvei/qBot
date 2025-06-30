@@ -2,4 +2,4 @@
 .env.example
 .env
 pfpug.code-workspace
-add.sh
+add.bat
