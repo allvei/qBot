@@ -1,6 +1,8 @@
 // CHECK ME
 use std::sync::Arc;
+
 use serenity::all::{CommandInteraction, Context};
+
 use crate::database::Database;
 
 #[derive(Clone)]

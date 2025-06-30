@@ -1,6 +1,7 @@
-// CHECK ME
+// CHECKED
 
 use serde::{Deserialize, Serialize};
+
 use crate::config::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

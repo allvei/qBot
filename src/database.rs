@@ -1,9 +1,13 @@
 // CHECK ME
+
+//Imports
+use std::collections::HashMap;
+
 use anyhow::Result;
 use sqlx::{SqlitePool, Row};
 use tracing::{info};
+
 use crate::models::*;
-use std::collections::HashMap;
 
 /// Macro to parse configuration values from a HashMap with default values
 macro_rules! prscfg {

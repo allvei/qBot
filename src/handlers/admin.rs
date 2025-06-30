@@ -1,6 +1,8 @@
 // CHECK ME
+
 use anyhow::{Result, anyhow};
 use serenity::all::{CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage, Colour};
+
 use crate::CommandContext;
 
 /// Handles the `/buffer` command, guarantees the player a spot in the next match.

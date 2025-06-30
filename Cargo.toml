@@ -29,3 +29,4 @@ uuid = { version = "1.0", features = ["v4"] }
 # missing_docs_in_private_items = "warn"
 non_upper_case_globals = "allow"
 non_camel_case_types = "allow"
+# arbitrary_source_item_ordering = "warn"

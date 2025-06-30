@@ -1,22 +1,32 @@
 // CHECK ME
-mod models;
 mod database;
 mod handlers;
+mod models;
 
-use std::sync::Mutex;
-use serenity::{all::GuildId, prelude::TypeMapKey};
-use models::*;
+use std::{env, sync::{Arc, Mutex}};
 
 use anyhow::Result;
 use serenity::{
+    all::GuildId,
     async_trait,
-    builder::{CreateCommand, CreateCommandOption, CreateInteractionResponse, CreateInteractionResponseMessage, CreateEmbed, CreateMessage, CreateEmbedFooter},
+    builder::{
+        CreateCommand,
+        CreateCommandOption,
+        CreateEmbed,
+        CreateEmbedFooter,
+        CreateInteractionResponse,
+        CreateInteractionResponseMessage,
+        CreateMessage,
+    },
     model::{
-        application::{CommandOptionType, Interaction}, gateway::Ready, guild::Guild, id::ChannelId, voice::VoiceState
+        application::{CommandOptionType, Interaction},
+        gateway::Ready,
+        guild::Guild,
+        id::ChannelId,
+        voice::VoiceState,
     },
     prelude::*,
 };
-use std::{env, sync::Arc};
 use tracing::{error, info};
 
 use database::Database;

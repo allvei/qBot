@@ -1,4 +1,9 @@
 // CHECK ME
+use std::sync::Arc;
+
+use anyhow::{Result, anyhow};
+use rand::seq::SliceRandom;
+use rand::rng;
 use serenity::{
     all::{
         CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage,
@@ -6,11 +11,8 @@ use serenity::{
     },
 };
 use serenity::builder::CreateEmbedFooter;
-use anyhow::{Result, anyhow};
+
 use crate::{database::Database, models::{player::Player as DbUser, session::{SessionPlayer, SessionStatus, Group, Team}, command::CommandContext}};
-use rand::seq::SliceRandom;
-use rand::rng;
-use std::sync::Arc;
 
 /// Checks if the user has runner permissions.
 /// 

@@ -1,15 +1,17 @@
 // CHECK ME
+use std::sync::Arc;
+
 use anyhow::Result;
 use serenity::{
     all::{Context, CreateInteractionResponse, CreateInteractionResponseMessage, ChannelId, CreateEmbed, CreateMessage},
     builder::CreateEmbedFooter,
-};
-use std::sync::Arc;
+  };
+use tracing::info;
+
 use crate::{
     database::Database,
     models::{session::Group, command::CommandContext},
 };
-use tracing::info;
 
 /// Handles the `/queue` command, which allows players to join or leave the queue.
 /// 
