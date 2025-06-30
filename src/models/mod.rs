@@ -5,7 +5,6 @@ pub mod session;
 pub mod config;
 pub mod command;
 pub mod file;
-pub mod guild;
 
 pub use player::*;
 pub use session::*;

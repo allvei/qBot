@@ -137,11 +137,13 @@ impl Group {
 
 impl Session {
     pub fn new() -> Self {
-        Self {
+        let session = Self {
             id: Vec::new(),
             players: Vec::<SessionPlayer>::new(),
             status: SessionStatus::Idle,
-        }
+        };
+        info!("New session started! ID: {}", self.id);
+        session
     }
 
     pub fn count(&self) -> usize {
@@ -158,11 +160,12 @@ impl Session {
             team: None,
             buffered: None,
         };
+        info!("Added player {} to session {}", player.discord_id, self.id);
         self.players.push(session_player);
     }
 
-    pub fn remove_player(&mut self, user_id: u64) {
-        self.players.retain(|p| p.player.discord_id != user_id);
+    pub fn remove_player(&mut self, player: &SessionPlayer) {
+        self.players.retain(|p| p.player.discord_id != player.player.discord_id);
     }
 
     pub fn buff(&mut self, user_id: u64, buffered: Option<Player>) {
@@ -188,6 +191,7 @@ impl SessionPlayer {
             buffered: None,
         }
     }
+    
     pub fn buff(&mut self, buffered: Option<Player>) {
         self.buffered = buffered;
     }
