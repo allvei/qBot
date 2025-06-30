@@ -31,7 +31,7 @@ pub async fn handle_queue_command<'a>(
     let player = cc.db.get_or_create_player(client).await?;
     
     // Check if player is already in session
-    if group.session.players.iter().any(|sp| sp.player.discord_id == client) {
+    if group.session.pool.iter().any(|sp| sp.player.discord_id == client) {
         // Remove a player from the session
         group.session.remove_player(client);
         cc.db.update_group(&group).await?;

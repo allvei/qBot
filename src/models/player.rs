@@ -14,13 +14,13 @@ pub enum Role {
 impl Role {
     pub fn id(&self) -> u64 {
         match self {
-          Runner => ID_RUNNER,
-          Admin  => ID_ADMIN,
+          Role::Runner => ID_RUNNER,
+          Role::Admin  => ID_ADMIN,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Rank {
     Beginner,
     Novice,

@@ -99,10 +99,10 @@ impl Group {
 
     pub fn create_session(&mut self) {
         self.session_increment += 1;
-        self.session.push(Session::new(session_increment));
+        self.session.push(Session::new(self.session_increment));
     }
 
-    pub fn end_session(&mut self, session_id: &[u16]) -> bool {
+    pub fn end_session(&mut self, session_id: u16) -> bool {
         if let Some(pos) = self.session.iter().position(|s| s.id == session_id) {
             self.session.remove(pos);
             true
@@ -114,9 +114,9 @@ impl Group {
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Session {
-    pub id:                u16,
-    pub status:            SessionStatus,
-    pub pool:           Vec<SessionPlayer>,
+    pub id:      u16,
+    pub status:  SessionStatus,
+    pub pool:    Vec<SessionPlayer>,
 }
 
 impl Session {
@@ -126,7 +126,7 @@ impl Session {
             pool: Vec::new(),
             status: SessionStatus::Idle,
         };
-        info!("New session started with ID: {}", self.id);
+        info!("New session started with ID: {}", id);
         session
     }
 
@@ -173,9 +173,9 @@ impl Session {
         self.pool.iter().map(|m| m.player.clone()).collect()
     }
 
-    pub fn add_player(&mut self, player: Player) {
+    pub fn add_player(&mut self, player: &Player) {
         let session_player = SessionPlayer {
-            player,
+            player: player.clone(),
             team: None,
             buffered: None,
         };
@@ -193,12 +193,6 @@ impl Session {
 
     pub fn unbuff(&mut self, user_id: u64) {
         self.pool.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().unbuff();
-    }
-}
-
-impl Default for Session {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

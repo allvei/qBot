@@ -59,7 +59,7 @@ impl Database {
         .fetch_one(&self.pool)
         .await?;
     
-        let db_player = Player::new(result.get::<i64, _>("discord_id") as u64);
+        let db_player = Player::new(result.get::<i64, _>("discord_id") as u64, None);
         
         Ok(db_player)
     }
@@ -165,7 +165,7 @@ impl Database {
     pub async fn get_or_create_player(&self, discord_id: u64) -> Result<Player> {
         // For now, simply create a new player instance
         // In a real implementation, this would check the database first
-        Ok(Player::new(discord_id))
+        Ok(Player::new(discord_id, None))
     }
 
     /// Get the active group with its session
@@ -193,17 +193,22 @@ impl Database {
         // Create a new session with the provided players
         let mut session = Session::new();
         for player in players {
-            session.add_player(player);
+            session.add_player(&player);
         }
         Ok(session)
     }
 
-    /// Remove a player from the group's session by their Discord user ID
+    /// Remove a player from any session within the group by their Discord user ID
     pub async fn leave_group_by_user_id(&self, group: &mut Group, user_id: u64) -> Result<bool> {
-        // Remove player from session
-        group.session.remove_player(user_id);
-        info!("Player {} left group session", user_id);
-        Ok(true)
+        for session in &mut group.session {
+            if let Some(player) = session.pool.iter().find(|p| p.player.discord_id == user_id).cloned() {
+                session.remove_player(&player);
+                info!("Player {} left a group session", user_id);
+                return Ok(true);
+            }
+        }
+        info!("Player {} not found in any group session", user_id);
+        Ok(false)
     }
 
     /// Get session players
