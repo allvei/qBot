@@ -70,11 +70,12 @@ impl Rank {
 }
 
 /// User data structure representing a player in the system
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[allow(clippy::missing_docs_in_private_items)]
 pub struct Player {
-    pub discord_id: u64,
-    pub steam_id:   Option<u64>,
+    pub i_guild:   u64,
+    pub i_discord: u64,
+    pub i_steam:   Option<u64>,
     pub rank:       Option<Rank>,
     pub role:       Option<Role>,
 }
@@ -82,8 +83,8 @@ pub struct Player {
 impl Player {
     pub fn new(discord_id: u64, steam_id: Option<u64>) -> Player {
         Player {
-            discord_id,
-            steam_id,
+            i_discord: discord_id,
+            i_steam: steam_id,
             rank:       None,
             role:       None,
         }

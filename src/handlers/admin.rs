@@ -50,7 +50,7 @@ pub async fn handle_config_command(
 
     if let Some(val) = value {
         // Set config value
-        cc.db.pull().await?;
+        cc.db.get_config().await?;
         
         let embed = CreateEmbed::new()
             .title("⚙️ Config Updated")
@@ -64,7 +64,7 @@ pub async fn handle_config_command(
         cc.intax.create_response(&cc.ctx.http, response).await?;
     } else {
         // Get current config
-        let config = cc.db.pull().await?;
+        let config = cc.db.get_config().await?;
         
         let config_text = format!(
             "**Current Configuration:**\n\
@@ -76,14 +76,14 @@ pub async fn handle_config_command(
             Confirmation Timeout: `{}s`\n\
             Runner Role: `{}`\n\
             Admin Role: `{}`",
-            config.cid_queue,
-            config.cid_red,
-            config.cid_blue,
-            config.cid_log,
-            config.queue_quota,
-            config.confirmation_timeout,
-            config.id_runner,
-            config.id_admin
+            config.ic_queue,
+            config.ic_red,
+            config.ic_blue,
+            config.ic_log,
+            config.quota,
+            config.join_timeout,
+            config.i_runner,
+            config.i_admin
         );
         
         let embed = CreateEmbed::new()
@@ -109,9 +109,9 @@ pub async fn handle_config_command(
 async fn is_admin(
     cc: &CommandContext<'_>,
 ) -> Result<bool> {
-    let config = cc.db.pull().await?; // Cache config
+    let config = cc.db.get_config().await?; // Cache config
     
-    if config.id_admin == 0 {
+    if config.i_admin == 0 {
         return Ok(true); // If no admin role configured, allow everyone (for setup)
     }
     
@@ -119,7 +119,7 @@ async fn is_admin(
     let member   = guild_id.member(&cc.ctx.http, cc.intax.user.id).await?;
     
     // Check if user has admin role
-    let has_admin = member.roles.iter().any(|r| *r == config.id_admin);
+    let has_admin = member.roles.iter().any(|r| *r == config.i_admin);
     
     Ok(has_admin)
 }

@@ -21,15 +21,15 @@ async fn check_runner_permissions(cc: &CommandContext<'_>) -> Result<bool> {
     let config = cc.db.get_config().await?;
     
     // If no runner roles configured, allow everyone
-    if config.id_runner == 0 && config.id_admin == 0 {
+    if config.i_runner == 0 && config.i_admin == 0 {
         return Ok(true);
     }
     
     if let Some(guild_id) = cc.intax.guild_id {
         if let Ok(member) = guild_id.member(&cc.ctx.http, cc.intax.user.id).await {
             // Check admin or runner role
-            let is_admin = member.roles.contains(&RoleId::new(config.id_admin));
-            let is_runner = member.roles.contains(&RoleId::new(config.id_runner));
+            let is_admin = member.roles.contains(&RoleId::new(config.i_admin));
+            let is_runner = member.roles.contains(&RoleId::new(config.i_runner));
             if is_admin || is_runner {
                 return Ok(true);
             }
@@ -90,13 +90,13 @@ pub async fn handle_shuffle_command(
     
     // Assign teams to players
     for player in &red_team {
-        if let Some(pos) = updated_group.session.players.iter().position(|sp| sp.player.discord_id == player.discord_id) {
+        if let Some(pos) = updated_group.session.players.iter().position(|sp| sp.player.discord_id == player.i_discord) {
             updated_group.session.players[pos].team = Some(Team::Red);
         }
     }
     
     for player in &blu_team {
-        if let Some(pos) = updated_group.session.players.iter().position(|sp| sp.player.discord_id == player.discord_id) {
+        if let Some(pos) = updated_group.session.players.iter().position(|sp| sp.player.discord_id == player.i_discord) {
             updated_group.session.players[pos].team = Some(Team::Blu);
         }
     }
@@ -107,8 +107,8 @@ pub async fn handle_shuffle_command(
     // Create session and update database
     cc.db.update_group(&updated_group).await?;
     
-    let red_team_names: Vec<String> = red_team.iter().map(|u| format!("<@{}>", u.discord_id)).collect();
-    let blu_team_names: Vec<String> = blu_team.iter().map(|u| format!("<@{}>", u.discord_id)).collect();
+    let red_team_names: Vec<String> = red_team.iter().map(|u| format!("<@{}>", u.i_discord)).collect();
+    let blu_team_names: Vec<String> = blu_team.iter().map(|u| format!("<@{}>", u.i_discord)).collect();
     
     let embed = CreateEmbed::new()
         .title("🎲 Teams Generated!")
@@ -131,8 +131,8 @@ pub async fn handle_shuffle_command(
     
     // Log to channel
     let config = cc.db.get_config().await?;
-    if config.cid_log != 0 {
-        let channel = ChannelId::new(config.cid_log);
+    if config.ic_log != 0 {
+        let channel = ChannelId::new(config.ic_log);
         
         let log_embed = CreateEmbed::new()
             .title("📋 Session Created")
@@ -160,7 +160,7 @@ pub async fn handle_shuffle_command(
 /// * `session_id`  - The ID of the session to accept.
 pub async fn handle_accept_command(
     cc:    &CommandContext<'_>,
-    session_id: Option<String>,
+    i_session: Option<String>,
 ) -> Result<()> {
     // Check permissions
     if !check_runner_permissions(cc).await? {
@@ -177,7 +177,7 @@ pub async fn handle_accept_command(
     let mut group = cc.db.get_group().await?;
     
     // If a specific session ID was provided, ensure it matches
-    if let Some(id) = session_id {
+    if let Some(id) = i_session {
         // Convert both ids to strings for comparison
         let session_id_str = format!("{:?}", group.session.id);
         if session_id_str != id {
@@ -208,8 +208,8 @@ pub async fn handle_accept_command(
     
     // Log acceptance
     let config = cc.db.get_config().await?;
-    if config.cid_log != 0 {
-        let channel = ChannelId::new(config.cid_log);
+    if config.ic_log != 0 {
+        let channel = ChannelId::new(config.ic_log);
         
         let log_embed = CreateEmbed::new()
             .title("✅ Session Accepted")
@@ -273,8 +273,8 @@ pub async fn handle_end_command(
     
     // Log session end
     let config = cc.db.get_config().await?;
-    if config.cid_log != 0 {
-        let channel = ChannelId::new(config.cid_log);
+    if config.ic_log != 0 {
+        let channel = ChannelId::new(config.ic_log);
         
         let log_embed = CreateEmbed::new()
             .title("🏁 Session Ended")
@@ -304,19 +304,19 @@ async fn move_players_to_queue_channel(
     session_id: i64,
     guild_id: serenity::model::id::GuildId,
 ) -> Result<()> {
-    let config = db.pull().await?;
+    let config = db.get_config().await?;
     // Convert session_id to string for database call
     let session_id_str = session_id.to_string();
     let players = db.get_session_players(&session_id_str).await?;
     
-    if config.cid_queue != 0 {
+    if config.ic_queue != 0 {
         for player in players {
             let user_id = player.player.discord_id;
             // Try to move the user back to queue
             let _ = ctx.http.edit_member(
                 guild_id,
                 UserId::new(user_id),
-                &EditMember::new().voice_channel(ChannelId::new(config.cid_queue)),
+                &EditMember::new().voice_channel(ChannelId::new(config.ic_queue)),
                 Some("Moving player back to queue voice channel")
             ).await;
         }

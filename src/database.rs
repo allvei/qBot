@@ -4,15 +4,18 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use sqlx::{SqlitePool, Row};
-use tracing::{info};
+use sqlx::{Row, SqlitePool};
+use tracing::info;
 
 use crate::models::*;
 
 /// Macro to parse configuration values from a HashMap with default values
 macro_rules! prscfg {
     ($map:expr, $key:expr, $default:expr) => {
-        $map.get($key).unwrap_or(&$default.to_string()).parse().unwrap_or($default)
+        $map.get($key)
+            .unwrap_or(&$default.to_string())
+            .parse()
+            .unwrap_or($default)
     };
 }
 
@@ -24,9 +27,9 @@ pub struct Database {
 
 impl Database {
     /// Creates a new `Database` instance and initializes the connection pool.
-    /// 
+    ///
     /// Returns a `Result` containing the `Database` instance or an `anyhow::Error` if the connection fails.
-    /// 
+    ///
     /// * `database_url` - The URL of the SQLite database to connect to.
     pub async fn new(database_url: &str) -> Result<Self> {
         // Get the database path
@@ -41,39 +44,169 @@ impl Database {
         }
         // Initialize the database connection pool
         let pool = SqlitePool::connect(database_url).await?;
-        
+
         Ok(Database { pool })
     }
 
     /// Creates a new user in the database.
-    /// 
+    ///
     /// Returns a `Result` containing the created user, or an `anyhow::Error` if creation fails.
-    pub async fn create_user(&self, discord_id: u64) -> Result<Player> {
+    pub async fn new_user(&self, discord_id: u64) -> Result<Player> {
         let result = sqlx::query(
             "INSERT INTO users (discord_id, user)
             VALUES (?, ?)
             ON CONFLICT(discord_id) DO UPDATE SET user=excluded.user
-            RETURNING id, discord_id, steam_id64, user, created_at, updated_at"
+            RETURNING id, discord_id, steam_id64, user, created_at, updated_at",
         )
         .bind(discord_id.to_string())
         .fetch_one(&self.pool)
         .await?;
-    
+
         let db_player = Player::new(result.get::<i64, _>("discord_id") as u64, None);
-        
+
         Ok(db_player)
     }
 
+    pub async fn get_user(&self, discord_id: u64) -> Result<Player> {
+        let result = sqlx::query(
+            "SELECT id, discord_id, steam_id64, user, created_at, updated_at
+            FROM users
+            WHERE discord_id = ?",
+        )
+        .bind(discord_id.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+
+        let db_player = Player::new(result.get::<i64, _>("discord_id") as u64, None);
+
+        Ok(db_player)
+    }
+
+    pub async fn set_user(&self, discord_id: u64, steam_id64: u64) -> Result<Player> {
+        let result = sqlx::query(
+            "UPDATE users
+            SET steam_id64 = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE discord_id = ?",
+        )
+        .bind(steam_id64.to_string())
+        .bind(discord_id.to_string())
+        .execute(&self.pool)
+        .await?;
+
+        let db_player = Player::new(discord_id, Some(steam_id64));
+
+        Ok(db_player)
+    }
+
+    /// Creates a new group in the database.
+    ///
+    /// Returns a `Result` containing the created group, or an `anyhow::Error` if creation fails.
+    pub async fn new_group(&self, dashboard: u64, chat: u64, queue: u64, red: u64, blu: u64) -> Result<Group> {
+        let result = sqlx::query(
+            "INSERT INTO groups (dashboard, chat, queue, red, blu)
+            VALUES (?, ?, ?, ?, ?)
+            RETURNING id, dashboard, chat, queue, red, blu",
+        )
+        .bind(dashboard)
+        .bind(chat)
+        .bind(queue)
+        .bind(red)
+        .bind(blu)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let group = Group {
+            dashboard: result.get::<i64, _>("dashboard") as u64,
+            chat: result.get::<i64, _>("chat") as u64,
+            queue: result.get::<i64, _>("queue") as u64,
+            teams: vec![TeamChannels {
+                red: result.get::<i64, _>("red") as u64,
+                blu: result.get::<i64, _>("blu") as u64,
+            }],
+            session: Vec::new(),
+            session_increment: 0,
+        };
+
+        Ok(group)
+    }
+
+    /// Retrieves a group from the database by its queue channel ID.
+    ///
+    /// Returns a `Result` containing the group, or an `anyhow::Error` if not found.
+    pub async fn get_group(&self, queue_id: u64) -> Result<Group> {
+        let result = sqlx::query(
+            "SELECT dashboard, chat, queue, red, blu
+            FROM groups
+            WHERE queue = ?",
+        )
+        .bind(queue_id as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let group = Group {
+            dashboard: result.get::<i64, _>("dashboard") as u64,
+            chat: result.get::<i64, _>("chat") as u64,
+            queue: result.get::<i64, _>("queue") as u64,
+            teams: vec![TeamChannels {
+                red: result.get::<i64, _>("red") as u64,
+                blu: result.get::<i64, _>("blu") as u64,
+            }],
+            session: Vec::new(),
+            session_increment: 0,
+        };
+
+        Ok(group)
+    }
+
+    /// Updates a group in the database.
+    ///
+    /// Returns a `Result` containing the updated group, or an `anyhow::Error` if update fails.
+    pub async fn set_group(
+        &self,
+        queue_id: u64,
+        dashboard: u64,
+        chat: u64,
+        red: u64,
+        blu: u64,
+    ) -> Result<Group> {
+        let result = sqlx::query(
+            "UPDATE groups
+            SET dashboard = ?, chat = ?, red = ?, blu = ?
+            WHERE queue = ?
+            RETURNING dashboard, chat, queue, red, blu",
+        )
+        .bind(dashboard as i64)
+        .bind(chat as i64)
+        .bind(red as i64)
+        .bind(blu as i64)
+        .bind(queue_id as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let group = Group {
+            dashboard: result.get::<i64, _>("dashboard") as u64,
+            chat: result.get::<i64, _>("chat") as u64,
+            queue: result.get::<i64, _>("queue") as u64,
+            teams: vec![TeamChannels {
+                red: result.get::<i64, _>("red") as u64,
+                blu: result.get::<i64, _>("blu") as u64,
+            }],
+            session: Vec::new(),
+            session_increment: 0,
+        };
+
+        Ok(group)
+    }
+
     /// Retrieves all configuration values from the database and constructs a `Config` object.
-    /// Retrieves all configuration values from the database and constructs a `Config` object.
-    /// 
+    ///
     /// This method reads all key-value pairs from the config table and maps them to the
     /// appropriate fields in the BotConfig struct. Default values are used for missing or
     /// malformed configuration entries.
     ///
     /// Returns a `Result` containing the populated `BotConfig` object or an error if the database
     /// query fails.
-    pub async fn pull(&self) -> Result<Config> {
+    pub async fn get_config(&self) -> Result<Config> {
         let rows = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config")
             .fetch_all(&self.pool)
             .await?;
@@ -85,154 +218,31 @@ impl Database {
 
         // Use macros to parse configuration values from the HashMap with default values
         Ok(Config {
-            cid_queue:            prscfg!(config_map, "queue_channel_id",     0),
-            cid_log:              prscfg!(config_map, "log_channel_id",       0),
-            queue_quota:          prscfg!(config_map, "queue_size",           8),
-            confirmation_timeout: prscfg!(config_map, "confirmation_timeout", 120),
-            id_runner:            prscfg!(config_map, "runner_role_id",       0),
-            id_admin:             prscfg!(config_map, "admin_role_id",        0),
-            cid_buffer:           prscfg!(config_map, "buffer_channel_id",    0),
-            cid_red:              prscfg!(config_map, "red_channel_id",       0),
-            cid_blue:             prscfg!(config_map, "blue_channel_id",      0),
+            ic_queue: prscfg!(config_map, "queue_channel_id", 0),
+            ic_log: prscfg!(config_map, "log_channel_id", 0),
+            quota: prscfg!(config_map, "queue_size", 8),
+            join_timeout: prscfg!(config_map, "confirmation_timeout", 120),
+            i_runner: prscfg!(config_map, "runner_role_id", 0),
+            i_admin: prscfg!(config_map, "admin_role_id", 0),
+            ic_buffer: prscfg!(config_map, "buffer_channel_id", 0),
+            ic_red: prscfg!(config_map, "red_channel_id", 0),
+            ic_blue: prscfg!(config_map, "blue_channel_id", 0),
         })
-    }
-    
-    /// Get the configuration settings
-    pub async fn get_config(&self) -> Result<Config> {
-        self.pull().await
-    }
-    
-    /// Get a session by its UUID
-    pub async fn get_session_by_uuid(&self, uuid: &str) -> Result<Session> {
-        // For now, return a dummy session
-        // In a real implementation, this would query the database
-        let mut session = Session::new();
-        session.id = uuid.as_bytes().iter().map(|&b| b as u16).collect();
-        Ok(session)
-    }
-    
-    /// Get the latest hot session
-    pub async fn get_latest_hot_session(&self) -> Result<Session> {
-        // For now, return a dummy session with "hot" status
-        // In a real implementation, this would query the database
-        let mut session = Session::new();
-        session.status = SessionStatus::Hot;
-        Ok(session)
-    }
-    
-    /// Get the latest push session
-    pub async fn get_latest_push_session(&self) -> Result<Session> {
-        // For now, return a dummy session with "ongoing" status
-        // In a real implementation, this would query the database
-        let mut session = Session::new();
-        session.status = SessionStatus::Live;
-        Ok(session)
-    }
-    
-    /// Accept a session
-    pub async fn accept_session(&self, session_id: String) -> Result<()> {
-        // In a real implementation, this would update the session status in the database
-        info!("Accepting session with ID: {}", session_id);
-        Ok(())
-    }
-    
-    /// End a session
-    pub async fn end_session(&self, session_id: String) -> Result<()> {
-        // In a real implementation, this would update the session status in the database
-        info!("Ending session with ID: {}", session_id);
-        Ok(())
-    }
-
-    pub async fn pull_group(&self) -> Result<Group> {
-        // This is a placeholder implementation
-        // In a real implementation, this would fetch group data from the database
-        Ok(Group::new(0, 0, 0, 0, 0))
-    }
-
-    pub async fn init(&self) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO config (key, value) VALUES (?, ?)"
-        )
-        .bind("queue_channel_id")
-        .bind("0")
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Get a player by Discord ID or create one if it doesn't exist
-    pub async fn get_or_create_player(&self, discord_id: u64) -> Result<Player> {
-        // For now, simply create a new player instance
-        // In a real implementation, this would check the database first
-        Ok(Player::new(discord_id, None))
-    }
-
-    /// Get the active group with its session
-    pub async fn get_group(&self) -> Result<Group> {
-        // For now, return a dummy group
-        // In a real implementation, this would query the database
-        Ok(Group::new(0, 0, 0, 0, 0))
-    }
-
-    /// Update a group in the database
-    pub async fn update_group(&self, group: &Group) -> Result<()> {
-        // For now, just log the update
-        // In a real implementation, this would update the group in the database
-        info!("Updating group with session");
-        Ok(())
-    }
-
-    /// Get the group with an idle session
-    pub async fn get_group_idle(&self) -> Result<Group> {
-        self.get_group().await
-    }
-
-    /// Create a new session
-    pub async fn create_session(&self, players: Vec<Player>) -> Result<Session> {
-        // Create a new session with the provided players
-        let mut session = Session::new();
-        for player in players {
-            session.add_player(&player);
-        }
-        Ok(session)
-    }
-
-    /// Remove a player from any session within the group by their Discord user ID
-    pub async fn leave_group_by_user_id(&self, group: &mut Group, user_id: u64) -> Result<bool> {
-        for session in &mut group.session {
-            if let Some(player) = session.pool.iter().find(|p| p.player.discord_id == user_id).cloned() {
-                session.remove_player(&player);
-                info!("Player {} left a group session", user_id);
-                return Ok(true);
-            }
-        }
-        info!("Player {} not found in any group session", user_id);
-        Ok(false)
-    }
-
-    /// Get session players
-    pub async fn get_session_players(&self, session_id: &str) -> Result<Vec<SessionPlayer>> {
-        // In a real implementation, this would fetch from the database
-        // For now, return an empty vector
-        Ok(Vec::new())
     }
 
     /// Sets or updates a configuration value in the database.
     /// If the key already exists, its value will be replaced.
-    /// 
+    ///
     /// Returns a `Result` indicating success or an `anyhow::Error`.
-    /// 
+    ///
     /// * `key` - The key of the configuration item to set.
     /// * `value` - The value to associate with the key.
-    pub async fn push(&self, key: &str, value: &str) -> Result<()> {
-        sqlx::query(
-            "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)"
-        )
-        .bind(key)
-        .bind(value)
-        .execute(&self.pool)
-        .await?;
+    pub async fn set_config(&self, key: &str, value: &str) -> Result<()> {
+        sqlx::query("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)")
+            .bind(key)
+            .bind(value)
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }

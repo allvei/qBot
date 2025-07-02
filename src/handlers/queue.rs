@@ -134,8 +134,8 @@ async fn notify_session_ready(
     let config = db.get_config().await?;
     
     // Send notification to log channel
-    if config.cid_log != 0 {
-        let channel = ChannelId::new(config.cid_log);
+    if config.ic_log != 0 {
+        let channel = ChannelId::new(config.ic_log);
         
         let mut player_mentions = Vec::new();
         for member in &group.session.players[..8] {

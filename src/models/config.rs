@@ -38,8 +38,7 @@ define_global_ids! {
   ID_CHAT            => 1388643261543088208,
   ID_QUEUE           => 1385893666010300436,
   ID_RED             => 1385464431185494086,
-  ID_BLU             => 1385464563448680578,
-
+  ID_BLU             => 1385464563448680578,    
   // ID_NA_BEGINNER     => 0,
   // ID_NA_NEWCOMER     => 0,
   // ID_NA_NOVICE       => 0,
@@ -61,29 +60,31 @@ pub struct ConfigFormat {
 /// Bot configuration struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub cid_queue: u64,
-    pub cid_log: u64,
-    pub queue_quota: u8,
-    pub confirmation_timeout: u64,
-    pub id_runner: u64,
-    pub id_admin: u64,
-    pub cid_buffer: u64,
-    pub cid_red: u64,
-    pub cid_blue: u64,
+    pub i_guild: u64,
+    pub i_runner: u64,
+    pub i_admin: u64,
+    pub ic_queue: u64,
+    pub ic_log: u64,
+    pub ic_buffer: u64,
+    pub ic_red: u64,
+    pub ic_blue: u64,
+    pub quota: u8,
+    pub join_timeout: u64,
 }
 
 impl Default for Config {
-    fn default() -> Self {
+    fn default(i_guild: u64, i_runner: u64, i_admin: u64, ic_queue: u64, ic_log: u64, ic_buffer: u64, ic_red: u64, ic_blue: u64 ) -> Self {
         Self {
-            cid_queue: 0,
-            cid_log: 0,
-            queue_quota: 8,
-            confirmation_timeout: 120,
-            id_runner: 0,
-            id_admin: 0,
-            cid_buffer: 0,
-            cid_red: 0,
-            cid_blue: 0,
+            i_guild,
+            i_runner,
+            i_admin,
+            ic_queue,
+            ic_log,
+            ic_buffer,
+            ic_red,
+            ic_blue,
+            quota: 8,
+            join_timeout: 120,
         }
     }
 }

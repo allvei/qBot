@@ -72,11 +72,11 @@ impl PugManager {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Group {
-    pub dashboard:         u64,
-    pub chat:              u64,
-    pub queue:             u64,
-    pub teams:             Vec<TeamChannels>,
-    pub session:           Vec<Session>,
+    pub dashboard: u64,
+    pub chat: u64,
+    pub queue: u64,
+    pub teams: Vec<TeamChannels>,
+    pub session: Vec<Session>,
     pub session_increment: u16,
 }
 
@@ -87,8 +87,8 @@ impl Group {
             dashboard,
             chat,
             queue,
-            teams:             vec![TeamChannels { red, blu }],
-            session:           Vec::new(),
+            teams: vec![TeamChannels { red, blu }],
+            session: Vec::new(),
             session_increment: 0,
         }
     }
@@ -114,9 +114,9 @@ impl Group {
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Session {
-    pub id:      u16,
-    pub status:  SessionStatus,
-    pub pool:    Vec<SessionPlayer>,
+    pub id: u16,
+    pub status: SessionStatus,
+    pub pool: Vec<SessionPlayer>,
 }
 
 impl Session {
@@ -137,6 +137,7 @@ impl Session {
 
     pub fn push(&mut self) {
         self.status = SessionStatus::Push;
+
     }
 
     pub fn live(&mut self) {
@@ -148,21 +149,93 @@ impl Session {
     }
 
     pub fn generate_teams(&mut self) {
-        // Create genpool
-        let genpool = Vec::<SessionPlayer>::new();
-        // 1. Get the first n=quota_size players who are buffered using first-in first-out method from the pool vector
-        // 2. Add the buffered players to the genpool vector
-        // 3. Now pull the remaining players from the pool vector and fill the genpool vector up until n=quota_size
-        // 4. Now we have a genpool with n=quota_size players
-        // 5. Generate teams using an algorithm that balances the teams based on the player's elo.
-        //   - Sort players by ELO rating in descending order
-        //   - Add randomness for players with identical ELO values
-        //   - Distribute players using a snake draft pattern (ABBAABBA) to ensure balance
-        //   - Team A gets highest rated player, Team B gets 2nd and 3rd, Team A gets 4th and 5th, etc.
-        //   - This creates teams with similar average skill levels
-        //   - Finally, assign players to appropriate positions based on their preferences if available
-        // 
+        let mut rng = rand::thread_rng();
+        let mut genpool = Vec::<SessionPlayer>::new();
 
+        // 1. First add buffered players to genpool (priority)
+        let mut buffered_players = self
+            .pool
+            .iter()
+            .filter(|p| p.buffered.is_some())
+            .cloned()
+            .collect::<Vec<_>>();
+
+        genpool.extend(buffered_players);
+
+        // 2. Fill remaining slots with non-buffered players
+        let remaining_slots = 8 - genpool.len(); // Assuming 8 players per match
+        let mut non_buffered = self
+            .pool
+            .iter()
+            .filter(|p| p.buffered.is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+
+        // Take only what we need
+        if non_buffered.len() > remaining_slots {
+            non_buffered.truncate(remaining_slots);
+        }
+
+        genpool.extend(non_buffered);
+
+        // 3. Sort players by ELO in descending order
+        genpool.sort_by(|a, b| {
+            let a_elo = a.player.elo.unwrap_or(1000);
+            let b_elo = b.player.elo.unwrap_or(1000);
+
+            // Randomize order for players with identical ELO
+            if a_elo == b_elo {
+                if rng.gen::<bool>() {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Greater
+                }
+            } else {
+                b_elo.cmp(&a_elo)
+            }
+        });
+
+        // 4. Distribute players in snake draft pattern (ABBAABBA)
+        let mut team_a = Vec::new();
+        let mut team_b = Vec::new();
+
+        for (i, player) in genpool.iter().enumerate() {
+            let mut player_clone = player.clone();
+
+            // Snake draft pattern: 0->A, 1->B, 2->B, 3->A, 4->A, 5->B, 6->B, 7->A
+            match i % 4 {
+                0 | 3 => {
+                    player_clone.team(Team::Red);
+                    team_a.push(player_clone);
+                }
+                1 | 2 => {
+                    player_clone.team(Team::Blu);
+                    team_b.push(player_clone);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        // 5. Update the original pool with team assignments
+        for player in &team_a {
+            if let Some(p) = self
+                .pool
+                .iter_mut()
+                .find(|p| p.player.i_discord == player.player.i_discord)
+            {
+                p.team = Some(Team::Red);
+            }
+        }
+
+        for player in &team_b {
+            if let Some(p) = self
+                .pool
+                .iter_mut()
+                .find(|p| p.player.i_discord == player.player.i_discord)
+            {
+                p.team = Some(Team::Blu);
+            }
+        }
     }
 
     pub fn count(&self) -> usize {
@@ -179,27 +252,36 @@ impl Session {
             team: None,
             buffered: None,
         };
-        info!("Added player {} to session {}", player.discord_id, self.id);
+        info!("Added player {} to session {}", player.i_discord, self.id);
         self.pool.push(session_player);
     }
 
     pub fn remove_player(&mut self, player: &SessionPlayer) {
-        self.pool.retain(|p| p.player.discord_id != player.player.discord_id);
+        self.pool
+            .retain(|p| p.player.i_discord != player.player.i_discord);
     }
 
     pub fn buff(&mut self, user_id: u64, buffered: Option<Player>) {
-        self.pool.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().buff(buffered);
+        self.pool
+            .iter_mut()
+            .find(|m| m.player.i_discord == user_id)
+            .unwrap()
+            .buff(buffered);
     }
 
     pub fn unbuff(&mut self, user_id: u64) {
-        self.pool.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().unbuff();
+        self.pool
+            .iter_mut()
+            .find(|m| m.player.i_discord == user_id)
+            .unwrap()
+            .unbuff();
     }
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct SessionPlayer {
     pub player: Player,
-    pub team:   Option<Team>,
+    pub team: Option<Team>,
     pub buffered: Option<Player>,
 }
 
@@ -211,7 +293,7 @@ impl SessionPlayer {
             buffered: None,
         }
     }
-    
+
     pub fn buff(&mut self, buffered: Option<Player>) {
         self.buffered = buffered;
     }
