@@ -231,8 +231,8 @@ impl EventHandler for Handler {
                                     info!("Session is now IDLE with {} players", session.pool.len());
                                 }
                             }
+                            break;  // Break only if we found the matching group
                         }
-                        break;
                     }
                 }
             } // Mutex guard is released here when it goes out of scope

@@ -34,7 +34,7 @@ pub enum Rank {
 }
 
 impl Rank {
-    pub fn id(&self) -> u64 {
+    pub fn id_hardcoded(&self) -> u64 {
         match self {
             Rank::Beginner    => ID_EU_BEGINNER,
             Rank::Novice      => ID_EU_NOVICE,
