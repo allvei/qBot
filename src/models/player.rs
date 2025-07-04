@@ -1,8 +1,10 @@
 // CHECKED
 
 use serde::{Deserialize, Serialize};
+use sqlx::prelude::FromRow;
+use tracing::info;
 
-use crate::config::*;
+use crate::models::config::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Role {
@@ -76,25 +78,29 @@ pub struct Player {
     pub i_guild:   u64,
     pub i_discord: u64,
     pub i_steam:   Option<u64>,
-    pub rank:       Option<Rank>,
-    pub role:       Option<Role>,
+    pub rank:      Option<Rank>,
+    pub role:      Option<Role>,
 }
 
 impl Player {
-    pub fn new(discord_id: u64, steam_id: Option<u64>) -> Player {
+    pub fn new(i_discord: u64, i_steam64: u64, i_guild: Option<u64>) -> Player {
+        info!("[player] Creating new player: discord={}, steam={}, guild={:?}", i_discord, i_steam64, i_guild);
         Player {
-            i_discord: discord_id,
-            i_steam: steam_id,
-            rank:       None,
-            role:       None,
+            i_guild: i_guild.unwrap_or(0),
+            i_discord,
+            i_steam: Some(i_steam64),
+            rank: None,
+            role: None,
         }
     }
 
     pub fn set_rank(&mut self, rank: Option<Rank>) {
+        info!("[player] Setting rank for player {}: {:?}", self.i_discord, rank);
         self.rank = rank;
     }
 
     pub fn set_role(&mut self, role: Option<Role>) {
+        info!("[player] Setting role for player {}: {:?}", self.i_discord, role);
         self.role = role;
     }
 }

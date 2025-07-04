@@ -2,6 +2,7 @@
 
 use anyhow::{Result, anyhow};
 use serenity::all::{CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage, Colour};
+use tracing::info;
 
 use crate::CommandContext;
 
@@ -12,6 +13,7 @@ pub async fn handle_buffer_command(
     cc:           &CommandContext<'_>,
     user_mention: String,
 ) -> Result<()> {
+    info!("[admin] Processing buffer command for user mention: {}", user_mention);
     if !is_admin(cc).await? {
         let response = CreateInteractionResponse::Message(
             CreateInteractionResponseMessage::new()
@@ -21,9 +23,6 @@ pub async fn handle_buffer_command(
         cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
-
-    // Parse the user mention to get the Discord user ID
-    let user_id = parse_user_mention(&user_mention)?;
 
     Ok(())
 }
@@ -37,8 +36,11 @@ pub async fn handle_config_command(
     key:   String,
     value: Option<String>,
 ) -> Result<()> {
+    info!("[admin] Processing config command: key={}, value={:?}", key, value);
+    info!("[admin] Checking admin permissions for config command");
     // Check if user has admin permissions
     if !is_admin(cc).await? {
+        info!("[admin] Permission denied: User is not an admin");
         let response = CreateInteractionResponse::Message(
             CreateInteractionResponseMessage::new()
                 .content("❌ You need admin permissions to modify config!")
@@ -49,6 +51,7 @@ pub async fn handle_config_command(
     }
 
     if let Some(val) = value {
+        info!("[admin] Setting config {} = {}", key, val);
         // Set config value
         cc.db.get_config().await?;
         
@@ -106,9 +109,8 @@ pub async fn handle_config_command(
 /// * `ctx`         - Ref to the Serenity context.
 /// * `interaction` - Ref to the command interaction.
 /// * `db`          - Ref to the database.
-async fn is_admin(
-    cc: &CommandContext<'_>,
-) -> Result<bool> {
+async fn is_admin(cc: &CommandContext<'_>) -> Result<bool> {
+    info!("[admin] Checking if user {} is an admin", cc.intax.user.id);
     let config = cc.db.get_config().await?; // Cache config
     
     if config.i_admin == 0 {

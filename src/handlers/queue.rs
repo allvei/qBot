@@ -21,26 +21,51 @@ use crate::{
 pub async fn handle_queue_command<'a>(
     cc:           &'a CommandContext<'a>,
 ) -> Result<()> {
+    info!("[queue] Processing queue command from user {}", cc.intax.user.id);
     let client: u64 = cc.intax.user.id.into();
-    let channel   = cc.intax.channel_id;
+    let _channel = cc.intax.channel_id;
+    info!("[queue] Channel ID: {}", cc.intax.channel_id);
     
+    info!("[queue] Getting active group with channel ID {}", cc.intax.channel_id.get());
     // Get active group with session
-    let mut group = cc.db.get_group_idle().await?;
+    // TODO: Replace hardcoded 0 with the actual queue channel ID
+    let mut group = cc.db.get_group(cc.intax.channel_id.get()).await?;
     
-    // Get player info
-    let player = cc.db.get_or_create_player(client).await?;
+    // Ensure group has at least one session
+    if group.session.is_empty() {
+        info!("[queue] No active sessions found, creating a new session");
+        group.create_session();
+    } else {
+        info!("[queue] Found existing sessions: {}", group.session.len());
+    }
+    
+    info!("[queue] Getting player info for user {}", client);
+    // Get player info - try to get user or create if not exists
+    let player = match cc.db.get_user(client).await {
+        Ok(user) => {
+            info!("[queue] Found existing user");
+            user
+        },
+        Err(_) => {
+            info!("[queue] Creating new user");
+            cc.db.new_user(client).await?
+        }
+    };
     
     // Check if player is already in session
-    if group.session.pool.iter().any(|sp| sp.player.discord_id == client) {
+    // Get the last (active) session
+    let session = group.session.last_mut().expect("No active session found");
+    if session.pool.iter().any(|sp| sp.player.i_discord == client) {
         // Remove a player from the session
-        group.session.remove_player(client);
-        cc.db.update_group(&group).await?;
+        let session = group.session.last_mut().expect("No active session found");
+        info!("[queue] Removing player {} from session", player.i_discord);
+        session.pool.retain(|sp| sp.player.i_discord != client);
         
         let embed = CreateEmbed::new()
             .title("Left Queue")
             .description(format!("**{}** left the queue", cc.intax.user.name))
             .color(0xff6b6b)
-            .footer(CreateEmbedFooter::new(format!("Queue: {}/8", group.session.players.len())));
+            .footer(CreateEmbedFooter::new(format!("Queue: {}/8", session.pool.len())));
         
         let response = CreateInteractionResponse::Message(
             CreateInteractionResponseMessage::new()
@@ -53,14 +78,15 @@ pub async fn handle_queue_command<'a>(
         info!("User {} ({}) left queue", cc.intax.user.name, client);
     } else {
         // Add player to session
-        group.session.add_player(player);
-        cc.db.update_group(&group).await?;
+        let session = group.session.last_mut().expect("No active session found");
+        info!("[queue] Adding player to session with {} current players", session.pool.len());
+        session.add_player(&player);
         
         let embed = CreateEmbed::new()
             .title("Joined Queue")
             .description(format!("**{}** joined the queue", cc.intax.user.name))
             .color(0x51cf66)
-            .footer(CreateEmbedFooter::new(format!("Queue: {}/8", group.session.players.len())));
+            .footer(CreateEmbedFooter::new(format!("Queue: {}/8", session.pool.len())));
         
         let response = CreateInteractionResponse::Message(
             CreateInteractionResponseMessage::new()
@@ -73,11 +99,13 @@ pub async fn handle_queue_command<'a>(
         info!("User {} ({}) joined queue", cc.intax.user.name, client);
         
         // Check if session is full
-        if group.session.players.len() >= 8 {
+        if session.pool.len() >= 8 {
+            info!("[queue] Session is now full with {} players", session.pool.len());
             notify_session_ready(cc.ctx, &cc.db, &group).await?;
         }
     }
     
+    info!("[queue] Command processed successfully, sending response");
     Ok(())
 }
 
@@ -89,18 +117,29 @@ pub async fn handle_queue_command<'a>(
 pub async fn handle_queue_status_command<'a>(
     cc:           &'a CommandContext<'a>,
 ) -> Result<()> {
+    info!("[queue] Processing queue status command");
     // Get active group with session
-    let group = cc.db.get_group_idle().await?;
-    let count = group.session.players.len();
+    // TODO: Replace hardcoded 0 with the actual queue channel ID
+    let group = cc.db.get_group(cc.intax.channel_id.get()).await?;
+    
+    // If group has no sessions or session pool, return empty count
+    let count = if group.session.is_empty() {
+        0
+    } else {
+        group.session.last().expect("No active session found").pool.len()
+    };
     
     let description = if count == 0 {
         "Queue is empty. Use `/queue join` to join!".to_string()
     } else {
         let mut parts = vec![format!("**{} players in queue:**\n", count)];
-        for (i, member) in group.session.players.iter().enumerate() {
-            // Use discord_id as display name if needed
-            let name = format!("user_{}", member.player.discord_id);
-            parts.push(format!("{}.{}", i + 1, name));
+        // Ensure we have a session and access its pool
+        if let Some(session) = group.session.last() {
+            for (i, member) in session.pool.iter().enumerate() {
+                // Use i_discord as display name if needed
+                let name = format!("user_{}", member.player.i_discord);
+                parts.push(format!("{}.{}", i + 1, name));
+            }
         }
         parts.join("\n")
     };
@@ -138,8 +177,12 @@ async fn notify_session_ready(
         let channel = ChannelId::new(config.ic_log);
         
         let mut player_mentions = Vec::new();
-        for member in &group.session.players[..8] {
-            player_mentions.push(format!("<@{}>", member.player.discord_id));
+        // Ensure we have a session before accessing its pool
+        if let Some(session) = group.session.last() {
+            let pool_len = session.pool.len().min(8); // Take at most 8 players
+            for member in &session.pool[..pool_len] {
+                player_mentions.push(format!("<@{}>", member.player.i_discord));
+            }
         }
         
         let embed = CreateEmbed::new()

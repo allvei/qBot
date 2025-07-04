@@ -72,8 +72,8 @@ pub struct Config {
     pub join_timeout: u64,
 }
 
-impl Default for Config {
-    fn default(i_guild: u64, i_runner: u64, i_admin: u64, ic_queue: u64, ic_log: u64, ic_buffer: u64, ic_red: u64, ic_blue: u64 ) -> Self {
+impl Config {
+    pub fn new(i_guild: u64, i_runner: u64, i_admin: u64, ic_queue: u64, ic_log: u64, ic_buffer: u64, ic_red: u64, ic_blue: u64 ) -> Self {
         Self {
             i_guild,
             i_runner,
