@@ -3,20 +3,18 @@ mod database;
 mod handlers;
 mod models;
 
-use std::{env, sync::{Arc, Mutex}};
+use std::{
+    env,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::Result;
 use serenity::{
     all::{ButtonStyle, CreateActionRow, CreateButton},
     async_trait,
     builder::{
-        CreateCommand,
-        CreateCommandOption,
-        CreateEmbed,
-        CreateEmbedFooter,
-        CreateInteractionResponse,
-        CreateInteractionResponseMessage,
-        CreateMessage,
+        CreateCommand, CreateCommandOption, CreateEmbed, CreateEmbedFooter,
+        CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage,
     },
     model::{
         application::{CommandOptionType, Interaction},
@@ -29,16 +27,16 @@ use serenity::{
 use tracing::{error, info};
 
 use database::Database;
-use handlers::{queue, session, admin};
+use handlers::{admin, queue, session};
 use models::{
-    session::{Manager, Group, SessionStatus, SessionPlayer},
     command::CommandContext,
-    config::{ID_DASHBOARD, ID_CHAT, ID_QUEUE, ID_RED, ID_BLU},
+    config::{ID_BLU, ID_CHAT, ID_DASHBOARD, ID_QUEUE, ID_RED},
+    session::{Group, Manager, SessionPlayer, SessionStatus},
 };
 
 struct Handler {
-    database:   Arc<Database>,
-    guild: Arc<Mutex<Manager>>,
+    database: Arc<Database>,
+    guild:    Arc<Mutex<Manager>>,
 }
 
 /// Handler for Discord events with database access
@@ -54,47 +52,67 @@ impl EventHandler for Handler {
         let commands = vec![
             CreateCommand::new("queue")
                 .description("Join or leave the queue")
-                .add_option(CreateCommandOption::new(CommandOptionType::SubCommand, "join", "Join the queue"))
-                .add_option(CreateCommandOption::new(CommandOptionType::SubCommand, "leave", "Leave the queue"))
-                .add_option(CreateCommandOption::new(CommandOptionType::SubCommand, "status", "Check queue status")),
-        
-            CreateCommand::new("shuffle")
-                .description("Generate teams from queue"),
-        
+                .add_option(CreateCommandOption::new(
+                    CommandOptionType::SubCommand,
+                    "join",
+                    "Join the queue",
+                ))
+                .add_option(CreateCommandOption::new(
+                    CommandOptionType::SubCommand,
+                    "leave",
+                    "Leave the queue",
+                ))
+                .add_option(CreateCommandOption::new(
+                    CommandOptionType::SubCommand,
+                    "status",
+                    "Check queue status",
+                )),
+            CreateCommand::new("shuffle").description("Generate teams from queue"),
             CreateCommand::new("accept")
                 .description("Accept/confirm generated teams")
                 .add_option(
-                    CreateCommandOption::new(CommandOptionType::String, "session_id", "Session ID to accept (optional)")
-                        .required(false)
+                    CreateCommandOption::new(
+                        CommandOptionType::String,
+                        "session_id",
+                        "Session ID to accept (optional)",
+                    )
+                    .required(false),
                 ),
-        
             CreateCommand::new("end")
                 .description("End a session")
                 .add_option(
-                    CreateCommandOption::new(CommandOptionType::String, "session_id", "Session ID to end (optional)")
-                        .required(false)
+                    CreateCommandOption::new(
+                        CommandOptionType::String,
+                        "session_id",
+                        "Session ID to end (optional)",
+                    )
+                    .required(false),
                 ),
-        
             CreateCommand::new("buffer")
                 .description("Buffer a player")
                 .add_option(
                     CreateCommandOption::new(CommandOptionType::String, "user", "User to buffer")
-                        .required(true)
+                        .required(true),
                 ),
-        
             CreateCommand::new("config")
                 .description("View or set bot configuration")
                 .add_option(
                     CreateCommandOption::new(CommandOptionType::String, "key", "Configuration key")
-                        .required(false)
+                        .required(false),
                 )
                 .add_option(
-                    CreateCommandOption::new(CommandOptionType::String, "value", "Configuration value")
-                        .required(false)
+                    CreateCommandOption::new(
+                        CommandOptionType::String,
+                        "value",
+                        "Configuration value",
+                    )
+                    .required(false),
                 ),
         ];
 
-        if let Err(why) = serenity::model::application::Command::set_global_commands(&ctx.http, commands).await {
+        if let Err(why) =
+            serenity::model::application::Command::set_global_commands(&ctx.http, commands).await
+        {
             error!("Cannot register global slash commands: {}", why);
         } else {
             info!("Registered global slash commands");
@@ -106,9 +124,9 @@ impl EventHandler for Handler {
         if let Interaction::Command(command) = pl {
             let user_name = &command.user.name;
             let cmd_ctx = CommandContext {
-                ctx: &ctx,
+                ctx:   &ctx,
                 intax: &command,
-                db: self.database.clone(),
+                db:    self.database.clone(),
             };
 
             let result = match command.data.name.as_str() {
@@ -118,7 +136,7 @@ impl EventHandler for Handler {
                         match subcommand.name.as_str() {
                             "join" | "leave" => queue::handle_queue_command(&cmd_ctx).await,
                             "status" => queue::handle_queue_status_command(&cmd_ctx).await,
-                            _ => Ok(())
+                            _ => Ok(()),
                         }
                     } else {
                         Ok(())
@@ -130,7 +148,10 @@ impl EventHandler for Handler {
                 }
                 "accept" => {
                     info!("{}: /{}", user_name, command.data.name);
-                    let session_id = command.data.options.iter()
+                    let session_id = command
+                        .data
+                        .options
+                        .iter()
                         .find(|opt| opt.name == "session_id")
                         .and_then(|opt| opt.value.as_str())
                         .map(|s| s.to_string());
@@ -138,7 +159,10 @@ impl EventHandler for Handler {
                 }
                 "end" => {
                     info!("{}: /{}", user_name, command.data.name);
-                    let session_id = command.data.options.iter()
+                    let session_id = command
+                        .data
+                        .options
+                        .iter()
                         .find(|opt| opt.name == "session_id")
                         .and_then(|opt| opt.value.as_str())
                         .map(|s| s.to_string());
@@ -158,61 +182,77 @@ impl EventHandler for Handler {
                 }
                 "config" => {
                     info!("{}: /{}", user_name, command.data.name);
-                    let key = command.data.options.iter()
+                    let key = command
+                        .data
+                        .options
+                        .iter()
                         .find(|opt| opt.name == "key")
                         .and_then(|opt| opt.value.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let value = command.data.options.iter()
+                    let value = command
+                        .data
+                        .options
+                        .iter()
                         .find(|opt| opt.name == "value")
                         .and_then(|opt| opt.value.as_str())
                         .map(|s| s.to_string());
-                    
+
                     admin::handle_config_command(&cmd_ctx, key, value).await
                 }
                 _ => {
                     let response = CreateInteractionResponse::Message(
                         CreateInteractionResponseMessage::new()
                             .content("Unknown command")
-                            .ephemeral(true)
+                            .ephemeral(true),
                     );
-                    command.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                    command
+                        .create_response(&ctx.http, response)
+                        .await
+                        .map_err(|e| e.into())
                 }
             };
 
             if let Err(e) = result {
                 error!("Error handling command '{}': {}", command.data.name, e);
-                
+
                 // Try to respond with an error message if we haven't responded yet
                 let error_response = CreateInteractionResponse::Message(
                     CreateInteractionResponseMessage::new()
                         .content("An error occurred while processing your command")
-                        .ephemeral(true)
+                        .ephemeral(true),
                 );
-                
-                if let Err(response_err) = command.create_response(&ctx.http, error_response).await {
+
+                if let Err(response_err) = command.create_response(&ctx.http, error_response).await
+                {
                     error!("Failed to send error response: {}", response_err);
                 }
             }
         }
     }
-    
+
     async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
-        info!("Voice state update: User={}, Old={:?}, New={:?}",
+        info!(
+            "Voice state update: User={}, Old={:?}, New={:?}",
             new.user_id,
             old.as_ref().and_then(|vs| vs.channel_id).map(|id| id.get()),
-            new.channel_id.map(|id| id.get()));
+            new.channel_id.map(|id| id.get())
+        );
         let user_id = new.user_id;
         let old_channel_id = old.and_then(|vs| vs.channel_id);
         let new_channel_id = new.channel_id;
-        
+
         // Handle user leaving a queue channel
         if let Some(old_channel_id) = old_channel_id {
-            info!("User {} left voice channel {}", user_id, old_channel_id.get());
+            info!(
+                "User {} left voice channel {}",
+                user_id,
+                old_channel_id.get()
+            );
             // Use a block to ensure the mutex guard is dropped at the end of this scope
             {
                 let mut guild = self.guild.lock().unwrap();
-                
+
                 // Check all groups to find if this was a queue channel
                 for server in guild.servers.iter_mut() {
                     for group in server.groups.iter_mut() {
@@ -220,27 +260,45 @@ impl EventHandler for Handler {
                             // User left a queue channel - remove them from the session
                             // Ensure there is at least one session
                             if let Some(session) = group.session.last_mut() {
-                                if session.pool.iter().any(|sp| sp.player.i_discord == user_id.get()) {
-                                    session.pool.retain(|sp| sp.player.i_discord != user_id.get());
-                                    info!("User {} left queue channel and was removed from session", user_id);
+                                if session
+                                    .pool
+                                    .iter()
+                                    .any(|sp| sp.player.i_discord == user_id.get())
+                                {
+                                    session
+                                        .pool
+                                        .retain(|sp| sp.player.i_discord != user_id.get());
+                                    info!(
+                                        "User {} left queue channel and was removed from session",
+                                        user_id
+                                    );
                                     info!("Session now has {} players", session.pool.len());
                                 }
                                 // Session notification when the queue reaches capacity
-                                if session.pool.len() < 8 && matches!(session.status, SessionStatus::Hot) {
+                                if session.pool.len() < 8
+                                    && matches!(session.status, SessionStatus::Hot)
+                                {
                                     session.status = SessionStatus::Idle;
-                                    info!("Session is now IDLE with {} players", session.pool.len());
+                                    info!(
+                                        "Session is now IDLE with {} players",
+                                        session.pool.len()
+                                    );
                                 }
                             }
-                            break;  // Break only if we found the matching group
+                            break; // Break only if we found the matching group
                         }
                     }
                 }
             } // Mutex guard is released here when it goes out of scope
         }
-        
+
         // Handle user joining a queue channel
         if let Some(new_channel_id) = new_channel_id {
-            info!("User {} joined voice channel {}", user_id, new_channel_id.get());
+            info!(
+                "User {} joined voice channel {}",
+                user_id,
+                new_channel_id.get()
+            );
             // First, get the player data without holding the lock
             info!("Fetching player data for user {}", user_id.get());
             let player = match self.database.get_user(user_id.get()).await {
@@ -251,76 +309,90 @@ impl EventHandler for Handler {
                         error!("Failed to create new user: {}", e);
                         return;
                     }
-                }
+                },
             };
-            
+
             // We'll store notification information to use after the mutex is released
             let mut dashboard_channel = None;
             let mut session_info = None;
-            
+
             // Scope for the mutex lock
             {
                 let mut guild = self.guild.lock().unwrap();
-                
+
                 // Check if the new channel is a queue channel in any group
                 for server in guild.servers.iter_mut() {
                     for group in server.groups.iter_mut() {
                         if group.queue == new_channel_id.get() {
-                        // User joined queue channel
-                        info!("User {} joined queue channel {}", user_id, new_channel_id);
-                        
-                        // Ensure there is at least one active session
-                        if group.session.is_empty() {
-                            info!("No active session, creating one");
-                            group.create_session();
-                        }
-                        
-                        // Get the current session (last in the vector)
-                        if let Some(session) = group.session.last_mut() {
-                            // Skip if user is already in the session
-                            if session.pool.iter().any(|sp| sp.player.i_discord == user_id.get()) {
-                                info!("User {} is already in session", user_id);
-                                break;
-                            }
-                            
-                            // Check if the session has space and is accepting players
-                            if session.pool.len() >= 12 {
-                                info!("Session is full, cannot add more players");
-                                break;
-                            }
-                            
-                            if matches!(session.status, SessionStatus::Live) {
-                                info!("Session is already playing, cannot add more players");
-                                break;
-                            }
-                            
-                            // Add player to session
-                            let _session_player = SessionPlayer::new(player.clone());
-                            session.add_player(&player);
-                            info!("Added user {} to session, now has {} players", user_id, session.pool.len());
+                            // User joined queue channel
+                            info!("User {} joined queue channel {}", user_id, new_channel_id);
 
-                            // If we have enough players, update session status
-                            if session.pool.len() >= 8 && !matches!(session.status, SessionStatus::Hot) {
-                                session.status = SessionStatus::Hot;
-                                info!("Session is now HOT with {} players", session.pool.len());
-
-                                // Store notification info to use after releasing the lock
-                                dashboard_channel = Some(group.dashboard);
-                                session_info = Some((session.id, session.pool.len()));
+                            // Ensure there is at least one active session
+                            if group.session.is_empty() {
+                                info!("No active session, creating one");
+                                group.create_session();
                             }
+
+                            // Get the current session (last in the vector)
+                            if let Some(session) = group.session.last_mut() {
+                                // Skip if user is already in the session
+                                if session
+                                    .pool
+                                    .iter()
+                                    .any(|sp| sp.player.i_discord == user_id.get())
+                                {
+                                    info!("User {} is already in session", user_id);
+                                    break;
+                                }
+
+                                // Check if the session has space and is accepting players
+                                if session.pool.len() >= 12 {
+                                    info!("Session is full, cannot add more players");
+                                    break;
+                                }
+
+                                if matches!(session.status, SessionStatus::Live) {
+                                    info!("Session is already playing, cannot add more players");
+                                    break;
+                                }
+
+                                // Add player to session
+                                let _session_player = SessionPlayer::new(player.clone());
+                                session.add_player(&player);
+                                info!(
+                                    "Added user {} to session, now has {} players",
+                                    user_id,
+                                    session.pool.len()
+                                );
+
+                                // If we have enough players, update session status
+                                if session.pool.len() >= 8
+                                    && !matches!(session.status, SessionStatus::Hot)
+                                {
+                                    session.status = SessionStatus::Hot;
+                                    info!("Session is now HOT with {} players", session.pool.len());
+
+                                    // Store notification info to use after releasing the lock
+                                    dashboard_channel = Some(group.dashboard);
+                                    session_info = Some((session.id, session.pool.len()));
+                                }
+                            }
+                            break; // We found the group, exit the loop
                         }
-                        break; // We found the group, exit the loop
-                    }
                     }
                 }
             } // Mutex guard is released here
-            
+
             // Now perform async operations with the data we collected
-            if let (Some(dashboard_id), Some((session_id, player_count))) = (dashboard_channel, session_info) {
-                info!("Sending session ready notification: dashboard={}, session_id={}, players={}", 
-                      dashboard_id, session_id, player_count);
+            if let (Some(dashboard_id), Some((session_id, player_count))) =
+                (dashboard_channel, session_info)
+            {
+                info!(
+                    "Sending session ready notification: dashboard={}, session_id={}, players={}",
+                    dashboard_id, session_id, player_count
+                );
                 let channel = ChannelId::new(dashboard_id);
-                
+
                 // Create an embed message for the session ready notification
                 let embed = CreateEmbed::new()
                     .title("🔔 SESSION READY!")
@@ -330,26 +402,23 @@ impl EventHandler for Handler {
                     ))
                     .color(0xffd43b)
                     .footer(CreateEmbedFooter::new("Awaiting team generation..."));
-                
+
                 // Create buttons for actions
-                let components = vec![
-                    CreateActionRow::Buttons(vec![
-                        CreateButton::new(format!("shuffle:{}", session_id))
-                            .style(ButtonStyle::Primary)
-                            .label("Shuffle Teams")
-                            .emoji('🎲')
-                    ])
-                ];
-                
+                let components = vec![CreateActionRow::Buttons(vec![CreateButton::new(format!(
+                    "shuffle:{}",
+                    session_id
+                ))
+                .style(ButtonStyle::Primary)
+                .label("Shuffle Teams")
+                .emoji('🎲')])];
+
                 // Send the message with both embed and components
                 if let Ok(msg) = channel
                     .send_message(
                         &ctx.http,
-                        CreateMessage::new()
-                            .embed(embed)
-                            .components(components)
+                        CreateMessage::new().embed(embed).components(components),
                     )
-                    .await 
+                    .await
                 {
                     // Add a reaction to the message
                     if let Err(e) = msg.react(&ctx.http, '✅').await {
@@ -367,7 +436,7 @@ impl Handler {
     /// Sends a notification to the dashboard channel when a session is ready
     async fn send_session_ready_notification(&self, ctx: &Context, group: &Group) {
         let dashboard_channel = ChannelId::new(group.dashboard);
-        
+
         // Ensure there are at least 8 players before slicing
         let mut player_mentions = Vec::new();
         // Get count from the latest session if available
@@ -377,14 +446,14 @@ impl Handler {
             0
         };
         let players_to_mention = if player_count >= 8 { 8 } else { player_count };
-        
+
         // Access players in the latest session if available
         if let Some(session) = group.session.last() {
             for player in &session.pool[..players_to_mention] {
                 player_mentions.push(format!("<@{}>", player.player.i_discord));
             }
         }
-        
+
         let embed = CreateEmbed::new()
             .title("🔔 SESSION READY!")
             .description(format!(
@@ -393,12 +462,12 @@ impl Handler {
             ))
             .color(0xffd43b)
             .footer(CreateEmbedFooter::new("Awaiting team generation..."));
-        
+
         // Send the message to the dashboard channel
-        if let Err(e) = dashboard_channel.send_message(
-            &ctx.http, 
-            CreateMessage::new().embed(embed)
-        ).await {
+        if let Err(e) = dashboard_channel
+            .send_message(&ctx.http, CreateMessage::new().embed(embed))
+            .await
+        {
             error!("Failed to send session ready notification: {:?}", e);
         } else {
             info!("Sent session ready notification to dashboard channel");
@@ -417,9 +486,8 @@ async fn main() -> Result<()> {
     // Load environment variables
     dotenvy::dotenv().ok();
 
-    let token = env::var("DISCORD_TOKEN")
-        .expect("Expected a Discord token in the environment");
-    
+    let token = env::var("DISCORD_TOKEN").expect("Expected a Discord token in the environment");
+
     let db_file = env::var("DATABASE_URL").unwrap_or_else(|_| "./pfpug.db".to_string());
     let database_url = format!("sqlite:{}", db_file);
 
@@ -437,27 +505,36 @@ async fn main() -> Result<()> {
     impl TypeMapKey for GuildKey {
         type Value = Arc<Mutex<Manager>>;
     }
-    
+
     info!("Starting bot...");
 
+    // Check if tables exist, create them if not
+    db.init_db().await?;
+
     // Hardcoded for testing
-    let group = db.new_group(ID_DASHBOARD, ID_CHAT, ID_QUEUE, ID_RED, ID_BLU).await?;
-    
+    let group = db
+        .new_group(ID_DASHBOARD, ID_CHAT, ID_QUEUE, ID_RED, ID_BLU, 8)
+        .await?;
+
     // Create a manager
     let manager = Arc::new(Mutex::new(Manager::default()));
-    
+
     // Create client
     let mut client = Client::builder(&token, intents)
-        .event_handler(Handler { 
+        .event_handler(Handler {
             database: db.clone(),
-            guild: manager.clone(),
+            guild:    manager.clone(),
         })
         .await
         .expect("Error creating client");
-    
+
     // Set the manager in the client data for global access
-    client.data.write().await.insert::<GuildKey>(manager.clone());
-    
+    client
+        .data
+        .write()
+        .await
+        .insert::<GuildKey>(manager.clone());
+
     // Start listening for events by starting a single shard
     if let Err(why) = client.start().await {
         error!("Client error: {:?}", why);

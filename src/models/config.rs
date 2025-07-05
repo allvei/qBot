@@ -38,7 +38,7 @@ define_global_ids! {
   ID_CHAT            => 1388643261543088208,
   ID_QUEUE           => 1385893666010300436,
   ID_RED             => 1385464431185494086,
-  ID_BLU             => 1385464563448680578,    
+  ID_BLU             => 1385464563448680578,
   // ID_NA_BEGINNER     => 0,
   // ID_NA_NEWCOMER     => 0,
   // ID_NA_NOVICE       => 0,
@@ -52,28 +52,36 @@ define_global_ids! {
 /// Configuration key-value pair struct.
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct ConfigFormat {
-    pub key: String,
-    pub value: String,
+    pub key:         String,
+    pub value:       String,
     pub description: Option<String>,
 }
 
 /// Bot configuration struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub i_guild: u64,
-    pub i_runner: u64,
-    pub i_admin: u64,
-    pub ic_queue: u64,
-    pub ic_log: u64,
-    pub ic_buffer: u64,
-    pub ic_red: u64,
-    pub ic_blue: u64,
-    pub quota: u8,
+    pub i_guild:      u64,
+    pub i_runner:     u64,
+    pub i_admin:      u64,
+    pub ic_queue:     u64,
+    pub ic_log:       u64,
+    pub ic_buffer:    u64,
+    pub ic_red:       u64,
+    pub ic_blue:      u64,
     pub join_timeout: u64,
 }
 
 impl Config {
-    pub fn new(i_guild: u64, i_runner: u64, i_admin: u64, ic_queue: u64, ic_log: u64, ic_buffer: u64, ic_red: u64, ic_blue: u64 ) -> Self {
+    pub fn new(
+        i_guild: u64,
+        i_runner: u64,
+        i_admin: u64,
+        ic_queue: u64,
+        ic_log: u64,
+        ic_buffer: u64,
+        ic_red: u64,
+        ic_blue: u64,
+    ) -> Self {
         Self {
             i_guild,
             i_runner,
@@ -83,7 +91,6 @@ impl Config {
             ic_buffer,
             ic_red,
             ic_blue,
-            quota: 8,
             join_timeout: 120,
         }
     }

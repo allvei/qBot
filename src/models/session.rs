@@ -3,11 +3,11 @@
 use std::str::FromStr;
 
 use anyhow::Error;
-use serenity::all::{Cache, GuildId};
-use tracing::{info, debug};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use serenity::all::{Cache, GuildId};
 use sqlx::FromRow;
+use tracing::{debug, info};
 
 use crate::models::{Player, Rank};
 
@@ -51,9 +51,11 @@ pub struct Manager {
 
 impl Manager {
     pub fn new() -> Self {
-        Self { servers: Vec::new() }
+        Self {
+            servers: Vec::new(),
+        }
     }
-    
+
     pub fn pull_list(&mut self, cache: &Cache) -> Self {
         let mut servers = Vec::new();
         cache.guilds().iter().for_each(|g| {
@@ -65,7 +67,7 @@ impl Manager {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Server {
-    pub guild: GuildId,
+    pub guild:  GuildId,
     pub groups: Vec<Group>,
 }
 
@@ -103,10 +105,18 @@ pub struct Group {
     pub teams:             Vec<TeamChannels>,
     pub session:           Vec<Session>,
     pub session_increment: u16,
+    pub session_quota:     u8,
 }
 
 impl Group {
-    pub fn new(dashboard: u64, chat: u64, queue: u64, red: u64, blu: u64) -> Self {
+    pub fn new(
+        dashboard: u64,
+        chat: u64,
+        queue: u64,
+        red: u64,
+        blu: u64,
+        session_quota: u8,
+    ) -> Self {
         info!("New group created for {}", dashboard);
         Self {
             dashboard,
@@ -115,6 +125,7 @@ impl Group {
             teams: vec![TeamChannels { red, blu }],
             session: Vec::new(),
             session_increment: 0,
+            session_quota,
         }
     }
 
@@ -124,7 +135,10 @@ impl Group {
 
     pub fn create_session(&mut self) {
         self.session_increment += 1;
-        info!("[model] Creating new session with ID: {}", self.session_increment);
+        info!(
+            "[model] Creating new session with ID: {}",
+            self.session_increment
+        );
         self.session.push(Session::new(self.session_increment));
     }
 
@@ -132,10 +146,16 @@ impl Group {
         info!("[model] Attempting to end session with ID: {}", session_id);
         if let Some(pos) = self.session.iter().position(|s| s.id == session_id) {
             self.session.remove(pos);
-            info!("[model] Session {} successfully ended and removed", session_id);
+            info!(
+                "[model] Session {} successfully ended and removed",
+                session_id
+            );
             true
         } else {
-            info!("[model] Failed to end session {}: Session not found", session_id);
+            info!(
+                "[model] Failed to end session {}: Session not found",
+                session_id
+            );
             false
         }
     }
@@ -143,9 +163,9 @@ impl Group {
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Session {
-    pub id: u16,
+    pub id:     u16,
     pub status: SessionStatus,
-    pub pool: Vec<SessionPlayer>,
+    pub pool:   Vec<SessionPlayer>,
 }
 
 impl Session {
@@ -182,12 +202,15 @@ impl Session {
 
     pub fn generate_teams(&mut self) {
         info!("[model] Generating teams for session {}", self.id);
-        debug!("[model] Cloned {} players for team assignment", self.pool.len());
+        debug!(
+            "[model] Cloned {} players for team assignment",
+            self.pool.len()
+        );
         let mut rng = rand::rng();
         let mut players = self.pool.clone();
 
         // 1. First add buffered players to genpool (priority)
-        let mut buffered_players = self
+        let buffered_players = self
             .pool
             .iter()
             .filter(|p| p.buffered.is_some())
@@ -279,20 +302,31 @@ impl Session {
     pub fn add_player(&mut self, player: &Player) {
         // Clone players for team assignment
         let session_player = SessionPlayer::new(player.clone());
-        info!("[model] Player {} added to session {}. Total players: {}", player.i_discord, self.id, self.pool.len());
+        info!(
+            "[model] Player {} added to session {}. Total players: {}",
+            player.i_discord,
+            self.id,
+            self.pool.len()
+        );
         self.pool.push(session_player);
     }
 
     pub fn remove_player(&mut self, player: &SessionPlayer) {
         let before_count = self.pool.len();
-        self.pool.retain(|p| p.player.i_discord != player.player.i_discord);
+        self.pool
+            .retain(|p| p.player.i_discord != player.player.i_discord);
         let after_count = self.pool.len();
-        
+
         if before_count == after_count {
-            info!("[model] Player {} not found in session {}", player.player.i_discord, self.id);
+            info!(
+                "[model] Player {} not found in session {}",
+                player.player.i_discord, self.id
+            );
         } else {
-            info!("[model] Player {} removed from session {}. Remaining players: {}", 
-                  player.player.i_discord, self.id, after_count);
+            info!(
+                "[model] Player {} removed from session {}. Remaining players: {}",
+                player.player.i_discord, self.id, after_count
+            );
         }
     }
 
@@ -315,8 +349,8 @@ impl Session {
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct SessionPlayer {
-    pub player: Player,
-    pub team: Option<Team>,
+    pub player:   Player,
+    pub team:     Option<Team>,
     pub buffered: Option<Player>,
 }
 

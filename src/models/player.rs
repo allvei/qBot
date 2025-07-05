@@ -20,6 +20,13 @@ impl Role {
           Role::Admin  => ID_ADMIN,
         }
     }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Role::Runner => "Runner",
+            Role::Admin  => "Admin",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,6 +40,7 @@ pub enum Rank {
     Grandmaster,
 }
 
+#[allow(non_snake_case, unreachable_patterns)]
 impl Rank {
     pub fn id_hardcoded(&self) -> u64 {
         match self {
