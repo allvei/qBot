@@ -10,14 +10,14 @@ pub async fn check_role(cc: &CommandContext<'_>, role: &Role) -> Result<bool> {
         let member = guild_id.member(&cc.ctx.http, cc.intax.user.id).await;
         if let Ok(member) = member {
             info!(
-                "[role] Checking if user has {} role with ID: {}",
+                "[role.rs] Checking if user has {} role with ID: {}",
                 role.name(),
                 role.id()
             );
             return Ok(member.roles.contains(&RoleId::new(role.id())));
         } else {
             warn!(
-                "[role] Failed to fetch member for user {} in guild {}: {:?}",
+                "[role.rs] Failed to fetch member for user {} in guild {}: {:?}",
                 cc.intax.user.id,
                 guild_id,
                 member.as_ref().err()

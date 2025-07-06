@@ -60,7 +60,7 @@ pub struct ConfigFormat {
 /// Bot configuration struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub i_guild:      u64,
+    pub guild_id:     u64,
     pub i_runner:     u64,
     pub i_admin:      u64,
     pub ic_queue:     u64,
@@ -72,26 +72,15 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(
-        i_guild: u64,
-        i_runner: u64,
-        i_admin: u64,
-        ic_queue: u64,
-        ic_log: u64,
-        ic_buffer: u64,
-        ic_red: u64,
-        ic_blue: u64,
-    ) -> Self {
-        Self {
-            i_guild,
-            i_runner,
-            i_admin,
-            ic_queue,
-            ic_log,
-            ic_buffer,
-            ic_red,
-            ic_blue,
-            join_timeout: 120,
-        }
+    pub fn new(guild_id: u64, i_runner: u64, i_admin: u64, ic_queue: u64, ic_log: u64, ic_buffer: u64, ic_red: u64, ic_blue: u64) -> Self {
+        Self { guild_id,
+               i_runner,
+               i_admin,
+               ic_queue,
+               ic_log,
+               ic_buffer,
+               ic_red,
+               ic_blue,
+               join_timeout: 120 }
     }
 }
