@@ -15,7 +15,7 @@ use crate::models::session::Group;
 /// * `ctx`         - Ref to the Serenity context.
 /// * `interaction` - Ref to the command interaction.
 /// * `db`          - Ref to the database.
-pub async fn handle_queue_command<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
+pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     info!("[queue.rs] Processing queue command from user {}", cc.intax.user.id);
     let client: u64 = cc.intax.user.id.into();
     let _channel = cc.intax.channel_id;
@@ -56,7 +56,6 @@ pub async fn handle_queue_command<'a>(cc: &'a CommandContext<'a>) -> Result<()> 
 
         let embed = CreateEmbed::new().title("Left Queue")
                                       .description(format!("**{}** left the queue", cc.intax.user.name))
-                                      .color(0xff6b6b)
                                       .footer(CreateEmbedFooter::new(format!("Queue: {}/8", session.pool.len())));
 
         let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().embed(embed).ephemeral(true));
@@ -71,7 +70,6 @@ pub async fn handle_queue_command<'a>(cc: &'a CommandContext<'a>) -> Result<()> 
 
         let embed = CreateEmbed::new().title("Joined Queue")
                                       .description(format!("**{}** joined the queue", cc.intax.user.name))
-                                      .color(0x51cf66)
                                       .footer(CreateEmbedFooter::new(format!("Queue: {}/8", session.pool.len())));
 
         let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().embed(embed).ephemeral(true));
@@ -96,7 +94,7 @@ pub async fn handle_queue_command<'a>(cc: &'a CommandContext<'a>) -> Result<()> 
 /// * `ctx`         - Ref to the Serenity context.
 /// * `interaction` - Ref to the command interaction.
 /// * `db`          - Ref to the database.
-pub async fn handle_queue_status_command<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
+pub async fn status<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     info!("[queue.rs] Processing queue status command");
     // Get active group with session
     // TODO: Replace hardcoded 0 with the actual queue channel ID
@@ -126,7 +124,6 @@ pub async fn handle_queue_status_command<'a>(cc: &'a CommandContext<'a>) -> Resu
 
     let embed = CreateEmbed::new().title("Queue Status")
                                   .description(description)
-                                  .color(0x339af0)
                                   .footer(CreateEmbedFooter::new(format!("Queue: {}/8", count)));
 
     let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().embed(embed).ephemeral(true));
@@ -159,7 +156,6 @@ async fn notify_session_ready(ctx: &Context, db: &Arc<Database>, group: &Group) 
         let embed = CreateEmbed::new().title("QUOTA REACHED!")
                                       .description(format!("**8 players ready for pickup!**\n\n{}\n\nPlayers have 2 minutes to confirm. A runner will generate teams shortly.",
                                                            player_mentions.join(" ")))
-                                      .color(0xffd43b)
                                       .footer(CreateEmbedFooter::new("Awaiting team generation..."));
 
         channel.send_message(&ctx.http, CreateMessage::new().embed(embed)).await?;

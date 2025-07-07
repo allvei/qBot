@@ -7,9 +7,9 @@ use std::env;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use serenity::all::{ButtonStyle, CreateActionRow, CreateButton};
+use serenity::all::{ButtonStyle, CreateActionRow, CreateButton as CB};
 use serenity::async_trait;
-use serenity::builder::{CreateCommand as CC, CreateCommandOption as CCO, CreateEmbed, CreateEmbedFooter, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateMessage};
+use serenity::builder::{CreateCommand as CC, CreateCommandOption as CCO, CreateEmbed as CE, CreateEmbedFooter as CEF, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateMessage as CM};
 use serenity::model::application::{Command, CommandOptionType as COT, Interaction};
 use serenity::model::gateway::Ready;
 use serenity::model::id::ChannelId;
@@ -53,7 +53,7 @@ struct Handler {
 }
 
 /// Handler for Discord events with database access
-#[async_trait]
+// #[async_trait]
 impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
@@ -96,57 +96,58 @@ impl EventHandler for Handler {
             let cmd_ctx = CommandContext { ctx:   &ctx,
                                            intax: &command,
                                            db:    self.database.clone(), };
+            let cd  = &command.data;
+            let cdo = cd.options;
 
-            let result = match command.data.name.as_str() {
+            fn info() {
+                info!("{}: /{}", user_name, command.data.name);
+            }
+
+            fn get_arg(name: &str) -> Option<String> {
+                command.data
+                    .options
+                    .iter()
+                    .find(|opt| opt.name == name)
+                    .and_then(|opt| opt.value.as_str())
+                    .map(|s| s.to_string())
+            }
+
+            let result = match cd.name.as_str() {
                 "join" | "leave" => {
-                    info!("{}: /{}", user_name, command.data.name);
-                    queue::handle_queue_command(&cmd_ctx).await
+                    info();
+                    queue::queue(&cmd_ctx).await
                 }
                 "status" => {
-                    info!("{}: /{}", user_name, command.data.name);
-                    queue::handle_queue_status_command(&cmd_ctx).await
+                    info();
+                    queue::status(&cmd_ctx).await
                 }
                 "shuffle" => {
-                    info!("{}: /{}", user_name, command.data.name);
-                    session::handle_shuffle_command(&cmd_ctx).await
+                    info();
+                    session::shuffle(&cmd_ctx).await
                 }
                 "accept" => {
-                    info!("{}: /{}", user_name, command.data.name);
-                    let session_id = command.data
-                                       .options
-                                            .i.find(|opt| opt.name == "session_id")
-                                            .and_then(|opt| opt.value.as_str())
-                                            .map(|s| s.to_string());
-                    session::handle_accept_command(&cmd_ctx, &session_id).await
+                    info();
+                    session::accept(&cmd_ctx, get_arg("id")).await
                 }
                 "end" => {
-                    info!("{}: /{}", user_name, command.data.name);
-                    let session_id = command.data
-                                            .options
-                                            .iter()
-                                            .find(|opt| opt.name == "session_id")
-                                            .and_then(|opt| opt.value.as_str())
-                                            .map(|s| s.to_string());
-                    session::handle_end_command(&cmd_ctx, session_id).await
+                    info();
+                    session::end(&cmd_ctx, get_arg("id")).await
                 }
                 "buffer" => {
-                    info!("{}: /{}", user_name, command.data.name);
-                    if let Some(user_option) = command.data.options.first() {
+                    info();
+                    if let Some(user_option) = cdo.first() {
                         if let Some(user_id) = user_option.value.as_str() {
-                            admin::handle_buffer_command(&cmd_ctx, user_id.to_string()).await
-                        } else {
-                            Ok(())
+                            admin::buffer(&cmd_ctx, user_id.to_string()).await
                         }
-                    } else {
-                        Ok(())
                     }
+                    Ok(())
                 }
                 "config" => {
-                    info!("{}: /{}", user_name, command.data.name);
-                    let key = command.data.options.iter().find(|opt| opt.name == "key").and_then(|opt| opt.value.as_str()).unwrap_or("").to_string();
-                    let value = command.data.options.iter().find(|opt| opt.name == "value").and_then(|opt| opt.value.as_str()).map(|s| s.to_string());
+                    info();
+                    let key   = cdo.iter().find(|opt| opt.name == "key")  .and_then(|opt| opt.value.as_str()).unwrap_or("").to_string();
+                    let value = cdo.iter().find(|opt| opt.name == "value").and_then(|opt| opt.value.as_str()).map(|s| s.to_string());
 
-                    admin::handle_config_command(&cmd_ctx, key, value).await
+                    admin::config(&cmd_ctx, key, value).await
                 }
                 _ => {
                     let response = CIR::Message(CIRM::new().content("Unknown command").ephemeral(true));
@@ -168,20 +169,20 @@ impl EventHandler for Handler {
     }
 
     async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
-        let user = new.user_id;
-        let channel = new.channel_id;
+        let user        = new.user_id;
+        let channel     = new.channel_id;
         let old_channel = old.map(|s| s.channel_id);
 
         if channel.is_none() && old_channel.is_some() {
             info!("User {} left voice channel", user);
+
+            // TODO: create a function to get the session by channel
             let session = Session::get_session_by_channel(old_channel.unwrap().get()).await;
             if let Some(session) = session {
                 session.remove_player(user.get()).await;
             }
             return;
         }
-
-        
 
         // Handle user joining a queue channel
         if let Some(new_channel_id) = channel {
@@ -278,20 +279,19 @@ impl EventHandler for Handler {
                 let channel = ChannelId::new(dashboard_id);
 
                 // Create an embed message for the session ready notification
-                let embed = CreateEmbed::new()
+                let embed = CE::new()
                     .title("SESSION READY!")
                     .description(format!(
                         "A match with ID: {} is ready to start with {} players!",
                         session_id, player_count
                     ))
-                    .color(0xffd43b)
-                    .footer(CreateEmbedFooter::new("Awaiting team generation..."));
+                    .footer(CEF::new("Awaiting team generation..."));
 
                 // Create buttons for actions
-                let components = vec![CreateActionRow::Buttons(vec![CreateButton::new(format!("shuffle:{}", session_id)).style(ButtonStyle::Primary).label("Shuffle Teams").emoji('🎲')])];
+                let components = vec![CreateActionRow::Buttons(vec![CB::new(format!("shuffle:{}", session_id)).style(ButtonStyle::Primary).label("Shuffle Teams").emoji('🎲')])];
 
                 // Send the message with both embed and components
-                if let Ok(msg) = channel.send_message(&ctx.http, CreateMessage::new().embed(embed).components(components)).await {
+                if let Ok(msg) = channel.send_message(&ctx.http, CM::new().embed(embed).components(components)).await {
                     // Add a reaction to the message
                     if let Err(e) = msg.react(&ctx.http, '✅').await {
                         error!("Failed to add reaction: {}", e);
@@ -306,7 +306,7 @@ impl EventHandler for Handler {
 
 impl Handler {
     /// Sends a notification to the dashboard channel when a session is ready
-    async fn send_session_ready_notification(&self, ctx: &Context, group: &Group) {
+    async fn notify(&self, ctx: &Context, group: &Group) {
         let dashboard_channel = ChannelId::new(group.dashboard);
 
         // Ensure there are at least 8 players before slicing
@@ -322,17 +322,16 @@ impl Handler {
             }
         }
 
-        let embed = CreateEmbed::new()
+        let embed = CE::new()
             .title("SESSION READY!")
-            .description(format!(
+            .description(format!( // TODO: format according to group quota
                 "**8 players in queue channel!**\n\n{}\n\nUse `/shuffle` to generate teams.",
                 player_mentions.join(" ")
             ))
-            .color(0xffd43b)
-            .footer(CreateEmbedFooter::new("Awaiting team generation..."));
+            .footer(CEF::new("Awaiting team generation..."));
 
         // Send the message to the dashboard channel
-        if let Err(e) = dashboard_channel.send_message(&ctx.http, CreateMessage::new().embed(embed)).await {
+        if let Err(e) = dashboard_channel.send_message(&ctx.http, CM::new().embed(embed)).await {
             error!("Failed to send session ready notification: {:?}", e);
         } else {
             info!("Sent session ready notification to dashboard channel");

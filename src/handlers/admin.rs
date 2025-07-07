@@ -11,7 +11,7 @@ use crate::CommandContext;
 /// Handles the `/buffer` command, guarantees the player a spot in the next match.
 ///
 /// * `user_mention` - The user mention to buffer.
-pub async fn handle_buffer_command(cc: &CommandContext<'_>, user_mention: String) -> Result<()> {
+pub async fn buffer(cc: &CommandContext<'_>, user_mention: String) -> Result<()> {
     info!("[admin.rs] Processing buffer command for user mention: {}", user_mention);
     if !check_role(cc, &Role::Admin).await? {
         let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Only admins can buffer players!").ephemeral(true));
@@ -26,7 +26,7 @@ pub async fn handle_buffer_command(cc: &CommandContext<'_>, user_mention: String
 ///
 /// * `key`         - The key to modify.
 /// * `value`       - The value to set for the key.
-pub async fn handle_config_command(cc: &CommandContext<'_>, key: String, value: Option<String>) -> Result<()> {
+pub async fn config(cc: &CommandContext<'_>, key: String, value: Option<String>) -> Result<()> {
     info!("[admin.rs] Processing config command: key={}, value={:?}", key, value);
     info!("[admin.rs] Checking admin permissions for config command");
     // Check if user has admin permissions

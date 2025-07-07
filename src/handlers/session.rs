@@ -28,7 +28,7 @@ pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<S
 }
 
 /// Handles the `/shuffle` command, which shuffles the queue.
-pub async fn handle_shuffle_command(cc: &CommandContext<'_>) -> Result<()> {
+pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
     info!("[session.rs] Processing shuffle command");
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
@@ -95,7 +95,6 @@ pub async fn handle_shuffle_command(cc: &CommandContext<'_>) -> Result<()> {
                                                        stringify!(updated_group.session.last().unwrap().id),
                                                        red_team_names.join("\n"),
                                                        blu_team_names.join("\n")))
-                                  .color(0x51cf66)
                                   .footer(CreateEmbedFooter::new("Use /accept to confirm teams"));
 
     let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().embed(embed).ephemeral(true));
@@ -113,7 +112,6 @@ pub async fn handle_shuffle_command(cc: &CommandContext<'_>) -> Result<()> {
                                                                cc.intax.user.display_name(),
                                                                red_team_names.join(", "),
                                                                blu_team_names.join(", ")))
-                                          .color(0x339af0)
                                           .footer(CreateEmbedFooter::new("Awaiting acceptance..."));
 
         channel.send_message(&cc.ctx.http, serenity::all::CreateMessage::new().embed(log_embed)).await?;
@@ -128,7 +126,7 @@ pub async fn handle_shuffle_command(cc: &CommandContext<'_>) -> Result<()> {
 /// * `interaction` - Ref to the command interaction.
 /// * `db`          - Ref to the database.
 /// * `session_id`  - The ID of the session to accept.
-pub async fn handle_accept_command(cc: &CommandContext<'_>, i_session: &Option<String>) -> Result<()> {
+pub async fn accept(cc: &CommandContext<'_>, i_session: &Option<String>) -> Result<()> {
     info!("[session.rs] Processing accept command for session ID: {}", i_session.clone().unwrap_or("None".to_string()));
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
@@ -168,7 +166,6 @@ pub async fn handle_accept_command(cc: &CommandContext<'_>, i_session: &Option<S
 
         let log_embed = CreateEmbed::new().title("Session Accepted")
                                           .description(format!("**Session ID:** `{:?}`\n**Accepted by:** {}", group.session.last().unwrap().id, cc.intax.user.display_name()))
-                                          .color(0x51cf66)
                                           .footer(CreateEmbedFooter::new("Session in progress..."));
 
         channel.send_message(&cc.ctx.http, serenity::all::CreateMessage::new().embed(log_embed)).await?;
@@ -183,7 +180,7 @@ pub async fn handle_accept_command(cc: &CommandContext<'_>, i_session: &Option<S
 /// * `interaction` - Ref to the command interaction.
 /// * `db`          - Ref to the database.
 /// * `session_id`  - The ID of the session to end.
-pub async fn handle_end_command(cc: &CommandContext<'_>, session_id: Option<String>) -> Result<()> {
+pub async fn end(cc: &CommandContext<'_>, session_id: Option<String>) -> Result<()> {
     info!("[session.rs] Processing end command for session ID: {}", session_id.clone().unwrap_or("None".to_string()));
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
@@ -235,7 +232,6 @@ pub async fn handle_end_command(cc: &CommandContext<'_>, session_id: Option<Stri
 
         let log_embed = CreateEmbed::new().title("Session Ended")
                                           .description(format!("**Session ID:** `{:?}`\n**Ended by:** {}", session_id_display, cc.intax.user.display_name()))
-                                          .color(0xff6b6b)
                                           .footer(CreateEmbedFooter::new("Session completed"));
 
         channel.send_message(&cc.ctx.http, serenity::all::CreateMessage::new().embed(log_embed)).await?;
