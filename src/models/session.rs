@@ -51,33 +51,29 @@ pub struct Manager {
 
 impl Manager {
     pub fn new() -> Self {
-        Self {
-            servers: Vec::new(),
-        }
+        Self { servers: Vec::new() }
     }
 
     pub fn pull_list(&mut self, cache: &Cache) -> Self {
         let mut servers = Vec::new();
         cache.guilds().iter().for_each(|g| {
-            servers.push(Server::new(*g, None));
-        });
+                                 servers.push(Server::new(*g, None));
+                             });
         Self { servers }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Server {
-    pub guild:  GuildId,
-    pub groups: Vec<Group>,
+    pub guild_id: GuildId,
+    pub groups:   Vec<Group>,
 }
 
 impl Server {
-    pub fn new(guild: GuildId, group: Option<Group>) -> Self {
-        info!("New server created for {}", guild);
-        Self {
-            guild,
-            groups: vec![group.unwrap()],
-        }
+    pub fn new(guild_id: GuildId, group: Option<Group>) -> Self {
+        info!("New server created for {}", guild_id);
+        Self { guild_id,
+               groups: vec![group.unwrap()] }
     }
 
     pub fn groups(&self) -> &Vec<Group> {
@@ -99,6 +95,7 @@ impl Server {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Group {
+    pub guild_id:          u64,
     pub dashboard:         u64,
     pub chat:              u64,
     pub queue:             u64,
@@ -109,24 +106,16 @@ pub struct Group {
 }
 
 impl Group {
-    pub fn new(
-        dashboard: u64,
-        chat: u64,
-        queue: u64,
-        red: u64,
-        blu: u64,
-        session_quota: u8,
-    ) -> Self {
+    pub fn new(guild_id: u64, dashboard: u64, chat: u64, queue: u64, red: u64, blu: u64, session_quota: u8) -> Self {
         info!("New group created for {}", dashboard);
-        Self {
-            dashboard,
-            chat,
-            queue,
-            teams: vec![TeamChannels { red, blu }],
-            session: Vec::new(),
-            session_increment: 0,
-            session_quota,
-        }
+        Self { guild_id,
+               dashboard,
+               chat,
+               queue,
+               teams: vec![TeamChannels { red, blu }],
+               session: Vec::new(),
+               session_increment: 0,
+               session_quota }
     }
 
     pub fn add_team_channels(&mut self, red: u64, blu: u64) {
@@ -135,10 +124,7 @@ impl Group {
 
     pub fn create_session(&mut self) {
         self.session_increment += 1;
-        info!(
-            "[model.rs] Creating new session with ID: {}",
-            self.session_increment
-        );
+        info!("[model.rs] Creating new session with ID: {}", self.session_increment);
         self.session.push(Session::new(self.session_increment));
     }
 
@@ -146,16 +132,10 @@ impl Group {
         info!("[model.rs] Attempting to end session with ID: {}", session_id);
         if let Some(pos) = self.session.iter().position(|s| s.id == session_id) {
             self.session.remove(pos);
-            info!(
-                "[model.rs] Session {} successfully ended and removed",
-                session_id
-            );
+            info!("[model.rs] Session {} successfully ended and removed", session_id);
             true
         } else {
-            info!(
-                "[model.rs] Failed to end session {}: Session not found",
-                session_id
-            );
+            info!("[model.rs] Failed to end session {}: Session not found", session_id);
             false
         }
     }
@@ -170,11 +150,9 @@ pub struct Session {
 
 impl Session {
     pub fn new(id: u16) -> Self {
-        let session = Self {
-            id,
-            pool: Vec::new(),
-            status: SessionStatus::Idle,
-        };
+        let session = Self { id,
+                             pool: Vec::new(),
+                             status: SessionStatus::Idle };
         info!("New session started with ID: {}", id);
         session
     }
@@ -202,29 +180,16 @@ impl Session {
 
     pub fn generate_teams(&mut self) {
         info!("[model.rs] Generating teams for session {}", self.id);
-        debug!(
-            "[model.rs] Cloned {} players for team assignment",
-            self.pool.len()
-        );
+        debug!("[model.rs] Cloned {} players for team assignment", self.pool.len());
         let mut rng = rand::rng();
         let mut players = self.pool.clone();
 
         // 1. First add buffered players to genpool (priority)
-        let buffered_players = self
-            .pool
-            .iter()
-            .filter(|p| p.buffered.is_some())
-            .cloned()
-            .collect::<Vec<_>>();
+        let buffered_players = self.pool.iter().filter(|p| p.buffered.is_some()).cloned().collect::<Vec<_>>();
 
         // 2. Fill remaining slots with non-buffered players
         let remaining_slots = 8 - buffered_players.len(); // Assuming 8 players per match
-        let mut non_buffered = self
-            .pool
-            .iter()
-            .filter(|p| p.buffered.is_none())
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut non_buffered = self.pool.iter().filter(|p| p.buffered.is_none()).cloned().collect::<Vec<_>>();
 
         // Take only what we need
         if non_buffered.len() > remaining_slots {
@@ -233,20 +198,20 @@ impl Session {
 
         // 3. Sort players by ELO in descending order
         players.sort_by(|a, b| {
-            let a_elo = a.player.rank.unwrap_or(Rank::Beginner).elo();
-            let b_elo = b.player.rank.unwrap_or(Rank::Beginner).elo();
+                   let a_elo = a.player.rank.unwrap_or(Rank::Beginner).elo();
+                   let b_elo = b.player.rank.unwrap_or(Rank::Beginner).elo();
 
-            // Randomize order for players with identical ELO
-            if a_elo == b_elo {
-                if rng.random::<bool>() {
-                    std::cmp::Ordering::Less
-                } else {
-                    std::cmp::Ordering::Greater
-                }
-            } else {
-                b_elo.cmp(&a_elo)
-            }
-        });
+                   // Randomize order for players with identical ELO
+                   if a_elo == b_elo {
+                       if rng.random::<bool>() {
+                           std::cmp::Ordering::Less
+                       } else {
+                           std::cmp::Ordering::Greater
+                       }
+                   } else {
+                       b_elo.cmp(&a_elo)
+                   }
+               });
 
         // 4. Distribute players in snake draft pattern (ABBAABBA)
         let mut team_a = Vec::new();
@@ -271,21 +236,13 @@ impl Session {
 
         // 5. Update the original pool with team assignments
         for player in &team_a {
-            if let Some(p) = self
-                .pool
-                .iter_mut()
-                .find(|p| p.player.i_discord == player.player.i_discord)
-            {
+            if let Some(p) = self.pool.iter_mut().find(|p| p.player.discord_id == player.player.discord_id) {
                 p.team = Some(Team::Red);
             }
         }
 
         for player in &team_b {
-            if let Some(p) = self
-                .pool
-                .iter_mut()
-                .find(|p| p.player.i_discord == player.player.i_discord)
-            {
+            if let Some(p) = self.pool.iter_mut().find(|p| p.player.discord_id == player.player.discord_id) {
                 p.team = Some(Team::Blu);
             }
         }
@@ -302,56 +259,66 @@ impl Session {
     pub fn add_player(&mut self, player: &Player) {
         // Clone players for team assignment
         let session_player = SessionPlayer::new(player.clone());
-        if !self.pool.contains(&session_player) {
-            info!(
-                "[model.rs] Player {} added to session {}. Total players: {}",
-                player.i_discord,
-                self.id,
-                self.pool.len()
-            );
-            self.pool.push(session_player);
-        } else {
-            info!(
-                "[model.rs] Player {} already in session {}",
-                player.i_discord,
-                self.id
-            );
-        }
+        info!("[model.rs] Player {} added to session {}. Total players: {}", player.discord_id, self.id, self.pool.len());
+        self.pool.push(session_player);
     }
 
     pub fn remove_player(&mut self, player: &SessionPlayer) {
         let before_count = self.pool.len();
-        self.pool
-            .retain(|p| p.player.i_discord != player.player.i_discord);
+        self.pool.retain(|p| p.player.discord_id != player.player.discord_id);
         let after_count = self.pool.len();
 
         if before_count == after_count {
-            info!(
-                "[model.rs] Player {} not found in session {}",
-                player.player.i_discord, self.id
-            );
+            info!("[model.rs] Player {} not found in session {}", player.player.discord_id, self.id);
         } else {
-            info!(
-                "[model.rs] Player {} removed from session {}. Remaining players: {}",
-                player.player.i_discord, self.id, after_count
-            );
+            info!("[model.rs] Player {} removed from session {}. Remaining players: {}", player.player.discord_id, self.id, after_count);
         }
     }
 
     pub fn buff(&mut self, user_id: u64, buffered: Option<Player>) {
-        self.pool
-            .iter_mut()
-            .find(|m| m.player.i_discord == user_id)
-            .unwrap()
-            .buff(buffered);
+        self.pool.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().buff(buffered);
     }
 
     pub fn unbuff(&mut self, user_id: u64) {
-        self.pool
-            .iter_mut()
-            .find(|m| m.player.i_discord == user_id)
-            .unwrap()
-            .unbuff();
+        self.pool.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().unbuff();
+    }
+
+    pub fn update_queue_status(&mut self, user: Player, queue_vc: Option<bool>, queue_cmd: Option<bool>) {
+        // if session is closed, ignore
+        if !matches!(self.status, SessionStatus::Idle | SessionStatus::Pull) {
+            return;
+        }
+
+        let uid = user.discord_id;
+        // find existing entry
+        if let Some(sp) = self.pool.iter_mut().find(|sp| sp.player.discord_id == uid) {
+            if let Some(v) = queue_vc {
+                sp.queue_vc = v;
+            }
+            if let Some(c) = queue_cmd {
+                sp.queue_cmd = c;
+            }
+
+            // if neither flag is true any more, remove them
+            if !sp.in_queue() {
+                self.pool.retain(|p| p.player.discord_id != uid);
+            }
+        } else if queue_vc.unwrap_or(false) || queue_cmd.unwrap_or(false) {
+            // first‐time join
+            let mut sp = SessionPlayer::new(user);
+            sp.queue_vc = queue_vc.unwrap_or(false);
+            sp.queue_cmd = queue_cmd.unwrap_or(false);
+            self.pool.push(sp);
+        }
+    }
+
+    /// Helper so you don’t have to remember SessionPlayer::new everywhere
+    pub fn on_voice_state_change(&mut self, user: Player, joined: bool) {
+        self.update_queue_status(user, Some(joined), None);
+    }
+
+    pub fn on_command_join(&mut self, user: Player, joined: bool) {
+        self.update_queue_status(user, None, Some(joined));
     }
 
     pub fn update_queue_status(&mut self, user: Player, queue_vc: Option<bool>, queue_cmd: Option<bool>) {
@@ -392,11 +359,11 @@ pub struct SessionPlayer {
 
 impl SessionPlayer {
     pub fn new(player: Player) -> Self {
-        Self {
-            player,
-            team: None,
-            buffered: None,
-        }
+        Self { player,
+               team: None,
+               buffered: None,
+               queue_vc: false,
+               queue_cmd: false }
     }
 
     pub fn buff(&mut self, buffered: Option<Player>) {
