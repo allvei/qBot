@@ -1,7 +1,7 @@
 // CHECK ME
 
 use anyhow::Result;
-use serenity::all::{Colour, CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage};
+use serenity::all::{CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
 use tracing::info;
 
 use crate::handlers::role::check_role;
@@ -12,13 +12,13 @@ use crate::CommandContext;
 ///
 /// * `user_mention` - The user mention to buffer.
 pub async fn buffer(cc: &CommandContext<'_>, user_mention: String) -> Result<()> {
-    info!("[admin.rs] Processing buffer command for user mention: {}", user_mention);
+    info!("Processing buffer command for user mention: {}", user_mention);
     if !check_role(cc, &Role::Admin).await? {
-        let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Only admins can buffer players!").ephemeral(true));
+        let response = CIR::Message(CIRM::new().content("Only admins can buffer players!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
-
+    // TODO: Actually buffer the player
     Ok(())
 }
 
@@ -27,36 +27,32 @@ pub async fn buffer(cc: &CommandContext<'_>, user_mention: String) -> Result<()>
 /// * `key`         - The key to modify.
 /// * `value`       - The value to set for the key.
 pub async fn config(cc: &CommandContext<'_>, key: String, value: Option<String>) -> Result<()> {
-    info!("[admin.rs] Processing config command: key={}, value={:?}", key, value);
-    info!("[admin.rs] Checking admin permissions for config command");
-    // Check if user has admin permissions
+    info!("Processing config: key={}, value={:?}", key, value);
     if !check_role(cc, &Role::Admin).await? {
-        let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Only session admins can modify the config!").ephemeral(true));
+        info!("User is not an admin");
+        let response = CIR::Message(CIRM::new().content("Only session admins can modify the config!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
     if let Some(val) = value {
-        info!("[admin.rs] Setting config {} = {}", key, val);
-        // Set config value
+        info!("Setting config {} = {}", key, val);
+
         cc.db.get_config().await?;
 
-        let embed = CreateEmbed::new().title("Config Updated")
-                                      .description(format!("Set `{}` = `{}`", key, val))
-                                      .colour(Colour::from_rgb(81, 207, 102));
+        let embed = CE::new().title("Config Updated")
+                                      .description(format!("Set `{}` = `{}`", key, val));
 
-        let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().embed(embed).ephemeral(true));
+        let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
 
         cc.intax.create_response(&cc.ctx.http, response).await?;
     } else {
-        // Get current config
         let config = match cc.db.get_config().await {
             Ok(cfg) => cfg,
             Err(e) => {
-                let err_embed = CreateEmbed::new().title("Failed to Load Config")
-                                                  .description(format!("Error: {e}\nPlease create a config using `/config`."))
-                                                  .colour(Colour::from_rgb(219, 47, 56));
-                let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().embed(err_embed).ephemeral(true));
+                let err_embed = CE::new().title("Failed to Load Config")
+                                                  .description(format!("Error: {e}\nPlease create a config using `/config`."));
+                let response = CIR::Message(CIRM::new().embed(err_embed).ephemeral(true));
                 cc.intax.create_response(&cc.ctx.http, response).await?;
                 return Ok(());
             }
@@ -72,9 +68,9 @@ pub async fn config(cc: &CommandContext<'_>, key: String, value: Option<String>)
                                   Admin Role: `{}`",
                                   config.guild_id, config.ic_queue, config.ic_red, config.ic_blue, config.join_timeout, config.i_runner, config.i_admin);
 
-        let embed = CreateEmbed::new().title("Bot Configuration").description(config_text).colour(Colour::from_rgb(51, 175, 240));
+        let embed = CE::new().title("Bot Configuration").description(config_text);
 
-        let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().embed(embed).ephemeral(true));
+        let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
 
         cc.intax.create_response(&cc.ctx.http, response).await?;
     }

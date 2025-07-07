@@ -92,7 +92,7 @@ pub struct Player {
 
 impl Player {
     pub fn new(discord_id: u64, steam_id64: u64, guild_id: Option<u64>) -> Player {
-        info!("[player.rs] Creating new player: discord={}, steam={}, guild={:?}", discord_id, steam_id64, guild_id);
+        info!("Creating new player: discord={}, steam={}, guild={:?}", discord_id, steam_id64, guild_id);
         Player { guild_id: guild_id.unwrap_or(0),
                  discord_id,
                  steam_id: Some(steam_id64),
@@ -101,12 +101,12 @@ impl Player {
     }
 
     pub fn set_rank(&mut self, rank: Option<Rank>) {
-        info!("[player.rs] Setting rank for player {}: {:?}", self.discord_id, rank);
+        info!("Setting rank for player {}: {:?}", self.discord_id, rank);
         self.rank = rank;
     }
 
     pub fn set_role(&mut self, role: Option<Role>) {
-        info!("[player.rs] Setting role for player {}: {:?}", self.discord_id, role);
+        info!("Setting role for player {}: {:?}", self.discord_id, role);
         self.role = role;
     }
 }

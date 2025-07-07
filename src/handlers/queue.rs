@@ -16,31 +16,31 @@ use crate::models::session::Group;
 /// * `interaction` - Ref to the command interaction.
 /// * `db`          - Ref to the database.
 pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
-    info!("[queue.rs] Processing queue command from user {}", cc.intax.user.id);
+    info!("Processing queue command from user {}", cc.intax.user.id);
     let client: u64 = cc.intax.user.id.into();
     let _channel = cc.intax.channel_id;
-    info!("[queue.rs] Channel ID: {}", cc.intax.channel_id);
+    info!("Channel ID: {}", cc.intax.channel_id);
 
-    info!("[queue.rs] Getting active group with channel ID {}", cc.intax.channel_id.get());
+    info!("Getting active group with channel ID {}", cc.intax.channel_id.get());
     // Get active group with session
     let mut group = cc.db.get_group(cc.intax.channel_id.get()).await?;
 
     // Ensure group has at least one session
     if group.session.is_empty() {
-        info!("[queue.rs] No active sessions found, creating a new session");
+        info!("No active sessions found, creating a new session");
         group.create_session();
     } else {
-        info!("[queue.rs] Found existing sessions: {}", group.session.len());
+        info!("Found existing sessions: {}", group.session.len());
     }
 
     // Get player info - try to get user or create if not exists
     let player = match cc.db.get_user(client).await {
         Ok(user) => {
-            info!("[queue.rs] Found user in db!");
+            info!("Found user in db!");
             user
         }
         Err(_) => {
-            info!("[queue.rs] Creating new user in db!");
+            info!("Creating new user in db!");
             cc.db.new_user(client).await?
         }
     };
@@ -51,7 +51,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     if session.pool.iter().any(|sp| sp.player.discord_id == client) {
         // Remove a player from the session
         let session = group.session.last_mut().expect("No active session found");
-        info!("[queue.rs] Removing player {} from session", player.discord_id);
+        info!("Removing player {} from session", player.discord_id);
         session.pool.retain(|sp| sp.player.discord_id != client);
 
         let embed = CreateEmbed::new().title("Left Queue")
@@ -80,12 +80,12 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
 
         // Check if session is full
         if session.pool.len() >= 8 {
-            info!("[queue.rs] Session is now full with {} players", session.pool.len());
+            info!("Session is now full with {} players", session.pool.len());
             notify_session_ready(cc.ctx, &cc.db, &group).await?;
         }
     }
 
-    info!("[queue.rs] Command processed successfully, sending response");
+    info!("Command processed successfully, sending response");
     Ok(())
 }
 
@@ -95,7 +95,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
 /// * `interaction` - Ref to the command interaction.
 /// * `db`          - Ref to the database.
 pub async fn status<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
-    info!("[queue.rs] Processing queue status command");
+    info!("Processing queue status command");
     // Get active group with session
     // TODO: Replace hardcoded 0 with the actual queue channel ID
     let group = cc.db.get_group(cc.intax.channel_id.get()).await?;

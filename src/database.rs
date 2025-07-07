@@ -44,7 +44,7 @@ impl Database {
     }
 
     pub async fn init_db(&self) -> Result<()> {
-        info!("[database.rs] Initializing database");
+        info!("Initializing database");
         self.init_config_table().await?;
         self.init_user_table().await?;
         self.init_group_table().await?;
@@ -52,7 +52,7 @@ impl Database {
     }
 
     pub async fn new_column(&self, table: &str, columns: Vec<&str>) -> Result<()> {
-        info!("[database.rs] Adding columns {:?} to table {} if not present", columns, table);
+        info!("Adding columns {:?} to table {} if not present", columns, table);
 
         // Get existing columns from PRAGMA table_info
         let existing_cols: Vec<String> = sqlx::query(&format!("PRAGMA table_info({})", table)).fetch_all(&self.pool)
@@ -63,7 +63,7 @@ impl Database {
 
         for &col in &columns {
             if !existing_cols.contains(&col.to_string()) {
-                info!("[database.rs] Creating new column {} for table {}", col, table);
+                info!("Creating new column {} for table {}", col, table);
                 sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {}", table, col)).execute(&self.pool).await?;
             }
         }
@@ -71,7 +71,7 @@ impl Database {
     }
 
     pub async fn new_table(&self, table: &str) -> Result<()> {
-        info!("[database.rs] Creating new table: {}", table);
+        info!("Creating new table: {}", table);
         sqlx::query(&format!("CREATE TABLE IF NOT EXISTS {} (id INTEGER PRIMARY KEY)", table)).execute(&self.pool).await?;
 
         Ok(())
@@ -81,7 +81,7 @@ impl Database {
         let result = sqlx::query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").fetch_all(&self.pool).await?;
 
         if result.is_empty() {
-            info!("[database.rs] Users table not found, creating...");
+            info!("Users table not found, creating...");
             self.new_table("users").await?;
             self.new_column("users", vec!["discord_id", "steam_id"]).await?;
         }
@@ -92,7 +92,7 @@ impl Database {
     ///
     /// Returns a `Result` containing the created user, or an `anyhow::Error` if creation fails.
     pub async fn new_user(&self, discord_id: u64) -> Result<Player> {
-        info!("[database.rs] Creating new user with discord_id: {}", discord_id);
+        info!("Creating new user with discord_id: {}", discord_id);
         let result = sqlx::query(
                                  "INSERT INTO users (discord_id, user)
             VALUES (?, ?)
@@ -108,7 +108,7 @@ impl Database {
     }
 
     pub async fn get_user(&self, discord_id: u64) -> Result<Player> {
-        info!("[database.rs] Getting user with discord_id: {}", discord_id);
+        info!("Getting user with discord_id: {}", discord_id);
         let result = sqlx::query(
                                  "SELECT id, discord_id, steam_id, user, created_at, updated_at
             FROM users
@@ -117,20 +117,20 @@ impl Database {
                      .fetch_one(&self.pool)
                      .await?;
 
-        info!("[database.rs] Retrieved user data: id={}, discord_id={}, steam_id={}",
+        info!("Retrieved user data: id={}, discord_id={}, steam_id={}",
               result.get::<i64, _>("id"),
               result.get::<i64, _>("discord_id"),
               result.get::<i64, _>("steam_id"));
 
         let db_player = Player::new(result.get::<i64, _>("discord_id") as u64, result.get::<i64, _>("steam_id") as u64, None);
 
-        info!("[database.rs] Created new player: discord_id={}, steam_id={}", db_player.discord_id, db_player.steam_id.unwrap_or(0));
+        info!("Created new player: discord_id={}, steam_id={}", db_player.discord_id, db_player.steam_id.unwrap_or(0));
 
         Ok(db_player)
     }
 
     pub async fn set_user(&self, discord_id: u64, steam_id: u64) -> Result<Player> {
-        info!("[database.rs] Updating user with discord_id: {}", discord_id);
+        info!("Updating user with discord_id: {}", discord_id);
         let result = sqlx::query(
                                  "UPDATE users
             SET steam_id = ?, updated_at = CURRENT_TIMESTAMP
@@ -149,7 +149,7 @@ impl Database {
         let result = sqlx::query("SELECT name FROM sqlite_master WHERE type='table' AND name='groups'").fetch_all(&self.pool).await?;
 
         if result.is_empty() {
-            info!("[database.rs] Groups table not found, creating...");
+            info!("Groups table not found, creating...");
             self.new_table("groups").await?;
             self.new_column("groups", vec!["guild", "dashboard", "chat", "queue", "red", "blu", "session", "session_increment", "session_quota",])
                 .await?;
@@ -161,7 +161,7 @@ impl Database {
     ///
     /// Returns a `Result` containing the created group, or an `anyhow::Error` if creation fails.
     pub async fn new_group(&self, guild_id: u64, dashboard: u64, chat: u64, queue: u64, red: u64, blu: u64, session_quota: u8) -> Result<Group> {
-        info!("[database.rs] Creating new group with queue: {}", queue);
+        info!("Creating new group with queue: {}", queue);
         let result = sqlx::query(
                                  "INSERT INTO groups (guild_id, dashboard, chat, queue, red, blu, session_quota)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -193,7 +193,7 @@ impl Database {
     ///
     /// Returns a `Result` containing the group, or an `anyhow::Error` if not found.
     pub async fn get_group(&self, queue_id: u64) -> Result<Group> {
-        info!("[database.rs] Getting group with queue_id: {}", queue_id);
+        info!("Getting group with queue_id: {}", queue_id);
         let result = sqlx::query(
                                  "SELECT dashboard, chat, queue, red, blu, session_increment, session_quota
             FROM groups
@@ -219,7 +219,7 @@ impl Database {
     ///
     /// Returns a `Result` containing the updated group, or an `anyhow::Error` if update fails.
     pub async fn set_group(&self, guild_id: u64, queue_id: u64, dashboard: u64, chat: u64, red: u64, blu: u64, session_quota: u8) -> Result<Group> {
-        info!("[database.rs] Updating group with queue_id: {}", queue_id);
+        info!("Updating group with queue_id: {}", queue_id);
         let result = sqlx::query(
                                  "UPDATE groups
             SET dashboard = ?, chat = ?, red = ?, blu = ?, session_quota = ?
@@ -252,7 +252,7 @@ impl Database {
         let result = sqlx::query("SELECT name FROM sqlite_master WHERE type='table' AND name='config'").fetch_all(&self.pool).await?;
 
         if result.is_empty() {
-            info!("[database.rs] Config table not found, creating...");
+            info!("Config table not found, creating...");
             sqlx::query(
                         "CREATE TABLE config (
                     guild    INTEGER NOT NULL UNIQUE,
@@ -276,11 +276,11 @@ impl Database {
     /// Returns a `Result` containing the populated `BotConfig` object or an error if the database
     /// query fails.
     pub async fn get_config(&self) -> Result<Config, anyhow::Error> {
-        info!("[database.rs] Getting config from database");
+        info!("Getting config from database");
         let rows = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config").fetch_all(&self.pool).await?;
 
         if rows.is_empty() {
-            error!("[database.rs] No config values found in database");
+            error!("No config values found in database");
             return Err(anyhow::anyhow!("No configuration values found in database"));
         }
 
@@ -309,13 +309,13 @@ impl Database {
     /// * `key` - The key of the configuration item to set.
     /// * `value` - The value to associate with the key.
     pub async fn set_config(&self, key: &str, value: &str) -> Result<()> {
-        info!("[database.rs] Setting config key '{}' to value '{}'", key, value);
+        info!("Setting config key '{}' to value '{}'", key, value);
         let query_result = sqlx::query("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)").bind(key).bind(value).execute(&self.pool).await;
 
         match query_result {
             Ok(_) => Ok(()),
             Err(e) => {
-                error!("[database.rs] Failed to set config: {}", e);
+                error!("Failed to set config: {}", e);
                 Err(e.into())
             }
         }

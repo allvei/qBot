@@ -29,7 +29,7 @@ pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<S
 
 /// Handles the `/shuffle` command, which shuffles the queue.
 pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
-    info!("[session.rs] Processing shuffle command");
+    info!("Processing shuffle command");
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
         cc.create_bot_reply("Only runners can shuffle teams!").await?;
@@ -127,7 +127,7 @@ pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
 /// * `db`          - Ref to the database.
 /// * `session_id`  - The ID of the session to accept.
 pub async fn accept(cc: &CommandContext<'_>, i_session: &Option<String>) -> Result<()> {
-    info!("[session.rs] Processing accept command for session ID: {}", i_session.clone().unwrap_or("None".to_string()));
+    info!("Processing accept command for session ID: {}", i_session.clone().unwrap_or("None".to_string()));
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
         cc.create_bot_reply("Only runners can accept sessions!").await?;
@@ -150,7 +150,7 @@ pub async fn accept(cc: &CommandContext<'_>, i_session: &Option<String>) -> Resu
 
     // Update session status to Push
     group.session.last_mut().unwrap().status = SessionStatus::Push;
-    info!("[session.rs] Updating session status to PUSH");
+    info!("Updating session status to PUSH");
     // TODO: Persist group changes to DB if needed (no update_group method exists)
     // You may need to implement this in your database layer.
 
@@ -181,7 +181,7 @@ pub async fn accept(cc: &CommandContext<'_>, i_session: &Option<String>) -> Resu
 /// * `db`          - Ref to the database.
 /// * `session_id`  - The ID of the session to end.
 pub async fn end(cc: &CommandContext<'_>, session_id: Option<String>) -> Result<()> {
-    info!("[session.rs] Processing end command for session ID: {}", session_id.clone().unwrap_or("None".to_string()));
+    info!("Processing end command for session ID: {}", session_id.clone().unwrap_or("None".to_string()));
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
         cc.create_bot_reply("Only runners can end sessions!").await?;

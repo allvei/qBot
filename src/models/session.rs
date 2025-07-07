@@ -124,18 +124,18 @@ impl Group {
 
     pub fn create_session(&mut self) {
         self.session_increment += 1;
-        info!("[model.rs] Creating new session with ID: {}", self.session_increment);
+        info!("Creating new session with ID: {}", self.session_increment);
         self.session.push(Session::new(self.session_increment));
     }
 
     pub fn end_session(&mut self, session_id: u16) -> bool {
-        info!("[model.rs] Attempting to end session with ID: {}", session_id);
+        info!("Attempting to end session with ID: {}", session_id);
         if let Some(pos) = self.session.iter().position(|s| s.id == session_id) {
             self.session.remove(pos);
-            info!("[model.rs] Session {} successfully ended and removed", session_id);
+            info!("Session {} successfully ended and removed", session_id);
             true
         } else {
-            info!("[model.rs] Failed to end session {}: Session not found", session_id);
+            info!("Failed to end session {}: Session not found", session_id);
             false
         }
     }
@@ -159,28 +159,28 @@ impl Session {
 
     pub fn hot(&mut self) {
         // send notif
-        info!("[model.rs] Changing session {} status to HOT", self.id);
+        info!("Changing session {} status to HOT", self.id);
         self.status = SessionStatus::Hot;
     }
 
     pub fn push(&mut self) {
-        info!("[model.rs] Changing session {} status to PUSH", self.id);
+        info!("Changing session {} status to PUSH", self.id);
         self.status = SessionStatus::Push;
     }
 
     pub fn live(&mut self) {
-        info!("[model.rs] Changing session {} status to LIVE", self.id);
+        info!("Changing session {} status to LIVE", self.id);
         self.status = SessionStatus::Live;
     }
 
     pub fn pull(&mut self) {
-        info!("[model.rs] Changing session {} status to PULL", self.id);
+        info!("Changing session {} status to PULL", self.id);
         self.status = SessionStatus::Pull;
     }
 
     pub fn generate_teams(&mut self) {
-        info!("[model.rs] Generating teams for session {}", self.id);
-        debug!("[model.rs] Cloned {} players for team assignment", self.pool.len());
+        info!("Generating teams for session {}", self.id);
+        debug!("Cloned {} players for team assignment", self.pool.len());
         let mut rng = rand::rng();
         let mut players = self.pool.clone();
 
@@ -259,7 +259,7 @@ impl Session {
     pub fn add_player(&mut self, player: &Player) {
         // Clone players for team assignment
         let session_player = SessionPlayer::new(player.clone());
-        info!("[model.rs] Player {} added to session {}. Total players: {}", player.discord_id, self.id, self.pool.len());
+        info!("Player {} added to session {}. Total players: {}", player.discord_id, self.id, self.pool.len());
         self.pool.push(session_player);
     }
 
@@ -269,9 +269,9 @@ impl Session {
         let after_count = self.pool.len();
 
         if before_count == after_count {
-            info!("[model.rs] Player {} not found in session {}", player.player.discord_id, self.id);
+            info!("Player {} not found in session {}", player.player.discord_id, self.id);
         } else {
-            info!("[model.rs] Player {} removed from session {}. Remaining players: {}", player.player.discord_id, self.id, after_count);
+            info!("Player {} removed from session {}. Remaining players: {}", player.player.discord_id, self.id, after_count);
         }
     }
 
