@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use serenity::all::{ButtonStyle, CreateActionRow, CreateButton};
 use serenity::async_trait;
-use serenity::builder::{CreateCommand, CreateCommandOption, CreateEmbed, CreateEmbedFooter, CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage};
-use serenity::model::application::{CommandOptionType, Interaction};
+use serenity::builder::{CreateCommand as CC, CreateCommandOption as CCO, CreateEmbed, CreateEmbedFooter, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateMessage};
+use serenity::model::application::{Command, CommandOptionType as COT, Interaction};
 use serenity::model::gateway::Ready;
 use serenity::model::id::ChannelId;
 use serenity::model::voice::VoiceState;
@@ -23,6 +23,30 @@ use models::command::CommandContext;
 use models::config::{ID_BLU, ID_CHAT, ID_DASHBOARD, ID_QUEUE, ID_RED};
 use models::session::{Group, Manager, SessionPlayer, SessionStatus};
 
+fn cmd(name: impl Into<String>, desc: impl Into<String>) -> CC {
+    CC::new(name.into()).description(desc.into())
+}
+
+pub trait CmdOp: Sized {
+    fn op(self, name: impl Into<String>, desc: impl Into<String>, req: bool) -> Self;
+}
+
+impl CmdOp for CC {
+
+    /// Adds an option to the command
+    /// 
+    /// ### Arguments
+    /// * `name`
+    /// * `desc`
+    /// * `req` - Is it required?
+    /// 
+    /// ### Returns
+    /// The command with the added option
+    fn op(self, name: impl Into<String>, desc: impl Into<String>, req: bool) -> Self {
+        self.add_option(CCO::new(COT::String, name, desc).required(req))
+    }
+}
+
 struct Handler {
     database: Arc<Database>,
     guild_id: Arc<Mutex<Manager>>,
@@ -34,29 +58,34 @@ impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
 
-        let guilds = ctx.cache.guilds().len();
-        println!("Guilds in the Cache: {}", guilds);
+        let guild_count = ctx.cache.guilds().len();
+        println!("Connected to {} guilds", guild_count);
+        for guild in ctx.cache.guilds() {
+            if let Some(guild_data) = ctx.cache.guild(guild) {
+                println!("{}: {}", guild_data.name, guild_data.id);
+            }
+        }
 
         // Register slash commands globally or for specific guild
-        let commands = vec![CreateCommand::new("queue").description("Join or leave the queue")
-                                                       .add_option(CreateCommandOption::new(CommandOptionType::SubCommand, "join", "Join the queue"))
-                                                       .add_option(CreateCommandOption::new(CommandOptionType::SubCommand, "leave", "Leave the queue"))
-                                                       .add_option(CreateCommandOption::new(CommandOptionType::SubCommand, "status", "Check queue status")),
-                            CreateCommand::new("shuffle").description("Generate teams from queue"),
-                            CreateCommand::new("accept").description("Accept/confirm generated teams")
-                                                        .add_option(CreateCommandOption::new(CommandOptionType::String, "session_id", "Session ID to accept (optional)").required(false)),
-                            CreateCommand::new("end").description("End a session")
-                                                     .add_option(CreateCommandOption::new(CommandOptionType::String, "session_id", "Session ID to end (optional)").required(false)),
-                            CreateCommand::new("buffer").description("Buffer a player")
-                                                        .add_option(CreateCommandOption::new(CommandOptionType::String, "user", "User to buffer").required(true)),
-                            CreateCommand::new("config").description("View or set bot configuration")
-                                                        .add_option(CreateCommandOption::new(CommandOptionType::String, "key", "Configuration key").required(false))
-                                                        .add_option(CreateCommandOption::new(CommandOptionType::String, "value", "Configuration value").required(false)),];
+        let cmds = vec![cmd("join",   "Join the queue"),
+                        cmd("leave",  "Leave the queue"),
+                        cmd("status", "Check queue status"),
+                        cmd("shuffle","Generate teams from queue"),
+                        cmd("accept", "Accept/confirm generated teams")
+                           .op("id",   "Session ID to accept (optional)", false),
 
-        if let Err(why) = serenity::model::application::Command::set_global_commands(&ctx.http, commands).await {
-            error!("Cannot register global slash commands: {}", why);
-        } else {
-            info!("Registered global slash commands");
+                        cmd("end",    "End a session")
+                           .op("id",   "Session ID to end (optional)", false),
+
+                        cmd("buffer", "Buffer a player")
+                           .op("user", "User to buffer", true),
+
+                        cmd("config", "View or set bot configuration")
+                           .op("key",  "Configuration key", false)
+                           .op("value","Configuration value", false),];
+
+        if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
+            error!("Failed to register commands: {}", why);
         }
     }
 
@@ -69,17 +98,13 @@ impl EventHandler for Handler {
                                            db:    self.database.clone(), };
 
             let result = match command.data.name.as_str() {
-                "queue" => {
-                    if let Some(subcommand) = command.data.options.first() {
-                        info!("{}: /{} {}", user_name, command.data.name, subcommand.name);
-                        match subcommand.name.as_str() {
-                            "join" | "leave" => queue::handle_queue_command(&cmd_ctx).await,
-                            "status" => queue::handle_queue_status_command(&cmd_ctx).await,
-                            _ => Ok(()),
-                        }
-                    } else {
-                        Ok(())
-                    }
+                "join" | "leave" => {
+                    info!("{}: /{}", user_name, command.data.name);
+                    queue::handle_queue_command(&cmd_ctx).await
+                }
+                "status" => {
+                    info!("{}: /{}", user_name, command.data.name);
+                    queue::handle_queue_status_command(&cmd_ctx).await
                 }
                 "shuffle" => {
                     info!("{}: /{}", user_name, command.data.name);
@@ -88,9 +113,8 @@ impl EventHandler for Handler {
                 "accept" => {
                     info!("{}: /{}", user_name, command.data.name);
                     let session_id = command.data
-                                            .options
-                                            .iter()
-                                            .find(|opt| opt.name == "session_id")
+                                       .options
+                                            .i.find(|opt| opt.name == "session_id")
                                             .and_then(|opt| opt.value.as_str())
                                             .map(|s| s.to_string());
                     session::handle_accept_command(&cmd_ctx, &session_id).await
@@ -125,7 +149,7 @@ impl EventHandler for Handler {
                     admin::handle_config_command(&cmd_ctx, key, value).await
                 }
                 _ => {
-                    let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Unknown command").ephemeral(true));
+                    let response = CIR::Message(CIRM::new().content("Unknown command").ephemeral(true));
                     command.create_response(&ctx.http, response).await.map_err(|e| e.into())
                 }
             };
@@ -134,7 +158,7 @@ impl EventHandler for Handler {
                 error!("Error handling command '{}': {}", command.data.name, e);
 
                 // Try to respond with an error message if we haven't responded yet
-                let error_response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("An error occurred while processing your command").ephemeral(true));
+                let error_response = CIR::Message(CIRM::new().content("An error occurred while processing your command").ephemeral(true));
 
                 if let Err(response_err) = command.create_response(&ctx.http, error_response).await {
                     error!("Failed to send error response: {}", response_err);
@@ -169,10 +193,7 @@ impl EventHandler for Handler {
             // First, get the player data without holding the lock
             info!("Fetching player data for user {}", user.get());
             let player = match self.database.get_user(user.get()).await {
-            info!("Fetching player data for user {}", user.get());
-            let player = match self.database.get_user(user.get()).await {
                 Ok(user) => user,
-                Err(_) => match self.database.new_user(user.get()).await {
                 Err(_) => match self.database.new_user(user.get()).await {
                     Ok(new_user) => new_user,
                     Err(e) => {

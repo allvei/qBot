@@ -10,7 +10,7 @@ use crate::database::Database;
 use crate::models::command::CommandContext;
 use crate::models::session::Group;
 
-/// Handles the `/queue` command, which allows players to join or leave the queue.
+/// Handles the `/join` and `/leave` commands, which allow players to join or leave the queue.
 ///
 /// * `ctx`         - Ref to the Serenity context.
 /// * `interaction` - Ref to the command interaction.
@@ -91,7 +91,7 @@ pub async fn handle_queue_command<'a>(cc: &'a CommandContext<'a>) -> Result<()> 
     Ok(())
 }
 
-/// Handles the `/queue status` command, which shows the current queue status.
+/// Handles the `/status` command, which shows the current queue status.
 ///
 /// * `ctx`         - Ref to the Serenity context.
 /// * `interaction` - Ref to the command interaction.
@@ -110,7 +110,7 @@ pub async fn handle_queue_status_command<'a>(cc: &'a CommandContext<'a>) -> Resu
     };
 
     let description = if count == 0 {
-        "Queue is empty. Use `/queue join` to join!".to_string()
+        "Queue is empty. Use `/join` to join!".to_string()
     } else {
         let mut parts = vec![format!("**{} players in queue:**\n", count)];
         // Ensure we have a session and access its pool
