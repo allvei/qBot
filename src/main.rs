@@ -232,78 +232,33 @@ impl EventHandler for Handler {
     }
 
     async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
-        info!(
-            "Voice state update: User={}, Old={:?}, New={:?}",
-            new.user_id,
-            old.as_ref().and_then(|vs| vs.channel_id).map(|id| id.get()),
-            new.channel_id.map(|id| id.get())
-        );
-        let user_id = new.user_id;
-        let old_channel_id = old.and_then(|vs| vs.channel_id);
-        let new_channel_id = new.channel_id;
+        let user = new.user_id;
+        let channel = new.channel_id;
+        let old_channel = old.map(|s| s.channel_id);
 
-        // Handle user leaving a queue channel
-        if let Some(old_channel_id) = old_channel_id {
-            info!(
-                "User {} left voice channel {}",
-                user_id,
-                old_channel_id.get()
-            );
-            // Use a block to ensure the mutex guard is dropped at the end of this scope
-            {
-                let mut guild = self.guild.lock().unwrap();
-
-                // Check all groups to find if this was a queue channel
-                for server in guild.servers.iter_mut() {
-                    for group in server.groups.iter_mut() {
-                        if group.queue == old_channel_id.get() {
-                            // User left a queue channel - remove them from the session
-                            // Ensure there is at least one session
-                            if let Some(session) = group.session.last_mut() {
-                                if session
-                                    .pool
-                                    .iter()
-                                    .any(|sp| sp.player.i_discord == user_id.get())
-                                {
-                                    session
-                                        .pool
-                                        .retain(|sp| sp.player.i_discord != user_id.get());
-                                    info!(
-                                        "User {} left queue channel and was removed from session",
-                                        user_id
-                                    );
-                                    info!("Session now has {} players", session.pool.len());
-                                }
-                                // Session notification when the queue reaches capacity
-                                if session.pool.len() < 8
-                                    && matches!(session.status, SessionStatus::Hot)
-                                {
-                                    session.status = SessionStatus::Idle;
-                                    info!(
-                                        "Session is now IDLE with {} players",
-                                        session.pool.len()
-                                    );
-                                }
-                            }
-                            break; // Break only if we found the matching group
-                        }
-                    }
-                }
-            } // Mutex guard is released here when it goes out of scope
+        if channel.is_none() && old_channel.is_some() {
+            info!("User {} left voice channel", user);
+            let session = Session::get_session_by_channel(old_channel.unwrap().get()).await;
+            if let Some(session) = session {
+                session.remove_player(user.get()).await;
+            }
+            return;
         }
 
+        
+
         // Handle user joining a queue channel
-        if let Some(new_channel_id) = new_channel_id {
+        if let Some(new_channel_id) = channel {
             info!(
                 "User {} joined voice channel {}",
-                user_id,
+                user,
                 new_channel_id.get()
             );
             // First, get the player data without holding the lock
-            info!("Fetching player data for user {}", user_id.get());
-            let player = match self.database.get_user(user_id.get()).await {
+            info!("Fetching player data for user {}", user.get());
+            let player = match self.database.get_user(user.get()).await {
                 Ok(user) => user,
-                Err(_) => match self.database.new_user(user_id.get()).await {
+                Err(_) => match self.database.new_user(user.get()).await {
                     Ok(new_user) => new_user,
                     Err(e) => {
                         error!("Failed to create new user: {}", e);
@@ -325,7 +280,7 @@ impl EventHandler for Handler {
                     for group in server.groups.iter_mut() {
                         if group.queue == new_channel_id.get() {
                             // User joined queue channel
-                            info!("User {} joined queue channel {}", user_id, new_channel_id);
+                            info!("User {} joined queue channel {}", user, new_channel_id);
 
                             // Ensure there is at least one active session
                             if group.session.is_empty() {
@@ -339,9 +294,9 @@ impl EventHandler for Handler {
                                 if session
                                     .pool
                                     .iter()
-                                    .any(|sp| sp.player.i_discord == user_id.get())
+                                    .any(|sp| sp.player.i_discord == user.get())
                                 {
-                                    info!("User {} is already in session", user_id);
+                                    info!("User {} is already in session", user);
                                     break;
                                 }
 
@@ -361,7 +316,7 @@ impl EventHandler for Handler {
                                 session.add_player(&player);
                                 info!(
                                     "Added user {} to session, now has {} players",
-                                    user_id,
+                                    user,
                                     session.pool.len()
                                 );
 
@@ -395,7 +350,7 @@ impl EventHandler for Handler {
 
                 // Create an embed message for the session ready notification
                 let embed = CreateEmbed::new()
-                    .title("🔔 SESSION READY!")
+                    .title("SESSION READY!")
                     .description(format!(
                         "A match with ID: {} is ready to start with {} players!",
                         session_id, player_count
@@ -455,7 +410,7 @@ impl Handler {
         }
 
         let embed = CreateEmbed::new()
-            .title("🔔 SESSION READY!")
+            .title("SESSION READY!")
             .description(format!(
                 "**8 players in queue channel!**\n\n{}\n\nUse `/shuffle` to generate teams.",
                 player_mentions.join(" ")

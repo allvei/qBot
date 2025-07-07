@@ -23,38 +23,36 @@ use crate::{
 /// * `db`          - Ref to the database.
 pub async fn handle_queue_command<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     info!(
-        "[queue] Processing queue command from user {}",
+        "[queue.rs] Processing queue command from user {}",
         cc.intax.user.id
     );
     let client: u64 = cc.intax.user.id.into();
     let _channel = cc.intax.channel_id;
-    info!("[queue] Channel ID: {}", cc.intax.channel_id);
+    info!("[queue.rs] Channel ID: {}", cc.intax.channel_id);
 
     info!(
-        "[queue] Getting active group with channel ID {}",
+        "[queue.rs] Getting active group with channel ID {}",
         cc.intax.channel_id.get()
     );
     // Get active group with session
-    // TODO: Replace hardcoded 0 with the actual queue channel ID
     let mut group = cc.db.get_group(cc.intax.channel_id.get()).await?;
 
     // Ensure group has at least one session
     if group.session.is_empty() {
-        info!("[queue] No active sessions found, creating a new session");
+        info!("[queue.rs] No active sessions found, creating a new session");
         group.create_session();
     } else {
-        info!("[queue] Found existing sessions: {}", group.session.len());
+        info!("[queue.rs] Found existing sessions: {}", group.session.len());
     }
 
-    info!("[queue] Getting player info for user {}", client);
     // Get player info - try to get user or create if not exists
     let player = match cc.db.get_user(client).await {
         Ok(user) => {
-            info!("[queue] Found existing user");
+            info!("[queue.rs] Found user in db!");
             user
         }
         Err(_) => {
-            info!("[queue] Creating new user");
+            info!("[queue.rs] Creating new user in db!");
             cc.db.new_user(client).await?
         }
     };
@@ -65,7 +63,7 @@ pub async fn handle_queue_command<'a>(cc: &'a CommandContext<'a>) -> Result<()> 
     if session.pool.iter().any(|sp| sp.player.i_discord == client) {
         // Remove a player from the session
         let session = group.session.last_mut().expect("No active session found");
-        info!("[queue] Removing player {} from session", player.i_discord);
+        info!("[queue.rs] Removing player {} from session", player.i_discord);
         session.pool.retain(|sp| sp.player.i_discord != client);
 
         let embed = CreateEmbed::new()
@@ -89,10 +87,6 @@ pub async fn handle_queue_command<'a>(cc: &'a CommandContext<'a>) -> Result<()> 
     } else {
         // Add player to session
         let session = group.session.last_mut().expect("No active session found");
-        info!(
-            "[queue] Adding player to session with {} current players",
-            session.pool.len()
-        );
         session.add_player(&player);
 
         let embed = CreateEmbed::new()
@@ -115,16 +109,16 @@ pub async fn handle_queue_command<'a>(cc: &'a CommandContext<'a>) -> Result<()> 
         info!("User {} ({}) joined queue", cc.intax.user.name, client);
 
         // Check if session is full
-        if session.pool.len() >= 8 {
+        if session.pool.len() >= group.session_quota as usize {
             info!(
-                "[queue] Session is now full with {} players",
+                "[queue.rs] Session is now full with {} players",
                 session.pool.len()
             );
             notify_session_ready(cc.ctx, &cc.db, &group).await?;
         }
     }
 
-    info!("[queue] Command processed successfully, sending response");
+    info!("[queue.rs] Command processed successfully, sending response");
     Ok(())
 }
 
@@ -134,7 +128,7 @@ pub async fn handle_queue_command<'a>(cc: &'a CommandContext<'a>) -> Result<()> 
 /// * `interaction` - Ref to the command interaction.
 /// * `db`          - Ref to the database.
 pub async fn handle_queue_status_command<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
-    info!("[queue] Processing queue status command");
+    info!("[queue.rs] Processing queue status command");
     // Get active group with session
     // TODO: Replace hardcoded 0 with the actual queue channel ID
     let group = cc.db.get_group(cc.intax.channel_id.get()).await?;
@@ -204,7 +198,7 @@ async fn notify_session_ready(ctx: &Context, db: &Arc<Database>, group: &Group) 
         }
 
         let embed = CreateEmbed::new()
-            .title("🔔 QUOTA REACHED!")
+            .title("QUOTA REACHED!")
             .description(format!(
                 "**8 players ready for pickup!**\n\n{}\n\nPlayers have 2 minutes to confirm. A runner will generate teams shortly.",
                 player_mentions.join(" ")

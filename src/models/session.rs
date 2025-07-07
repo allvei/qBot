@@ -136,24 +136,24 @@ impl Group {
     pub fn create_session(&mut self) {
         self.session_increment += 1;
         info!(
-            "[model] Creating new session with ID: {}",
+            "[model.rs] Creating new session with ID: {}",
             self.session_increment
         );
         self.session.push(Session::new(self.session_increment));
     }
 
     pub fn end_session(&mut self, session_id: u16) -> bool {
-        info!("[model] Attempting to end session with ID: {}", session_id);
+        info!("[model.rs] Attempting to end session with ID: {}", session_id);
         if let Some(pos) = self.session.iter().position(|s| s.id == session_id) {
             self.session.remove(pos);
             info!(
-                "[model] Session {} successfully ended and removed",
+                "[model.rs] Session {} successfully ended and removed",
                 session_id
             );
             true
         } else {
             info!(
-                "[model] Failed to end session {}: Session not found",
+                "[model.rs] Failed to end session {}: Session not found",
                 session_id
             );
             false
@@ -181,29 +181,29 @@ impl Session {
 
     pub fn hot(&mut self) {
         // send notif
-        info!("[model] Changing session {} status to HOT", self.id);
+        info!("[model.rs] Changing session {} status to HOT", self.id);
         self.status = SessionStatus::Hot;
     }
 
     pub fn push(&mut self) {
-        info!("[model] Changing session {} status to PUSH", self.id);
+        info!("[model.rs] Changing session {} status to PUSH", self.id);
         self.status = SessionStatus::Push;
     }
 
     pub fn live(&mut self) {
-        info!("[model] Changing session {} status to LIVE", self.id);
+        info!("[model.rs] Changing session {} status to LIVE", self.id);
         self.status = SessionStatus::Live;
     }
 
     pub fn pull(&mut self) {
-        info!("[model] Changing session {} status to PULL", self.id);
+        info!("[model.rs] Changing session {} status to PULL", self.id);
         self.status = SessionStatus::Pull;
     }
 
     pub fn generate_teams(&mut self) {
-        info!("[model] Generating teams for session {}", self.id);
+        info!("[model.rs] Generating teams for session {}", self.id);
         debug!(
-            "[model] Cloned {} players for team assignment",
+            "[model.rs] Cloned {} players for team assignment",
             self.pool.len()
         );
         let mut rng = rand::rng();
@@ -302,13 +302,21 @@ impl Session {
     pub fn add_player(&mut self, player: &Player) {
         // Clone players for team assignment
         let session_player = SessionPlayer::new(player.clone());
-        info!(
-            "[model] Player {} added to session {}. Total players: {}",
-            player.i_discord,
-            self.id,
-            self.pool.len()
-        );
-        self.pool.push(session_player);
+        if !self.pool.contains(&session_player) {
+            info!(
+                "[model.rs] Player {} added to session {}. Total players: {}",
+                player.i_discord,
+                self.id,
+                self.pool.len()
+            );
+            self.pool.push(session_player);
+        } else {
+            info!(
+                "[model.rs] Player {} already in session {}",
+                player.i_discord,
+                self.id
+            );
+        }
     }
 
     pub fn remove_player(&mut self, player: &SessionPlayer) {
@@ -319,12 +327,12 @@ impl Session {
 
         if before_count == after_count {
             info!(
-                "[model] Player {} not found in session {}",
+                "[model.rs] Player {} not found in session {}",
                 player.player.i_discord, self.id
             );
         } else {
             info!(
-                "[model] Player {} removed from session {}. Remaining players: {}",
+                "[model.rs] Player {} removed from session {}. Remaining players: {}",
                 player.player.i_discord, self.id, after_count
             );
         }
@@ -345,13 +353,41 @@ impl Session {
             .unwrap()
             .unbuff();
     }
+
+    pub fn update_queue_status(&mut self, user: Player, queue_vc: Option<bool>, queue_cmd: Option<bool>) {
+        let uid = user.i_discord;
+        
+        if let Some(sp) = self.pool.iter_mut().find(|sp| sp.player.i_discord == uid) {
+            if let Some(queue_vc) = queue_vc { sp.queue_vc = queue_vc; }
+            if let Some(queue_cmd) = queue_cmd { sp.queue_cmd = queue_cmd; }
+
+            if !sp.in_queue() {
+                self.pool.retain(|p| p.player.i_discord != uid);
+            }
+        } else if queue_vc.unwrap_or(false) || queue_cmd.unwrap_or(false) {
+            let mut sp = SessionPlayer::new(user);
+            sp.queue_vc  = queue_vc.unwrap_or(false);
+            sp.queue_cmd = queue_cmd.unwrap_or(false);
+            self.pool.push(sp);
+        }
+    }
+
+    pub fn on_voice_state_change(&mut self, user: Player, joined: bool) {
+        self.update_queue_status(user, Some(joined), None);
+    }
+
+    pub fn on_command_join(&mut self, user: Player, joined: bool) {
+        self.update_queue_status(user, None, Some(joined));
+    }
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct SessionPlayer {
-    pub player:   Player,
-    pub team:     Option<Team>,
-    pub buffered: Option<Player>,
+    pub player:    Player,
+    pub team:      Option<Team>,
+    pub buffered:  Option<Player>,
+    pub queue_vc:  bool,
+    pub queue_cmd: bool,
 }
 
 impl SessionPlayer {
@@ -373,6 +409,10 @@ impl SessionPlayer {
 
     pub fn team(&mut self, team: Team) {
         self.team = Some(team);
+    }
+
+    pub fn in_queue(&self) -> bool {
+        self.queue_vc || self.queue_cmd
     }
 }
 

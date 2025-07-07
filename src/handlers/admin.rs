@@ -14,7 +14,7 @@ use crate::{handlers::role::check_role, CommandContext};
 /// * `user_mention` - The user mention to buffer.
 pub async fn handle_buffer_command(cc: &CommandContext<'_>, user_mention: String) -> Result<()> {
     info!(
-        "[admin] Processing buffer command for user mention: {}",
+        "[admin.rs] Processing buffer command for user mention: {}",
         user_mention
     );
     if !check_role(cc, &Role::Admin).await? {
@@ -40,10 +40,10 @@ pub async fn handle_config_command(
     value: Option<String>,
 ) -> Result<()> {
     info!(
-        "[admin] Processing config command: key={}, value={:?}",
+        "[admin.rs] Processing config command: key={}, value={:?}",
         key, value
     );
-    info!("[admin] Checking admin permissions for config command");
+    info!("[admin.rs] Checking admin permissions for config command");
     // Check if user has admin permissions
     if !check_role(cc, &Role::Admin).await? {
         let response = CreateInteractionResponse::Message(
@@ -56,12 +56,12 @@ pub async fn handle_config_command(
     }
 
     if let Some(val) = value {
-        info!("[admin] Setting config {} = {}", key, val);
+        info!("[admin.rs] Setting config {} = {}", key, val);
         // Set config value
         cc.db.get_config().await?;
 
         let embed = CreateEmbed::new()
-            .title("⚙️ Config Updated")
+            .title("Config Updated")
             .description(format!("Set `{}` = `{}`", key, val))
             .colour(Colour::from_rgb(81, 207, 102));
 
@@ -95,7 +95,7 @@ pub async fn handle_config_command(
         );
 
         let embed = CreateEmbed::new()
-            .title("⚙️ Bot Configuration")
+            .title("Bot Configuration")
             .description(config_text)
             .colour(Colour::from_rgb(51, 175, 240));
 

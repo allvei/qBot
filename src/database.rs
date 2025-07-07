@@ -53,7 +53,7 @@ impl Database {
     }
 
     pub async fn init_db(&self) -> Result<()> {
-        info!("[database] Initializing database");
+        info!("[database.rs] Initializing database");
         self.init_config().await?;
         self.init_users().await?;
         self.init_groups().await?;
@@ -62,7 +62,7 @@ impl Database {
 
     pub async fn new_column(&self, table: &str, columns: Vec<&str>) -> Result<()> {
         info!(
-            "[database] Adding columns {:?} to table {} if not present",
+            "[database.rs] Adding columns {:?} to table {} if not present",
             columns, table
         );
 
@@ -76,7 +76,7 @@ impl Database {
 
         for &col in &columns {
             if !existing_cols.contains(&col.to_string()) {
-                info!("[database] Creating new column {} for table {}", col, table);
+                info!("[database.rs] Creating new column {} for table {}", col, table);
                 sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {}", table, col))
                     .execute(&self.pool)
                     .await?;
@@ -86,7 +86,7 @@ impl Database {
     }
 
     pub async fn new_table(&self, table: &str) -> Result<()> {
-        info!("[database] Creating new table: {}", table);
+        info!("[database.rs] Creating new table: {}", table);
         sqlx::query(&format!(
             "CREATE TABLE IF NOT EXISTS {} (id INTEGER PRIMARY KEY)",
             table
@@ -98,7 +98,7 @@ impl Database {
     }
 
     pub async fn init_users(&self) -> Result<()> {
-        info!("[database] Checking if users have been created in the database");
+        info!("[database.rs] Checking if users have been created in the database");
         let result =
             sqlx::query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
                 .fetch_all(&self.pool)
@@ -116,7 +116,7 @@ impl Database {
     ///
     /// Returns a `Result` containing the created user, or an `anyhow::Error` if creation fails.
     pub async fn new_user(&self, i_discord: u64) -> Result<Player> {
-        info!("[database] Creating new user with i_discord: {}", i_discord);
+        info!("[database.rs] Creating new user with i_discord: {}", i_discord);
         let result = sqlx::query(
             "INSERT INTO users (i_discord, user)
             VALUES (?, ?)
@@ -137,7 +137,7 @@ impl Database {
     }
 
     pub async fn get_user(&self, i_discord: u64) -> Result<Player> {
-        info!("[database] Getting user with i_discord: {}", i_discord);
+        info!("[database.rs] Getting user with i_discord: {}", i_discord);
         let result = sqlx::query(
             "SELECT id, i_discord, i_steam, user, created_at, updated_at
             FROM users
@@ -148,7 +148,7 @@ impl Database {
         .await?;
 
         info!(
-            "[database] Retrieved user data: id={}, i_discord={}, i_steam={}",
+            "[database.rs] Retrieved user data: id={}, i_discord={}, i_steam={}",
             result.get::<i64, _>("id"),
             result.get::<i64, _>("i_discord"),
             result.get::<i64, _>("i_steam")
@@ -161,7 +161,7 @@ impl Database {
         );
 
         info!(
-            "[database] Created new player: i_discord={}, i_steam={}",
+            "[database.rs] Created new player: i_discord={}, i_steam={}",
             db_player.i_discord,
             db_player.i_steam.unwrap_or(0)
         );
@@ -170,7 +170,7 @@ impl Database {
     }
 
     pub async fn set_user(&self, i_discord: u64, i_steam: u64) -> Result<Player> {
-        info!("[database] Updating user with i_discord: {}", i_discord);
+        info!("[database.rs] Updating user with i_discord: {}", i_discord);
         let result = sqlx::query(
             "UPDATE users
             SET i_steam = ?, updated_at = CURRENT_TIMESTAMP
@@ -187,7 +187,7 @@ impl Database {
     }
 
     pub async fn init_groups(&self) -> Result<()> {
-        info!("[database] Checking if groups have been created in the database");
+        info!("[database.rs] Checking if groups have been created in the database");
         let result =
             sqlx::query("SELECT name FROM sqlite_master WHERE type='table' AND name='groups'")
                 .fetch_all(&self.pool)
@@ -225,7 +225,7 @@ impl Database {
         blu: u64,
         session_quota: u8,
     ) -> Result<Group> {
-        info!("[database] Creating new group with queue: {}", queue);
+        info!("[database.rs] Creating new group with queue: {}", queue);
         let result = sqlx::query(
             "INSERT INTO groups (dashboard, chat, queue, red, blu, session_quota)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -260,7 +260,7 @@ impl Database {
     ///
     /// Returns a `Result` containing the group, or an `anyhow::Error` if not found.
     pub async fn get_group(&self, queue_id: u64) -> Result<Group> {
-        info!("[database] Getting group with queue_id: {}", queue_id);
+        info!("[database.rs] Getting group with queue_id: {}", queue_id);
         let result = sqlx::query(
             "SELECT dashboard, chat, queue, red, blu, session_increment, session_quota
             FROM groups
@@ -298,7 +298,7 @@ impl Database {
         blu: u64,
         session_quota: u8,
     ) -> Result<Group> {
-        info!("[database] Updating group with queue_id: {}", queue_id);
+        info!("[database.rs] Updating group with queue_id: {}", queue_id);
         let result = sqlx::query(
             "UPDATE groups
             SET dashboard = ?, chat = ?, red = ?, blu = ?, session_quota = ?
@@ -331,7 +331,7 @@ impl Database {
     }
 
     pub async fn init_config(&self) -> Result<()> {
-        info!("[database] Checking if config has been created in the database");
+        info!("[database.rs] Checking if config has been created in the database");
         let result =
             sqlx::query("SELECT name FROM sqlite_master WHERE type='table' AND name='config'")
                 .fetch_all(&self.pool)
@@ -354,7 +354,7 @@ impl Database {
     /// Returns a `Result` containing the populated `BotConfig` object or an error if the database
     /// query fails.
     pub async fn get_config(&self) -> Result<Config> {
-        info!("[database] Getting config from database");
+        info!("[database.rs] Getting config from database");
         let rows = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config")
             .fetch_all(&self.pool)
             .await?;
@@ -387,7 +387,7 @@ impl Database {
     /// * `value` - The value to associate with the key.
     pub async fn set_config(&self, key: &str, value: &str) -> Result<()> {
         info!(
-            "[database] Setting config key '{}' to value '{}'",
+            "[database.rs] Setting config key '{}' to value '{}'",
             key, value
         );
         let query_result = sqlx::query("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)")
@@ -399,7 +399,7 @@ impl Database {
         match query_result {
             Ok(_) => Ok(()),
             Err(e) => {
-                error!("[database] Failed to set config: {}", e);
+                error!("[database.rs] Failed to set config: {}", e);
                 Err(e.into())
             }
         }
