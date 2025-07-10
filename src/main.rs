@@ -1,7 +1,15 @@
-// CHECK ME
+//! # Main Module
+//!
+//! This is the entry point for the Discord bot application.
+//! It sets up the Discord client, registers event handlers,
+//! and initializes the database connection.
+
 mod database;
+mod error;
 mod handlers;
 mod models;
+
+use error::{AppError, AppResult};
 
 use std::env;
 use std::sync::{Arc, Mutex};
@@ -9,7 +17,9 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use serenity::all::{ButtonStyle, CreateActionRow, CreateButton as CB};
 use serenity::async_trait;
-use serenity::builder::{CreateCommand as CC, CreateCommandOption as CCO, CreateEmbed as CE, CreateEmbedFooter as CEF, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateMessage as CM};
+use serenity::builder::{
+    CreateCommand as CC, CreateCommandOption as CCO, CreateEmbed as CE, CreateEmbedFooter as CEF, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateMessage as CM,
+};
 use serenity::model::application::{Command, CommandOptionType as COT, Interaction};
 use serenity::model::gateway::Ready;
 use serenity::model::id::ChannelId;
@@ -21,28 +31,43 @@ use database::Database;
 use handlers::{admin, queue, session};
 use models::command::CommandContext;
 use models::config::{ID_BLU, ID_CHAT, ID_DASHBOARD, ID_QUEUE, ID_RED};
-use models::session::{Group, Manager, SessionPlayer, SessionStatus};
+use models::player::Player;
+use models::session::{Group, Manager, SessionStatus};
 
-fn cmd(name: impl Into<String>, desc: impl Into<String>) -> CC {
+use crate::models::Session;
+
+fn cmd(
+    name: impl Into<String>,
+    desc: impl Into<String>,
+) -> CC {
     CC::new(name.into()).description(desc.into())
 }
 
 pub trait CmdOp: Sized {
-    fn op(self, name: impl Into<String>, desc: impl Into<String>, req: bool) -> Self;
+    fn op(
+        self,
+        name: impl Into<String>,
+        desc: impl Into<String>,
+        req: bool,
+    ) -> Self;
 }
 
 impl CmdOp for CC {
-
     /// Adds an option to the command
-    /// 
+    ///
     /// ### Arguments
     /// * `name`
     /// * `desc`
     /// * `req` - Is it required?
-    /// 
+    ///
     /// ### Returns
     /// The command with the added option
-    fn op(self, name: impl Into<String>, desc: impl Into<String>, req: bool) -> Self {
+    fn op(
+        self,
+        name: impl Into<String>,
+        desc: impl Into<String>,
+        req: bool,
+    ) -> Self {
         self.add_option(CCO::new(COT::String, name, desc).required(req))
     }
 }
@@ -53,9 +78,13 @@ struct Handler {
 }
 
 /// Handler for Discord events with database access
-// #[async_trait]
+#[async_trait]
 impl EventHandler for Handler {
-    async fn ready(&self, ctx: Context, ready: Ready) {
+    async fn ready(
+        &self,
+        ctx: Context,
+        ready: Ready,
+    ) {
         info!("{} is connected!", ready.user.name);
 
         let guild_count = ctx.cache.guilds().len();
@@ -67,22 +96,18 @@ impl EventHandler for Handler {
         }
 
         // Register slash commands globally or for specific guild
-        let cmds = vec![cmd("join",   "Join the queue"),
-                        cmd("leave",  "Leave the queue"),
-                        cmd("status", "Check queue status"),
-                        cmd("shuffle","Generate teams from queue"),
-                        cmd("accept", "Accept/confirm generated teams")
-                           .op("id",   "Session ID to accept (optional)", false),
-
-                        cmd("end",    "End a session")
-                           .op("id",   "Session ID to end (optional)", false),
-
-                        cmd("buffer", "Buffer a player")
-                           .op("user", "User to buffer", true),
-
-                        cmd("config", "View or set bot configuration")
-                           .op("key",  "Configuration key", false)
-                           .op("value","Configuration value", false),];
+        let cmds = vec![
+            cmd("join", "Join the queue"),
+            cmd("leave", "Leave the queue"),
+            cmd("status", "Check queue status"),
+            cmd("shuffle", "Generate teams from queue"),
+            cmd("accept", "Accept/confirm generated teams").op("id", "Session ID to accept (optional)", false),
+            cmd("end", "End a session").op("id", "Session ID to end (optional)", false),
+            cmd("buffer", "Buffer a player").op("user", "User to buffer", true),
+            cmd("config", "View or set bot configuration")
+                .op("key", "Configuration key", false)
+                .op("value", "Configuration value", false),
+        ];
 
         if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
             error!("Failed to register commands: {}", why);
@@ -90,27 +115,26 @@ impl EventHandler for Handler {
     }
 
     /// Handles interaction create events
-    async fn interaction_create(&self, ctx: Context, pl: Interaction) {
+    async fn interaction_create(
+        &self,
+        ctx: Context,
+        pl: Interaction,
+    ) {
         if let Interaction::Command(command) = pl {
             let user_name = &command.user.name;
-            let cmd_ctx = CommandContext { ctx:   &ctx,
-                                           intax: &command,
-                                           db:    self.database.clone(), };
-            let cd  = &command.data;
-            let cdo = cd.options;
+            let cmd_ctx = CommandContext {
+                ctx:   &ctx,
+                intax: &command,
+                db:    self.database.clone(),
+            };
+            let cd = &command.data;
+            let cdo = &cd.options;
 
-            fn info() {
+            let info = || {
                 info!("{}: /{}", user_name, command.data.name);
-            }
+            };
 
-            fn get_arg(name: &str) -> Option<String> {
-                command.data
-                    .options
-                    .iter()
-                    .find(|opt| opt.name == name)
-                    .and_then(|opt| opt.value.as_str())
-                    .map(|s| s.to_string())
-            }
+            let get_arg = |name: &str| -> Option<String> { command.data.options.iter().find(|opt| opt.name == name).and_then(|opt| opt.value.as_str()).map(|s| s.to_string()) };
 
             let result = match cd.name.as_str() {
                 "join" | "leave" => {
@@ -127,7 +151,7 @@ impl EventHandler for Handler {
                 }
                 "accept" => {
                     info();
-                    session::accept(&cmd_ctx, get_arg("id")).await
+                    session::accept(&cmd_ctx, &get_arg("id")).await
                 }
                 "end" => {
                     info();
@@ -137,15 +161,15 @@ impl EventHandler for Handler {
                     info();
                     if let Some(user_option) = cdo.first() {
                         if let Some(user_id) = user_option.value.as_str() {
-                            admin::buffer(&cmd_ctx, user_id.to_string()).await
+                            let _ = admin::buffer(&cmd_ctx, user_id.to_string()).await;
                         }
                     }
                     Ok(())
                 }
                 "config" => {
                     info();
-                    let key   = cdo.iter().find(|opt| opt.name == "key")  .and_then(|opt| opt.value.as_str()).unwrap_or("").to_string();
-                    let value = cdo.iter().find(|opt| opt.name == "value").and_then(|opt| opt.value.as_str()).map(|s| s.to_string());
+                    let key = get_arg("key").unwrap_or("".to_string());
+                    let value = get_arg("value").map(|s| s.to_string());
 
                     admin::config(&cmd_ctx, key, value).await
                 }
@@ -168,29 +192,35 @@ impl EventHandler for Handler {
         }
     }
 
-    async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
-        let user        = new.user_id;
-        let channel     = new.channel_id;
+    async fn voice_state_update(
+        &self,
+        ctx: Context,
+        old: Option<VoiceState>,
+        new: VoiceState,
+    ) {
+        let guild_id = new.guild_id;
+        let channel = new.channel_id;
+        let user = new.user_id;
         let old_channel = old.map(|s| s.channel_id);
 
-        if channel.is_none() && old_channel.is_some() {
-            info!("User {} left voice channel", user);
-
-            // TODO: create a function to get the session by channel
-            let session = Session::get_session_by_channel(old_channel.unwrap().get()).await;
-            if let Some(session) = session {
-                session.remove_player(user.get()).await;
+        {
+            let mut mgr = self.guild_id.lock().unwrap();
+            for server in mgr.servers.iter_mut() {
+                if let Some(group) = server.find_group_by_queue_channel_mut(channel.expect("Channel ID expected").get()) {
+                    if let Some(session) = group.session.iter_mut().find(|s| s.status == SessionStatus::Idle) {
+                        info!("User {} left voice channel", user);
+                        if let Err(e) = session.remove_player(user.get()) {
+                            info!("Error removing player from session: {}", e);
+                        }
+                        return;
+                    }
+                }
             }
-            return;
         }
 
         // Handle user joining a queue channel
-        if let Some(new_channel_id) = channel {
-            info!(
-                "User {} joined voice channel {}",
-                user,
-                new_channel_id.get()
-            );
+        if let Some(new_channel) = channel {
+            info!("User {} joined voice channel {}", user, new_channel.get());
             // First, get the player data without holding the lock
             info!("Fetching player data for user {}", user.get());
             let player = match self.database.get_user(user.get()).await {
@@ -217,7 +247,7 @@ impl EventHandler for Handler {
                     for group in server.groups.iter_mut() {
                         if group.queue == new_channel.get() {
                             // User joined queue channel
-                            info!("User {} joined queue channel {}", user, new_channel_id);
+                            info!("User {} joined queue channel {}", user, new_channel);
 
                             // Ensure there is at least one active session
                             if group.session.is_empty() {
@@ -228,11 +258,7 @@ impl EventHandler for Handler {
                             // Get the current session (last in the vector)
                             if let Some(session) = group.session.last_mut() {
                                 // Skip if user is already in the session
-                                if session
-                                    .pool
-                                    .iter()
-                                    .any(|sp| sp.player.i_discord == user.get())
-                                {
+                                if session.pool.iter().any(|sp| sp.discord_id == user.get()) {
                                     info!("User {} is already in session", user);
                                     break;
                                 }
@@ -248,23 +274,24 @@ impl EventHandler for Handler {
                                     break;
                                 }
 
-                                // Add player to session
-                                let _session_player = SessionPlayer::new(player.clone());
-                                session.add_player(&player);
-                                info!(
-                                    "Added user {} to session, now has {} players",
-                                    user,
-                                    session.pool.len()
-                                );
+                                // Add player to session with backreferences
+                                match session.add_player(&player) {
+                                    Ok(_) => {
+                                        info!("Added user {} to session, now has {} players", user, session.pool.len());
+                                        
+                                        // If we have enough players, update session status
+                                        if session.pool.len() >= 8 && !matches!(session.status, SessionStatus::Hot) {
+                                            session.status = SessionStatus::Hot;
+                                            info!("Session is now HOT with {} players", session.pool.len());
 
-                                // If we have enough players, update session status
-                                if session.pool.len() >= 8 && !matches!(session.status, SessionStatus::Hot) {
-                                    session.status = SessionStatus::Hot;
-                                    info!("Session is now HOT with {} players", session.pool.len());
-
-                                    // Store notification info to use after releasing the lock
-                                    dashboard_channel = Some(group.dashboard);
-                                    session_info = Some((session.id, session.pool.len()));
+                                            // Store notification info to use after releasing the lock
+                                            dashboard_channel = Some(group.dashboard);
+                                            session_info = Some((session.id, session.pool.len()));
+                                        }
+                                    },
+                                    Err(e) => {
+                                        info!("Failed to add user {} to session: {}", user, e);
+                                    }
                                 }
                             }
                             break; // We found the group, exit the loop
@@ -281,14 +308,14 @@ impl EventHandler for Handler {
                 // Create an embed message for the session ready notification
                 let embed = CE::new()
                     .title("SESSION READY!")
-                    .description(format!(
-                        "A match with ID: {} is ready to start with {} players!",
-                        session_id, player_count
-                    ))
+                    .description(format!("A match with ID: {} is ready to start with {} players!", session_id, player_count))
                     .footer(CEF::new("Awaiting team generation..."));
 
                 // Create buttons for actions
-                let components = vec![CreateActionRow::Buttons(vec![CB::new(format!("shuffle:{}", session_id)).style(ButtonStyle::Primary).label("Shuffle Teams").emoji('🎲')])];
+                let components = vec![CreateActionRow::Buttons(vec![CB::new(format!("shuffle:{}", session_id))
+                    .style(ButtonStyle::Primary)
+                    .label("Shuffle Teams")
+                    .emoji('🎲')])];
 
                 // Send the message with both embed and components
                 if let Ok(msg) = channel.send_message(&ctx.http, CM::new().embed(embed).components(components)).await {
@@ -306,7 +333,11 @@ impl EventHandler for Handler {
 
 impl Handler {
     /// Sends a notification to the dashboard channel when a session is ready
-    async fn notify(&self, ctx: &Context, group: &Group) {
+    async fn notify(
+        &self,
+        ctx: &Context,
+        group: &Group,
+    ) {
         let dashboard_channel = ChannelId::new(group.dashboard);
 
         // Ensure there are at least 8 players before slicing
@@ -318,13 +349,14 @@ impl Handler {
         // Access players in the latest session if available
         if let Some(session) = group.session.last() {
             for player in &session.pool[..players_to_mention] {
-                player_mentions.push(format!("<@{}>", player.player.discord_id));
+                player_mentions.push(format!("<@{}>", player.discord_id));
             }
         }
 
         let embed = CE::new()
             .title("SESSION READY!")
-            .description(format!( // TODO: format according to group quota
+            .description(format!(
+                // TODO: format according to group quota
                 "**8 players in queue channel!**\n\n{}\n\nUse `/shuffle` to generate teams.",
                 player_mentions.join(" ")
             ))
@@ -377,10 +409,13 @@ async fn main() -> Result<()> {
     let manager = Arc::new(Mutex::new(Manager::default()));
 
     // Create client
-    let mut client = Client::builder(&token, intents).event_handler(Handler { database: db.clone(),
-                                                                              guild_id: manager.clone(), })
-                                                     .await
-                                                     .expect("Error creating client");
+    let mut client = Client::builder(&token, intents)
+        .event_handler(Handler {
+            database: db.clone(),
+            guild_id: manager.clone(),
+        })
+        .await
+        .expect("Error creating client");
 
     // Set the manager in the client data for global access
     client.data.write().await.insert::<GuildKey>(manager.clone());

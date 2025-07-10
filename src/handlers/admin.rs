@@ -11,7 +11,9 @@ use crate::CommandContext;
 /// Handles the `/buffer` command, guarantees the player a spot in the next match.
 ///
 /// * `user_mention` - The user mention to buffer.
-pub async fn buffer(cc: &CommandContext<'_>, user_mention: String) -> Result<()> {
+pub async fn buffer(cc: &CommandContext<'_>,
+                    user_mention: String)
+                    -> Result<(), anyhow::Error> {
     info!("Processing buffer command for user mention: {}", user_mention);
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can buffer players!").ephemeral(true));
@@ -26,7 +28,10 @@ pub async fn buffer(cc: &CommandContext<'_>, user_mention: String) -> Result<()>
 ///
 /// * `key`         - The key to modify.
 /// * `value`       - The value to set for the key.
-pub async fn config(cc: &CommandContext<'_>, key: String, value: Option<String>) -> Result<()> {
+pub async fn config(cc: &CommandContext<'_>,
+                    key: String,
+                    value: Option<String>)
+                    -> Result<()> {
     info!("Processing config: key={}, value={:?}", key, value);
     if !check_role(cc, &Role::Admin).await? {
         info!("User is not an admin");
@@ -40,8 +45,7 @@ pub async fn config(cc: &CommandContext<'_>, key: String, value: Option<String>)
 
         cc.db.get_config().await?;
 
-        let embed = CE::new().title("Config Updated")
-                                      .description(format!("Set `{}` = `{}`", key, val));
+        let embed = CE::new().title("Config Updated").description(format!("Set `{}` = `{}`", key, val));
 
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
 
@@ -50,8 +54,7 @@ pub async fn config(cc: &CommandContext<'_>, key: String, value: Option<String>)
         let config = match cc.db.get_config().await {
             Ok(cfg) => cfg,
             Err(e) => {
-                let err_embed = CE::new().title("Failed to Load Config")
-                                                  .description(format!("Error: {e}\nPlease create a config using `/config`."));
+                let err_embed = CE::new().title("Failed to Load Config").description(format!("Error: {e}\nPlease create a config using `/config`."));
                 let response = CIR::Message(CIRM::new().embed(err_embed).ephemeral(true));
                 cc.intax.create_response(&cc.ctx.http, response).await?;
                 return Ok(());

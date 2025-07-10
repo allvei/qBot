@@ -5,6 +5,8 @@ use sqlx::prelude::FromRow;
 use tracing::info;
 
 use crate::models::config::*;
+use crate::models::session::Team;
+use crate::Session;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Role {
@@ -79,34 +81,110 @@ impl Rank {
     }
 }
 
-/// User data structure representing a player in the system
+/// User data structure representing a player in the Discord bot system.
+///
+/// This struct contains all relevant information about a player including their
+/// Discord and Steam identifiers, current session and group affiliations, rank,
+/// role, and team assignment. It maintains backreferences to its parent Session
+/// and Group for easier navigation between related entities.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[allow(clippy::missing_docs_in_private_items)]
 pub struct Player {
-    pub guild_id:   u64,
+    /// Discord user ID of the player
     pub discord_id: u64,
+    /// Steam ID64 of the player (optional)
     pub steam_id:   Option<u64>,
+    /// Discord guild/server ID where this player belongs
+    pub guild_id:   u64,
+    /// Historical record of sessions this player has participated in
+    pub session:    Vec<Option<Session>>,
+    /// Backreference to the current active session ID
+    pub session_id: Option<u16>,
+    /// Backreference to the current group ID
+    pub group_id:   Option<u64>,
+    /// Player's skill rank
     pub rank:       Option<Rank>,
+    /// Player's preferred role
     pub role:       Option<Role>,
+    /// Whether the player is in a buffered state
+    pub buffered:   bool,
+    /// Current team assignment (Red or Blu)
+    pub team:       Option<Team>,
 }
 
 impl Player {
-    pub fn new(discord_id: u64, steam_id64: u64, guild_id: Option<u64>) -> Player {
+    pub fn new(
+        discord_id: u64,
+        steam_id64: u64,
+        guild_id: Option<u64>,
+    ) -> Player {
         info!("Creating new player: discord={}, steam={}, guild={:?}", discord_id, steam_id64, guild_id);
-        Player { guild_id: guild_id.unwrap_or(0),
-                 discord_id,
-                 steam_id: Some(steam_id64),
-                 rank: None,
-                 role: None }
+        Player {
+            guild_id: guild_id.unwrap_or(0),
+            discord_id,
+            steam_id: Some(steam_id64),
+            session: Vec::new(),
+            session_id: None,
+            group_id: guild_id,
+            rank: None,
+            role: None,
+            buffered: false,
+            team: None,
+        }
     }
 
-    pub fn set_rank(&mut self, rank: Option<Rank>) {
+    pub fn set_buffer_status(
+        &mut self,
+        buffered: bool,
+    ) {
+        self.buffered = buffered;
+    }
+
+    pub fn set_rank(
+        &mut self,
+        rank: Option<Rank>,
+    ) {
         info!("Setting rank for player {}: {:?}", self.discord_id, rank);
         self.rank = rank;
     }
 
-    pub fn set_role(&mut self, role: Option<Role>) {
+    pub fn set_role(
+        &mut self,
+        role: Option<Role>,
+    ) {
         info!("Setting role for player {}: {:?}", self.discord_id, role);
         self.role = role;
+    }
+
+    pub fn set_team(
+        &mut self,
+        team: Option<Team>,
+    ) {
+        self.team = team;
+    }
+
+    /// Set the current session ID for this player
+    pub fn set_session_id(
+        &mut self,
+        session_id: Option<u16>,
+    ) {
+        self.session_id = session_id;
+        info!("Setting session ID for player {}: {:?}", self.discord_id, session_id);
+    }
+
+    /// Set the current group ID for this player
+    pub fn set_group_id(
+        &mut self,
+        group_id: Option<u64>,
+    ) {
+        self.group_id = group_id;
+        info!("Setting group ID for player {}: {:?}", self.discord_id, group_id);
+    }
+
+    pub fn by_discord_id(
+        players: &[Player],
+        discord_id: u64,
+    ) -> Option<Player> {
+        players.iter().find(|p| p.discord_id == discord_id).cloned()
     }
 }

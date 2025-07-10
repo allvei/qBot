@@ -48,15 +48,16 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     // Check if player is already in session
     // Get the last (active) session
     let session = group.session.last_mut().expect("No active session found");
-    if session.pool.iter().any(|sp| sp.player.discord_id == client) {
+    if session.pool.iter().any(|sp| sp.discord_id == client) {
         // Remove a player from the session
         let session = group.session.last_mut().expect("No active session found");
         info!("Removing player {} from session", player.discord_id);
-        session.pool.retain(|sp| sp.player.discord_id != client);
+        session.pool.retain(|sp| sp.discord_id != client);
 
-        let embed = CreateEmbed::new().title("Left Queue")
-                                      .description(format!("**{}** left the queue", cc.intax.user.name))
-                                      .footer(CreateEmbedFooter::new(format!("Queue: {}/8", session.pool.len())));
+        let embed = CreateEmbed::new()
+            .title("Left Queue")
+            .description(format!("**{}** left the queue", cc.intax.user.name))
+            .footer(CreateEmbedFooter::new(format!("Queue: {}/8", session.pool.len())));
 
         let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().embed(embed).ephemeral(true));
 
@@ -66,11 +67,28 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     } else {
         // Add player to session
         let session = group.session.last_mut().expect("No active session found");
-        session.add_player(&player);
+        match session.add_player(&player) {
+            Ok(_) => info!("Player {} added to session", player.discord_id),
+            Err(e) => {
+                info!("Failed to add player to session: {}", e);
+                let embed = CreateEmbed::new()
+                    .title("Queue Error")
+                    .description(format!("Failed to join queue: {}", e))
+                    .color(0xFF0000);
+                
+                let response = CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new().embed(embed).ephemeral(true)
+                );
+                
+                cc.intax.create_response(&cc.ctx.http, response).await?;
+                return Ok(());
+            }
+        }
 
-        let embed = CreateEmbed::new().title("Joined Queue")
-                                      .description(format!("**{}** joined the queue", cc.intax.user.name))
-                                      .footer(CreateEmbedFooter::new(format!("Queue: {}/8", session.pool.len())));
+        let embed = CreateEmbed::new()
+            .title("Joined Queue")
+            .description(format!("**{}** joined the queue", cc.intax.user.name))
+            .footer(CreateEmbedFooter::new(format!("Queue: {}/8", session.pool.len())));
 
         let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().embed(embed).ephemeral(true));
 
@@ -115,16 +133,17 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
         if let Some(session) = group.session.last() {
             for (i, member) in session.pool.iter().enumerate() {
                 // Use discord_id as display name if needed
-                let name = format!("user_{}", member.player.discord_id);
+                let name = format!("user_{}", member.discord_id);
                 parts.push(format!("{}.{}", i + 1, name));
             }
         }
         parts.join("\n")
     };
 
-    let embed = CreateEmbed::new().title("Queue Status")
-                                  .description(description)
-                                  .footer(CreateEmbedFooter::new(format!("Queue: {}/8", count)));
+    let embed = CreateEmbed::new()
+        .title("Queue Status")
+        .description(description)
+        .footer(CreateEmbedFooter::new(format!("Queue: {}/8", count)));
 
     let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().embed(embed).ephemeral(true));
 
@@ -137,7 +156,11 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
 /// * `ctx`        - Ref to the Serenity context.
 /// * `db`         - Ref to the database.
 /// * `_guild_id`  - The ID of the guild where the command was issued.
-async fn notify_session_ready(ctx: &Context, db: &Arc<Database>, group: &Group) -> Result<()> {
+async fn notify_session_ready(
+    ctx: &Context,
+    db: &Arc<Database>,
+    group: &Group,
+) -> Result<()> {
     let config = db.get_config().await?;
 
     // Send notification to log channel
@@ -149,14 +172,17 @@ async fn notify_session_ready(ctx: &Context, db: &Arc<Database>, group: &Group) 
         if let Some(session) = group.session.last() {
             let pool_len = session.pool.len().min(8); // Take at most 8 players
             for member in &session.pool[..pool_len] {
-                player_mentions.push(format!("<@{}>", member.player.discord_id));
+                player_mentions.push(format!("<@{}>", member.discord_id));
             }
         }
 
-        let embed = CreateEmbed::new().title("QUOTA REACHED!")
-                                      .description(format!("**8 players ready for pickup!**\n\n{}\n\nPlayers have 2 minutes to confirm. A runner will generate teams shortly.",
-                                                           player_mentions.join(" ")))
-                                      .footer(CreateEmbedFooter::new("Awaiting team generation..."));
+        let embed = CreateEmbed::new()
+            .title("QUOTA REACHED!")
+            .description(format!(
+                "**8 players ready for pickup!**\n\n{}\n\nPlayers have 2 minutes to confirm. A runner will generate teams shortly.",
+                player_mentions.join(" ")
+            ))
+            .footer(CreateEmbedFooter::new("Awaiting team generation..."));
 
         channel.send_message(&ctx.http, CreateMessage::new().embed(embed)).await?;
     }
