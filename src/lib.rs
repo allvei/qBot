@@ -3,6 +3,7 @@
 
 // Library crate for testable modules
 pub mod database;
+pub mod error;
 pub mod handlers;
 pub mod models;
 

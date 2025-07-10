@@ -12,7 +12,9 @@ use crate::database::Database;
 use crate::handlers::role::check_role;
 use crate::models::command::CommandContext;
 use crate::models::player::{Player, Role};
-use crate::models::session::{Group, Session, SessionStatus, Team};
+use crate::models::group::Group;
+use crate::models::session::{Session, SessionStatus};
+use crate::models::common::Team;
 
 /// Splits the players into two teams.
 ///
@@ -53,21 +55,21 @@ pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
     }
 
     // Collect players and split into teams (synchronous shuffle so no !Send types live across await)
-    let (mut red_team, mut blu_team) = split_into_teams(&session.pool);
+    let (mut red_team, mut blue_team) = split_into_teams(&session.pool);
     let mut updated_group = group.clone();
 
     // Assign teams using Player's team method
     for sp in &mut red_team {
         sp.set_team(Some(Team::Red));
     }
-    for sp in &mut blu_team {
-        sp.set_team(Some(Team::Blu));
+    for sp in &mut blue_team {
+        sp.set_team(Some(Team::Blue));
     }
 
     // Update pool with new team assignments
     updated_group.session.last_mut().unwrap().pool.clear();
     updated_group.session.last_mut().unwrap().pool.extend(red_team.into_iter());
-    updated_group.session.last_mut().unwrap().pool.extend(blu_team.into_iter());
+    updated_group.session.last_mut().unwrap().pool.extend(blue_team.into_iter());
 
     updated_group.session.last_mut().unwrap().status = SessionStatus::Hot;
     // TODO: Persist updated_group changes to DB if needed (no update_group method exists)
@@ -82,23 +84,23 @@ pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
         .filter(|sp| sp.team == Some(Team::Red))
         .map(|sp| format!("<@{}>", sp.discord_id))
         .collect();
-    let blu_team_names: Vec<String> = updated_group
+    let blue_team_names: Vec<String> = updated_group
         .session
         .last()
         .unwrap()
         .pool
         .iter()
-        .filter(|sp| sp.team == Some(Team::Blu))
+        .filter(|sp| sp.team == Some(Team::Blue))
         .map(|sp| format!("<@{}>", sp.discord_id))
         .collect();
 
     let embed = CreateEmbed::new()
         .title("Teams Generated!")
         .description(format!(
-            "**Session ID:** `{}`\n\n**🔴 RED Team:**\n{}\n\n**🔵 BLU Team:**\n{}",
+            "**Session ID:** `{}`\n\n**🔴 RED Team:**\n{}\n\n**🔵 BLUE Team:**\n{}",
             stringify!(updated_group.session.last().unwrap().id),
             red_team_names.join("\n"),
-            blu_team_names.join("\n")
+            blue_team_names.join("\n")
         ))
         .footer(CreateEmbedFooter::new("Use /accept to confirm teams"));
 
@@ -118,7 +120,7 @@ pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
                 stringify!(updated_group.session.last().unwrap().id),
                 cc.intax.user.display_name(),
                 red_team_names.join(", "),
-                blu_team_names.join(", ")
+                blue_team_names.join(", ")
             ))
             .footer(CreateEmbedFooter::new("Awaiting acceptance..."));
 
@@ -308,7 +310,7 @@ async fn move_players_to_team_channels(
         return Err(anyhow!("No team channels configured for this group"));
     }
     let red_channel_id = group.teams[0].red;
-    let blue_channel_id = group.teams[0].blu;
+    let blue_channel_id = group.teams[0].blue;
     if red_channel_id == 0 || blue_channel_id == 0 {
         return Err(anyhow!("Voice channel IDs not configured for this group"));
     }
@@ -320,7 +322,7 @@ async fn move_players_to_team_channels(
         if let Some(team) = &player.team {
             let target_channel = match team {
                 Team::Red => redvc,
-                Team::Blu => bluvc,
+                Team::Blue => bluvc,
             };
             let user_id = player.discord_id;
             if let Ok(mut member) = guild_id.member(&ctx.http, user_id).await {

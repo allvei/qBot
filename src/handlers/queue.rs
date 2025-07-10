@@ -8,7 +8,7 @@ use tracing::info;
 
 use crate::database::Database;
 use crate::models::command::CommandContext;
-use crate::models::session::Group;
+use crate::models::group::Group;
 
 /// Handles the `/join` and `/leave` commands, which allow players to join or leave the queue.
 ///

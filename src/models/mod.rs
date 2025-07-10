@@ -5,6 +5,7 @@
 //!
 //! ## Key Components
 //!
+//! - `common`: Common types and enums shared across modules
 //! - `config`: Configuration constants and settings
 //! - `player`: Player-related data structures and logic
 //! - `session`: Session, Group, Server, and Manager data structures and logic
@@ -12,8 +13,10 @@
 //! - `file`: File-related data structures and logic
 
 pub mod command;
+pub mod common;
 pub mod config;
 pub mod file;
+pub mod group;
 pub mod player;
 pub mod session;
 

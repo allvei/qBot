@@ -5,7 +5,7 @@ use sqlx::prelude::FromRow;
 use tracing::info;
 
 use crate::models::config::*;
-use crate::models::session::Team;
+use crate::models::common::Team;
 use crate::Session;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

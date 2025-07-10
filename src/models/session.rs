@@ -3,13 +3,14 @@
 //! This module defines the Session struct and its related functionality.
 //! A Session represents a game session with players, teams, and status.
 
-use rand::Rng;
+use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use tracing::{debug, info};
 
 use crate::error::{AppError, AppResult};
-use crate::models::player::{Player, Rank, Team};
+use crate::models::player::{Player, Rank};
+use crate::models::common::Team;
 use crate::models::group::Group;
 
 /// Type alias for Session ID
@@ -39,8 +40,7 @@ pub enum SessionStatus {
     Pull,
 }
 
-/// Represents a game session with players, teams, and status
-/// Represents a team channel configuration
+/// Represents a team channel configuration with voice channels for each team
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamChannels {
     /// Red team voice channel ID
@@ -156,7 +156,7 @@ impl Session {
             ));
         }
         
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::ThreadRng::default();
         let mut players = self.pool.clone();
 
         // 1. First add buffered players to genpool (priority)
@@ -280,7 +280,7 @@ impl Session {
         groups: &'a [Group],
     ) -> Option<&'a Session> {
         for group in groups {
-            if group.queue == channel_id {
+            if group.queue_channel == channel_id {
                 return group.session.iter().find(|s| s.status == SessionStatus::Idle);
             }
         }
@@ -288,8 +288,4 @@ impl Session {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamChannels {
-    pub red: u64,
-    pub blu: u64,
-}
+
