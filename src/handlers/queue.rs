@@ -71,15 +71,10 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
             Ok(_) => info!("Player {} added to session", player.discord_id),
             Err(e) => {
                 info!("Failed to add player to session: {}", e);
-                let embed = CreateEmbed::new()
-                    .title("Queue Error")
-                    .description(format!("Failed to join queue: {}", e))
-                    .color(0xFF0000);
-                
-                let response = CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new().embed(embed).ephemeral(true)
-                );
-                
+                let embed = CreateEmbed::new().title("Queue Error").description(format!("Failed to join queue: {}", e)).color(0xFF0000);
+
+                let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().embed(embed).ephemeral(true));
+
                 cc.intax.create_response(&cc.ctx.http, response).await?;
                 return Ok(());
             }

@@ -89,4 +89,25 @@ impl Group {
     pub fn find_session_by_id_mut(&mut self, id: u16) -> Option<&mut Session> {
         self.session.iter_mut().find(|s| s.id == id)
     }
+
+    /// Creates a new session and adds it to the group
+    ///
+    /// This increments the session counter and creates a new empty session
+    /// with the next available ID.
+    ///
+    /// # Returns
+    /// * Reference to the newly created session
+    pub fn create_session(&mut self) -> &Session {
+        // Increment the session counter
+        self.session_increment += 1;
+        
+        // Create a new session with the incremented ID
+        let new_session = Session::new(self.session_increment, self.guild_id);
+        
+        // Add the session to the group
+        self.session.push(new_session);
+        
+        // Return a reference to the newly created session
+        self.session.last().unwrap()
+    }
 }

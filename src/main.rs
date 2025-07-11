@@ -32,7 +32,9 @@ use handlers::{admin, queue, session};
 use models::command::CommandContext;
 use models::config::{ID_BLU, ID_CHAT, ID_DASHBOARD, ID_QUEUE, ID_RED};
 use models::player::Player;
-use models::session::{Group, Manager, SessionStatus};
+use models::group::Group;
+use models::manager::Manager;
+use models::session::SessionStatus;
 
 use crate::models::Session;
 

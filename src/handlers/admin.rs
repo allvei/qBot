@@ -11,9 +11,10 @@ use crate::CommandContext;
 /// Handles the `/buffer` command, guarantees the player a spot in the next match.
 ///
 /// * `user_mention` - The user mention to buffer.
-pub async fn buffer(cc: &CommandContext<'_>,
-                    user_mention: String)
-                    -> Result<(), anyhow::Error> {
+pub async fn buffer(
+    cc: &CommandContext<'_>,
+    user_mention: String,
+) -> Result<(), anyhow::Error> {
     info!("Processing buffer command for user mention: {}", user_mention);
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can buffer players!").ephemeral(true));
@@ -28,10 +29,11 @@ pub async fn buffer(cc: &CommandContext<'_>,
 ///
 /// * `key`         - The key to modify.
 /// * `value`       - The value to set for the key.
-pub async fn config(cc: &CommandContext<'_>,
-                    key: String,
-                    value: Option<String>)
-                    -> Result<()> {
+pub async fn config(
+    cc: &CommandContext<'_>,
+    key: String,
+    value: Option<String>,
+) -> Result<()> {
     info!("Processing config: key={}, value={:?}", key, value);
     if !check_role(cc, &Role::Admin).await? {
         info!("User is not an admin");
@@ -61,7 +63,8 @@ pub async fn config(cc: &CommandContext<'_>,
             }
         };
 
-        let config_text = format!("**Current Configuration:**\n\
+        let config_text = format!(
+            "**Current Configuration:**\n\
                                   Guild: `{}`\n\
                                   Queue Channel: `{}`\n\
                                   RED Channel: `{}`\n\
@@ -69,7 +72,8 @@ pub async fn config(cc: &CommandContext<'_>,
                                   Confirmation Timeout: `{}s`\n\
                                   Runner Role: `{}`\n\
                                   Admin Role: `{}`",
-                                  config.guild_id, config.ic_queue, config.ic_red, config.ic_blue, config.join_timeout, config.i_runner, config.i_admin);
+            config.guild_id, config.ic_queue, config.ic_red, config.ic_blue, config.join_timeout, config.i_runner, config.i_admin
+        );
 
         let embed = CE::new().title("Bot Configuration").description(config_text);
 

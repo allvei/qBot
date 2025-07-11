@@ -75,7 +75,7 @@ impl Server {
         &self,
         channel_id: u64,
     ) -> Option<&Group> {
-        self.groups.iter().find(|g| g.queue_channel == channel_id)
+        self.groups.iter().find(|g| g.queue == channel_id)
     }
 
     /// Find a group by its queue channel ID (mutable)
@@ -89,6 +89,6 @@ impl Server {
         &mut self,
         channel_id: u64,
     ) -> Option<&mut Group> {
-        self.groups.iter_mut().find(|g| g.queue_channel == channel_id)
+        self.groups.iter_mut().find(|g| g.queue == channel_id)
     }
 }

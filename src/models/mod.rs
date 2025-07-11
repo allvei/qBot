@@ -17,7 +17,9 @@ pub mod common;
 pub mod config;
 pub mod file;
 pub mod group;
+pub mod manager;
 pub mod player;
+pub mod server;
 pub mod session;
 
 pub use command::*;

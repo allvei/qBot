@@ -25,6 +25,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 dotenvy = "0.15"
 uuid = { version = "1.0", features = ["v4"] }
+itertools = "0.14.0"
 
 [lints.clippy]
 # missing_docs_in_private_items = "warn"

@@ -7,6 +7,9 @@ pub mod error;
 pub mod handlers;
 pub mod models;
 
+#[cfg(test)]
+pub mod tests;
+
 // Re-export for easier testing
 pub use database::Database;
 
