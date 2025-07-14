@@ -5,14 +5,14 @@ use serenity::all::{CreateEmbed as CE, CreateInteractionResponse as CIR, CreateI
 use tracing::info;
 
 use crate::handlers::role::check_role;
+use crate::models::command::CommandContext;
 use crate::models::player::Role;
-use crate::CommandContext;
 
 /// Handles the `/buffer` command, guarantees the player a spot in the next match.
 ///
 /// * `user_mention` - The user mention to buffer.
-pub async fn buffer(
-    cc: &CommandContext<'_>,
+pub async fn buffer<'a>(
+    cc: &'a CommandContext<'a>,
     user_mention: String,
 ) -> Result<(), anyhow::Error> {
     info!("Processing buffer command for user mention: {}", user_mention);
@@ -29,8 +29,8 @@ pub async fn buffer(
 ///
 /// * `key`         - The key to modify.
 /// * `value`       - The value to set for the key.
-pub async fn config(
-    cc: &CommandContext<'_>,
+pub async fn config<'a>(
+    cc: &'a CommandContext<'a>,
     key: String,
     value: Option<String>,
 ) -> Result<()> {

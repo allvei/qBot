@@ -4,7 +4,7 @@
 //! It provides functions for processing and responding to user commands.
 
 use serenity::all::{Context, Message};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::error::AppResult;
 use crate::models::session::SessionStatus;

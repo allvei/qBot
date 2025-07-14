@@ -14,14 +14,17 @@ A comprehensive Discord bot for managing 4v4 pickup games (PUGs) for passtime.tf
 ## Commands
 
 ### Player Commands
+
 - `/join`                 - Join the PUG queue
 - `/leave`                - Leave the PUG queue
 
 ### Runner Commands
+
 - `/shuffle [match_id]`   - Regenerate teams for a match
 - `/accept [match_id]`    - Confirm generated teams and start match
 - `/end [match_id]`       - End a match and return players to queue
 
 ### Admin Commands
+
 - `/buffer [user]`        - Buffer a player (guarantee a spot in the current session)
 - `/config [key] [value]` - View or modify bot configuration

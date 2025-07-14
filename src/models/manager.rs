@@ -7,7 +7,6 @@ use serenity::all::Cache;
 use tracing::info;
 
 use crate::models::server::Server;
-use crate::error::AppResult;
 
 /// Manages multiple servers and their associated groups/sessions
 #[derive(Default)]

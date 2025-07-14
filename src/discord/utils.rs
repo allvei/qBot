@@ -32,7 +32,7 @@ pub async fn send_response(
         }
         CommandResponse::Embed { title, description, color } => {
             let color_value = match color {
-                Some((r, g, b)) => (r as u32) << 16 | (g as u32) << 8 | b as u32,
+                Some((r, g, b)) => ((r as u32) << 16) | ((g as u32) << 8) | b as u32,
                 None => 0x3498db, // Default Discord blue
             };
 

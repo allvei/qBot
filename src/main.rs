@@ -11,8 +11,6 @@ mod events;
 mod handlers;
 mod models;
 
-use error::{AppError, AppResult};
-
 use std::env;
 use std::sync::{Arc, Mutex};
 
@@ -32,10 +30,8 @@ use tracing::{error, info};
 use database::Database;
 use handlers::{admin, queue, session};
 use models::command::CommandContext;
-use models::config::{ID_BLU, ID_CHAT, ID_DASHBOARD, ID_QUEUE, ID_RED};
 use models::group::Group;
 use models::manager::Manager;
-use models::player::Player;
 use models::session::SessionStatus;
 
 use crate::models::Session;
@@ -202,10 +198,8 @@ impl EventHandler for Handler {
         old: Option<VoiceState>,
         new: VoiceState,
     ) {
-        let guild_id = new.guild_id;
         let channel = new.channel_id;
         let user = new.user_id;
-        let old_channel = old.map(|s| s.channel_id);
 
         {
             let mut mgr = self.guild_id.lock().unwrap();

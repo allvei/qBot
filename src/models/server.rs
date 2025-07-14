@@ -8,7 +8,6 @@ use serenity::all::GuildId;
 use tracing::info;
 
 use crate::models::group::Group;
-use crate::error::AppResult;
 
 /// Represents a game server with IP and name
 #[derive(Debug, Clone, Serialize, Deserialize)]

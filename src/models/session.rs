@@ -512,7 +512,7 @@ impl Session {
     /// # Returns
     /// * `Vec<Player>` - A vector containing clones of all players in the session
     pub fn get_members(&self) -> Vec<Player> {
-        self.pool.iter().cloned().collect()
+        self.pool.to_vec()
     }
 
     pub fn add_player(

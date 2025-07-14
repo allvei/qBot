@@ -4,7 +4,7 @@
 //! join, leave, or move between voice channels.
 
 use serenity::all::{Context, VoiceState};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::error::AppResult;
 use crate::models::group::Group;
