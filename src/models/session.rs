@@ -5,10 +5,12 @@
 
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
+use serenity::all::{ChannelId, GuildId, UserId};
 use sqlx::FromRow;
 use tracing::{debug, info};
 
-use crate::error::AppResult;
+use crate::discord::commands::CommandResponse;
+use crate::discord::utils::{move_user_to_channel, send_response};
 use crate::models::common::Team;
 use crate::models::group::Group;
 use crate::models::player::{Player, Rank};
@@ -142,34 +144,24 @@ impl Session {
         ctx: &serenity::prelude::Context,
         group: &'a Group,
     ) -> crate::error::AppResult<()> {
-        use crate::discord::utils::send_response;
-        use crate::discord::commands::CommandResponse;
-        use serenity::all::ChannelId;
-        
         info!("Changing session {} status to HOT", self.id);
-        
+
         // Update status
         self.status = SessionStatus::Hot;
-        
+
         // Generate teams if not already done
         if self.pool.iter().any(|p| p.team.is_none()) {
             self.generate_teams()?;
         }
-        
+
         // Notify players in the dashboard channel
         let dashboard_id = ChannelId::new(group.dashboard);
-        let red_players: Vec<_> = self.pool.iter()
-            .filter(|p| p.team == Some(Team::Red))
-            .map(|p| format!("<@{}>", p.discord_id))
-            .collect();
-            
-        let blue_players: Vec<_> = self.pool.iter()
-            .filter(|p| p.team == Some(Team::Blue))
-            .map(|p| format!("<@{}>", p.discord_id))
-            .collect();
-        
+        let red_players: Vec<_> = self.pool.iter().filter(|p| p.team == Some(Team::Red)).map(|p| format!("<@{}>", p.discord_id)).collect();
+
+        let blue_players: Vec<_> = self.pool.iter().filter(|p| p.team == Some(Team::Blue)).map(|p| format!("<@{}>", p.discord_id)).collect();
+
         let notification = CommandResponse::Embed {
-            title: format!("Session {} is HOT!", self.id),
+            title:       format!("Session {} is HOT!", self.id),
             description: format!(
                 "The session is ready to start!\n\n\
                 **Red Team:** {}\n\
@@ -178,11 +170,11 @@ impl Session {
                 red_players.join(", "),
                 blue_players.join(", ")
             ),
-            color: Some((255, 165, 0)), // Orange color for HOT status
+            color:       Some((255, 165, 0)), // Orange color for HOT status
         };
-        
+
         send_response(ctx, dashboard_id, notification).await?;
-        
+
         Ok(())
     }
 
@@ -228,39 +220,33 @@ impl Session {
         ctx: &serenity::prelude::Context,
         group: &'a Group,
     ) -> crate::error::AppResult<()> {
-        use crate::discord::utils::{move_user_to_channel, send_response};
-        use crate::discord::commands::CommandResponse;
-        use serenity::all::{ChannelId, GuildId, UserId};
-        
         info!("Changing session {} status to PUSH", self.id);
-        
+
         // Update status
         self.status = SessionStatus::Push;
-        
+
         // Ensure teams are assigned
         if self.pool.iter().any(|p| p.team.is_none()) {
             self.generate_teams()?;
         }
-        
+
         // Get guild ID
         let guild_id = GuildId::new(group.guild_id);
-        
+
         // Find the team channels
         if group.teams.is_empty() {
-            return Err(crate::error::AppError::SessionError(
-                format!("No team channels configured for group {}", group.guild_id)
-            ));
+            return Err(crate::error::AppError::SessionError(format!("No team channels configured for group {}", group.guild_id)));
         }
-        
+
         // Use the first team channels configuration
         let team_channels = &group.teams[0];
         let red_channel = ChannelId::new(team_channels.red);
         let blue_channel = ChannelId::new(team_channels.blue);
-        
+
         // Move players to their team channels
         for player in &self.pool {
             let user_id = UserId::new(player.discord_id);
-            
+
             match player.team {
                 Some(Team::Red) => {
                     move_user_to_channel(ctx, guild_id, user_id, red_channel).await?;
@@ -274,17 +260,17 @@ impl Session {
                 }
             }
         }
-        
+
         // Notify in dashboard channel
         let dashboard_id = ChannelId::new(group.dashboard);
         let notification = CommandResponse::Embed {
-            title: format!("Session {} is starting!", self.id),
+            title:       format!("Session {} is starting!", self.id),
             description: "Players have been moved to their team channels. The match is now starting!".to_string(),
-            color: Some((0, 255, 0)), // Green color for PUSH status
+            color:       Some((0, 255, 0)), // Green color for PUSH status
         };
-        
+
         send_response(ctx, dashboard_id, notification).await?;
-        
+
         Ok(())
     }
 
@@ -306,33 +292,27 @@ impl Session {
         ctx: &serenity::prelude::Context,
         group: &'a Group,
     ) -> crate::error::AppResult<()> {
-        use crate::discord::utils::send_response;
-        use crate::discord::commands::CommandResponse;
-        use serenity::all::ChannelId;
-        
         info!("Changing session {} status to LIVE", self.id);
-        
+
         // Update status
         self.status = SessionStatus::Live;
-        
+
         // Notify in dashboard channel
         let dashboard_id = ChannelId::new(group.dashboard);
         let notification = CommandResponse::Embed {
-            title: format!("Session {} is now LIVE!", self.id),
+            title:       format!("Session {} is now LIVE!", self.id),
             description: "The match is now in progress. Good luck and have fun!".to_string(),
-            color: Some((0, 0, 255)), // Blue color for LIVE status
+            color:       Some((0, 0, 255)), // Blue color for LIVE status
         };
-        
+
         send_response(ctx, dashboard_id, notification).await?;
-        
+
         // Notify in chat channel
         let chat_id = ChannelId::new(group.chat);
-        let chat_message = CommandResponse::Text(
-            format!("@here Session {} is now LIVE! The match is in progress.", self.id)
-        );
-        
+        let chat_message = CommandResponse::Text(format!("@here Session {} is now LIVE! The match is in progress.", self.id));
+
         send_response(ctx, chat_id, chat_message).await?;
-        
+
         Ok(())
     }
 
@@ -355,48 +335,42 @@ impl Session {
         ctx: &serenity::prelude::Context,
         group: &'a Group,
     ) -> crate::error::AppResult<()> {
-        use crate::discord::utils::{move_user_to_channel, send_response};
-        use crate::discord::commands::CommandResponse;
-        use serenity::all::{ChannelId, GuildId, UserId};
-        
         info!("Changing session {} status to PULL", self.id);
-        
+
         // Update status
         self.status = SessionStatus::Pull;
-        
+
         // Get guild ID and queue channel
         let guild_id = GuildId::new(group.guild_id);
         let queue_channel = ChannelId::new(group.queue);
-        
+
         // Move all players back to queue channel and reset team assignments
         for player in &mut self.pool {
             let user_id = UserId::new(player.discord_id);
-            
+
             // Move player to queue channel
             move_user_to_channel(ctx, guild_id, user_id, queue_channel).await?;
-            
+
             // Reset team assignment
             player.set_team(None);
         }
-        
+
         // Notify in dashboard channel
         let dashboard_id = ChannelId::new(group.dashboard);
         let notification = CommandResponse::Embed {
-            title: format!("Session {} has ended", self.id),
+            title:       format!("Session {} has ended", self.id),
             description: "The match has ended. Players have been moved back to the queue channel.".to_string(),
-            color: Some((128, 128, 128)), // Gray color for PULL status
+            color:       Some((128, 128, 128)), // Gray color for PULL status
         };
-        
+
         send_response(ctx, dashboard_id, notification).await?;
-        
+
         // Notify in chat channel
         let chat_id = ChannelId::new(group.chat);
-        let chat_message = CommandResponse::Text(
-            format!("Session {} has ended. Thanks for playing!", self.id)
-        );
-        
+        let chat_message = CommandResponse::Text(format!("Session {} has ended. Thanks for playing!", self.id));
+
         send_response(ctx, chat_id, chat_message).await?;
-        
+
         Ok(())
     }
 

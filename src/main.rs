@@ -5,7 +5,9 @@
 //! and initializes the database connection.
 
 mod database;
+mod discord;
 mod error;
+mod events;
 mod handlers;
 mod models;
 
@@ -31,9 +33,9 @@ use database::Database;
 use handlers::{admin, queue, session};
 use models::command::CommandContext;
 use models::config::{ID_BLU, ID_CHAT, ID_DASHBOARD, ID_QUEUE, ID_RED};
-use models::player::Player;
 use models::group::Group;
 use models::manager::Manager;
+use models::player::Player;
 use models::session::SessionStatus;
 
 use crate::models::Session;
@@ -280,7 +282,7 @@ impl EventHandler for Handler {
                                 match session.add_player(&player) {
                                     Ok(_) => {
                                         info!("Added user {} to session, now has {} players", user, session.pool.len());
-                                        
+
                                         // If we have enough players, update session status
                                         if session.pool.len() >= 8 && !matches!(session.status, SessionStatus::Hot) {
                                             session.status = SessionStatus::Hot;
@@ -290,7 +292,7 @@ impl EventHandler for Handler {
                                             dashboard_channel = Some(group.dashboard);
                                             session_info = Some((session.id, session.pool.len()));
                                         }
-                                    },
+                                    }
                                     Err(e) => {
                                         info!("Failed to add user {} to session: {}", user, e);
                                     }

@@ -6,8 +6,8 @@
 use serenity::all::{ChannelId, Context, GuildId, UserId};
 use tracing::{error, info};
 
-use crate::error::{AppError, AppResult};
 use crate::discord::commands::CommandResponse;
+use crate::error::{AppError, AppResult};
 
 /// Send a command response to a channel
 ///
@@ -18,7 +18,11 @@ use crate::discord::commands::CommandResponse;
 ///
 /// # Returns
 /// * `AppResult<()>` - Success or failure with error context
-pub async fn send_response(ctx: &Context, channel_id: ChannelId, response: CommandResponse) -> AppResult<()> {
+pub async fn send_response(
+    ctx: &Context,
+    channel_id: ChannelId,
+    response: CommandResponse,
+) -> AppResult<()> {
     match response {
         CommandResponse::Text(content) => {
             channel_id.say(&ctx.http, content).await.map_err(|e| {
@@ -31,14 +35,12 @@ pub async fn send_response(ctx: &Context, channel_id: ChannelId, response: Comma
                 Some((r, g, b)) => (r as u32) << 16 | (g as u32) << 8 | b as u32,
                 None => 0x3498db, // Default Discord blue
             };
-            
-            channel_id.send_message(&ctx.http, |m| {
-                m.embed(|e| {
-                    e.title(title)
-                        .description(description)
-                        .color(color_value)
-                })
-            }).await.map_err(|e| {
+
+            use serenity::builder::{CreateEmbed, CreateMessage};
+
+            let embed = CreateEmbed::new().title(title).description(description).color(color_value);
+
+            channel_id.send_message(&ctx.http, CreateMessage::new().embed(embed)).await.map_err(|e| {
                 error!("Failed to send embed: {}", e);
                 AppError::DiscordError(format!("Failed to send embed: {}", e))
             })?;
@@ -47,7 +49,7 @@ pub async fn send_response(ctx: &Context, channel_id: ChannelId, response: Comma
             // No response needed
         }
     }
-    
+
     Ok(())
 }
 
@@ -68,12 +70,12 @@ pub async fn move_user_to_channel(
     channel_id: ChannelId,
 ) -> AppResult<()> {
     info!("Moving user {} to channel {}", user_id, channel_id);
-    
+
     guild_id.move_member(&ctx.http, user_id, channel_id).await.map_err(|e| {
         error!("Failed to move user: {}", e);
         AppError::DiscordError(format!("Failed to move user: {}", e))
     })?;
-    
+
     Ok(())
 }
 
@@ -85,16 +87,16 @@ pub async fn move_user_to_channel(
 ///
 /// # Returns
 /// * `AppResult<String>` - The channel name or an error
-pub async fn get_channel_name(ctx: &Context, channel_id: ChannelId) -> AppResult<String> {
+pub async fn get_channel_name(
+    ctx: &Context,
+    channel_id: ChannelId,
+) -> AppResult<String> {
     let channel = channel_id.to_channel(&ctx.http).await.map_err(|e| {
         error!("Failed to get channel: {}", e);
         AppError::DiscordError(format!("Failed to get channel: {}", e))
     })?;
-    
-    Ok(channel.guild().map_or_else(
-        || format!("DM Channel {}", channel_id),
-        |c| c.name().to_string(),
-    ))
+
+    Ok(channel.guild().map_or_else(|| format!("DM Channel {}", channel_id), |c| c.name().to_string()))
 }
 
 /// Check if a user has a specific role
@@ -117,12 +119,12 @@ pub async fn user_has_role(
         error!("Failed to get member: {}", e);
         AppError::DiscordError(format!("Failed to get member: {}", e))
     })?;
-    
+
     let guild = guild_id.to_partial_guild(&ctx.http).await.map_err(|e| {
         error!("Failed to get guild: {}", e);
         AppError::DiscordError(format!("Failed to get guild: {}", e))
     })?;
-    
+
     for role_id in &member.roles {
         if let Some(role) = guild.roles.get(role_id) {
             if role.name.eq_ignore_ascii_case(role_name) {
@@ -130,6 +132,6 @@ pub async fn user_has_role(
             }
         }
     }
-    
+
     Ok(false)
 }

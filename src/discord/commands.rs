@@ -15,9 +15,9 @@ pub enum CommandResponse {
     Text(String),
     /// Embed response with title and description
     Embed {
-        title: String,
+        title:       String,
         description: String,
-        color: Option<(u8, u8, u8)>,
+        color:       Option<(u8, u8, u8)>,
     },
     /// No response needed
     None,
@@ -32,7 +32,11 @@ pub enum CommandResponse {
 ///
 /// # Returns
 /// * `AppResult<CommandResponse>` - The response to send
-pub async fn process_command(ctx: &Context, msg: &Message, command: &str) -> AppResult<CommandResponse> {
+pub async fn process_command(
+    ctx: &Context,
+    msg: &Message,
+    command: &str,
+) -> AppResult<CommandResponse> {
     let parts: Vec<&str> = command.split_whitespace().collect();
     if parts.is_empty() {
         return Ok(CommandResponse::None);
@@ -59,11 +63,15 @@ pub async fn process_command(ctx: &Context, msg: &Message, command: &str) -> App
 ///
 /// # Returns
 /// * `AppResult<CommandResponse>` - The response to send
-async fn handle_help_command(_ctx: &Context, _msg: &Message, _args: &[&str]) -> AppResult<CommandResponse> {
+async fn handle_help_command(
+    _ctx: &Context,
+    _msg: &Message,
+    _args: &[&str],
+) -> AppResult<CommandResponse> {
     info!("Processing help command");
-    
+
     Ok(CommandResponse::Embed {
-        title: "PF PUG Bot Commands".to_string(),
+        title:       "PF PUG Bot Commands".to_string(),
         description: "
 **Basic Commands**
 `!help` - Show this help message
@@ -76,8 +84,9 @@ async fn handle_help_command(_ctx: &Context, _msg: &Message, _args: &[&str]) -> 
 **Admin Commands**
 `!start` - Start a session (admin only)
 `!end` - End a session (admin only)
-".to_string(),
-        color: Some((0, 128, 255)),
+"
+        .to_string(),
+        color:       Some((0, 128, 255)),
     })
 }
 
@@ -90,13 +99,17 @@ async fn handle_help_command(_ctx: &Context, _msg: &Message, _args: &[&str]) -> 
 ///
 /// # Returns
 /// * `AppResult<CommandResponse>` - The response to send
-async fn handle_status_command(_ctx: &Context, msg: &Message, _args: &[&str]) -> AppResult<CommandResponse> {
+async fn handle_status_command(
+    _ctx: &Context,
+    msg: &Message,
+    _args: &[&str],
+) -> AppResult<CommandResponse> {
     info!("Processing status command from user {}", msg.author.id);
-    
+
     // TODO: Implement status command logic
     // - Get the current session status for the relevant group
     // - Format and send the status message
-    
+
     Ok(CommandResponse::Text("Status command not fully implemented yet.".to_string()))
 }
 
@@ -109,12 +122,16 @@ async fn handle_status_command(_ctx: &Context, msg: &Message, _args: &[&str]) ->
 ///
 /// # Returns
 /// * `AppResult<CommandResponse>` - The response to send
-async fn handle_join_command(_ctx: &Context, msg: &Message, _args: &[&str]) -> AppResult<CommandResponse> {
+async fn handle_join_command(
+    _ctx: &Context,
+    msg: &Message,
+    _args: &[&str],
+) -> AppResult<CommandResponse> {
     info!("Processing join command from user {}", msg.author.id);
-    
+
     // TODO: Implement join command logic
     // - Add the user to the appropriate session
-    
+
     Ok(CommandResponse::Text("Join command not fully implemented yet.".to_string()))
 }
 
@@ -127,12 +144,16 @@ async fn handle_join_command(_ctx: &Context, msg: &Message, _args: &[&str]) -> A
 ///
 /// # Returns
 /// * `AppResult<CommandResponse>` - The response to send
-async fn handle_leave_command(_ctx: &Context, msg: &Message, _args: &[&str]) -> AppResult<CommandResponse> {
+async fn handle_leave_command(
+    _ctx: &Context,
+    msg: &Message,
+    _args: &[&str],
+) -> AppResult<CommandResponse> {
     info!("Processing leave command from user {}", msg.author.id);
-    
+
     // TODO: Implement leave command logic
     // - Remove the user from the appropriate session
-    
+
     Ok(CommandResponse::Text("Leave command not fully implemented yet.".to_string()))
 }
 

@@ -3,20 +3,18 @@
 
 // Library crate for testable modules
 pub mod database;
+pub mod discord;
 pub mod error;
+pub mod events;
 pub mod handlers;
 pub mod models;
 
 #[cfg(test)]
 pub mod tests;
 
-// Re-export for easier testing
+// Re-export
 pub use database::Database;
-
-// Re-export models
+pub use discord::*;
+pub use events::*;
+pub use handlers::{admin, queue, session};
 pub use models::*;
-
-// Re-export handlers
-pub use handlers::admin;
-pub use handlers::queue;
-pub use handlers::session;

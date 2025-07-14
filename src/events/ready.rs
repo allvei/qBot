@@ -19,19 +19,22 @@ use crate::error::AppResult;
 ///
 /// # Returns
 /// * `AppResult<()>` - Success or failure with error context
-pub async fn handle_ready(ctx: Context, ready: Ready) -> AppResult<()> {
+pub async fn handle_ready(
+    ctx: Context,
+    ready: Ready,
+) -> AppResult<()> {
     let bot_user = &ready.user;
-    info!("Connected as {}#{}", bot_user.name, bot_user.discriminator);
+    info!("Connected as {}#{}", bot_user.name, bot_user.discriminator.unwrap());
     info!("Serving {} guilds", ready.guilds.len());
-    
+
     // Log the guilds the bot is connected to
     for guild in &ready.guilds {
-        info!("Connected to guild: {}", guild.id());
+        info!("Connected to guild: {}", guild.id.get());
     }
-    
+
     // Initialize any data structures or state needed for the bot
     initialize_bot_state(&ctx).await?;
-    
+
     Ok(())
 }
 
@@ -47,7 +50,7 @@ async fn initialize_bot_state(ctx: &Context) -> AppResult<()> {
     // - Load configuration
     // - Initialize data structures
     // - Set up scheduled tasks
-    
+
     info!("Bot state initialized successfully");
     Ok(())
 }
