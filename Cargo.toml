@@ -29,6 +29,8 @@ itertools = "0.14.0"
 
 [lints.clippy]
 # missing_docs_in_private_items = "warn"
-non_upper_case_globals = "allow"
-non_camel_case_types = "allow"
 # arbitrary_source_item_ordering = "warn"
+unused_imports = "allow"
+dead_code = "allow"
+too_many_arguments = "allow"
+unused_variables = "allow"
