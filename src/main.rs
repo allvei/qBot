@@ -136,6 +136,22 @@ impl EventHandler for Handler {
 
             let get_arg = |name: &str| -> Option<String> { command.data.options.iter().find(|opt| opt.name == name).and_then(|opt| opt.value.as_str()).map(|s| s.to_string()) };
 
+            // Check if the guild has a configuration, but only if it's not the config command
+            if cd.name.as_str() != "config" {
+                if let Some(guild_id) = command.guild_id {
+                    // Try to get the config for this guild
+                    // We'll automatically initialize if needed
+                    match self.database.get_config(Some(guild_id.get())).await {
+                        Err(_) => {
+                            // No config exists yet, we'll auto-initialize it in the admin handler
+                            // Just log this and continue
+                            info!("No configuration found for guild {}, will auto-initialize when needed", guild_id.get());
+                        }
+                        Ok(_) => {}
+                    }
+                }
+            }
+
             let result = match cd.name.as_str() {
                 "join" | "leave" => {
                     info();

@@ -156,7 +156,8 @@ async fn notify_session_ready(
     db: &Arc<Database>,
     group: &Group,
 ) -> Result<()> {
-    let config = db.get_config().await?;
+    // Use the guild_id from the group
+    let config = db.get_config(Some(group.guild_id)).await?;
 
     // Send notification to log channel
     if config.ic_log != 0 {

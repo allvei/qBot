@@ -109,7 +109,8 @@ pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
     // Log to channel
-    let config = cc.db.get_config().await?;
+    let guild_id = cc.intax.guild_id.map(|id| id.get());
+    let config = cc.db.get_config(guild_id).await?;
     if config.ic_log != 0 {
         let channel = ChannelId::new(config.ic_log);
 
@@ -173,7 +174,8 @@ pub async fn accept(
     cc.create_bot_reply("Session accepted! Players moved to team channels.").await?;
 
     // Log acceptance
-    let config = cc.db.get_config().await?;
+    let guild_id = cc.intax.guild_id.map(|id| id.get());
+    let config = cc.db.get_config(guild_id).await?;
     if config.ic_log != 0 {
         let channel = ChannelId::new(config.ic_log);
 
@@ -243,7 +245,8 @@ pub async fn end(
         .await?;
 
     // Log session end
-    let config = cc.db.get_config().await?;
+    let guild_id = cc.intax.guild_id.map(|id| id.get());
+    let config = cc.db.get_config(guild_id).await?;
     if config.ic_log != 0 {
         let channel = ChannelId::new(config.ic_log);
 
