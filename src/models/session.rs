@@ -1,571 +1,612 @@
-//! # Session Module
-//!
-//! This module defines the Session struct and its related functionality.
-//! A Session represents a game session with players, teams, and status.
+// CHECK ME
 
-use rand::prelude::*;
+use std::str::FromStr;
+use anyhow::{anyhow, Error};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
-use serenity::all::{ChannelId, GuildId, UserId};
+use serenity::all::{ButtonStyle, Cache, ChannelId, Context, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, CreateMessage, GuildId};
 use sqlx::FromRow;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
-use crate::discord::commands::CommandResponse;
-use crate::discord::utils::{move_user_to_channel, send_response};
-use crate::models::common::Team;
-use crate::models::group::Group;
-use crate::models::player::{Player, Rank};
+use crate::models::{Player, Rank};
 
-/// Calculate statistical metrics for a set of ELO values
-///
-/// # Arguments
-/// * `elos` - A slice of ELO values
-///
-/// # Returns
-/// * `(f64, f64, f64)` - (mean, median, standard deviation)
-fn calculate_stats(elos: &[u32]) -> (f64, f64, f64) {
-    if elos.is_empty() {
-        return (0.0, 0.0, 0.0);
-    }
-
-    // Calculate mean
-    let sum: u32 = elos.iter().sum();
-    let mean = sum as f64 / elos.len() as f64;
-
-    // Calculate median
-    let mut sorted_elos = elos.to_vec();
-    sorted_elos.sort_unstable();
-
-    let median = if elos.len() % 2 == 0 {
-        let mid = elos.len() / 2;
-        (sorted_elos[mid - 1] as f64 + sorted_elos[mid] as f64) / 2.0
-    } else {
-        sorted_elos[elos.len() / 2] as f64
-    };
-
-    // Calculate standard deviation
-    let variance = elos
-        .iter()
-        .map(|&x| {
-            let diff = mean - (x as f64);
-            diff * diff
-        })
-        .sum::<f64>()
-        / elos.len() as f64;
-
-    let std_dev = variance.sqrt();
-
-    (mean, median, std_dev)
-}
-
-/// Type alias for Session ID
-pub type SessionId = u16;
-
-/// Division names for grouping sessions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+)]
 pub enum DivName {
-    /// New players division
     Newcomer,
-    /// Experienced players division
     Journey,
 }
 
-/// Session status representing the current state of a session
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+)]
 pub enum SessionStatus {
-    /// Waiting for enough players to join
-    Idle,
-    /// Waiting for runners to start the session
-    Hot,
-    /// Moving players to the team channels
-    Push,
-    /// Game is active
-    Live,
-    /// Moving players back to the queue
-    Pull,
+    Idle, // Waiting for enough players to join
+    Hot, // Waiting for runners to start the session
+    Push, // Moving players to the team channels
+    Live, // Game is active
+    Pull, // Moving players back to the queue
 }
 
-/// Represents a team channel configuration with voice channels for each team
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamChannels {
-    /// Red team voice channel ID
-    pub red:  u64,
-    /// Blue team voice channel ID
-    pub blue: u64,
+impl SessionStatus {
+    pub fn is_active(&self) -> bool {
+        matches!(self, SessionStatus::Push | SessionStatus::Live | SessionStatus::Pull)
+    }
 }
 
-/// Represents a game session within a group.
-///
-/// A Session manages a collection of players (the pool) and tracks the current status
-/// of the game. It maintains a backreference to its parent Group via the group_id field.
-/// Sessions progress through various states (Idle, Hot, Push, Live, Pull) as players
-/// join, teams are formed, and the game proceeds.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+)]
+pub enum Team {
+    Red,
+    Blu,
+}
+
+impl FromStr
+    for Team {
+    type Err =
+        Error;
+
+    fn from_str(
+        s: &str,
+    ) -> Result<
+        Self,
+        Self::Err,
+    > {
+        match s {
+            "RED" => Ok(Team::Red),
+            "BLU" => Ok(Team::Blu),
+            _ => Err(Error::msg(format!("Unknown : {}", s))),
+        }
+    }
+}
+
+#[derive(
+    Default,
+)]
+pub struct Manager {
+    pub servers:
+        Vec<Server>,
+}
+
+impl Manager {
+    pub fn new(
+    ) -> Self {
+        Self { servers: Vec::new() }
+    }
+
+    pub fn pull_list(
+        &mut self,
+        cache: &Cache,
+    ) -> Self {
+        let mut servers = Vec::new();
+        cache.guilds().iter().for_each(|g| {
+            servers.push(Server::new(*g, None));
+        });
+        Self {
+            servers,
+        }
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+)]
+pub struct Server {
+    pub guild_id:
+        GuildId,
+    pub groups:
+        Vec<Group>,
+}
+
+impl Server {
+    pub fn new(
+        guild_id: GuildId,
+        group: Option<Group>,
+    ) -> Self {
+        info!("New server created for {}", guild_id);
+        Self {
+            guild_id,
+            groups: vec![group.unwrap()],
+        }
+    }
+
+    pub fn groups(
+        &self,
+    ) -> &Vec<Group> {
+        &self.groups
+    }
+
+    pub fn groups_mut(&mut self) -> &mut Vec<Group>{
+        &mut self
+            .groups
+    }
+
+    pub fn find_group_by_queue_channel(
+        &self,
+        channel_id: u64,
+    ) -> Option<
+        &Group,
+    > {
+        self.groups.iter().find(|g| g.queue_id == channel_id)
+    }
+
+    pub fn find_group_by_queue_tc_mut(
+        &mut self,
+        channel_id: u64,
+    ) -> Option<
+        &mut Group,
+    > {
+        self.groups.iter_mut().find(|g| g.queue_id == channel_id)
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+)]
+pub struct Group {
+    pub guild_id:          u64,
+    pub dashboard_id:      u64,
+    pub queue_chat_id:     u64,
+    pub queue_id:          u64,
+    pub teams:             Vec<TeamChannels>,
+    pub sessions:          Vec<Session>,
+    pub session_increment: u16,
+    pub quota:             u8,
+}
+
+impl Group {
+    pub fn new(
+        guild_id: u64,
+        dashboard_tc_id: u64,
+        queue_chat_id: u64,
+        queue_vc_id: u64,
+        red_vc_id: u64,
+        blu_vc_id: u64,
+        session_quota: u8,
+    ) -> Self {
+        info!("New group created for {}", dashboard_tc_id);
+        Self {
+            guild_id,
+            dashboard_id: dashboard_tc_id,
+            queue_chat_id,
+            queue_id: queue_vc_id,
+            teams: vec![TeamChannels { red_vc_id, blu_vc_id }],
+            sessions: Vec::new(),
+            session_increment: 0,
+            quota: session_quota,
+        }
+    }
+
+    pub fn add_team_channels(
+        &mut self,
+        red: u64,
+        blu: u64,
+    ) {
+        self.teams.push(TeamChannels { red_vc_id: red, blu_vc_id: blu });
+    }
+
+    pub fn get_sessions_by_status(&mut self, status: &SessionStatus) -> Vec<&mut Session> {
+        self.sessions.iter_mut().filter(|s| s.status == *status).collect()
+    }
+
+    pub fn is_player_in_session(&self, player: &Player) -> bool {
+        self.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.discord_id == player.discord_id))
+    }
+
+    pub fn get_player_session_status(&self, player: &Player) -> Result<SessionStatus, Error> {
+        self.sessions
+            .iter()
+            .find(|s| s.pool.iter().any(|p| p.player.discord_id == player.discord_id))
+            .map(|s| Ok(s.status.clone()))
+            .unwrap_or(Err(anyhow!("Player not found in any session")))
+    }
+
+    pub fn create_session(&mut self) {
+        self.session_increment += 1;
+        info!("Creating new session with ID: {}", self.session_increment);
+        self.sessions.push(Session::new(self.session_increment, self.guild_id, self.queue_id));
+    }
+
+    pub fn end_session(
+        &mut self,
+        session_id: u16,
+    ) -> bool {
+        info!("Attempting to end session with ID: {}", session_id);
+        if let Some(pos) = self.sessions.iter().position(|s| s.session_id == session_id) {
+            self.sessions.remove(pos);
+            info!("Session {} successfully ended and removed", session_id);
+            true
+        } else {
+            info!("Failed to end session {}: Session not found", session_id);
+            false
+        }
+    }
+
+    pub async fn init_dashboard(
+        &self,
+        ctx: &Context,
+        dashboard_id: u64,
+    ) -> Result<bool, anyhow::Error> {
+        info!("Initializing dashboard for channel ID: {}", dashboard_id);
+        if self.dashboard_id != dashboard_id {
+            return Ok(false);
+        }
+        
+        let channel = ChannelId::new(dashboard_id);
+        let embed = CreateEmbed::new()
+            .title("PUG Dashboard")
+            .description("No active sessions. Join the queue to get started!")
+            .footer(CreateEmbedFooter::new("Use /join to join the queue"));
+        
+        // Create buttons in a modular way for easy addition/removal
+        let buttons = self.create_dashboard_buttons();
+        let action_row = CreateActionRow::Buttons(buttons);
+            
+        match channel.send_message(
+            &ctx.http, 
+            CreateMessage::new()
+                .embed(embed)
+                .components(vec![action_row])
+        ).await {
+            Ok(_) => {
+                info!("Dashboard initialized successfully");
+                Ok(true)
+            },
+            Err(e) => {
+                error!("Failed to initialize dashboard: {:?}", e);
+                Err(anyhow::anyhow!("Failed to initialize dashboard: {:?}", e))
+            }
+        }
+    }
+    
+    /// Creates buttons for the dashboard in a modular way
+    /// Makes it easy to add or remove buttons
+    fn create_dashboard_buttons(&self) -> Vec<CreateButton> {
+        // Get the latest session ID if available
+        let session_id = self.sessions.last().map(|s| s.session_id.to_string());
+        
+        // Check if there's an active session to enable/disable buttons
+        let has_active_session = !self.sessions.is_empty();
+        let has_ready_session = self.sessions.iter().any(|s| s.pool.len() >= 8);
+        
+        // Define button configurations - this makes it easy to add/remove buttons
+        let button_configs = vec![
+            // (custom_id, label, style, disabled, emoji_option)
+            ("join_leave", "Join Queue",    ButtonStyle::Success,   false,               None),
+            ("shuffle",    "Shuffle Teams", ButtonStyle::Primary,   !has_ready_session,  Some('🎲')),
+            ("start",      "Start Match",   ButtonStyle::Secondary, !has_active_session, Some('▶')),
+            ("end",        "End Match",     ButtonStyle::Danger,    !has_active_session, Some('⏹'))
+        ];
+        
+        // Generate buttons from configurations
+        button_configs.into_iter().map(|(action, label, style, disabled, emoji)| {
+            // Create button with the appropriate custom_id
+            let custom_id = if let Some(id) = &session_id {
+                // For buttons that need a session ID
+                if action != "join_leave" {
+                    format!("{action}:{id}")
+                } else {
+                    action.to_string()
+                }
+            } else {
+                // No session ID available
+                action.to_string()
+            };
+            
+            // Create the button with all specified properties
+            let mut button = CreateButton::new(custom_id)
+                .label(label)
+                .style(style)
+                .disabled(disabled);
+                
+            // Add emoji if specified
+            if let Some(emoji_char) = emoji {
+                button = button.emoji(emoji_char);
+            }
+            
+            button
+        }).collect()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Session {
-    /// Unique identifier for this session
-    pub id:       u16,
-    /// ID of the owning group (backreference)
-    pub group_id: u64,
-    /// Current status of the session (Idle, Hot, Push, Live, Pull)
-    pub status:   SessionStatus,
-    /// Collection of players currently in this session
-    pub pool:     Vec<Player>,
+    pub guild_id:      u64,
+    pub queue_chat_id: u64,
+    pub session_id:    u16,
+    pub status:        SessionStatus,
+    pub pool:          Vec<SessionPlayer>,
 }
 
 impl Session {
     pub fn new(
-        id: u16,
-        group_id: u64,
+        session_id:    u16,
+        guild_id:      u64,
+        queue_chat_id: u64,
     ) -> Self {
         let session = Self {
-            id,
-            group_id,
-            pool: Vec::new(),
+            guild_id,
+            queue_chat_id,
+            session_id,
+            pool:   Vec::new(),
             status: SessionStatus::Idle,
         };
-        info!("New session started with ID: {}", id);
+        info!("New session started with ID: {}", session_id);
         session
     }
 
-    /// Change session status to Hot
-    ///
-    /// This method performs the following actions:
-    /// 1. Updates the session status to Hot
-    /// 2. Notifies players that the session is ready to start
-    /// 3. Prepares team assignments if not already done
-    ///
-    /// # Arguments
-    /// * `ctx` - Discord context for API access
-    /// * `group` - Reference to the parent group containing this session
-    ///
-    /// # Returns
-    /// * `AppResult<()>` - Success or failure with error context
-    pub async fn hot<'a>(
-        &mut self,
-        ctx: &serenity::prelude::Context,
-        group: &'a Group,
-    ) -> crate::error::AppResult<()> {
-        info!("Changing session {} status to HOT", self.id);
-
-        // Update status
+    pub fn hot(&mut self) {
+        // send notif
+        info!("Changing session {} status to HOT", self.session_id);
         self.status = SessionStatus::Hot;
-
-        // Generate teams if not already done
-        if self.pool.iter().any(|p| p.team.is_none()) {
-            self.generate_teams()?;
-        }
-
-        // Notify players in the dashboard channel
-        let dashboard_id = ChannelId::new(group.dashboard);
-        let red_players: Vec<_> = self.pool.iter().filter(|p| p.team == Some(Team::Red)).map(|p| format!("<@{}>", p.discord_id)).collect();
-
-        let blue_players: Vec<_> = self.pool.iter().filter(|p| p.team == Some(Team::Blue)).map(|p| format!("<@{}>", p.discord_id)).collect();
-
-        let notification = CommandResponse::Embed {
-            title:       format!("Session {} is HOT!", self.id),
-            description: format!(
-                "The session is ready to start!\n\n\
-                **Red Team:** {}\n\
-                **Blue Team:** {}\n\n\
-                Please prepare to be moved to your team channels.",
-                red_players.join(", "),
-                blue_players.join(", ")
-            ),
-            color:       Some((255, 165, 0)), // Orange color for HOT status
-        };
-
-        send_response(ctx, dashboard_id, notification).await?;
-
-        Ok(())
     }
 
-    /// Get the group ID this session belongs to
-    ///
-    /// # Returns
-    /// * `u64` - The group ID
-    pub fn group_id(&self) -> u64 {
-        self.group_id
-    }
-
-    /// Update the group ID this session belongs to
-    ///
-    /// # Arguments
-    /// * `group_id` - The new group ID
-    ///
-    /// # Returns
-    /// * `AppResult<()>` - Success or failure with error context
-    pub fn set_group_id(
-        &mut self,
-        group_id: u64,
-    ) -> crate::error::AppResult<()> {
-        info!("Updating session {} group ID to {}", self.id, group_id);
-        self.group_id = group_id;
-        Ok(())
-    }
-
-    /// Change session status to Push and move players to their team channels
-    ///
-    /// This method performs the following actions:
-    /// 1. Updates the session status to Push
-    /// 2. Moves players from the queue channel to their assigned team channels
-    /// 3. Notifies players that the match is starting
-    ///
-    /// # Arguments
-    /// * `ctx` - Discord context for API access
-    /// * `group` - Reference to the parent group containing this session
-    ///
-    /// # Returns
-    /// * `AppResult<()>` - Success or failure with error context
-    pub async fn push<'a>(
-        &mut self,
-        ctx: &serenity::prelude::Context,
-        group: &'a Group,
-    ) -> crate::error::AppResult<()> {
-        info!("Changing session {} status to PUSH", self.id);
-
-        // Update status
+    pub fn push(&mut self) {
+        info!("Changing session {} status to PUSH", self.session_id);
         self.status = SessionStatus::Push;
-
-        // Ensure teams are assigned
-        if self.pool.iter().any(|p| p.team.is_none()) {
-            self.generate_teams()?;
-        }
-
-        // Get guild ID
-        let guild_id = GuildId::new(group.guild_id);
-
-        // Find the team channels
-        if group.teams.is_empty() {
-            return Err(crate::error::AppError::SessionError(format!("No team channels configured for group {}", group.guild_id)));
-        }
-
-        // Use the first team channels configuration
-        let team_channels = &group.teams[0];
-        let red_channel = ChannelId::new(team_channels.red);
-        let blue_channel = ChannelId::new(team_channels.blue);
-
-        // Move players to their team channels
-        for player in &self.pool {
-            let user_id = UserId::new(player.discord_id);
-
-            match player.team {
-                Some(Team::Red) => {
-                    move_user_to_channel(ctx, guild_id, user_id, red_channel).await?;
-                }
-                Some(Team::Blue) => {
-                    move_user_to_channel(ctx, guild_id, user_id, blue_channel).await?;
-                }
-                None => {
-                    // Skip players without team assignment
-                    info!("Player {} has no team assignment, skipping move", player.discord_id);
-                }
-            }
-        }
-
-        // Notify in dashboard channel
-        let dashboard_id = ChannelId::new(group.dashboard);
-        let notification = CommandResponse::Embed {
-            title:       format!("Session {} is starting!", self.id),
-            description: "Players have been moved to their team channels. The match is now starting!".to_string(),
-            color:       Some((0, 255, 0)), // Green color for PUSH status
-        };
-
-        send_response(ctx, dashboard_id, notification).await?;
-
-        Ok(())
     }
 
-    /// Change session status to Live and mark the match as in progress
-    ///
-    /// This method performs the following actions:
-    /// 1. Updates the session status to Live
-    /// 2. Notifies players that the match is now live
-    /// 3. Updates any necessary match tracking information
-    ///
-    /// # Arguments
-    /// * `ctx` - Discord context for API access
-    /// * `group` - Reference to the parent group containing this session
-    ///
-    /// # Returns
-    /// * `AppResult<()>` - Success or failure with error context
-    pub async fn live<'a>(
-        &mut self,
-        ctx: &serenity::prelude::Context,
-        group: &'a Group,
-    ) -> crate::error::AppResult<()> {
-        info!("Changing session {} status to LIVE", self.id);
-
-        // Update status
+    pub fn live(&mut self) {
+        info!("Changing session {} status to LIVE", self.session_id);
         self.status = SessionStatus::Live;
-
-        // Notify in dashboard channel
-        let dashboard_id = ChannelId::new(group.dashboard);
-        let notification = CommandResponse::Embed {
-            title:       format!("Session {} is now LIVE!", self.id),
-            description: "The match is now in progress. Good luck and have fun!".to_string(),
-            color:       Some((0, 0, 255)), // Blue color for LIVE status
-        };
-
-        send_response(ctx, dashboard_id, notification).await?;
-
-        // Notify in chat channel
-        let chat_id = ChannelId::new(group.chat);
-        let chat_message = CommandResponse::Text(format!("@here Session {} is now LIVE! The match is in progress.", self.id));
-
-        send_response(ctx, chat_id, chat_message).await?;
-
-        Ok(())
     }
 
-    /// Change session status to Pull, move players back to queue, and reset team assignments
-    ///
-    /// This method performs the following actions:
-    /// 1. Updates the session status to Pull
-    /// 2. Moves players from team channels back to the queue channel
-    /// 3. Resets team assignments for all players
-    /// 4. Notifies players that the match has ended
-    ///
-    /// # Arguments
-    /// * `ctx` - Discord context for API access
-    /// * `group` - Reference to the parent group containing this session
-    ///
-    /// # Returns
-    /// * `AppResult<()>` - Success or failure with error context
-    pub async fn pull<'a>(
-        &mut self,
-        ctx: &serenity::prelude::Context,
-        group: &'a Group,
-    ) -> crate::error::AppResult<()> {
-        info!("Changing session {} status to PULL", self.id);
-
-        // Update status
+    pub fn pull(&mut self) {
+        info!("Changing session {} status to PULL", self.session_id);
         self.status = SessionStatus::Pull;
-
-        // Get guild ID and queue channel
-        let guild_id = GuildId::new(group.guild_id);
-        let queue_channel = ChannelId::new(group.queue);
-
-        // Move all players back to queue channel and reset team assignments
-        for player in &mut self.pool {
-            let user_id = UserId::new(player.discord_id);
-
-            // Move player to queue channel
-            move_user_to_channel(ctx, guild_id, user_id, queue_channel).await?;
-
-            // Reset team assignment
-            player.set_team(None);
-        }
-
-        // Notify in dashboard channel
-        let dashboard_id = ChannelId::new(group.dashboard);
-        let notification = CommandResponse::Embed {
-            title:       format!("Session {} has ended", self.id),
-            description: "The match has ended. Players have been moved back to the queue channel.".to_string(),
-            color:       Some((128, 128, 128)), // Gray color for PULL status
-        };
-
-        send_response(ctx, dashboard_id, notification).await?;
-
-        // Notify in chat channel
-        let chat_id = ChannelId::new(group.chat);
-        let chat_message = CommandResponse::Text(format!("Session {} has ended. Thanks for playing!", self.id));
-
-        send_response(ctx, chat_id, chat_message).await?;
-
-        Ok(())
     }
 
-    /// Generate balanced teams for the session using the Balanced Composite Heuristic (BCH) algorithm
-    ///
-    /// BCH evaluates all possible team splits and selects the one with the lowest combined score
-    /// of differences in average ELO, median ELO, and standard deviation of ELO between teams.
-    ///
-    /// # Returns
-    /// * `AppResult<()>` - Success or failure with error context
-    pub fn generate_teams(&mut self) -> crate::error::AppResult<()> {
-        use itertools::Itertools;
-        use std::collections::HashSet;
-
-        info!("Generating teams for session {} using BCH algorithm", self.id);
-        debug!("Evaluating {} players for team assignment", self.pool.len());
-
-        if self.pool.is_empty() {
-            return Err(crate::error::AppError::SessionError(format!("Cannot generate teams for session {} with no players", self.id)));
-        }
-
-        // Ensure we have an even number of players
-        if self.pool.len() % 2 != 0 {
-            return Err(crate::error::AppError::SessionError(format!(
-                "Cannot generate balanced teams with odd number of players: {}",
-                self.pool.len()
-            )));
-        }
+    pub fn generate_teams(&mut self) {
+        info!("Generating teams for session {}", self.session_id);
+        debug!("Cloned {} players for team assignment", self.pool.len());
+        let mut rng = rand::rng();
+        let mut players = self.pool.clone();
 
         // 1. First add buffered players to genpool (priority)
-        let buffered_players = self.pool.iter().filter(|p| p.buffered).cloned().collect::<Vec<_>>();
+        let buffered_players = self.pool.iter().filter(|p| p.buffered.is_some()).cloned().collect::<Vec<_>>();
 
         // 2. Fill remaining slots with non-buffered players
-        let team_size = self.pool.len() / 2; // Each team should have half the players
-        let remaining_slots = (team_size * 2) - buffered_players.len();
-        let mut non_buffered = self.pool.iter().filter(|p| !p.buffered).cloned().collect::<Vec<_>>();
+        let remaining_slots = 8 - buffered_players.len(); // Assuming 8 players per match
+        let mut non_buffered = self.pool.iter().filter(|p| p.buffered.is_none()).cloned().collect::<Vec<_>>();
 
         // Take only what we need
         if non_buffered.len() > remaining_slots {
             non_buffered.truncate(remaining_slots);
         }
 
-        // Combine buffered and non-buffered players
-        let mut players = Vec::new();
-        players.extend(buffered_players);
-        players.extend(non_buffered);
+        // 3. Sort players by ELO in descending order
+        players.sort_by(|a, b| {
+            let a_elo = a.player.rank.unwrap_or(Rank::Beginner).elo();
+            let b_elo = b.player.rank.unwrap_or(Rank::Beginner).elo();
 
-        // If we don't have enough players for two teams, return error
-        if players.len() < 2 {
-            return Err(crate::error::AppError::SessionError(format!("Not enough players to form teams: {}", players.len())));
-        }
-
-        // Get player ELO values
-        let player_elos: Vec<(usize, u32)> = players.iter().enumerate().map(|(idx, p)| (idx, p.rank.unwrap_or(Rank::Beginner).elo())).collect();
-
-        // For small player counts, we can evaluate all combinations
-        // For larger counts, we might need to limit or sample
-        let half_size = players.len() / 2;
-        let max_combinations = 10000; // Limit combinations to evaluate for performance
-
-        // Track best team split
-        let mut best_score = f64::MAX;
-        let mut best_team_a_indices = HashSet::new();
-
-        // Generate all possible combinations of player indices for team A
-        // Team B will be the complement of these indices
-        let combinations = (0..players.len()).combinations(half_size);
-
-        // Count combinations for logging
-        let total_combinations = combinations.clone().count();
-        info!("Evaluating {} possible team combinations", total_combinations);
-
-        // Limit combinations if there are too many
-        let combinations_to_evaluate = if total_combinations > max_combinations {
-            debug!("Limiting to {} combinations for performance", max_combinations);
-            combinations.take(max_combinations)
-        } else {
-            combinations.take(total_combinations)
-        };
-
-        // Evaluate each possible team split
-        for team_a_indices in combinations_to_evaluate {
-            let team_a_indices_set: HashSet<usize> = team_a_indices.iter().cloned().collect();
-
-            // Calculate team A stats
-            let team_a_elos: Vec<u32> = team_a_indices_set.iter().map(|&idx| player_elos[idx].1).collect();
-
-            // Calculate team B stats (all players not in team A)
-            let team_b_elos: Vec<u32> = (0..players.len()).filter(|idx| !team_a_indices_set.contains(idx)).map(|idx| player_elos[idx].1).collect();
-
-            // Calculate mean, median, and standard deviation for both teams
-            let (avg_a, med_a, std_a) = calculate_stats(&team_a_elos);
-            let (avg_b, med_b, std_b) = calculate_stats(&team_b_elos);
-
-            // Calculate the score (lower is better)
-            let score = (avg_a - avg_b).abs() + (med_a - med_b).abs() + (std_a - std_b).abs();
-
-            // Update best team if this is better
-            if score < best_score {
-                best_score = score;
-                best_team_a_indices = team_a_indices_set;
+            // Randomize order for players with identical ELO
+            if a_elo == b_elo {
+                if rng.random::<bool>() {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Greater
+                }
+            } else {
+                b_elo.cmp(&a_elo)
             }
-        }
+        });
 
-        // Create the teams based on the best split found
+        // 4. Distribute players in snake draft pattern (ABBAABBA)
         let mut team_a = Vec::new();
         let mut team_b = Vec::new();
 
-        for (idx, player) in players.iter().enumerate() {
+        for (i, player) in players.iter().enumerate() {
             let mut player_clone = player.clone();
 
-            if best_team_a_indices.contains(&idx) {
-                player_clone.set_team(Some(Team::Red));
-                team_a.push(player_clone);
-            } else {
-                player_clone.set_team(Some(Team::Blue));
-                team_b.push(player_clone);
+            // Snake draft pattern: 0->A, 1->B, 2->B, 3->A, 4->A, 5->B, 6->B, 7->A
+            match i % 4 {
+                0 | 3 => {
+                    player_clone.team(Team::Red);
+                    team_a.push(player_clone);
+                }
+                1 | 2 => {
+                    player_clone.team(Team::Blu);
+                    team_b.push(player_clone);
+                }
+                _ => unreachable!(),
             }
         }
 
-        info!("BCH algorithm selected optimal team split with score: {}", best_score);
-
-        // Update the original players in the pool with their team assignments
-        for player in &mut self.pool {
-            if let Some(team_player) = team_a.iter().find(|p| p.discord_id == player.discord_id) {
-                player.set_team(team_player.team);
-            } else if let Some(team_player) = team_b.iter().find(|p| p.discord_id == player.discord_id) {
-                player.set_team(team_player.team);
+        // 5. Update the original pool with team assignments
+        for player in &team_a {
+            if let Some(p) = self.pool.iter_mut().find(|p| p.player.discord_id == player.player.discord_id) {
+                p.team = Some(Team::Red);
             }
         }
 
-        info!("Teams generated for session {}: Team A: {} players, Team B: {} players", self.id, team_a.len(), team_b.len());
-
-        Ok(())
+        for player in &team_b {
+            if let Some(p) = self.pool.iter_mut().find(|p| p.player.discord_id == player.player.discord_id) {
+                p.team = Some(Team::Blu);
+            }
+        }
     }
 
-    /// Get all players in the session
-    ///
-    /// # Returns
-    /// * `Vec<Player>` - A vector containing clones of all players in the session
+    pub fn count(&self) -> usize {
+        self.pool.len()
+    }
+
     pub fn get_members(&self) -> Vec<Player> {
-        self.pool.to_vec()
+        self.pool.iter().map(|m| m.player.clone()).collect()
     }
 
-    pub fn add_player(
-        &mut self,
-        player: &Player,
-    ) -> crate::error::AppResult<()> {
-        if self.pool.iter().any(|p| p.discord_id == player.discord_id) {
-            return Err(crate::error::AppError::SessionError(format!("Player {} is already in the session", player.discord_id)));
+    pub fn add_player(&mut self, player: &Player) {
+        // Clone players for team assignment
+        let session_player = SessionPlayer::construct(player.clone(), self.guild_id, self.session_id);
+        info!("Player {} added to session {}. Total players: {}", player.discord_id, self.session_id, self.pool.len());
+        self.pool.push(session_player);
+    }
+
+    pub fn remove_player(&mut self, player: &SessionPlayer) {
+        let before_count = self.pool.len();
+        self.pool.retain(|p| p.player.discord_id != player.player.discord_id);
+        let after_count = self.pool.len();
+
+        if before_count == after_count {
+            info!("Player {} not found in session {}", player.player.discord_id, self.session_id);
+        } else {
+            info!("Player {} removed from session {}. Remaining players: {}", player.player.discord_id, self.session_id, after_count);
+        }
+    }
+
+    pub fn buff(&mut self, user_id: u64, buffered: Option<Player>) {
+        self.pool.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().buff(buffered);
+    }
+
+    pub fn unbuff(&mut self, user_id: u64) {
+        self.pool.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().unbuff();
+    }
+
+    pub fn update_queue_status(&mut self,
+        user:      Player,
+        queue_vc:  Option<bool>,
+        queue_cmd: Option<bool>,
+    ) {
+        // if session is closed, ignore
+        if !matches!(self.status, SessionStatus::Idle | SessionStatus::Pull) {
+            return;
         }
 
-        // Clone player and set backreferences
-        let mut session_player = player.clone();
-        session_player.session_id = Some(self.id);
-        session_player.group_id = Some(self.group_id);
+        let uid = user.discord_id;
+        // find existing entry
+        if let Some(sp) = self.pool.iter_mut().find(|sp| sp.player.discord_id == uid) {
+            if let Some(v) = queue_vc {
+                sp.queue_vc = v;
+            }
+            if let Some(c) = queue_cmd {
+                sp.queue_cmd = c;
+            }
 
-        info!("Adding player {} to session {}", player.discord_id, self.id);
-        self.pool.push(session_player);
+            // if neither flag is true any more, remove them
+            if !sp.in_queue() {
+                self.pool.retain(|p| p.player.discord_id != uid);
+            }
+        } else if queue_vc.unwrap_or(false) || queue_cmd.unwrap_or(false) {
+            // first‐time join
+            let mut sp = SessionPlayer::construct(user, self.guild_id, self.session_id);
+            sp.queue_vc = queue_vc.unwrap_or(false);
+            sp.queue_cmd = queue_cmd.unwrap_or(false);
+            self.pool.push(sp);
+        }
+    }
+
+    /// Helper so you don’t have to remember SessionPlayer::new everywhere
+    pub fn on_voice_state_change(&mut self, user: Player, joined: bool) {
+        self.update_queue_status(user, Some(joined), None);
+    }
+
+    pub fn on_command_join(&mut self, user: Player, joined: bool) {
+        self.update_queue_status(user, None, Some(joined));
+    }
+
+    /// Notify session ready when the queue quota is reached.
+    ///
+    /// * `ctx`        - Ref to the Serenity context.
+    /// * `db`         - Ref to the database.
+    /// * `group`      - The group containing the session.
+    pub async fn notify_session_ready(
+        &self,
+        ctx: &Context,
+    ) -> Result<(), Error> {
+        // Send notification to log channel
+        if self.queue_chat_id != 0 {
+            let channel = ChannelId::new(self.queue_chat_id);
+            let mut player_mentions = Vec::new();
+            // Take at most 8 players
+            let pool_len = self.pool.len().min(8);
+            for member in &self.pool[..pool_len] {
+                player_mentions.push(format!("<@{}>", member.player.discord_id));
+            }
+            
+            let embed = CreateEmbed::new()
+                .title("QUOTA REACHED!")
+                .description(
+                    format!(
+                        "**8 players ready for pickup!**\n\n{}\n\nPlayers have 2 minutes to confirm.", // TODO: Use Discord datetime feature
+                        player_mentions.join(" ")
+                    )
+                )
+                .footer(CreateEmbedFooter::new("Awaiting team generation..."));
+            channel.send_message(&ctx.http, CreateMessage::new().embed(embed)).await?;
+        } else {
+            error!("Queue chat ID is not set in the config")
+        }
         Ok(())
     }
 
-    /// Remove a player from the session by their Discord ID
-    ///
-    /// # Arguments
-    /// * `discord_id` - The Discord ID of the player to remove
-    ///
-    /// # Returns
-    /// * `Ok(())` if the player was successfully removed
-    /// * `Err(AppError::SessionError)` if the player was not found in the session
-    pub fn remove_player(
-        &mut self,
-        discord_id: u64,
-    ) -> crate::error::AppResult<()> {
-        if let Some(pos) = self.pool.iter().position(|p| p.discord_id == discord_id) {
-            self.pool.remove(pos);
-            info!("Player {} removed from session {}. Remaining players: {}", discord_id, self.id, self.pool.len());
-            Ok(())
-        } else {
-            let error_msg = format!("Player {} not found in session {}", discord_id, self.id);
-            info!("{}", error_msg);
-            Err(crate::error::AppError::SessionError(error_msg))
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize,)]
+pub struct SessionPlayer {
+    pub guild_id:   u64,
+    pub session_id: u16,
+    pub player:     Player,
+    pub team:       Option<Team>,
+    pub buffered:   Option<Player>,
+    pub queue_vc:   bool,
+    pub queue_cmd:  bool,
+}
+
+impl SessionPlayer {
+    pub fn construct(
+        player:     Player,
+        guild_id:   u64,
+        session_id: u16,
+    ) -> Self {
+        Self {
+            guild_id,
+            session_id,
+            player,
+            team:      None,
+            buffered:  None,
+            queue_vc:  false,
+            queue_cmd: false,
         }
     }
 
-    pub fn get_idle_session_by_vc<'a>(
-        &self,
-        channel_id: u64,
-        groups: &'a [Group],
-    ) -> Option<&'a Session> {
-        for group in groups {
-            if group.queue == channel_id {
-                return group.session.iter().find(|s| s.status == SessionStatus::Idle);
-            }
-        }
-        None
+    pub fn buff(&mut self, buffered: Option<Player>,) {
+        self.buffered = buffered;
     }
+
+    pub fn unbuff(&mut self,) {
+        self.buffered = None;
+    }
+
+    pub fn team(&mut self, team: Team,) {
+        self.team = Some(team);
+    }
+
+    pub fn in_queue(&self) -> bool {
+        self.queue_vc || self.queue_cmd
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamChannels {
+    pub red_vc_id: u64,
+    pub blu_vc_id: u64,
 }

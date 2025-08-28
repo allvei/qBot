@@ -9,12 +9,9 @@ pub mod events;
 pub mod handlers;
 pub mod models;
 
-#[cfg(test)]
-pub mod tests;
-
 // Re-export
 pub use database::Database;
 pub use discord::*;
 pub use events::*;
-pub use handlers::{admin, queue, session};
+pub use handlers::{admin, session};
 pub use models::*;

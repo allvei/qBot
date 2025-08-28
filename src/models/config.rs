@@ -1,5 +1,5 @@
 // CHECK ME
-use serde::{Deserialize, Serialize};
+use serde::{ Deserialize, Serialize };
 use sqlx::FromRow;
 
 // Example usage:
@@ -12,33 +12,34 @@ macro_rules! define_global_ids {
         $(
             $(#[$meta:meta])*
             $const:ident => $value:expr
-        ),* $(,)?
+        ),*
+        $(,)?
     ) => {
         $(
             $(#[$meta])*
             pub const $const: u64 = $value;
         )*
-    }
+    };
 }
 
 define_global_ids! {
-  ID_RUNNER          => 1386951114225746040,
-  ID_ADMIN           => 1386951155052974141,
+  RUNNER_R_ID          => 1386951114225746040,
+  ADMIN_R_ID           => 1386951155052974141,
 
-  ID_EU_BEGINNER     => 1386989827307606107,
-  ID_EU_NEWCOMER     => 1386951211109974066,
-  ID_EU_NOVICE       => 1386951241539784827,
-  ID_EU_APPRENTICE   => 1386951264117592097,
-  ID_EU_JOURNEYMAN   => 1386951275056201820,
-  ID_EU_MASTER       => 1386951316143734814,
-  ID_EU_MASTER_ELITE => 1386951327711494204,
-  ID_EU_GRANDMASTER  => 1386951360594837544,
+  EU_BEGINNER_R_ID     => 1386989827307606107,
+  EU_NEWCOMER_R_ID     => 1386951211109974066,
+  EU_NOVICE_R_ID       => 1386951241539784827,
+  EU_APPRENTICE_R_ID   => 1386951264117592097,
+  EU_JOURNEYMAN_R_ID   => 1386951275056201820,
+  EU_MASTER_R_ID       => 1386951316143734814,
+  EU_MASTER_ELITE_R_ID => 1386951327711494204,
+  EU_GRANDMASTER_R_ID  => 1386951360594837544,
 
-  ID_DASHBOARD       => 1385894822992281701,
-  ID_CHAT            => 1388643261543088208,
-  ID_QUEUE           => 1385893666010300436,
-  ID_RED             => 1385464431185494086,
-  ID_BLU             => 1385464563448680578,
+  DASHBOARD_TC_ID    => 1385894822992281701,
+  CHAT_TC_ID         => 1388643261543088208,
+  QUEUE_TC_ID        => 1385893666010300436,
+  RED_VC_ID          => 1385464431185494086,
+  BLU_VC_ID          => 1385464563448680578,
   // ID_NA_BEGINNER     => 0,
   // ID_NA_NEWCOMER     => 0,
   // ID_NA_NOVICE       => 0,
@@ -53,34 +54,70 @@ define_global_ids! {
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct ConfigFormat {
     pub key:         String,
-    pub value:       String,
+    pub value:       Option<String>,
     pub description: Option<String>,
 }
 
 /// Bot configuration struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Config {
-    pub guild_id:     u64,
-    pub i_runner:     u64,
-    pub i_admin:      u64,
-    pub ic_queue:     u64,
-    pub ic_log:       u64,
-    pub ic_buffer:    u64,
-    pub ic_red:       u64,
-    pub ic_blue:      u64,
-    pub join_timeout: u64,
+pub struct GroupConfig {
+    pub guild_id:        u64,
+    pub group_id:        u64,
+    pub runner_r_id:     u64,
+    pub admin_r_id:      u64,
+    pub dashboard_tc_id: u64,
+    pub queue_tc_id:     u64,
+    pub queue_vc_id:     u64,
+    pub log_tc_id:       u64,
+    pub red_vc_id:       u64,
+    pub blu_vc_id:       u64,
+    pub join_timeout:    u16,
 }
 
-impl Config {
-    pub fn new(guild_id: u64, i_runner: u64, i_admin: u64, ic_queue: u64, ic_log: u64, ic_buffer: u64, ic_red: u64, ic_blue: u64) -> Self {
-        Self { guild_id,
-               i_runner,
-               i_admin,
-               ic_queue,
-               ic_log,
-               ic_buffer,
-               ic_red,
-               ic_blue,
-               join_timeout: 120 }
+impl GroupConfig {
+    pub fn new(
+        guild_id:        u64,
+        group_id:        u64,
+        runner_r_id:     u64,
+        admin_r_id:      u64,
+        dashboard_tc_id: u64,
+        queue_tc_id:     u64,
+        queue_vc_id:     u64,
+        log_tc_id:       u64,
+        red_vc_id:       u64,
+        blu_vc_id:       u64,
+    ) -> Self {
+        Self {
+            guild_id,
+            group_id,
+            runner_r_id,
+            admin_r_id,
+            dashboard_tc_id,
+            queue_tc_id,
+            queue_vc_id,
+            log_tc_id,
+            red_vc_id,
+            blu_vc_id,
+            join_timeout: 120,
+        }
+    }
+
+    pub fn empty(
+        guild_id: u64,
+        group_id: u64,
+    ) -> Self {
+        Self {
+            guild_id,
+            group_id,
+            runner_r_id:     0,
+            admin_r_id:      0,
+            dashboard_tc_id: 0,
+            queue_tc_id:     0,
+            queue_vc_id:     0,
+            log_tc_id:       0,
+            red_vc_id:       0,
+            blu_vc_id:       0,
+            join_timeout:    120,
+        }
     }
 }

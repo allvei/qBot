@@ -7,8 +7,8 @@ use serenity::all::{Context, VoiceState};
 use tracing::{debug, info};
 
 use crate::error::AppResult;
-use crate::models::group::Group;
-use crate::models::server::Server;
+use crate::models::Group;
+use crate::models::Server;
 
 /// Handle voice state update events
 ///
@@ -84,7 +84,7 @@ pub fn find_group_by_voice_channel(server: &Server, channel_id: u64) -> Option<&
     // Check team channels
     for group in &server.groups {
         for team_channel in &group.teams {
-            if team_channel.red == channel_id || team_channel.blue == channel_id {
+            if team_channel.red_vc_id == channel_id || team_channel.blu_vc_id == channel_id {
                 return Some(group);
             }
         }
