@@ -29,13 +29,7 @@ pub async fn buffer(
 ///
 /// * `key`         - The key to modify.
 /// * `value`       - The value to set for the key.
-pub async fn config(
-    cc: &CC<'_>,
-    key: String,
-    value: Option<
-        String,
-    >,
-) -> Result<()> {
+pub async fn config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Result<()> {
     info!("Processing config: key={}, value={:?}", key, value);
     if !check_role(cc, &Role::Admin).await? {
         info!("User is not an admin");
@@ -44,9 +38,7 @@ pub async fn config(
         return Ok(());
     }
 
-    if let Some(
-        val,
-    ) = value {
+    if let Some(val,) = value {
         info!("Setting config {} = {}", key, val);
 
         cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found").get()).await?;
@@ -69,10 +61,10 @@ pub async fn config(
 
         let config_text = format!(
             "**Current Configuration:**\n\
-                                  Guild: `{}`\n\
-                                  Queue Channel: `{}`\n\
-                                  RED Channel: `{}`\n\
-                                  BLU Channel: `{}`\n\
+                                  guild: `{}`\n\
+                                  dashboard: `{}`\n\
+                                  red: `{}`\n\
+                                  blu: `{}`\n\
                                   Confirmation Timeout: `{}s`\n\
                                   Runner Role: `{}`\n\
                                   Admin Role: `{}`",

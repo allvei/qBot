@@ -181,9 +181,9 @@ impl EventHandler
                 
                 // Create component context similar to command context
                 let comp_ctx = ComponentContext {
-                    ctx: &ctx,
+                    ctx:       &ctx,
                     component: &component,
-                    db: self.database.clone(),
+                    db:        self.database.clone(),
                 };
                 
                 // Handle different button actions based on custom_id
@@ -317,7 +317,6 @@ impl EventHandler
                 let components = vec![CreateActionRow::Buttons(vec![CB::new(format!("shuffle:{}", session_id))
                     .style(ButtonStyle::Primary)
                     .label("Shuffle Teams")
-                    .emoji('🎲')])];
 
                 // Send the message with both embed and components
                 if let Ok(msg) = channel.send_message(&ctx.http, CM::new().embed(embed).components(components)).await {

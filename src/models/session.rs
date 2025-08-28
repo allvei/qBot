@@ -293,9 +293,9 @@ impl Group {
         let button_configs = vec![
             // (custom_id, label, style, disabled, emoji_option)
             ("join_leave", "Join Queue",    ButtonStyle::Success,   false,               None),
-            ("shuffle",    "Shuffle Teams", ButtonStyle::Primary,   !has_ready_session,  Some('🎲')),
-            ("start",      "Start Match",   ButtonStyle::Secondary, !has_active_session, Some('▶')),
-            ("end",        "End Match",     ButtonStyle::Danger,    !has_active_session, Some('⏹'))
+            ("shuffle",    "Shuffle Teams", ButtonStyle::Primary,   !has_ready_session,  None),
+            ("start",      "Start Match",   ButtonStyle::Secondary, !has_active_session, None),
+            ("end",        "End Match",     ButtonStyle::Danger,    !has_active_session, None)
         ];
         
         // Generate buttons from configurations

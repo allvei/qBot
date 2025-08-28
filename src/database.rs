@@ -267,9 +267,9 @@ impl Database {
 
         let group = Group {
             guild_id,
-            dashboard_id: result.get::<i64, _>("dashboard") as u64,
+            dashboard_id:  result.get::<i64, _>("dashboard") as u64,
             queue_chat_id: result.get::<i64, _>("chat") as u64,
-            queue_id: result.get::<i64, _>("queue") as u64,
+            queue_id:      result.get::<i64, _>("queue") as u64,
             teams: vec![TeamChannels {
                 red_vc_id: result.get::<i64, _>("red") as u64,
                 blu_vc_id: result.get::<i64, _>("blu") as u64,
@@ -335,10 +335,10 @@ impl Database {
             .fetch_one(&self.pool).await?;
 
         let group = Group {
-            guild_id: result.get::<i64, _>("guild") as u64,
-            dashboard_id: result.get::<i64, _>("dashboard") as u64,
+            guild_id:      result.get::<i64, _>("guild") as u64,
+            dashboard_id:  result.get::<i64, _>("dashboard") as u64,
             queue_chat_id: result.get::<i64, _>("chat") as u64,
-            queue_id: result.get::<i64, _>("queue") as u64,
+            queue_id:      result.get::<i64, _>("queue") as u64,
             teams: vec![TeamChannels {
                 red_vc_id: result.get::<i64, _>("red") as u64,
                 blu_vc_id: result.get::<i64, _>("blu") as u64,
