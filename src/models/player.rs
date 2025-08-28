@@ -4,13 +4,13 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use serenity::all::{Context, UserId};
+use serenity::all::{Context, RoleId, UserId};
 use sqlx::prelude::FromRow;
 use tracing::info;
 
-use crate::models::config::*;
+use crate::models::data::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Role {
     Runner,
     Admin,
@@ -18,10 +18,10 @@ pub enum Role {
 
 #[allow(non_snake_case, unreachable_patterns)]
 impl Role {
-    pub fn id(&self) -> u64 {
+    pub fn id(&self) -> RoleId {
         match self {
-            Role::Runner => RUNNER_R_ID,
-            Role::Admin  => ADMIN_R_ID,
+            Role::Runner => RUNNER_R_ID.into(),
+            Role::Admin  => ADMIN_R_ID.into(),
         }
     }
 
@@ -46,15 +46,15 @@ pub enum Rank {
 
 #[allow(non_snake_case, unreachable_patterns)]
 impl Rank {
-    pub fn id_hardcoded(&self) -> u64 {
+    pub fn id_hardcoded(&self) -> UserId {
         match self {
-            Rank::Beginner    => EU_BEGINNER_R_ID,
-            Rank::Novice      => EU_NOVICE_R_ID,
-            Rank::Apprentice  => EU_APPRENTICE_R_ID,
-            Rank::Journeyman  => EU_JOURNEYMAN_R_ID,
-            Rank::Master      => EU_MASTER_R_ID,
-            Rank::MasterElite => EU_MASTER_ELITE_R_ID,
-            Rank::Grandmaster => EU_GRANDMASTER_R_ID,
+            Rank::Beginner    => EU_BEGINNER_R_ID.into(),
+            Rank::Novice      => EU_NOVICE_R_ID.into(),
+            Rank::Apprentice  => EU_APPRENTICE_R_ID.into(),
+            Rank::Journeyman  => EU_JOURNEYMAN_R_ID.into(),
+            Rank::Master      => EU_MASTER_R_ID.into(),
+            Rank::MasterElite => EU_MASTER_ELITE_R_ID.into(),
+            Rank::Grandmaster => EU_GRANDMASTER_R_ID.into(),
         }
     }
 
@@ -84,17 +84,17 @@ impl Rank {
 }
 
 /// User data structure representing a player in the system
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, FromRow)]
 #[allow(clippy::missing_docs_in_private_items)]
 pub struct Player {
-    pub discord_id: u64,
+    pub discord_id: UserId,
     pub steam_id:   Option<u64>,
     pub rank:       Option<Rank>,
     pub role:       Option<Role>,
 }
 
 impl Player {
-    pub fn construct(discord_id: u64, steam_id: Option<u64>) -> Player {
+    pub fn construct(discord_id: UserId, steam_id: Option<u64>) -> Player {
         Player {
             discord_id,
             steam_id,
@@ -114,7 +114,7 @@ impl Player {
     }
 
     pub async fn get_name(&self, ctx: &Context) -> String {
-        let name = &ctx.http.get_user(UserId::new(self.discord_id)).await.unwrap();
+        let name = &ctx.http.get_user(self.discord_id).await.unwrap();
         name.display_name().to_string()
     }
 }

@@ -45,7 +45,7 @@ pub async fn handle_ready(
 ///
 /// # Returns
 /// * `AppResult<()>` - Success or failure with error context
-async fn initialize_bot_state(ctx: &Context) -> AppResult<()> {
+async fn initialize_bot_state(_ctx: &Context) -> AppResult<()> {
     // TODO: Initialize any necessary bot state
     // - Load configuration
     // - Initialize data structures

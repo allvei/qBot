@@ -7,8 +7,6 @@ use serenity::all::{Context, VoiceState};
 use tracing::{debug, info};
 
 use crate::error::AppResult;
-use crate::models::Group;
-use crate::models::Server;
 
 /// Handle voice state update events
 ///
@@ -23,7 +21,7 @@ use crate::models::Server;
 /// # Returns
 /// * `AppResult<()>` - Success or failure with error context
 pub async fn handle_voice_state_update(
-    ctx: Context,
+    _ctx: Context,
     old: Option<VoiceState>,
     new: VoiceState,
 ) -> AppResult<()> {
@@ -65,30 +63,4 @@ pub async fn handle_voice_state_update(
     }
     
     Ok(())
-}
-
-/// Find the appropriate group based on a voice channel ID
-///
-/// # Arguments
-/// * `server` - The server to search in
-/// * `channel_id` - The voice channel ID to find
-///
-/// # Returns
-/// * `Option<&Group>` - The group if found, None otherwise
-pub fn find_group_by_voice_channel(server: &Server, channel_id: u64) -> Option<&Group> {
-    // Check queue channels
-    if let Some(group) = server.find_group_by_queue_channel(channel_id) {
-        return Some(group);
-    }
-    
-    // Check team channels
-    for group in &server.groups {
-        for team_channel in &group.teams {
-            if team_channel.red_vc_id == channel_id || team_channel.blu_vc_id == channel_id {
-                return Some(group);
-            }
-        }
-    }
-    
-    None
 }

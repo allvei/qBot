@@ -5,7 +5,6 @@ use anyhow::{ anyhow, Result };
 use rand::rng;
 use rand::seq::SliceRandom;
 use serenity::all::{
-    ChannelId,
     Context,
     CreateEmbed as CE,
     CreateEmbedFooter as CEF,
@@ -13,15 +12,12 @@ use serenity::all::{
     CreateInteractionResponseMessage as CIRM,
     EditMember,
     GuildId,
-    RoleId,
-    UserId,
 };
 use tracing::{info, warn};
-
-use crate::database::Database;
 use crate::models::command::{CommandContext};
 use crate::models::player::Role;
-use crate::models::session::{ Group, Session, SessionPlayer, SessionStatus, Team };
+use crate::models::data::{ Group, Session, SessionPlayer, SessionStatus, Team };
+use crate::Database;
 
 /// Checks if a user has the specified role.
 ///
@@ -35,7 +31,7 @@ pub async fn check_role(
         let member = guild_id.member(&cc.ctx.http, cc.intax.user.id).await;
         if let Ok(member) = member {
             info!("Checking if user has {} role with ID: {}", role.name(), role.id());
-            return Ok(member.roles.contains(&RoleId::new(role.id())));
+            return Ok(member.roles.contains(&role.id()));
         } else {
             warn!("Failed to fetch member for user {} in guild {}: {:?}", cc.intax.user.id, guild_id, member.as_ref().err());
         }
@@ -58,28 +54,15 @@ pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<S
 
 
 /// Moves players back to the queue channel.
-///
-/// * `ctx`        - Ref to the Serenity context.
-/// * `db`         - Ref to the database.
-/// * `group`      - The group containing session and queue info.
-/// * `session`    - The session with players to move.
-/// * `guild_id`   - The ID of the guild where the session is taking place.
-async fn move_players_to_queue_channel(
-    ctx: &Context,
-    _db: &Arc<Database>,
-    group: &Group,
-    session: &Session,
-    guild_id: GuildId
-) -> Result<()> {
+async fn move_players_to_queue_channel(session: Session, group: Group, guild_id: GuildId, ctx: &Context) -> Result<()> {
     // Check if queue channel is configured
-    if group.queue_id != 0 {
+    if group.channels.queue_vc != 0 {
         for player in &session.pool {
-            let user_id = player.player.discord_id;
             // Try to move the user back to queue
             let _ = ctx.http.edit_member(
                 guild_id,
-                UserId::new(user_id),
-                &EditMember::new().voice_channel(ChannelId::new(group.queue_id)),
+                player.player.discord_id,
+                &EditMember::new().voice_channel(group.channels.queue_vc),
                 Some("Moving player back to queue voice channel")
             ).await;
         }
@@ -97,28 +80,26 @@ async fn move_players_to_queue_channel(
 async fn move_players_to_team_channels(
     ctx: &Context,
     _db: &Arc<Database>,
-    group: &Group,
-    session: &Session,
+    group: Group,
+    session: &mut Session,
     guild_id: GuildId
 ) -> Result<()> {
     // Get red/blue voice channel IDs from the first team in the group
-    if group.teams.is_empty() {
+    if group.channels.teams.is_empty() {
         return Err(anyhow!("No team channels configured for this group"));
     }
-    let red_vc_id = group.teams[0].red_vc_id;
-    let blue_tc_id = group.teams[0].blu_vc_id;
-    if red_vc_id == 0 || blue_tc_id == 0 {
+    let red_vc = group.channels.teams[0].red_vc;
+    let blu_vc = group.channels.teams[0].blu_vc;
+    if red_vc == 0 || blu_vc == 0 {
         return Err(anyhow!("Voice channel IDs not configured for this group"));
     }
-    let redvc = ChannelId::new(red_vc_id);
-    let bluvc = ChannelId::new(blue_tc_id);
 
     // Move players to red/blu voice channels
     for player in &session.pool {
         if let Some(team) = &player.team {
             let target_channel = match team {
-                Team::Red => redvc,
-                Team::Blu => bluvc,
+                Team::Red => red_vc,
+                Team::Blu => blu_vc,
             };
             let user_id = player.player.discord_id;
             if let Ok(mut member) = guild_id.member(&ctx.http, user_id).await {
@@ -140,12 +121,39 @@ async fn move_players_to_team_channels(
 /// `/join` and `/leave`
 pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     info!("Processing queue command from user {}", cc.intax.user.id);
-    let client_id  = cc.intax.user.id.into();
-    let channel_id = cc.intax.channel_id.get();
+    let user = cc.intax.user.id;
+    let channel = cc.intax.channel_id;
+    let command_name = &cc.intax.data.name;
     
     // Get group of current channel
-    let mut group = cc.db.get_group_by_channel(channel_id).await?;
+    let mut group = cc.db.get_group_by_channel(channel).await?;
     
+    // Handle leave command
+    if command_name == "leave" {
+        // Find and remove player from any session
+        let mut found = false;
+        for session in &mut group.sessions {
+            if session.status == SessionStatus::Idle {
+                let initial_len = session.pool.len();
+                session.pool.retain(|p| p.player.discord_id != user);
+                if session.pool.len() < initial_len {
+                    found = true;
+                    let queue_count = session.pool.len();
+                    info!("Removed player from session. Queue now has {} players", queue_count);
+                    cc.create_bot_reply(&format!("❌ Left the queue! ({}/12 players)", queue_count)).await?;
+                    break;
+                }
+            }
+        }
+        
+        if !found {
+            cc.create_bot_reply("You are not in the queue!").await?;
+        }
+        
+        return Ok(());
+    }
+    
+    // Handle join command
     // Check if we have idle sessions
     match group.get_sessions_by_status(&SessionStatus::Idle).len() {
         0 => {
@@ -161,23 +169,34 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     }
 
     // Get player info or create a new one
-    let player = match cc.db.get_user(client_id).await {
+    let player = match cc.db.get_user(user).await {
         Ok(player) => {
             info!("Found user in db!");
             player
         }
         Err(_) => {
             info!("Creating new user in db!");
-            cc.db.new_user(client_id).await?
+            cc.db.new_user(user).await?
         }
     };
 
     // Check if player is already in session
-    if group.get_player_session_status(&player)?.is_active() {
+    if group.get_user_session(user).is_some() {
         info!("Player {} is already in a session", player.discord_id);
+        cc.create_bot_reply("You are already in the queue!").await?;
         return Ok(());
     }
 
+    // Add player to the session
+    if let Some(session) = group.sessions.last_mut() {
+        if session.status == SessionStatus::Idle {
+            session.pool.push(SessionPlayer::construct(player));
+            let queue_count = session.pool.len();
+            info!("Added player to session. Queue now has {} players", queue_count);
+            
+            cc.create_bot_reply(&format!("✅ Joined the queue! ({}/12 players)", queue_count)).await?;
+        }
+    }
 
     info!("Command processed successfully, sending response");
     Ok(())
@@ -187,7 +206,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
 pub async fn status<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     info!("Processing queue status command");
     // Get active group with session
-    let group = cc.db.get_group_by_channel(cc.intax.channel_id.get()).await?;
+    let group = cc.db.get_group_by_channel(cc.intax.channel_id).await?;
 
     // If group has no sessions or session pool, return empty count
     let count = if group.sessions.is_empty() {
@@ -234,8 +253,7 @@ pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
     }
 
     // Get active group with session
-    // TODO: Replace 0 with the actual queue channel ID for the group you want
-    let group = cc.db.get_group_by_channel(0).await?; // <-- FIX: supply correct queue_id
+    let group = cc.db.get_group_by_channel(cc.intax.channel_id).await?;
 
     if group.sessions.is_empty() {
         cc.create_bot_reply("No active sessions.").await?;
@@ -293,30 +311,6 @@ pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
 
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
-    // Log to channel
-    let config = cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found").get()).await?;
-    if config.log_tc_id != 0 {
-        let channel = ChannelId::new(config.log_tc_id);
-
-        let log_embed = CE::new()
-            .title("Session Created")
-            .description(
-                format!(
-                    "**Session:** `{}`\n**Generated by:** {}\n\n**🔴 RED:** {}\n**🔵 BLU:** {}",
-                    stringify!(updated_group.sessions.last().unwrap().id),
-                    cc.intax.user.display_name(),
-                    red_team_names.join(", "),
-                    blu_team_names.join(", ")
-                )
-            )
-            .footer(CEF::new("Awaiting acceptance..."));
-
-        channel.send_message(
-            &cc.ctx.http,
-            serenity::all::CreateMessage::new().embed(log_embed)
-        ).await?;
-    }
-
     Ok(())
 }
 
@@ -333,7 +327,7 @@ pub async fn accept(cc: &CommandContext<'_>, session_id: &Option<String>) -> Res
     }
 
     // Get the group for the current channel
-    let channel_id = cc.intax.channel_id.get();
+    let channel_id = cc.intax.channel_id;
     let mut group = cc.db.get_group_by_channel(channel_id).await?;
 
     match group.get_sessions_by_status(&SessionStatus::Hot).len() {
@@ -352,31 +346,10 @@ pub async fn accept(cc: &CommandContext<'_>, session_id: &Option<String>) -> Res
     let target_session = &mut group.get_sessions_by_status(&SessionStatus::Hot)[0];
     
     // Update session status to Push
-    target_session.push();
+    target_session.status = SessionStatus::Push;
 
     cc.create_bot_reply("Session accepted! Players moved to team channels.").await?;
 
-    // Log acceptance
-    let config = cc.db.get_config(cc.intax.guild_id.unwrap().get()).await?;
-    if config.log_tc_id != 0 {
-        let channel = ChannelId::new(config.log_tc_id);
-
-        let log_embed = CE::new()
-            .title("Session Accepted")
-            .description(
-                format!(
-                    "**Session ID:** `{:?}`\n**Accepted by:** {}",
-                    target_session.session_id,
-                    cc.intax.user.display_name()
-                )
-            )
-            .footer(CEF::new("Session in progress..."));
-
-        channel.send_message(
-            &cc.ctx.http,
-            serenity::all::CreateMessage::new().embed(log_embed)
-        ).await?;
-    }
 
     Ok(())
 }
@@ -398,21 +371,12 @@ pub async fn end(cc: &CommandContext<'_>, session_id: Option<String>) -> Result<
         return Ok(());
     }
 
-    // TODO: Replace 0 with the actual queue channel ID for the group you want
-    let mut group = cc.db.get_group_by_channel(0).await?; // <-- FIX: supply correct queue_id
+    // Get the group for the current channel
+    let channel_id = cc.intax.channel_id;
+    let mut group = cc.db.get_group_by_channel(channel_id).await?;
 
-    // Find the session to end based on ID or status
-    let session_index = if let Some(id) = session_id.clone() {
-        // Find session with matching ID
-        group.sessions.iter().position(|s| format!("{:?}", s.session_id) == id)
-    } else {
-        // Find session with Push status
-        group.sessions.iter().position(|s| s.status == SessionStatus::Push)
-    };
-
-    if let Some(index) = session_index {
-        // Set the session status to Pull (ended)
-        group.sessions[index].status = SessionStatus::Pull;
+    if let Some(mut session) = group.get_user_session(cc.intax.user.id) {
+        session.status = SessionStatus::Pull;
 
         // TODO: Persist group changes to DB if needed (no update_group method exists)
         // You may need to implement this in your database layer.
@@ -420,48 +384,16 @@ pub async fn end(cc: &CommandContext<'_>, session_id: Option<String>) -> Result<
         // Move players to queue channel if we're in a guild
         if let Some(guild_id) = cc.intax.guild_id {
             move_players_to_queue_channel(
-                cc.ctx,
-                &cc.db,
-                &group,
-                &group.sessions[index],
-                guild_id
+                session.clone(),
+                group.clone(),
+                guild_id,
+                cc.ctx
             ).await?;
         }
+        
+        cc.create_bot_reply("Session has been ended. Players will be moved back to queue.").await?;
     } else {
         cc.create_bot_reply("No active session found to end.").await?;
-        return Ok(());
-    }
-
-    let session_id_display = if let Some(idx) = session_index {
-        format!("{:?}", group.sessions[idx].session_id)
-    } else {
-        "unknown".to_string()
-    };
-
-    cc.create_bot_reply(
-        &format!("Session {} has been ended. Players will be moved back to queue.", session_id_display)
-    ).await?;
-
-    // Log session end
-    let config = cc.db.get_config(cc.intax.guild_id.unwrap().get()).await?;
-    if config.log_tc_id != 0 {
-        let channel = ChannelId::new(config.log_tc_id);
-
-        let log_embed = CE::new()
-            .title("Session Ended")
-            .description(
-                format!(
-                    "**Session ID:** `{:?}`\n**Ended by:** {}",
-                    session_id_display,
-                    cc.intax.user.display_name()
-                )
-            )
-            .footer(CEF::new("Session completed"));
-
-        channel.send_message(
-            &cc.ctx.http,
-            serenity::all::CreateMessage::new().embed(log_embed)
-        ).await?;
     }
 
     Ok(())

@@ -59,13 +59,9 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
         let config_text = format!(
             "**Current Configuration:**\n\
                                   guild: `{}`\n\
-                                  dashboard: `{}`\n\
-                                  red: `{}`\n\
-                                  blu: `{}`\n\
-                                  Confirmation Timeout: `{}s`\n\
-                                  Runner Role: `{}`\n\
-                                  Admin Role: `{}`",
-            config.guild_id, config.dashboard_tc_id, config.red_vc_id, config.blu_vc_id, config.join_timeout, config.runner_r_id, config.admin_r_id
+                                  roles: `{}`\n\
+                                  groups: `{}`",
+        config.guild_id, config.roles.runner, config.roles.admin
         );
 
         let embed = CE::new().title("Bot Configuration").description(config_text);
@@ -87,7 +83,7 @@ pub async fn cmd_init_dashboard(cc: &CC<'_>,) -> Result<()> {
         return Ok(());
     }
     
-    let channel_id = cc.intax.channel_id.get();
+    let channel_id = cc.intax.channel_id;
     
     // Get the group from database using channel_id since there can be multiple groups per guild
     let group = match cc.db.get_group_by_channel(channel_id).await {
@@ -99,7 +95,7 @@ pub async fn cmd_init_dashboard(cc: &CC<'_>,) -> Result<()> {
         }
     };
     
-    match group.init_dashboard(cc.ctx, channel_id).await {
+    match group.init_dashboard(cc.ctx, &cc.db, channel_id).await {
         Ok(true) => {
             let response = CIR::Message(CIRM::new().content("Dashboard setup complete!").ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;

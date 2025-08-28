@@ -7,7 +7,7 @@ use serenity::all::{Context, Message};
 use tracing::{debug, info};
 
 use crate::error::AppResult;
-use crate::models::session::SessionStatus;
+use crate::models::data::SessionStatus;
 
 /// Command response type for standardized command handling
 pub enum CommandResponse {

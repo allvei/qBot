@@ -2,7 +2,7 @@ use serenity::all::{ CreateEmbed as CE, CreateEmbedFooter as CEF };
 use anyhow::Result;
 use tracing::info;
 use crate::models::command::ComponentContext as CC;
-use crate::models::session::{Group, Session, SessionStatus};
+use crate::models::data::{Group, Session, SessionStatus};
 
 
 
@@ -76,8 +76,8 @@ pub async fn create_dynamic_dashboard(group: &Group) -> CE {
     // Show hot sessions (waiting to start)
     if !hot_sessions.is_empty() {
         description.push_str("**🔥 Ready Sessions:**\n");
-        for session in hot_sessions {
-            description.push_str(&format!("• Session {} - Ready to start!\n", session.session_id));
+        for _session in hot_sessions {
+            description.push_str("• Ready to start!\n");
         }
         description.push('\n');
     }
@@ -85,8 +85,8 @@ pub async fn create_dynamic_dashboard(group: &Group) -> CE {
     // Show live matches
     if !live_sessions.is_empty() {
         description.push_str("**⚡ Live Matches:**\n");
-        for session in live_sessions {
-            description.push_str(&format!("• Session {} - Match in progress\n", session.session_id));
+        for _session in live_sessions {
+            description.push_str("• Live\n");
         }
         description.push('\n');
     }

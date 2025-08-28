@@ -10,7 +10,7 @@ pub mod handlers;
 pub mod models;
 
 // Re-export
-pub use database::Database;
+pub use database::*;
 pub use discord::*;
 pub use events::*;
 pub use handlers::{admin, session};

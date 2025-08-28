@@ -18,12 +18,12 @@ use serenity::model::gateway::Ready;
 use serenity::model::id::ChannelId;
 use serenity::model::voice::VoiceState;
 use serenity::prelude::*;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
-use database::Database;
+use database::{Database, migrations::DatabaseMigrations};
 use handlers::{admin, player, dashboard};
 use models::command::CommandContext;
-use models::session::{Group, Manager, SessionPlayer, SessionStatus};
+use models::data::{Group, Manager, SessionPlayer, SessionStatus};
 
 use crate::models::ComponentContext;
 
@@ -85,15 +85,27 @@ impl EventHandler
         }
     }
 
-    async fn guild_create(&self,_ctx: Context,guild: Guild,_is_new: Option<bool>,) {
+    async fn guild_create(&self,ctx: Context, guild: Guild, _is_new: Option<bool>,) {
         let guild_id = guild.id.get();
         match self.database.get_config(guild_id).await {
-            Ok(_) => {
+            Ok(_config) => {
                 info!("{} connected successfully!", guild.name);
+                
+                // Validate that groups exist for this guild
+                let group_repo = crate::database::repositories::GroupRepository::new(self.database.pool().clone());
+                match group_repo.group_exists_for_guild(guild_id).await {
+                    Ok(true) => {
+                        info!("Guild {} has group configurations", guild.name);
+                    },
+                    Ok(false) => {
+                        warn!("Guild {} has no group configurations. Bot commands may not work properly.", guild.name);
+                        info!("Consider creating a group configuration for guild_id: {}", guild_id);
+                    },
+                    Err(e) => error!("Failed to check group configurations for guild {}: {}", guild.name, e),
+                }
             },
             Err(e) => error!("Failed to load config for guild {}: {}", guild.name, e),
         }
-        
     }
 
     /// Handles interaction create events
@@ -223,12 +235,12 @@ impl EventHandler
         if let Some(new_tc_id) = channel {
             info!("{} joined {} VC", user_name, new_tc_id.name(&ctx.http).await.unwrap());
             // First, get the player data without holding the lock
-            let player = match self.database.get_user(user_id.get()).await {
+            let player = match self.database.get_user(user_id).await {
                 Ok(user) => {
                     info!("Loaded user: {}", user_name);
                     user
                 },
-                Err(_) => match self.database.new_user(user_id.get()).await {
+                Err(_) => match self.database.new_user(user_id).await {
                     Ok(new_user) => {
                         info!("New user: {}", user_name);
                         new_user
@@ -242,25 +254,24 @@ impl EventHandler
 
             // We'll store notification information to use after the mutex is released
             let mut dashboard_channel = None;
-            let mut session_info      = None;
+            let mut player_count = 0;
+            let mut should_notify = false;
 
             // Scope for the mutex lock
             {
-                let mut guild = self.guild_id.lock().unwrap();
-
-                // Check if the new channel is a queue channel in any group
-                for server in guild.servers.iter_mut() {
-                    for group in server.groups.iter_mut() {
-                        if group.queue_id == channel.expect("Channel ID is None").get() {
+                let mut manager = self.guild_id.lock().unwrap();
+                
+                // Find the guild by ID and check if the new channel is a queue channel in any group
+                if let Some(guild) = manager.guilds.iter_mut().find(|g| g.guild_id == new.guild_id.unwrap()) {
+                    for group in guild.groups.iter_mut() {
+                        if group.channels.queue == channel.expect("Channel ID is None").get() {
                             // User joined queue channel
                             info!("{} joined queue channel {}", user_name, channel.expect("Channel ID is None"));
-
                             // Ensure there is at least one active session
                             if group.sessions.is_empty() {
                                 info!("No active session, creating one");
                                 group.create_session();
                             }
-
                             // Get the current session (last in the vector)
                             if let Some(session) = group.sessions.last_mut() {
                                 // Skip if user is already in the session
@@ -268,52 +279,49 @@ impl EventHandler
                                     info!("User {} is already in session", user_name);
                                     break;
                                 }
-
                                 // Check if the session has space and is accepting players
                                 if session.pool.len() >= 12 {
                                     info!("Session is full, cannot add more players");
                                     break;
                                 }
-
                                 if matches!(session.status, SessionStatus::Live) {
                                     info!("Session is already playing, cannot add more players");
                                     break;
                                 }
-
                                 // Add player to session
-                                let _session_player = SessionPlayer::construct(player.clone(), group.guild_id, session.session_id);
-                                session.add_player(&player);
+                                let _session_player = SessionPlayer::construct(player);
+                                session.pool.push(_session_player);
                                 info!("Added {} to session, now has {} players", user_name, session.pool.len());
-
                                 // If we have enough players, update session status
                                 if session.pool.len() >= 8 && !matches!(session.status, SessionStatus::Hot) {
                                     session.status = SessionStatus::Hot;
                                     info!("Session is now HOT with {} players", session.pool.len());
-
                                     // Store notification info to use after releasing the lock
-                                    dashboard_channel = Some(group.dashboard_id);
-                                    session_info      = Some((session.session_id, session.pool.len()));
+                                    dashboard_channel = Some(group.dashboard.ch);
+                                    player_count = session.pool.len();
+                                    should_notify = true;
                                 }
                             }
                             break; // We found the group, exit the loop
                         }
                     }
-                }
+                } // Close the if let Some(guild) block
             } // Mutex guard is released here
 
             // Now perform async operations with the data we collected
-            if let (Some(dashboard_id), Some((session_id, player_count))) = (dashboard_channel, session_info) {
-                info!("Sending session ready notification: dashboard={}, session_id={}, players={}", dashboard_id, session_id, player_count);
-                let channel = ChannelId::new(dashboard_id);
+            if should_notify {
+                if let Some(dashboard_id) = dashboard_channel {
+                info!("Sending session ready notification: dashboard={}, players={}", dashboard_id, player_count);
+                let channel = dashboard_id;
 
                 // Create an embed message for the session ready notification
                 let embed = CE::new()
                     .title("SESSION READY!")
-                    .description(format!("A match with ID: {} is ready to start with {} players!", session_id, player_count))
+                    .description(format!("A match is ready to start with {} players!", player_count))
                     .footer(CEF::new("Awaiting team generation..."));
 
                 // Create buttons for actions
-                let components = vec![CreateActionRow::Buttons(vec![CreateButton::new(format!("shuffle:{}", session_id))
+                let components = vec![CreateActionRow::Buttons(vec![CreateButton::new("shuffle")
                     .style(ButtonStyle::Primary)
                     .label("Shuffle Teams")])];
 
@@ -326,6 +334,7 @@ impl EventHandler
                 } else {
                     error!("Failed to send session ready notification");
                 }
+                }
             }
         }
     }
@@ -334,7 +343,7 @@ impl EventHandler
 impl Handler {
     /// Sends a notification to the dashboard channel when a session is ready
     async fn notify(&self,ctx: &Context,group: &Group,) {
-        let dashboard_channel = ChannelId::new(group.dashboard_id);
+        let dashboard_channel = group.dashboard.ch;
 
         // Ensure there are at least 8 players before slicing
         let mut player_mentions = Vec::new();
@@ -383,8 +392,15 @@ async fn main(
     let db_file      = env::var("DATABASE_URL").unwrap_or_else(|_| "./pfpug.db".to_string());
     let database_url = format!("sqlite:{}",db_file);
 
-    // Initialize database
+    // Initialize database connection
     let db = Arc::new(Database::new(&database_url).await?);
+
+    // Run database migrations
+    let migrations = DatabaseMigrations::new(db.pool());
+    migrations.run_all().await?;
+    
+    // Validate database schema integrity
+    migrations.validate_schema().await?;
 
     // Configure the client with the framework and intents
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILD_VOICE_STATES | GatewayIntents::GUILDS;
@@ -403,7 +419,7 @@ async fn main(
     // Init client
     let mut client = Client::builder(&token, intents)
         .event_handler(Handler {
-            database: db.clone(),
+            database: db,
             guild_id: manager.clone(),
         })
         .await

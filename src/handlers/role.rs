@@ -1,5 +1,4 @@
 use anyhow::Result;
-use serenity::all::RoleId;
 use tracing::{
     info, warn,
 };
@@ -23,7 +22,7 @@ pub async fn check_role(
             member
         {
             info!("Checking if user has {} role with ID: {}", role.name(), role.id());
-            return Ok(member.roles.contains(&RoleId::new(role.id())));
+            return Ok(member.roles.contains(&role.id()));
         } else {
             warn!("Failed to fetch member for user {} in guild {}: {:?}", cc.intax.user.id, guild_id, member.as_ref().err());
         }
