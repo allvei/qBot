@@ -125,28 +125,37 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     let channel = cc.intax.channel_id;
     let command_name = &cc.intax.data.name;
     
-    // Get group of current channel
-    let mut group = cc.db.get_group_by_channel(channel).await?;
+    // Get group from database as base configuration
+    let base_group = cc.db.get_group_by_channel(channel).await?;
     
     // Handle leave command
     if command_name == "leave" {
-        // Find and remove player from any session
         let mut found = false;
-        for session in &mut group.sessions {
-            if session.status == SessionStatus::Idle {
-                let initial_len = session.pool.len();
-                session.pool.retain(|p| p.player.discord_id != user);
-                if session.pool.len() < initial_len {
-                    found = true;
-                    let queue_count = session.pool.len();
-                    info!("Removed player from session. Queue now has {} players", queue_count);
-                    cc.create_bot_reply(&format!("❌ Left the queue! ({}/12 players)", queue_count)).await?;
-                    break;
+        let mut queue_count = 0;
+        
+        // Scope the manager lock to avoid Send issues
+        {
+            let mut manager = cc.manager.lock().unwrap();
+            let group = manager.get_or_create_group(channel, base_group.clone());
+            
+            // Find and remove player from any session
+            for session in &mut group.sessions {
+                if session.status == SessionStatus::Idle {
+                    let initial_len = session.pool.len();
+                    session.pool.retain(|p| p.player.discord_id != user);
+                    if session.pool.len() < initial_len {
+                        found = true;
+                        queue_count = session.pool.len();
+                        info!("Removed player from session. Queue now has {} players", queue_count);
+                        break;
+                    }
                 }
             }
-        }
+        } // Manager lock is dropped here
         
-        if !found {
+        if found {
+            cc.create_bot_reply(&format!("❌ Left the queue! ({}/12 players)", queue_count)).await?;
+        } else {
             cc.create_bot_reply("You are not in the queue!").await?;
         }
         
@@ -154,20 +163,6 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     }
     
     // Handle join command
-    // Check if we have idle sessions
-    match group.get_sessions_by_status(&SessionStatus::Idle).len() {
-        0 => {
-            info!("No idle sessions found, creating a new session");
-            group.create_session();
-        },
-        1 => {
-            info!("Found one existing idle session");
-        },
-        n => {
-            return Err(anyhow!("Found more than one idle session ({}). This is unexpected. ", n));
-        },
-    }
-
     // Get player info or create a new one
     let player = match cc.db.get_user(user).await {
         Ok(player) => {
@@ -180,22 +175,48 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
         }
     };
 
-    // Check if player is already in session
-    if group.get_user_session(user).is_some() {
-        info!("Player {} is already in a session", player.discord_id);
-        cc.create_bot_reply("You are already in the queue!").await?;
-        return Ok(());
-    }
-
-    // Add player to the session
-    if let Some(session) = group.sessions.last_mut() {
-        if session.status == SessionStatus::Idle {
-            session.pool.push(SessionPlayer::construct(player));
-            let queue_count = session.pool.len();
-            info!("Added player to session. Queue now has {} players", queue_count);
-            
-            cc.create_bot_reply(&format!("✅ Joined the queue! ({}/12 players)", queue_count)).await?;
+    let mut queue_count = 0;
+    let mut already_in_queue = false;
+    
+    // Scope the manager lock to avoid Send issues
+    {
+        let mut manager = cc.manager.lock().unwrap();
+        let group = manager.get_or_create_group(channel, base_group);
+        
+        // Check if we have idle sessions
+        match group.get_sessions_by_status(&SessionStatus::Idle).len() {
+            0 => {
+                info!("No idle sessions found, creating a new session");
+                group.create_session();
+            },
+            1 => {
+                info!("Found one existing idle session");
+            },
+            n => {
+                return Err(anyhow!("Found more than one idle session ({}). This is unexpected. ", n));
+            },
         }
+
+        // Check if player is already in session
+        if group.get_user_session(user).is_some() {
+            info!("Player {} is already in a session", player.discord_id);
+            already_in_queue = true;
+        } else {
+            // Add player to the session
+            if let Some(session) = group.sessions.last_mut() {
+                if session.status == SessionStatus::Idle {
+                    session.pool.push(SessionPlayer::construct(player));
+                    queue_count = session.pool.len();
+                    info!("Added player to session. Queue now has {} players", queue_count);
+                }
+            }
+        }
+    } // Manager lock is dropped here
+    
+    if already_in_queue {
+        cc.create_bot_reply("You are already in the queue!").await?;
+    } else {
+        cc.create_bot_reply(&format!("✅ Joined the queue! ({}/12 players)", queue_count)).await?;
     }
 
     info!("Command processed successfully, sending response");
@@ -205,41 +226,40 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
 /// `/status`
 pub async fn status<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     info!("Processing queue status command");
-    // Get active group with session
-    let group = cc.db.get_group_by_channel(cc.intax.channel_id).await?;
-
-    // If group has no sessions or session pool, return empty count
-    let count = if group.sessions.is_empty() {
-        0
-    } else {
-        group.sessions.last().expect("No active session found").pool.len()
-    };
-
-    let description = if count == 0 {
-        "Queue is empty. Use `/join` to join!".to_string()
-    } else {
-        let mut parts = vec![format!("**{} players in queue:**\n", count)];
-        // Ensure we have a session and access its pool
-        if let Some(session) = group.sessions.last() {
-            for (i, member) in session.pool.iter().enumerate() {
-                // Use discord_id as display name if needed
-                let name = format!("user_{}", member.player.discord_id);
-                parts.push(format!("{}.{}", i + 1, name));
-            }
+    let channel = cc.intax.channel_id;
+    let base_group = cc.db.get_group_by_channel(channel).await?;
+    
+    let (queue_count, queue_list) = {
+        let mut manager = cc.manager.lock().unwrap();
+        let group = manager.get_or_create_group(channel, base_group);
+        
+        let idle_sessions = group.get_sessions_by_status(&SessionStatus::Idle);
+        
+        if idle_sessions.is_empty() {
+            (0, "No active queue found.".to_string())
+        } else {
+            let session = &idle_sessions[0];
+            let count = session.pool.len();
+            let list = if count > 0 {
+                session.pool.iter()
+                    .enumerate()
+                    .map(|(i, p)| format!("{}. <@{}>", i + 1, p.player.discord_id))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                "Queue is empty".to_string()
+            };
+            (count, list)
         }
-        parts.join("\n")
-    };
-
-    let embed = CE::new()
-        .title("Queue Status")
-        .description(description)
-        .footer(CEF::new(format!("Queue: {}/8", count)));
-
-    let response = CIR::Message(
-        CIRM::new().embed(embed).ephemeral(true)
-    );
-
-    cc.intax.create_response(&cc.ctx.http, response).await?;
+    }; // Manager lock is dropped here
+    
+    if queue_count == 0 && queue_list == "No active queue found." {
+        cc.create_bot_reply("No active queue found.").await?;
+    } else {
+        let status_message = format!("**Queue Status ({}/12 players)**\n{}", queue_count, queue_list);
+        cc.create_bot_reply(&status_message).await?;
+    }
+    
     Ok(())
 }
 

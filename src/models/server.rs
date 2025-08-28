@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serenity::all::GuildId;
 use tracing::info;
 
-use crate::models::group::Group;
+use crate::models::data::Group;
 
 /// Represents a game server with IP and name
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,10 +63,10 @@ impl Server {
         &mut self.groups
     }
 
-    /// Find a group by its queue channel ID
+    /// Find a group by its queue channel ID (text or voice channel)
     ///
     /// # Arguments
-    /// * `channel_id` - The queue channel ID to find
+    /// * `channel_id` - The channel ID to find (can be text queue or voice queue)
     ///
     /// # Returns
     /// * `Option<&Group>` - The group if found, None otherwise
@@ -74,13 +74,15 @@ impl Server {
         &self,
         channel_id: u64,
     ) -> Option<&Group> {
-        self.groups.iter().find(|g| g.queue == channel_id)
+        self.groups.iter().find(|g| 
+            g.channels.queue.get() == channel_id || g.channels.queue_vc.get() == channel_id
+        )
     }
 
-    /// Find a group by its queue channel ID (mutable)
+    /// Find a group by its queue channel ID (mutable, text or voice channel)
     ///
     /// # Arguments
-    /// * `channel_id` - The queue channel ID to find
+    /// * `channel_id` - The channel ID to find (can be text queue or voice queue)
     ///
     /// # Returns
     /// * `Option<&mut Group>` - The mutable group if found, None otherwise
@@ -88,6 +90,8 @@ impl Server {
         &mut self,
         channel_id: u64,
     ) -> Option<&mut Group> {
-        self.groups.iter_mut().find(|g| g.queue == channel_id)
+        self.groups.iter_mut().find(|g| 
+            g.channels.queue.get() == channel_id || g.channels.queue_vc.get() == channel_id
+        )
     }
 }

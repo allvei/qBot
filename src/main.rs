@@ -15,7 +15,6 @@ use serenity::builder::{
 };
 use serenity::model::application::{Command, CommandOptionType as COT, Interaction};
 use serenity::model::gateway::Ready;
-use serenity::model::id::ChannelId;
 use serenity::model::voice::VoiceState;
 use serenity::prelude::*;
 use tracing::{error, info, warn};
@@ -23,7 +22,8 @@ use tracing::{error, info, warn};
 use database::{Database, migrations::DatabaseMigrations};
 use handlers::{admin, player, dashboard};
 use models::command::CommandContext;
-use models::data::{Group, Manager, SessionPlayer, SessionStatus};
+use models::data::{Group, SessionPlayer, SessionStatus};
+use models::manager::Manager as SessionManager;
 
 use crate::models::ComponentContext;
 
@@ -53,7 +53,7 @@ impl CmdOp for CC {
 
 struct Handler {
     database: Arc<Database,>,
-    guild_id: Arc<Mutex<Manager,>,>,
+    guild_id: Arc<Mutex<SessionManager,>,>,
 }
 
 /// Handler for Discord events with database access
@@ -117,6 +117,7 @@ impl EventHandler
                     ctx:   &ctx,
                     intax: &command,
                     db:    self.database.clone(),
+                    manager: self.guild_id.clone(),
                 };
                 let cd = &command.data;
                 let cdo = &cd.options;
@@ -262,8 +263,8 @@ impl EventHandler
                 let mut manager = self.guild_id.lock().unwrap();
                 
                 // Find the guild by ID and check if the new channel is a queue channel in any group
-                if let Some(guild) = manager.guilds.iter_mut().find(|g| g.guild_id == new.guild_id.unwrap()) {
-                    for group in guild.groups.iter_mut() {
+                if let Some(server) = manager.servers.iter_mut().find(|s| s.guild_id == new.guild_id.unwrap()) {
+                    for group in server.groups.iter_mut() {
                         if group.channels.queue == channel.expect("Channel ID is None").get() {
                             // User joined queue channel
                             info!("{} joined queue channel {}", user_name, channel.expect("Channel ID is None"));
@@ -409,12 +410,12 @@ async fn main(
     struct GuildKey;
     impl TypeMapKey
         for GuildKey {
-        type Value = Arc<Mutex<Manager>>;
+        type Value = Arc<Mutex<SessionManager>>;
     }
 
 
     // Init manager
-    let manager = Arc::new(Mutex::new(Manager::default()));
+    let manager = Arc::new(Mutex::new(SessionManager::default()));
 
     // Init client
     let mut client = Client::builder(&token, intents)
