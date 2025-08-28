@@ -11,10 +11,7 @@ use crate::{CommandContext as CC};
 /// `/buffer`
 ///
 /// * `user_mention` - The user mention to buffer.
-pub async fn buffer(
-    cc: &CC<'_>,
-    user_mention: String,
-) -> Result<()> {
+pub async fn cmd_buffer(cc: &CC<'_>,user_mention: String,) -> Result<()> {
     info!("Processing buffer command for user mention: {}", user_mention);
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can buffer players!").ephemeral(true));
@@ -29,7 +26,7 @@ pub async fn buffer(
 ///
 /// * `key`         - The key to modify.
 /// * `value`       - The value to set for the key.
-pub async fn config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Result<()> {
+pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Result<()> {
     info!("Processing config: key={}, value={:?}", key, value);
     if !check_role(cc, &Role::Admin).await? {
         info!("User is not an admin");
@@ -82,9 +79,7 @@ pub async fn config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Result
 }
 
 /// `/init_dashboard`
-pub async fn init_dashboard(
-    cc: &CC<'_>,
-) -> Result<()> {
+pub async fn cmd_init_dashboard(cc: &CC<'_>,) -> Result<()> {
     info!("Processing init_dashboard command");
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can set up the dashboard!").ephemeral(true));
@@ -125,9 +120,7 @@ pub async fn init_dashboard(
 /// Parses a user mention to get the Discord ID.
 ///
 /// * `mention` - The user mention to parse.
-fn parse_user_mention(
-    mention: &str,
-) -> Result<u64> {
+fn parse_user_mention(mention: &str,) -> Result<u64> {
     // Parse Discord user mention format: <@!123456789> or <@123456789>
     let mention =
         mention

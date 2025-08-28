@@ -3,7 +3,6 @@ mod database;
 mod handlers;
 mod models;
 
-use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, Mutex};
 
@@ -11,7 +10,7 @@ use anyhow::Result;
 use serenity::all::*;
 use serenity::async_trait;
 use serenity::builder::{
-    CreateButton as CB, CreateCommand as CC, CreateCommandOption as CCO, CreateEmbed as CE, CreateEmbedFooter as CEF, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM,
+    CreateCommand as CC, CreateCommandOption as CCO, CreateEmbed as CE, CreateEmbedFooter as CEF, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM,
     CreateMessage as CM,
 };
 use serenity::model::application::{Command, CommandOptionType as COT, Interaction};
@@ -26,7 +25,7 @@ use handlers::{admin, player, dashboard};
 use models::command::CommandContext;
 use models::session::{Group, Manager, SessionPlayer, SessionStatus};
 
-use crate::models::{session, ComponentContext};
+use crate::models::ComponentContext;
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
     CC::new(name.into(),).description(desc.into(),)
@@ -87,14 +86,14 @@ impl EventHandler
     }
 
     async fn guild_create(&self,_ctx: Context,guild: Guild,_is_new: Option<bool>,) {
-        info!("{}: {}", guild.name, guild.id);
-
         let guild_id = guild.id.get();
-
         match self.database.get_config(guild_id).await {
-            Ok(_) => {},
+            Ok(_) => {
+                info!("{} connected successfully!", guild.name);
+            },
             Err(e) => error!("Failed to load config for guild {}: {}", guild.name, e),
         }
+        
     }
 
     /// Handles interaction create events
@@ -141,7 +140,7 @@ impl EventHandler
                         info();
                         if let Some(user_option) = cdo.first() {
                             if let Some(user_id) = user_option.value.as_str() {
-                                admin::buffer(&cmd_ctx, user_id.to_string()).await.expect("Failed to buffer player")
+                                admin::cmd_buffer(&cmd_ctx, user_id.to_string()).await.expect("Failed to buffer player")
                             }
                         }
                         Ok(())
@@ -151,11 +150,11 @@ impl EventHandler
                         let key   = cdo.iter().find(|opt| opt.name == "key")  .and_then(|opt| opt.value.as_str()).unwrap_or("").to_string();
                         let value = cdo.iter().find(|opt| opt.name == "value").and_then(|opt| opt.value.as_str()).map(|s| s.to_string());
 
-                        admin::config(&cmd_ctx, key, value).await
+                        admin::cmd_config(&cmd_ctx, key, value).await
                     }
                     "init_dashboard" => {
                         info();
-                        admin::init_dashboard(&cmd_ctx).await
+                        admin::cmd_init_dashboard(&cmd_ctx).await
                     }
                     _ => {
                         let response = CIR::Message(CIRM::new().content("Unknown command").ephemeral(true));
@@ -314,9 +313,9 @@ impl EventHandler
                     .footer(CEF::new("Awaiting team generation..."));
 
                 // Create buttons for actions
-                let components = vec![CreateActionRow::Buttons(vec![CB::new(format!("shuffle:{}", session_id))
+                let components = vec![CreateActionRow::Buttons(vec![CreateButton::new(format!("shuffle:{}", session_id))
                     .style(ButtonStyle::Primary)
-                    .label("Shuffle Teams")
+                    .label("Shuffle Teams")])];
 
                 // Send the message with both embed and components
                 if let Ok(msg) = channel.send_message(&ctx.http, CM::new().embed(embed).components(components)).await {

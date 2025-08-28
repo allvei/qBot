@@ -9,6 +9,7 @@ use sqlx::FromRow;
 use tracing::{debug, error, info};
 
 use crate::models::{Player, Rank};
+use crate::handlers::dashboard;
 
 #[derive(
     Debug,
@@ -31,7 +32,7 @@ pub enum DivName {
 )]
 pub enum SessionStatus {
     Idle, // Waiting for enough players to join
-    Hot, // Waiting for runners to start the session
+    Hot,  // Waiting for runners to start the session
     Push, // Moving players to the team channels
     Live, // Game is active
     Pull, // Moving players back to the queue
@@ -176,13 +177,13 @@ pub struct Group {
 
 impl Group {
     pub fn new(
-        guild_id: u64,
+        guild_id:        u64,
         dashboard_tc_id: u64,
-        queue_chat_id: u64,
-        queue_vc_id: u64,
-        red_vc_id: u64,
-        blu_vc_id: u64,
-        session_quota: u8,
+        queue_chat_id:   u64,
+        queue_vc_id:     u64,
+        red_vc_id:       u64,
+        blu_vc_id:       u64,
+        session_quota:   u8,
     ) -> Self {
         info!("New group created for {}", dashboard_tc_id);
         Self {
@@ -197,11 +198,7 @@ impl Group {
         }
     }
 
-    pub fn add_team_channels(
-        &mut self,
-        red: u64,
-        blu: u64,
-    ) {
+    pub fn add_team_channels(&mut self,red: u64,blu: u64,) {
         self.teams.push(TeamChannels { red_vc_id: red, blu_vc_id: blu });
     }
 
@@ -217,7 +214,7 @@ impl Group {
         self.sessions
             .iter()
             .find(|s| s.pool.iter().any(|p| p.player.discord_id == player.discord_id))
-            .map(|s| Ok(s.status.clone()))
+            .map(|s| Ok(s.status))
             .unwrap_or(Err(anyhow!("Player not found in any session")))
     }
 
@@ -227,10 +224,7 @@ impl Group {
         self.sessions.push(Session::new(self.session_increment, self.guild_id, self.queue_id));
     }
 
-    pub fn end_session(
-        &mut self,
-        session_id: u16,
-    ) -> bool {
+    pub fn end_session(&mut self,session_id: u16,) -> bool {
         info!("Attempting to end session with ID: {}", session_id);
         if let Some(pos) = self.sessions.iter().position(|s| s.session_id == session_id) {
             self.sessions.remove(pos);
@@ -242,21 +236,14 @@ impl Group {
         }
     }
 
-    pub async fn init_dashboard(
-        &self,
-        ctx: &Context,
-        dashboard_id: u64,
-    ) -> Result<bool, anyhow::Error> {
+    pub async fn init_dashboard(&self,ctx: &Context,dashboard_id: u64,) -> Result<bool, anyhow::Error> {
         info!("Initializing dashboard for channel ID: {}", dashboard_id);
         if self.dashboard_id != dashboard_id {
             return Ok(false);
         }
         
         let channel = ChannelId::new(dashboard_id);
-        let embed = CreateEmbed::new()
-            .title("PUG Dashboard")
-            .description("No active sessions. Join the queue to get started!")
-            .footer(CreateEmbedFooter::new("Use /join to join the queue"));
+        let embed = dashboard::create_dynamic_dashboard(self).await;
         
         // Create buttons in a modular way for easy addition/removal
         let buttons = self.create_dashboard_buttons();
@@ -281,21 +268,22 @@ impl Group {
     
     /// Creates buttons for the dashboard in a modular way
     /// Makes it easy to add or remove buttons
-    fn create_dashboard_buttons(&self) -> Vec<CreateButton> {
+    pub fn create_dashboard_buttons(&self) -> Vec<CreateButton> {
         // Get the latest session ID if available
         let session_id = self.sessions.last().map(|s| s.session_id.to_string());
         
-        // Check if there's an active session to enable/disable buttons
-        let has_active_session = !self.sessions.is_empty();
+        // Check if there's an live session to enable/disable buttons
+        let has_live_session = !self.sessions.is_empty();
         let has_ready_session = self.sessions.iter().any(|s| s.pool.len() >= 8);
         
         // Define button configurations - this makes it easy to add/remove buttons
         let button_configs = vec![
             // (custom_id, label, style, disabled, emoji_option)
-            ("join_leave", "Join Queue",    ButtonStyle::Success,   false,               None),
-            ("shuffle",    "Shuffle Teams", ButtonStyle::Primary,   !has_ready_session,  None),
-            ("start",      "Start Match",   ButtonStyle::Secondary, !has_active_session, None),
-            ("end",        "End Match",     ButtonStyle::Danger,    !has_active_session, None)
+            ("join",    "Join Queue",   ButtonStyle::Success,   false,               None::<&str>),
+            ("leave",   "Leave Queue",  ButtonStyle::Secondary, false,               None::<&str>),
+            ("shuffle", "Shuffle",      ButtonStyle::Primary,   !has_ready_session,  None::<&str>),
+            ("start",   "Start Match",  ButtonStyle::Secondary, !has_live_session,   None::<&str>),
+            ("end",     "End Match",    ButtonStyle::Danger,    !has_live_session,   None::<&str>)
         ];
         
         // Generate buttons from configurations
@@ -303,7 +291,7 @@ impl Group {
             // Create button with the appropriate custom_id
             let custom_id = if let Some(id) = &session_id {
                 // For buttons that need a session ID
-                if action != "join_leave" {
+                if action != "join" && action != "leave" {
                     format!("{action}:{id}")
                 } else {
                     action.to_string()
@@ -314,15 +302,15 @@ impl Group {
             };
             
             // Create the button with all specified properties
-            let mut button = CreateButton::new(custom_id)
+            let button = CreateButton::new(custom_id)
                 .label(label)
                 .style(style)
                 .disabled(disabled);
                 
-            // Add emoji if specified
-            if let Some(emoji_char) = emoji {
-                button = button.emoji(emoji_char);
-            }
+            // Add emoji if specified (currently disabled due to type issues)
+            // if let Some(emoji_char) = emoji {
+            //     button = button.emoji(emoji_char);
+            // }
             
             button
         }).collect()
@@ -339,11 +327,7 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(
-        session_id:    u16,
-        guild_id:      u64,
-        queue_chat_id: u64,
-    ) -> Self {
+    pub fn new(session_id: u16,guild_id: u64,queue_chat_id: u64,) -> Self {
         let session = Self {
             guild_id,
             queue_chat_id,
@@ -353,6 +337,11 @@ impl Session {
         };
         info!("New session started with ID: {}", session_id);
         session
+    }
+
+    pub fn idle(&mut self) {
+        info!("Changing session {} status to IDLE", self.session_id);
+        self.status = SessionStatus::Idle;
     }
 
     pub fn hot(&mut self) {
@@ -528,10 +517,7 @@ impl Session {
     /// * `ctx`        - Ref to the Serenity context.
     /// * `db`         - Ref to the database.
     /// * `group`      - The group containing the session.
-    pub async fn notify_session_ready(
-        &self,
-        ctx: &Context,
-    ) -> Result<(), Error> {
+    pub async fn notify_session_ready(&self,ctx: &Context,) -> Result<(), Error> {
         // Send notification to log channel
         if self.queue_chat_id != 0 {
             let channel = ChannelId::new(self.queue_chat_id);
@@ -557,7 +543,6 @@ impl Session {
         }
         Ok(())
     }
-
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize,)]

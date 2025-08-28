@@ -1,12 +1,10 @@
 // CHECKED
 
-use std::fmt::Display;
-
 use serde::{
     Deserialize,
     Serialize,
 };
-use serenity::all::{Context, Http, UserId};
+use serenity::all::{Context, UserId};
 use sqlx::prelude::FromRow;
 use tracing::info;
 
