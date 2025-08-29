@@ -74,3 +74,6 @@ Dashboard
 - check if dashboard exists
   - how?
   - search for message id
+
+
+Setup command that uses dropdowns etc to pick the channels and roles for a group
