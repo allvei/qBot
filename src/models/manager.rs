@@ -4,7 +4,7 @@
 //! The Manager is responsible for managing multiple servers and their groups/sessions.
 
 use serenity::all::Cache;
-use tracing::info;
+use tracing::{info, error};
 
 use crate::models::server::Server;
 use crate::models::data::Group;
@@ -78,6 +78,7 @@ impl Manager {
     /// * The group with maintained session state
     pub fn get_or_create_group(&mut self, channel_id: ChannelId, base_group: Group) -> &mut Group {
         let guild_id = base_group.channels.queue.get(); // Use queue channel as guild identifier
+        let queue_channel_id = base_group.channels.queue.get(); // Use the group's queue channel for lookups
         
         // Find or create server
         if self.find_server_by_guild_id(guild_id).is_none() {
@@ -87,7 +88,7 @@ impl Manager {
         
         // Find server and check if group exists
         let server = self.find_server_by_guild_id_mut(guild_id).unwrap();
-        let group_exists = server.find_group_by_queue_channel(channel_id.get()).is_some();
+        let group_exists = server.find_group_by_queue_channel(queue_channel_id).is_some();
         
         if !group_exists {
             // Create new group if not found
@@ -95,7 +96,11 @@ impl Manager {
         }
         
         // Return the group (either existing or newly created)
-        server.find_group_by_queue_channel_mut(channel_id.get()).unwrap()
+        server.find_group_by_queue_channel_mut(queue_channel_id)
+            .unwrap_or_else(|| {
+                error!("Failed to find group after creation. Queue Channel ID: {}, Guild ID: {}, Original Channel: {}", queue_channel_id, guild_id, channel_id.get());
+                panic!("Group should exist after creation but was not found");
+            })
     }
 
     /// Update group state in the manager

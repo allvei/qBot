@@ -1,10 +1,12 @@
 // CHECK ME
+mod console;
 mod database;
 mod handlers;
 mod models;
 
 use std::env;
 use std::sync::{Arc, Mutex};
+use tokio::sync::Mutex as TokioMutex;
 
 use anyhow::Result;
 use serenity::all::*;
@@ -78,6 +80,7 @@ impl EventHandler
             cmd("config",    "View or set bot configuration")
                 .op("key",   "Configuration key",   false)
                 .op("value", "Configuration value", false),
+            cmd("dashboard", "Create/update interactive dashboard"),
         ];
 
         if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
@@ -96,6 +99,9 @@ impl EventHandler
                 match group_repo.group_exists_for_guild(guild_id).await {
                     Ok(true) => {
                         info!("Guild {} has group configurations", guild.name);
+                        
+                        // Create dashboard for the guild automatically
+                        self.create_guild_dashboard(&ctx, &guild).await;
                     },
                     Ok(false) => {
                         warn!("Guild {} has no group configurations. Bot commands may not work properly.", guild.name);
@@ -169,6 +175,10 @@ impl EventHandler
                         info();
                         admin::cmd_init_dashboard(&cmd_ctx).await
                     }
+                    "dashboard" => {
+                        info();
+                        admin::cmd_dashboard(&cmd_ctx).await
+                    }
                     _ => {
                         let response = CIR::Message(CIRM::new().content("Unknown command").ephemeral(true));
                         command.create_response(&ctx.http, response).await.map_err(|e| e.into())
@@ -196,6 +206,7 @@ impl EventHandler
                     ctx:       &ctx,
                     component: &component,
                     db:        self.database.clone(),
+                    manager:   self.guild_id.clone(),
                 };
                 
                 // Handle different button actions based on custom_id
@@ -342,6 +353,37 @@ impl EventHandler
 }
 
 impl Handler {
+    /// Creates dashboard for a guild automatically when bot connects
+    async fn create_guild_dashboard(&self, ctx: &Context, guild: &Guild) {
+        info!("Creating dashboard for guild: {}", guild.name);
+        
+        // Get all groups for this guild from database
+        let group_repo = crate::database::repositories::GroupRepository::new(self.database.pool().clone());
+        match group_repo.get_groups_for_guild(guild.id.get()).await {
+            Ok(groups) => {
+                for group in groups {
+                    // Create dashboard for each group's queue channel
+                    let channel_id = group.channels.queue;
+                    
+                    // Get current group state from manager
+                    let group_data = {
+                        let mut manager = self.guild_id.lock().unwrap();
+                        let server_group = manager.get_or_create_group(channel_id, group);
+                        server_group.clone()
+                    };
+                    
+                    // Create dashboard in the queue channel
+                    if let Err(e) = dashboard::update_dashboard(&group_data, ctx, channel_id.get()).await {
+                        error!("Failed to create dashboard for channel {}: {}", channel_id, e);
+                    } else {
+                        info!("Dashboard created successfully for channel {}", channel_id);
+                    }
+                }
+            },
+            Err(e) => error!("Failed to get groups for guild {}: {}", guild.name, e),
+        }
+    }
+
     /// Sends a notification to the dashboard channel when a session is ready
     async fn notify(&self,ctx: &Context,group: &Group,) {
         let dashboard_channel = group.dashboard.ch;
@@ -420,7 +462,7 @@ async fn main(
     // Init client
     let mut client = Client::builder(&token, intents)
         .event_handler(Handler {
-            database: db,
+            database: db.clone(),
             guild_id: manager.clone(),
         })
         .await
@@ -428,6 +470,15 @@ async fn main(
 
     // Set the manager in the client data for global access
     client.data.write().await.insert::<GuildKey>(manager.clone());
+
+    // Start console handler in a separate task
+    let console_manager = Arc::new(TokioMutex::new(models::manager::Manager::new()));
+    let console_db = db.pool().clone();
+    
+    tokio::spawn(async move {
+        let console_handler = console::ConsoleHandler::new_without_context(console_manager, console_db);
+        console_handler.start_console_loop().await;
+    });
 
     // Start listening for events by starting a single shard
     if let Err(why) = client.start().await {

@@ -137,8 +137,8 @@ impl GroupRepository {
             timeout: result.try_get::<i64, _>("timeout").unwrap_or(120) as u16,
             dashboard: Dashboard::new(ChannelId::new(dashboard_ch), dashboard_msg),
             channels: Channels::new(
-                ChannelId::new(chat),
                 ChannelId::new(queue),
+                ChannelId::new(queue), // Use queue for both text and voice for now
                 vec![Teams::new(ChannelId::new(red), ChannelId::new(blu))]
             ),
             quota: result.get::<i64, _>("session_quota") as u8,

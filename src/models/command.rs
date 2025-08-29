@@ -24,6 +24,7 @@ pub struct ComponentContext<'a> {
     pub ctx: &'a Context,
     pub component: &'a ComponentInteraction,
     pub db: Arc<Database>,
+    pub manager: Arc<Mutex<SessionManager>>,
 }
 
 impl CommandContext<'_> {

@@ -1,8 +1,9 @@
 use serenity::all::{ CreateEmbed as CE, CreateEmbedFooter as CEF };
 use anyhow::Result;
-use tracing::info;
+use serenity::all::*;
+use tracing::{info, error};
 use crate::models::command::ComponentContext as CC;
-use crate::models::data::{Group, Session, SessionStatus};
+use crate::models::data::{Group, Session, SessionStatus, SessionPlayer};
 
 
 
@@ -50,14 +51,40 @@ pub async fn create_dynamic_dashboard(group: &Group) -> CE {
         } else if players_in_queue == quota {
             // Show teams when quota is met
             description.push_str("**🔥 READY TO START! 🔥**\n");
-            // TODO: Add red_team and blu_team fields to Session struct
-            // For now, show placeholder text
-            description.push_str("*Teams not yet generated. Click Shuffle to create teams.*\n\n");
+            
+            // Display teams (first 4 players = Red, next 4 = Blue)
+            let red_team = &current_session.pool[0..4];
+            let blue_team = &current_session.pool[4..8];
+            
+            description.push_str("**🔴 Red Team:**\n");
+            for (i, player) in red_team.iter().enumerate() {
+                description.push_str(&format!("{}. <@{}>\n", i + 1, player.player.discord_id));
+            }
+            
+            description.push_str("\n**🔵 Blue Team:**\n");
+            for (i, player) in blue_team.iter().enumerate() {
+                description.push_str(&format!("{}. <@{}>\n", i + 1, player.player.discord_id));
+            }
+            description.push_str("\n");
         } else {
             // Over quota - show current teams and queued players
             description.push_str("**🔥 MATCH READY! 🔥**\n");
-            // TODO: Add red_team and blu_team fields to Session struct
-            description.push_str("*Teams not yet generated. Click Shuffle to create teams.*\n");
+            
+            // Display teams (first 8 players split into teams)
+            if players_in_queue >= 8 {
+                let red_team = &current_session.pool[0..4];
+                let blue_team = &current_session.pool[4..8];
+                
+                description.push_str("**🔴 Red Team:**\n");
+                for (i, player) in red_team.iter().enumerate() {
+                    description.push_str(&format!("{}. <@{}>\n", i + 1, player.player.discord_id));
+                }
+                
+                description.push_str("\n**🔵 Blue Team:**\n");
+                for (i, player) in blue_team.iter().enumerate() {
+                    description.push_str(&format!("{}. <@{}>\n", i + 1, player.player.discord_id));
+                }
+            }
             
             // Show queued players for next session
             let extra_players = &current_session.pool[quota..];
@@ -164,62 +191,278 @@ pub async fn handle_button_interaction(cc: &CC<'_>) -> Result<()> {
 
 /// Handles the join queue button
 async fn join_queue(cc: &CC<'_>) -> Result<()> {
-    // TODO: Integrate with existing queue join functionality
-    // For now, provide feedback that the button was clicked
-    cc.create_bot_reply("🎮 Joining queue... (Integration with queue system pending)").await?;
+    let user = cc.component.user.id;
+    let channel = cc.component.channel_id;
     
-    // TODO: After joining, update the dashboard to reflect new state
-    // This would call update_dashboard() with the updated group state
+    // Get group from database as base configuration
+    let base_group = cc.db.get_group_by_channel(channel).await?;
     
+    // Get player info or create a new one
+    let player = match cc.db.get_user(user).await {
+        Ok(player) => {
+            info!("Found user in db!");
+            player
+        }
+        Err(_) => {
+            info!("Creating new user in db!");
+            cc.db.new_user(user).await?
+        }
+    };
+
+    let mut queue_count = 0;
+    let mut already_in_queue = false;
+    
+    // Scope the manager lock to avoid Send issues
+    {
+        let mut manager = match cc.manager.lock() {
+            Ok(manager) => manager,
+            Err(poisoned) => {
+                error!("Manager mutex poisoned, recovering: {}", poisoned);
+                poisoned.into_inner()
+            }
+        };
+        let group = manager.get_or_create_group(channel, base_group);
+        
+        // Check if we have idle sessions
+        match group.get_sessions_by_status(&SessionStatus::Idle).len() {
+            0 => {
+                info!("No idle sessions found, creating a new session");
+                group.create_session();
+            },
+            1 => {
+                info!("Found one existing idle session");
+            },
+            n => {
+                return Err(anyhow::anyhow!("Found more than one idle session ({}). This is unexpected.", n));
+            },
+        }
+
+        // Check if player is already in session
+        if group.get_user_session(user).is_some() {
+            info!("Player {} is already in a session", player.discord_id);
+            already_in_queue = true;
+        } else {
+            // Add player to the session
+            if let Some(session) = group.sessions.last_mut() {
+                if session.status == SessionStatus::Idle {
+                    session.pool.push(SessionPlayer::construct(player));
+                    queue_count = session.pool.len();
+                    info!("Added player to session. Queue now has {} players", queue_count);
+                }
+            }
+        }
+    } // Manager lock is dropped here
+    
+    if already_in_queue {
+        cc.create_bot_reply("You are already in the queue!").await?;
+    } else {
+        cc.create_bot_reply(&format!("✅ Joined the queue! ({}/12 players)", queue_count)).await?;
+        
+        // Update dashboard to reflect new state
+        update_dashboard_for_channel(cc, channel).await?;
+    }
+
     Ok(())
 }
 
 /// Handles the leave queue button
 async fn leave_queue(cc: &CC<'_>) -> Result<()> {
-    // TODO: Integrate with existing queue leave functionality
-    // For now, provide feedback that the button was clicked
-    cc.create_bot_reply("👋 Leaving queue... (Integration with queue system pending)").await?;
+    let user = cc.component.user.id;
+    let channel = cc.component.channel_id;
     
-    // TODO: After leaving, update the dashboard to reflect new state
-    // This would call update_dashboard() with the updated group state
+    // Get group from database as base configuration
+    let base_group = cc.db.get_group_by_channel(channel).await?;
+    
+    let mut found = false;
+    let mut queue_count = 0;
+    
+    // Scope the manager lock to avoid Send issues
+    {
+        let mut manager = match cc.manager.lock() {
+            Ok(manager) => manager,
+            Err(poisoned) => {
+                error!("Manager mutex poisoned, recovering: {}", poisoned);
+                poisoned.into_inner()
+            }
+        };
+        let group = manager.get_or_create_group(channel, base_group);
+        
+        // Find and remove player from any session
+        for session in &mut group.sessions {
+            if session.status == SessionStatus::Idle {
+                let initial_len = session.pool.len();
+                session.pool.retain(|p| p.player.discord_id != user);
+                if session.pool.len() < initial_len {
+                    found = true;
+                    queue_count = session.pool.len();
+                    info!("Removed player from session. Queue now has {} players", queue_count);
+                    break;
+                }
+            }
+        }
+    } // Manager lock is dropped here
+    
+    if found {
+        cc.create_bot_reply(&format!("❌ Left the queue! ({}/12 players)", queue_count)).await?;
+        
+        // Update dashboard to reflect new state
+        update_dashboard_for_channel(cc, channel).await?;
+    } else {
+        cc.create_bot_reply("You are not in the queue!").await?;
+    }
+    
+    Ok(())
+}
+
+/// Updates dashboard for a specific channel
+async fn update_dashboard_for_channel(cc: &CC<'_>, channel_id: serenity::all::ChannelId) -> Result<()> {
+    let _base_group = cc.db.get_group_by_channel(channel_id).await?;
+    
+    // Clone the group data to avoid borrowing issues
+    let group_data = {
+        let manager = match cc.manager.lock() {
+            Ok(manager) => manager,
+            Err(poisoned) => {
+                error!("Manager mutex poisoned, recovering: {}", poisoned);
+                poisoned.into_inner()
+            }
+        };
+        if let Some(server) = manager.servers.iter().find(|s| s.guild_id == cc.component.guild_id.unwrap().get()) {
+            if let Some(group) = server.find_group_by_queue_channel(channel_id.get()) {
+                Some(group.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    
+    if let Some(group) = group_data {
+        update_dashboard(&group, &cc.ctx, channel_id.get()).await?;
+    }
     
     Ok(())
 }
 
 /// Handles the shuffle teams button
 async fn shuffle(cc: &CC<'_>, session_id: Option<String>) -> Result<()> {
-    // If we have a session ID, use it, otherwise use the latest session
-    if let Some(id) = session_id {
-        cc.create_bot_reply(&format!("Shuffling teams for session {}...", id)).await?
+    let channel = cc.component.channel_id;
+    let base_group = cc.db.get_group_by_channel(channel).await?;
+    
+    let mut shuffled = false;
+    
+    // Scope the manager lock to avoid Send issues
+    {
+        let mut manager = match cc.manager.lock() {
+            Ok(manager) => manager,
+            Err(poisoned) => {
+                error!("Manager mutex poisoned, recovering: {}", poisoned);
+                poisoned.into_inner()
+            }
+        };
+        let group = manager.get_or_create_group(channel, base_group);
+        
+        // Find the session to shuffle
+        if let Some(session) = group.sessions.iter_mut().find(|s| s.status == SessionStatus::Idle && s.pool.len() >= 8) {
+            // Shuffle the players using rand crate
+            use rand::seq::SliceRandom;
+            session.pool.shuffle(&mut rand::thread_rng());
+            shuffled = true;
+            info!("Teams shuffled for session with {} players", session.pool.len());
+        }
+    } // Manager lock is dropped here
+    
+    if shuffled {
+        cc.create_bot_reply("🔀 Teams shuffled! Check the dashboard for new team assignments.").await?;
+        
+        // Update dashboard to show shuffled teams
+        update_dashboard_for_channel(cc, channel).await?;
     } else {
-        cc.create_bot_reply("Shuffling teams for latest session...").await?
+        cc.create_bot_reply("❌ No session ready for shuffling. Need at least 8 players in queue.").await?;
     }
     
-    // TODO: Implement actual team shuffling functionality
     Ok(())
 }
 
 /// Handles the start match button
 async fn start(cc: &CC<'_>, session_id: Option<String>) -> Result<()> {
-    // This is equivalent to accepting the teams
-    if let Some(id) = session_id {
-        cc.create_bot_reply(&format!("Starting match for session {}...", id)).await?
+    let channel = cc.component.channel_id;
+    let base_group = cc.db.get_group_by_channel(channel).await?;
+    
+    let mut match_started = false;
+    
+    // Scope the manager lock to avoid Send issues
+    {
+        let mut manager = match cc.manager.lock() {
+            Ok(manager) => manager,
+            Err(poisoned) => {
+                error!("Manager mutex poisoned, recovering: {}", poisoned);
+                poisoned.into_inner()
+            }
+        };
+        let group = manager.get_or_create_group(channel, base_group);
+        
+        // Find the session to start
+        if let Some(session) = group.sessions.iter_mut().find(|s| s.status == SessionStatus::Idle && s.pool.len() >= 8) {
+            // Change session status to Hot (ready to start)
+            session.status = SessionStatus::Hot;
+            match_started = true;
+            info!("Match started for session with {} players", session.pool.len());
+        }
+    } // Manager lock is dropped here
+    
+    if match_started {
+        cc.create_bot_reply("🔥 Match started! Teams are now ready to play.").await?;
+        
+        // Update dashboard to show match status
+        update_dashboard_for_channel(cc, channel).await?;
     } else {
-        cc.create_bot_reply("Starting match for latest session...").await?
+        cc.create_bot_reply("❌ No session ready to start. Need at least 8 players and shuffled teams.").await?;
     }
     
-    // TODO: Implement actual start match functionality
     Ok(())
 }
 
 /// Handles the end match button
 async fn end(cc: &CC<'_>, session_id: Option<String>) -> Result<()> {
-    if let Some(id) = session_id {
-        cc.create_bot_reply(&format!("Ending match for session {}...", id)).await?
+    let channel = cc.component.channel_id;
+    let base_group = cc.db.get_group_by_channel(channel).await?;
+    
+    let mut match_ended = false;
+    
+    // Scope the manager lock to avoid Send issues
+    {
+        let mut manager = match cc.manager.lock() {
+            Ok(manager) => manager,
+            Err(poisoned) => {
+                error!("Manager mutex poisoned, recovering: {}", poisoned);
+                poisoned.into_inner()
+            }
+        };
+        let group = manager.get_or_create_group(channel, base_group);
+        
+        // Find active sessions to end
+        for session in &mut group.sessions {
+            if session.status == SessionStatus::Hot || session.status == SessionStatus::Live {
+                // Clear the session and reset to idle
+                session.pool.clear();
+                session.status = SessionStatus::Idle;
+                match_ended = true;
+                info!("Match ended and session reset");
+                break;
+            }
+        }
+    } // Manager lock is dropped here
+    
+    if match_ended {
+        cc.create_bot_reply("✅ Match ended! Session has been reset and is ready for new players.").await?;
+        
+        // Update dashboard to show reset state
+        update_dashboard_for_channel(cc, channel).await?;
     } else {
-        cc.create_bot_reply("Ending match for latest session...").await?
+        cc.create_bot_reply("❌ No active match to end.").await?;
     }
     
-    // TODO: Implement actual end match functionality
     Ok(())
 }

@@ -1,12 +1,18 @@
 // CHECK ME
 
 use anyhow::Result;
-use serenity::all::{CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
-use tracing::info;
+use serenity::all::*;
+use tracing::{info, error};
+use crate::models::command::CommandContext as CC;
+use serenity::builder::{
+    CreateEmbed as CE, 
+    CreateInteractionResponse as CIR, 
+    CreateInteractionResponseMessage as CIRM
+};
 
 use crate::handlers::player::check_role;
+use crate::handlers::dashboard;
 use crate::models::player::Role;
-use crate::{CommandContext as CC};
 
 /// `/buffer`
 ///
@@ -129,4 +135,40 @@ fn parse_user_mention(mention: &str,) -> Result<u64> {
         // Assume it's already a raw user ID
         Ok(mention.parse::<u64>().unwrap())
     }
+}
+
+/// `/dashboard`
+///
+/// Creates or updates the dashboard in the current channel
+pub async fn cmd_dashboard(cc: &CC<'_>) -> Result<()> {
+    info!("Processing dashboard command");
+    
+    // Check permissions - only runners/admins can create dashboard
+    if !check_role(cc, &Role::Runner).await? && !check_role(cc, &Role::Admin).await? {
+        cc.create_bot_reply("Only runners and admins can create the dashboard!").await?;
+        return Ok(());
+    }
+    
+    let channel = cc.intax.channel_id;
+    let base_group = cc.db.get_group_by_channel(channel).await?;
+    
+    // Get current group state
+    let group_data = {
+        let mut manager = match cc.manager.lock() {
+            Ok(manager) => manager,
+            Err(poisoned) => {
+                error!("Manager mutex poisoned, recovering: {}", poisoned);
+                poisoned.into_inner()
+            }
+        };
+        let group = manager.get_or_create_group(channel, base_group);
+        group.clone()
+    };
+    
+    // Create and send dashboard
+    dashboard::update_dashboard(&group_data, &cc.ctx, channel.get()).await?;
+    
+    cc.create_bot_reply("✅ Dashboard created/updated successfully!").await?;
+    
+    Ok(())
 }

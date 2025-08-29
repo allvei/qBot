@@ -1,8 +1,7 @@
 // Combined session handlers
 use std::sync::Arc;
 
-use anyhow::{ anyhow, Result };
-use rand::rng;
+use anyhow::{anyhow, Result};
 use rand::seq::SliceRandom;
 use serenity::all::{
     Context,
@@ -13,7 +12,7 @@ use serenity::all::{
     EditMember,
     GuildId,
 };
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 use crate::models::command::{CommandContext};
 use crate::models::player::Role;
 use crate::models::data::{ Group, Session, SessionPlayer, SessionStatus, Team };
@@ -43,7 +42,7 @@ pub async fn check_role(
 ///
 /// * `players` - The players to split into teams.
 pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<SessionPlayer>) {
-    let mut rng = rng();
+    let mut rng = rand::thread_rng();
     let mut player_list: Vec<SessionPlayer> = players.to_vec();
     player_list.shuffle(&mut rng);
     let team_size = player_list.len() / 2;
@@ -135,7 +134,13 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
         
         // Scope the manager lock to avoid Send issues
         {
-            let mut manager = cc.manager.lock().unwrap();
+            let mut manager = match cc.manager.lock() {
+                Ok(manager) => manager,
+                Err(poisoned) => {
+                    error!("Manager mutex poisoned, recovering: {}", poisoned);
+                    poisoned.into_inner()
+                }
+            };
             let group = manager.get_or_create_group(channel, base_group.clone());
             
             // Find and remove player from any session
@@ -180,7 +185,13 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     
     // Scope the manager lock to avoid Send issues
     {
-        let mut manager = cc.manager.lock().unwrap();
+        let mut manager = match cc.manager.lock() {
+            Ok(manager) => manager,
+            Err(poisoned) => {
+                error!("Manager mutex poisoned, recovering: {}", poisoned);
+                poisoned.into_inner()
+            }
+        };
         let group = manager.get_or_create_group(channel, base_group);
         
         // Check if we have idle sessions
@@ -230,7 +241,13 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     let base_group = cc.db.get_group_by_channel(channel).await?;
     
     let (queue_count, queue_list) = {
-        let mut manager = cc.manager.lock().unwrap();
+        let mut manager = match cc.manager.lock() {
+            Ok(manager) => manager,
+            Err(poisoned) => {
+                error!("Manager mutex poisoned, recovering: {}", poisoned);
+                poisoned.into_inner()
+            }
+        };
         let group = manager.get_or_create_group(channel, base_group);
         
         let idle_sessions = group.get_sessions_by_status(&SessionStatus::Idle);
@@ -313,24 +330,13 @@ pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
     let red_team_names: Vec<String> = updated_group.sessions.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Red)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
     let blu_team_names: Vec<String> = updated_group.sessions.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Blu)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
 
-    let embed = CE::new()
-        .title("Teams Generated!")
-        .description(
-            format!(
-                "**Session ID:** `{}`\n\n**🔴 RED Team:**\n{}\n\n**🔵 BLU Team:**\n{}",
-                stringify!(updated_group.session.last().unwrap().id),
-                red_team_names.join("\n"),
-                blu_team_names.join("\n")
-            )
-        )
-        .footer(CEF::new("Use /accept to confirm teams"));
-
-    let response = CIR::Message(
-        CIRM::new().embed(embed).ephemeral(true)
+    let embed_content = format!(
+        "**🎲 Teams Generated!**\n\n**🔴 Red Team:**\n{}\n\n**🔵 Blue Team:**\n{}",
+        red_team_names.join("\n"),
+        blu_team_names.join("\n")
     );
-
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-
+    
+    cc.create_bot_reply(&embed_content).await?;
     Ok(())
 }
 
