@@ -72,10 +72,10 @@ impl ConsoleHandler {
         }
 
         match parts[0].to_lowercase().as_str() {
-            "status" => self.cmd_status().await?,
-            "guilds" => self.cmd_list_guilds().await?,
+            "status"   => self.cmd_status().await?,
+            "guilds"   => self.cmd_list_guilds().await?,
             "sessions" => self.cmd_list_sessions().await?,
-            "config" => {
+            "config"   => {
                 match parts.len() {
                     2 => {
                         // Read config: config <guild_id>

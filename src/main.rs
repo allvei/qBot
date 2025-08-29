@@ -62,6 +62,7 @@ struct Handler {
 #[async_trait]
 impl EventHandler
     for Handler {
+    /// When the bot is ready
     async fn ready(&self,ctx: Context,ready: Ready,) {
         info!("{} online!", ready.user.name);
 
@@ -88,6 +89,7 @@ impl EventHandler
         }
     }
 
+    /// When the bot is connected to a new guild
     async fn guild_create(&self,ctx: Context, guild: Guild, _is_new: Option<bool>,) {
         let guild_id = guild.id.get();
         match self.database.get_config(guild_id).await {
@@ -114,7 +116,7 @@ impl EventHandler
         }
     }
 
-    /// Handles interaction create events
+    /// When an interaction is created
     async fn interaction_create(&self,ctx: Context,pl: Interaction,) {
         match pl {
             Interaction::Command(command) => {
@@ -179,6 +181,10 @@ impl EventHandler
                         info();
                         admin::cmd_dashboard(&cmd_ctx).await
                     }
+                    "setup" => {
+                        info();
+                        admin::cmd_setup(&cmd_ctx).await
+                    }
                     _ => {
                         let response = CIR::Message(CIRM::new().content("Unknown command").ephemeral(true));
                         command.create_response(&ctx.http, response).await.map_err(|e| e.into())
@@ -200,6 +206,15 @@ impl EventHandler
                 // Handle button interactions
                 let user_name = &component.user.name;
                 info!("{} clicked button: {}", user_name, component.data.custom_id);
+                
+                // Handle setup interactions first
+                if component.data.custom_id.starts_with("setup_") {
+                    let result = admin::handle_setup_interaction(&ctx, &component, &self.database).await;
+                    if let Err(e) = result {
+                        error!("Error handling setup interaction: {}", e);
+                    }
+                    return;
+                }
                 
                 // Create component context similar to command context
                 let comp_ctx = ComponentContext {
@@ -229,6 +244,7 @@ impl EventHandler
         }
     }
 
+    /// When a user joins or leaves a voice channel
     async fn voice_state_update(&self,ctx: Context,old: Option<VoiceState>,new: VoiceState,) {
         let user_id     = new.user_id;
         let user        = &ctx.http.get_user(user_id).await.unwrap();
