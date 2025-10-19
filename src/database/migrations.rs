@@ -21,6 +21,7 @@ impl DatabaseMigrations {
         self.create_config_table().await?;
         self.create_users_table().await?;
         self.create_groups_table().await?;
+        self.create_teams_table().await?;
         
         info!("All migrations completed successfully");
         Ok(())
@@ -183,6 +184,24 @@ impl DatabaseMigrations {
                 .execute(&self.pool)
                 .await?;
             }
+        }
+        Ok(())
+    }
+
+    async fn create_teams_table(&self) -> Result<()> {
+        if !self.table_exists("teams").await? {
+            info!("Teams table not found, creating...");
+            sqlx::query(
+                "CREATE TABLE teams (
+                    id INTEGER PRIMARY KEY,
+                    guild_id INTEGER NOT NULL,
+                    group_id INTEGER NOT NULL,
+                    red INTEGER NOT NULL,
+                    blu INTEGER NOT NULL
+                )"
+            )
+            .execute(&self.pool)
+            .await?;
         }
         Ok(())
     }

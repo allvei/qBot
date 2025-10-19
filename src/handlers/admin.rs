@@ -2,15 +2,15 @@
 
 use anyhow::Result;
 use serenity::all::*;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use crate::models::player::Role;
 use crate::models::setup_state::SETUP_STATE;
-use crate::models::command::{CommandContext as CC, ComponentContext};
-use crate::handlers::{dashboard, role::check_role};
+use crate::models::command::{CommandContext as CC};
+use crate::handlers::{role::check_role};
 
 // Type aliases for convenience
-type CE = CreateEmbed;
-type CIR = CreateInteractionResponse;
+type CE   = CreateEmbed;
+type CIR  = CreateInteractionResponse;
 type CIRM = CreateInteractionResponseMessage;
 
 /// `/buffer`
@@ -100,13 +100,9 @@ pub async fn cmd_init_dashboard(cc: &CC<'_>,) -> Result<()> {
         }
     };
     
-    match group.init_dashboard(cc.ctx, &cc.db, channel_id).await {
-        Ok(true) => {
+    match group.dash_init(cc.ctx).await {
+        Ok(()) => {
             let response = CIR::Message(CIRM::new().content("Dashboard setup complete!").ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-        },
-        Ok(false) => {
-            let response = CIR::Message(CIRM::new().content("Failed to set up dashboard: channel ID mismatch.").ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
         },
         Err(e) => {
@@ -153,19 +149,13 @@ pub async fn cmd_dashboard(cc: &CC<'_>) -> Result<()> {
     
     // Get current group state
     let group_data = {
-        let mut manager = match cc.manager.lock() {
-            Ok(manager) => manager,
-            Err(poisoned) => {
-                error!("Manager mutex poisoned, recovering: {}", poisoned);
-                poisoned.into_inner()
-            }
-        };
-        let group = manager.get_or_create_group(channel, base_group);
+        let mut manager = cc.manager.lock().await;
+        let group = manager.get_or_create_group(channel, &base_group);
         group.clone()
     };
     
     // Create and send dashboard
-    dashboard::dash_update(&group_data, &cc.ctx, channel.get()).await?;
+    base_group.dash_init(&cc.ctx).await?;
     
     cc.create_bot_reply("✅ Dashboard created/updated successfully!").await?;
     

@@ -5,10 +5,6 @@ use anyhow::{anyhow, Result};
 use rand::seq::SliceRandom;
 use serenity::all::{
     Context,
-    CreateEmbed as CE,
-    CreateEmbedFooter as CEF,
-    CreateInteractionResponse as CIR,
-    CreateInteractionResponseMessage as CIRM,
     EditMember,
     GuildId,
 };
@@ -16,7 +12,7 @@ use tracing::{info, warn, error};
 use crate::models::command::{CommandContext};
 use crate::models::player::Role;
 use crate::models::data::{ Group, Session, SessionPlayer, SessionStatus, Team };
-use crate::Database;
+use crate::{Database};
 
 /// Checks if a user has the specified role.
 ///
@@ -42,7 +38,7 @@ pub async fn check_role(
 ///
 /// * `players` - The players to split into teams.
 pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<SessionPlayer>) {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut player_list: Vec<SessionPlayer> = players.to_vec();
     player_list.shuffle(&mut rng);
     let team_size = player_list.len() / 2;
@@ -134,14 +130,8 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
         
         // Scope the manager lock to avoid Send issues
         {
-            let mut manager = match cc.manager.lock() {
-                Ok(manager) => manager,
-                Err(poisoned) => {
-                    error!("Manager mutex poisoned, recovering: {}", poisoned);
-                    poisoned.into_inner()
-                }
-            };
-            let group = manager.get_or_create_group(channel, base_group.clone());
+            let mut manager = cc.manager.lock().await;
+            let group = manager.get_or_create_group(channel, &base_group);
             
             // Find and remove player from any session
             for session in &mut group.sessions {
@@ -185,14 +175,8 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     
     // Scope the manager lock to avoid Send issues
     {
-        let mut manager = match cc.manager.lock() {
-            Ok(manager) => manager,
-            Err(poisoned) => {
-                error!("Manager mutex poisoned, recovering: {}", poisoned);
-                poisoned.into_inner()
-            }
-        };
-        let group = manager.get_or_create_group(channel, base_group);
+        let mut manager = cc.manager.lock().await;
+        let group = manager.get_or_create_group(channel, &base_group);
         
         // Check if we have idle sessions
         match group.get_sessions_by_status(&SessionStatus::Idle).len() {
@@ -241,14 +225,8 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     let base_group = cc.db.get_group_by_channel(channel).await?;
     
     let (queue_count, queue_list) = {
-        let mut manager = match cc.manager.lock() {
-            Ok(manager) => manager,
-            Err(poisoned) => {
-                error!("Manager mutex poisoned, recovering: {}", poisoned);
-                poisoned.into_inner()
-            }
-        };
-        let group = manager.get_or_create_group(channel, base_group);
+        let mut manager = cc.manager.lock().await;
+        let group = manager.get_or_create_group(channel, &base_group);
         
         let idle_sessions = group.get_sessions_by_status(&SessionStatus::Idle);
         

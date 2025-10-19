@@ -261,7 +261,7 @@ impl ConsoleHandler {
                     println!("=== Configuration for Guild {} ===", guild_id);
                     for group in groups {
                         println!("Group ID: {}", group.group_id);
-                        println!("  Dashboard Channel: {}", group.dashboard.ch);
+                        println!("  Dashboard Channel: {}", group.dashboard.channel_id);
                         println!("  Chat Channel: N/A");
                         println!("  Queue Channel: {}", group.channels.queue);
                         println!("  Dashboard Message ID: {}", group.dashboard.msg);
@@ -332,7 +332,7 @@ impl ConsoleHandler {
                 match group_repo.update_group(
                     queue_id,
                     guild_id,
-                    group.dashboard.ch.get(),
+                    group.dashboard.channel_id.get(),
                     0, // chat (not used)
                     group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
                     group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
@@ -349,7 +349,7 @@ impl ConsoleHandler {
                 match group_repo.update_group(
                     queue_id,
                     guild_id,
-                    group.dashboard.ch.get(),
+                    group.dashboard.channel_id.get(),
                     0, // chat (not used)
                     red_id,
                     group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
@@ -366,7 +366,7 @@ impl ConsoleHandler {
                 match group_repo.update_group(
                     queue_id,
                     guild_id,
-                    group.dashboard.ch.get(),
+                    group.dashboard.channel_id.get(),
                     0, // chat (not used)
                     group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
                     blue_id,

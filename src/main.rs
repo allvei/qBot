@@ -5,8 +5,8 @@ mod handlers;
 mod models;
 
 use std::env;
-use std::sync::{Arc, Mutex};
-use tokio::sync::Mutex as TokioMutex;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use anyhow::Result;
 use serenity::all::*;
@@ -18,16 +18,14 @@ use serenity::builder::{
 use serenity::model::application::{Command, CommandOptionType as COT, Interaction};
 use serenity::model::gateway::Ready;
 use serenity::model::voice::VoiceState;
-use serenity::model::channel::GuildChannel;
-use serenity::model::channel::Channel;
 use serenity::prelude::*;
 use tracing::{error, info, warn};
 
 use database::{Database, migrations::DatabaseMigrations};
-use handlers::{admin, player, dashboard};
+use handlers::{admin, player};
 use models::command::CommandContext;
 use models::data::{Group, SessionPlayer, SessionStatus};
-use models::manager::Manager as SessionManager;
+use models::manager::Manager;
 
 use crate::models::ComponentContext;
 
@@ -56,14 +54,13 @@ impl CmdOp for CC {
 }
 
 struct Handler {
-    database: Arc<Database,>,
-    guild_id: Arc<Mutex<SessionManager,>,>,
+    database: Arc<Database>,
+    manager:  Arc<Mutex<Manager>>,
 }
 
 /// Handler for Discord events with database access
 #[async_trait]
-impl EventHandler
-    for Handler {
+impl EventHandler for Handler {
     /// When the bot is ready
     async fn ready(&self,ctx: Context,ready: Ready,) {
         info!("{} online!", ready.user.name);
@@ -122,22 +119,22 @@ impl EventHandler
     /// When an interaction is created
     async fn interaction_create(&self,ctx: Context,pl: Interaction,) {
         match pl {
-            Interaction::Command(command) => {
-                let user_name = &command.user.name;
+            Interaction::Command(itx) => {
+                let user_name = &itx.user.name;
                 let cmd_ctx = CommandContext {
-                    ctx:   &ctx,
-                    intax: &command,
-                    db:    self.database.clone(),
-                    manager: self.guild_id.clone(),
+                    ctx:     &ctx,
+                    intax:   &itx,
+                    db:      self.database.clone(),
+                    manager: &self.manager.clone(),
                 };
-                let cd = &command.data;
+                let cd = &itx.data;
                 let cdo = &cd.options;
 
                 let info = || {
-                    info!("{}: /{}", user_name, command.data.name);
+                    info!("{}: /{}", user_name, itx.data.name);
                 };
 
-                let get_arg = |name: &str| -> Option<String> { command.data.options.iter().find(|opt| opt.name == name).and_then(|opt| opt.value.as_str()).map(|s| s.to_string()) };
+                let get_arg = |name: &str| -> Option<String> { itx.data.options.iter().find(|opt| opt.name == name).and_then(|opt| opt.value.as_str()).map(|s| s.to_string()) };
 
                 let result = match cd.name.as_str() {
                     "join" | "leave" => {
@@ -190,29 +187,31 @@ impl EventHandler
                     }
                     _ => {
                         let response = CIR::Message(CIRM::new().content("Unknown command").ephemeral(true));
-                        command.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                        itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
                     }
                 };
 
                 if let Err(e) = result {
-                    error!("Error handling command '{}': {}", command.data.name, e);
+                    error!("Error handling command '{}': {}", itx.data.name, e);
 
                     // Try to respond with an error message if we haven't responded yet
                     let error_response = CIR::Message(CIRM::new().content("An error occurred while processing your command").ephemeral(true));
 
-                    if let Err(response_err) = command.create_response(&ctx.http, error_response).await {
+                    if let Err(response_err) = itx.create_response(&ctx.http, error_response).await {
                         error!("Failed to send error response: {}", response_err);
                     }
                 }
             },
-            Interaction::Component(component) => {
+            Interaction::Component(itx) => {
                 // Handle button interactions
-                let user_name = &component.user.name;
-                info!("{} clicked button: {}", user_name, component.data.custom_id);
+                let user_name = &itx.user.name;
+                let manager   = &self.manager.lock().await;
+                let group     = manager.get_group(itx.guild_id.unwrap(), itx.channel_id).unwrap();
+                info!("{} clicked button: {}", user_name, itx.data.custom_id);
                 
                 // Handle setup interactions first
-                if component.data.custom_id.starts_with("setup_") {
-                    let result = admin::handle_setup_interaction(&ctx, &component, &self.database).await;
+                if itx.data.custom_id.starts_with("setup_") {
+                    let result = admin::handle_setup_interaction(&ctx, &itx, &self.database).await;
                     if let Err(e) = result {
                         error!("Error handling setup interaction: {}", e);
                     }
@@ -222,21 +221,21 @@ impl EventHandler
                 // Create component context similar to command context
                 let comp_ctx = ComponentContext {
                     ctx:       &ctx,
-                    component: &component,
+                    component: &itx,
                     db:        self.database.clone(),
-                    manager:   self.guild_id.clone(),
+                    manager:   &self.manager,
                 };
                 
                 // Handle different button actions based on custom_id
-                let result = dashboard::handle_button_interaction(&comp_ctx).await;
+                let result = group.dashboard.handle_button_interaction(&comp_ctx).await;
                 
                 if let Err(e) = result {
-                    error!("Error handling button '{}': {}", component.data.custom_id, e);
+                    error!("Error handling button '{}': {}", itx.data.custom_id, e);
                     
                     // Try to respond with an error message if we haven't responded yet
                     let error_response = CIR::Message(CIRM::new().content("An error occurred while processing your button click").ephemeral(true));
                     
-                    if let Err(response_err) = component.create_response(&ctx.http, error_response).await {
+                    if let Err(response_err) = itx.create_response(&ctx.http, error_response).await {
                         error!("Failed to send error response: {}", response_err);
                     }
                 }
@@ -290,7 +289,7 @@ impl EventHandler
 
             // Scope for the mutex lock
             {
-                let mut manager = self.guild_id.lock().unwrap();
+                let mut manager = self.manager.lock().await;
                 
                 // Find the guild by ID and check if the new channel is a queue channel in any group
                 if let Some(server) = manager.servers.iter_mut().find(|s| s.guild_id == new.guild_id.unwrap()) {
@@ -328,7 +327,7 @@ impl EventHandler
                                     session.status = SessionStatus::Hot;
                                     info!("Session is now HOT with {} players", session.pool.len());
                                     // Store notification info to use after releasing the lock
-                                    dashboard_channel = Some(group.dashboard.ch);
+                                    dashboard_channel = Some(group.dashboard.channel_id);
                                     player_count = session.pool.len();
                                     should_notify = true;
                                 }
@@ -372,6 +371,7 @@ impl EventHandler
 }
 
 impl Handler {
+
     /// Creates dashboard for a guild automatically when bot connects
     async fn create_guild_dashboard(&self, ctx: &Context, guild: &Guild) {
         info!("Creating dashboard for guild: {}", guild.name);
@@ -385,18 +385,10 @@ impl Handler {
                     let channel_id = group.channels.queue;
                     let channel_name = channel_id.name(&ctx.http).await.unwrap();
                     
-                    // Get current group state from manager
-                    let group_data = {
-                        let mut manager = self.guild_id.lock().unwrap();
-                        let server_group = manager.get_or_create_group(channel_id, group);
-                        server_group.clone()
-                    };
-                    
                     // Create dashboard in the queue channel
-                    match dashboard::dash_init(&group_data).await {
-                        Ok(embed) => {
+                    match group.dash_init(&ctx).await {
+                        Ok(_) => {
                             info!("Dashboard created successfully for channel {}", channel_name);
-                            let _ = channel_id.send_message(&ctx.http, CM::new().embed(embed)).await;
                         },
                         Err(e) => {
                             error!("Failed to create dashboard for channel {}: {}", channel_name, e);
@@ -410,7 +402,7 @@ impl Handler {
 
     /// Sends a notification to the dashboard channel when a session is ready
     async fn notify(&self,ctx: &Context,group: &Group,) {
-        let dashboard_channel = group.dashboard.ch;
+        let dashboard_channel = group.dashboard.channel_id;
 
         // Ensure there are at least 8 players before slicing
         let mut player_mentions = Vec::new();
@@ -476,18 +468,18 @@ async fn main(
     struct GuildKey;
     impl TypeMapKey
         for GuildKey {
-        type Value = Arc<Mutex<SessionManager>>;
+        type Value = Arc<Mutex<Manager>>;
     }
 
 
     // Init manager
-    let manager = Arc::new(Mutex::new(SessionManager::default()));
+    let manager = Arc::new(Mutex::new(Manager::default()));
 
     // Init client
     let mut client = Client::builder(&token, intents)
         .event_handler(Handler {
             database: db.clone(),
-            guild_id: manager.clone(),
+            manager: manager.clone(),
         })
         .await
         .expect("Failed to create client");
@@ -496,7 +488,7 @@ async fn main(
     client.data.write().await.insert::<GuildKey>(manager.clone());
 
     // Start console handler in a separate task
-    let console_manager = Arc::new(TokioMutex::new(models::manager::Manager::new()));
+    let console_manager = Arc::new(Mutex::new(Manager::new()));
     let console_db = db.pool().clone();
     
     tokio::spawn(async move {

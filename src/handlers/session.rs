@@ -19,7 +19,8 @@ use tracing::{info, warn};
 use crate::database::Database;
 use crate::models::command::{CommandContext};
 use crate::models::player::Role;
-use crate::models::data::{ Group, Session, SessionPlayer, SessionStatus, Team };
+use crate::models::data::{ Group, Session, SessionPlayer, SessionStatus };
+use crate::models::data::Team;
 
 /// Checks if a user has the specified role.
 ///
@@ -103,13 +104,8 @@ async fn move_players_to_team_channels(
     if group.channels.teams.is_empty() {
         return Err(anyhow!("No team channels configured for this group"));
     }
-    let red_vc_id  = group.channels.teams[0].red_vc.get();
-    let blue_tc_id = group.channels.teams[0].blu_vc.get();
-    if red_vc_id == 0 || blue_tc_id == 0 {
-        return Err(anyhow!("Voice channel IDs not configured for this group"));
-    }
-    let redvc = ChannelId::new(red_vc_id);
-    let bluvc = ChannelId::new(blue_tc_id);
+    let redvc = group.channels.teams[0].red_vc;
+    let bluvc = group.channels.teams[0].blu_vc;
 
     // Move players to red/blu voice channels
     for player in &session.pool {

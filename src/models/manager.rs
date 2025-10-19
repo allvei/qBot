@@ -3,7 +3,10 @@
 //! This module defines the Manager struct and its related functionality.
 //! The Manager is responsible for managing multiple servers and their groups/sessions.
 
-use serenity::all::Cache;
+use std::sync::Mutex;
+
+use anyhow::{anyhow, Result};
+use serenity::all::{Cache, GuildId};
 use tracing::{info, error};
 
 use crate::models::server::Server;
@@ -11,7 +14,7 @@ use crate::models::data::Group;
 use serenity::all::ChannelId;
 
 /// Manages multiple servers and their associated groups/sessions
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Manager {
     /// Collection of servers managed by this instance
     pub servers: Vec<Server>,
@@ -68,6 +71,16 @@ impl Manager {
         self.servers.iter_mut().find(|s| s.guild_id.get() == guild_id)
     }
 
+    pub fn get_group(&self, guild_id: GuildId, channel_id: ChannelId) -> Result<&Group> {
+        let server = self.find_server_by_guild_id(guild_id.get()).unwrap();
+        let group = server.groups.iter().find(|g| g.channel_exists(&channel_id));
+        if let Some(group) = group {
+            Ok(group)
+        } else {
+            Err(anyhow!("Group not found for channel ID: {}", channel_id.get()))
+        }
+    }
+
     /// Get or create a group for the given channel, maintaining session state
     ///
     /// # Arguments
@@ -76,13 +89,13 @@ impl Manager {
     ///
     /// # Returns
     /// * The group with maintained session state
-    pub fn get_or_create_group(&mut self, channel_id: ChannelId, base_group: Group) -> &mut Group {
-        let guild_id = base_group.channels.queue.get(); // Use queue channel as guild identifier
-        let queue_channel_id = base_group.channels.queue.get(); // Use the group's queue channel for lookups
+    pub fn get_or_create_group(&mut self, channel_id: ChannelId, group: &Group) -> &mut Group {
+        let guild_id = group.channels.queue.get(); // Use queue channel as guild identifier
+        let queue_channel_id = group.channels.queue.get(); // Use the group's queue channel for lookups
         
         // Find or create server
         if self.find_server_by_guild_id(guild_id).is_none() {
-            let server = Server::new(serenity::all::GuildId::new(guild_id), Some(base_group.clone()));
+            let server = Server::new(serenity::all::GuildId::new(guild_id), Some(group.clone()));
             self.servers.push(server);
         }
         
@@ -92,7 +105,7 @@ impl Manager {
         
         if !group_exists {
             // Create new group if not found
-            server.groups.push(base_group);
+            server.groups.push(group.clone());
         }
         
         // Return the group (either existing or newly created)

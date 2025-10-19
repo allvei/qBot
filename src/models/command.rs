@@ -1,5 +1,6 @@
 // CHECK ME
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use serenity::all::{
     CommandInteraction,
@@ -16,7 +17,7 @@ pub struct CommandContext<'a> {
     pub ctx: &'a Context,
     pub intax: &'a CommandInteraction,
     pub db: Arc<Database>,
-    pub manager: Arc<Mutex<SessionManager>>,
+    pub manager: &'a Arc<Mutex<SessionManager>>,
 }
 
 #[derive(Clone)]
@@ -24,7 +25,7 @@ pub struct ComponentContext<'a> {
     pub ctx: &'a Context,
     pub component: &'a ComponentInteraction,
     pub db: Arc<Database>,
-    pub manager: Arc<Mutex<SessionManager>>,
+    pub manager: &'a Arc<Mutex<SessionManager>>,
 }
 
 impl CommandContext<'_> {
