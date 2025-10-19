@@ -18,6 +18,8 @@ use serenity::builder::{
 use serenity::model::application::{Command, CommandOptionType as COT, Interaction};
 use serenity::model::gateway::Ready;
 use serenity::model::voice::VoiceState;
+use serenity::model::channel::GuildChannel;
+use serenity::model::channel::Channel;
 use serenity::prelude::*;
 use tracing::{error, info, warn};
 
@@ -82,6 +84,7 @@ impl EventHandler
                 .op("key",   "Configuration key",   false)
                 .op("value", "Configuration value", false),
             cmd("dashboard", "Create/update interactive dashboard"),
+            cmd("setup",     "Run guild setup wizard"),
         ];
 
         if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
@@ -380,6 +383,7 @@ impl Handler {
                 for group in groups {
                     // Create dashboard for each group's queue channel
                     let channel_id = group.channels.queue;
+                    let channel_name = channel_id.name(&ctx.http).await.unwrap();
                     
                     // Get current group state from manager
                     let group_data = {
@@ -389,10 +393,14 @@ impl Handler {
                     };
                     
                     // Create dashboard in the queue channel
-                    if let Err(e) = dashboard::update_dashboard(&group_data, ctx, channel_id.get()).await {
-                        error!("Failed to create dashboard for channel {}: {}", channel_id, e);
-                    } else {
-                        info!("Dashboard created successfully for channel {}", channel_id);
+                    match dashboard::dash_init(&group_data).await {
+                        Ok(embed) => {
+                            info!("Dashboard created successfully for channel {}", channel_name);
+                            let _ = channel_id.send_message(&ctx.http, CM::new().embed(embed)).await;
+                        },
+                        Err(e) => {
+                            error!("Failed to create dashboard for channel {}: {}", channel_name, e);
+                        }
                     }
                 }
             },

@@ -181,30 +181,11 @@ impl Group {
         message.is_ok()
     }
 
-    pub async fn init_dashboard(&self,ctx: &Context, db: &Arc<Database>, dashboard_id: CI,) -> Result<bool, anyhow::Error> {
-        info!("Initializing dashboard for channel ID: {}", dashboard_id);
-        if self.has_dashboard(ctx).await {
-            return Ok(true);
-        }
-        
-        let channel = CI::new(dashboard_id.into());
-        let embed   = dashboard::create_dynamic_dashboard(self).await;
-        
-        // Create buttons in a modular way for easy addition/removal
-        let buttons    = self.create_dashboard_buttons();
-        let action_row = CreateActionRow::Buttons(buttons);
-            
-        match channel.send_message(&ctx.http, CreateMessage::new().embed(embed).components(vec![action_row])).await {
-            Ok(msg) => {
-                info!("Dashboard initialized successfully");
-                db.set_config("dashboard_msg_id", &msg.id.get().to_string(), self.dashboard.ch.into()).await?;
-                Ok(true)
-            },
-            Err(e) => {
-                error!("Failed to initialize dashboard: {:?}", e);
-                Err(anyhow::anyhow!("Failed to initialize dashboard: {:?}", e))
-            }
-        }
+    pub async fn init_dashboard(&self, ctx: &Context, _db: &Arc<Database>, _dashboard_id: CI) -> Result<bool, anyhow::Error> {
+        info!("Checking if dashboard exists for channel ID: {}", _dashboard_id);
+        // Only check if dashboard exists, don't create new ones
+        // Dashboard creation should be handled separately via admin commands
+        Ok(self.has_dashboard(ctx).await)
     }
 
     /// Creates buttons for the dashboard in a modular way

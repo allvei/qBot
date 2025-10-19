@@ -5,24 +5,10 @@ use tracing::{info, error};
 use crate::models::command::ComponentContext as CC;
 use crate::models::data::{Group, Session, SessionStatus, SessionPlayer};
 
-
-
-/// Creates an embed for displaying information on the dashboard.
-///
-/// * `title` - The title of the embed.
-/// * `description` - The description of the embed.
-/// * `footer` - The footer text for the embed.
-pub async fn create_dashboard(title: &str,description: Option<&str>,footer: Option<&str>) -> CE {
-    CE::new()
-        .title(title)
-        .description(description.unwrap_or(""))
-        .footer(CEF::new(footer.unwrap_or("")))
-}
-
 /// Creates a dynamic dashboard embed based on current group state
 ///
 /// * `group` - The group containing sessions and queue information
-pub async fn create_dynamic_dashboard(group: &Group) -> CE {
+pub async fn dash_init(group: &Group) -> Result<CE> {
     let mut embed = CE::new().title("PUG Dashboard");
     
     // Get current sessions by status
@@ -125,39 +111,53 @@ pub async fn create_dynamic_dashboard(group: &Group) -> CE {
     embed = embed.description(description);
     embed = embed.footer(CEF::new("Use the buttons below to manage the queue and matches"));
     
-    embed
+    Ok(embed)
 }
 
-/// Updates the dashboard message with current group state
+/// Updates the dashboard message with current group state using EditMessage::embed
+/// Only edits existing messages - does not create new ones
 ///
 /// * `group` - The group containing current session data
 /// * `ctx` - Serenity context for sending messages
 /// * `channel_id` - Channel ID where dashboard should be updated
-pub async fn update_dashboard(group: &Group, ctx: &serenity::all::Context, channel_id: u64) -> Result<()> {
-    use serenity::all::{ChannelId, CreateMessage, CreateActionRow};
+pub async fn dash_update(group: &Group, ctx: &serenity::all::Context, channel_id: u64) -> Result<()> {
+    use serenity::all::{ChannelId, CreateActionRow, EditMessage, MessageId};
     
-    let channel = ChannelId::new(channel_id);
-    let embed = create_dynamic_dashboard(group).await;
-    let buttons = group.create_dashboard_buttons();
+    let channel    = ChannelId::new(channel_id);
+    let embed      = dash_init(group).await.unwrap();
+    let buttons    = group.create_dashboard_buttons();
     let action_row = CreateActionRow::Buttons(buttons);
     
-    // For now, send a new message. In the future, this should edit the existing dashboard message
-    match channel.send_message(
-        &ctx.http,
-        CreateMessage::new()
-            .embed(embed)
-            .components(vec![action_row])
-    ).await {
-        Ok(_) => {
-            info!("Dashboard updated successfully");
-            Ok(())
-        },
-        Err(e) => {
-            tracing::error!("Failed to update dashboard: {:?}", e);
-            Err(anyhow::anyhow!("Failed to update dashboard: {:?}", e))
+    // Get the stored dashboard message ID
+    let msg_id = group.dashboard.msg.get();
+    
+    if msg_id != 1 {
+        // Only edit existing dashboard message using EditMessage::embed
+        let message_id = MessageId::new(msg_id);
+        info!("Attempting to edit existing dashboard message: {}", message_id);
+        
+        match channel.edit_message(
+            &ctx.http,
+            message_id,
+            EditMessage::new()
+                .embed(embed)
+                .components(vec![action_row])
+        ).await {
+            Ok(_) => {
+                info!("Dashboard message {} updated successfully via EditMessage::embed", message_id);
+                Ok(())
+            },
+            Err(e) => {
+                error!("Failed to edit dashboard message {}: {:?}", message_id, e);
+                Err(anyhow::anyhow!("Failed to edit dashboard message: {:?}", e))
+            }
         }
+    } else {
+        // No existing message ID - cannot update without a valid message ID;
+        Err(anyhow::anyhow!("No valid dashboard message ID found ({}), cannot update dashboard", msg_id))
     }
 }
+
 
 /// Handles button interaction events from the dashboard
 /// 
@@ -259,7 +259,7 @@ async fn join_queue(cc: &CC<'_>) -> Result<()> {
         cc.create_bot_reply(&format!("✅ Joined the queue! ({}/12 players)", queue_count)).await?;
         
         // Update dashboard to reflect new state
-        update_dashboard_for_channel(cc, channel).await?;
+        dash_update(cc, channel).await?;
     }
 
     Ok(())
@@ -306,40 +306,9 @@ async fn leave_queue(cc: &CC<'_>) -> Result<()> {
         cc.create_bot_reply(&format!("❌ Left the queue! ({}/12 players)", queue_count)).await?;
         
         // Update dashboard to reflect new state
-        update_dashboard_for_channel(cc, channel).await?;
+        dash_update(cc, channel).await?;
     } else {
         cc.create_bot_reply("You are not in the queue!").await?;
-    }
-    
-    Ok(())
-}
-
-/// Updates dashboard for a specific channel
-async fn update_dashboard_for_channel(cc: &CC<'_>, channel_id: serenity::all::ChannelId) -> Result<()> {
-    let _base_group = cc.db.get_group_by_channel(channel_id).await?;
-    
-    // Clone the group data to avoid borrowing issues
-    let group_data = {
-        let manager = match cc.manager.lock() {
-            Ok(manager) => manager,
-            Err(poisoned) => {
-                error!("Manager mutex poisoned, recovering: {}", poisoned);
-                poisoned.into_inner()
-            }
-        };
-        if let Some(server) = manager.servers.iter().find(|s| s.guild_id == cc.component.guild_id.unwrap().get()) {
-            if let Some(group) = server.find_group_by_queue_channel(channel_id.get()) {
-                Some(group.clone())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    };
-    
-    if let Some(group) = group_data {
-        update_dashboard(&group, &cc.ctx, channel_id.get()).await?;
     }
     
     Ok(())
@@ -377,7 +346,7 @@ async fn shuffle(cc: &CC<'_>, session_id: Option<String>) -> Result<()> {
         cc.create_bot_reply("🔀 Teams shuffled! Check the dashboard for new team assignments.").await?;
         
         // Update dashboard to show shuffled teams
-        update_dashboard_for_channel(cc, channel).await?;
+        dash_update(cc, channel).await?;
     } else {
         cc.create_bot_reply("❌ No session ready for shuffling. Need at least 8 players in queue.").await?;
     }
@@ -416,7 +385,7 @@ async fn start(cc: &CC<'_>, session_id: Option<String>) -> Result<()> {
         cc.create_bot_reply("🔥 Match started! Teams are now ready to play.").await?;
         
         // Update dashboard to show match status
-        update_dashboard_for_channel(cc, channel).await?;
+        dash_update(cc, channel).await?;
     } else {
         cc.create_bot_reply("❌ No session ready to start. Need at least 8 players and shuffled teams.").await?;
     }
@@ -459,7 +428,7 @@ async fn end(cc: &CC<'_>, session_id: Option<String>) -> Result<()> {
         cc.create_bot_reply("✅ Match ended! Session has been reset and is ready for new players.").await?;
         
         // Update dashboard to show reset state
-        update_dashboard_for_channel(cc, channel).await?;
+        dash_update(cc, channel).await?;
     } else {
         cc.create_bot_reply("❌ No active match to end.").await?;
     }

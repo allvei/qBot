@@ -3,3 +3,7 @@
 .env
 pfpug.code-workspace
 add.bat
+pfpug.db
+pfpug.db-shm
+pfpug.db-wal
+pfpug.db

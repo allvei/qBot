@@ -2,18 +2,16 @@
 
 use anyhow::Result;
 use serenity::all::*;
-use tracing::{info, error};
-use crate::models::command::CommandContext as CC;
-use serenity::builder::{
-    CreateEmbed as CE, 
-    CreateInteractionResponse as CIR, 
-    CreateInteractionResponseMessage as CIRM
-};
-
-use crate::handlers::player::check_role;
-use crate::handlers::dashboard;
+use tracing::{error, info, warn};
 use crate::models::player::Role;
 use crate::models::setup_state::SETUP_STATE;
+use crate::models::command::{CommandContext as CC, ComponentContext};
+use crate::handlers::{dashboard, role::check_role};
+
+// Type aliases for convenience
+type CE = CreateEmbed;
+type CIR = CreateInteractionResponse;
+type CIRM = CreateInteractionResponseMessage;
 
 /// `/buffer`
 ///
@@ -167,7 +165,7 @@ pub async fn cmd_dashboard(cc: &CC<'_>) -> Result<()> {
     };
     
     // Create and send dashboard
-    dashboard::update_dashboard(&group_data, &cc.ctx, channel.get()).await?;
+    dashboard::dash_update(&group_data, &cc.ctx, channel.get()).await?;
     
     cc.create_bot_reply("✅ Dashboard created/updated successfully!").await?;
     
@@ -187,8 +185,8 @@ pub async fn cmd_setup(cc: &CC<'_>) -> Result<()> {
         return Ok(());
     }
 
-    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-    let user_id = cc.intax.user.id;
+    let guild_id: GuildId = cc.intax.guild_id.expect("Guild ID not found");
+    let user_id:  UserId  = cc.intax.user.id;
 
     // Acknowledge the command
     let response = CIR::Message(CIRM::new()
@@ -197,13 +195,13 @@ pub async fn cmd_setup(cc: &CC<'_>) -> Result<()> {
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
     // Start the DM flow
-    start_setup_flow(&cc.ctx, guild_id, user_id, &cc.db).await?;
+    start_setup_flow(cc.ctx, guild_id, user_id, &cc.db).await?;
     
     Ok(())
 }
 
 /// Starts the interactive setup flow via DMs
-async fn start_setup_flow(ctx: &Context, guild_id: GuildId, user_id: UserId, db: &std::sync::Arc<crate::Database>) -> Result<()> {
+async fn start_setup_flow(ctx: &Context, guild_id: GuildId, user_id: UserId, _db: &std::sync::Arc<crate::Database>) -> Result<()> {
     // Initialize setup state
     SETUP_STATE.start_setup(user_id, guild_id);
     
@@ -227,10 +225,10 @@ async fn start_setup_flow(ctx: &Context, guild_id: GuildId, user_id: UserId, db:
         .color(0x00ff00);
 
     // Get text channels for dropdown
-    let channels = get_text_channels(&guild).await?;
+    let channels = get_text_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "dashboard");
     
-    let select_menu = CreateSelectMenu::new("setup_dashboard", channel_options)
+    let select_menu = CreateSelectMenu::new("setup_dashboard", CreateSelectMenuKind::String { options: channel_options })
         .placeholder("Select dashboard channel...")
         .max_values(1);
     
@@ -246,14 +244,13 @@ async fn start_setup_flow(ctx: &Context, guild_id: GuildId, user_id: UserId, db:
 }
 
 /// Gets text channels from a guild
-async fn get_text_channels(guild: &PartialGuild) -> Result<Vec<(ChannelId, String)>> {
+async fn get_text_channels(guild: &PartialGuild, ctx: &Context) -> Result<Vec<(ChannelId, String)>> {
     let mut channels = Vec::new();
     
-    for (channel_id, channel) in &guild.channels {
-        if let Channel::Guild(guild_channel) = channel {
-            if guild_channel.kind == ChannelType::Text {
-                channels.push((*channel_id, guild_channel.name.clone()));
-            }
+    let guild_channels = guild.channels(&ctx.http).await?;
+    for (channel_id, channel) in guild_channels {
+        if channel.kind == ChannelType::Text {
+            channels.push((channel_id, channel.name.clone()));
         }
     }
     
@@ -263,14 +260,13 @@ async fn get_text_channels(guild: &PartialGuild) -> Result<Vec<(ChannelId, Strin
 }
 
 /// Gets voice channels from a guild
-async fn get_voice_channels(guild: &PartialGuild) -> Result<Vec<(ChannelId, String)>> {
+async fn get_voice_channels(guild: &PartialGuild, ctx: &Context) -> Result<Vec<(ChannelId, String)>> {
     let mut channels = Vec::new();
     
-    for (channel_id, channel) in &guild.channels {
-        if let Channel::Guild(guild_channel) = channel {
-            if guild_channel.kind == ChannelType::Voice {
-                channels.push((*channel_id, guild_channel.name.clone()));
-            }
+    let guild_channels = guild.channels(&ctx.http).await?;
+    for (channel_id, channel) in guild_channels {
+        if channel.kind == ChannelType::Voice {
+            channels.push((channel_id, channel.name.clone()));
         }
     }
     
@@ -332,7 +328,10 @@ pub async fn handle_setup_interaction(ctx: &Context, interaction: &ComponentInte
     }
     
     let step = parts[1];
-    let selected_values = &interaction.data.values;
+    let selected_values = match &interaction.data.kind {
+        ComponentInteractionDataKind::StringSelect { values } => values,
+        _ => return Ok(()),
+    };
     
     if selected_values.is_empty() {
         return Ok(());
@@ -348,11 +347,11 @@ pub async fn handle_setup_interaction(ctx: &Context, interaction: &ComponentInte
     
     match step {
         "dashboard" => handle_dashboard_selection(ctx, interaction, channel_or_role_id).await?,
-        "queue" => handle_queue_selection(ctx, interaction, channel_or_role_id).await?,
-        "red" => handle_red_selection(ctx, interaction, channel_or_role_id).await?,
-        "blue" => handle_blue_selection(ctx, interaction, channel_or_role_id).await?,
-        "runner" => handle_runner_selection(ctx, interaction, channel_or_role_id).await?,
-        "admin" => handle_admin_selection(ctx, interaction, channel_or_role_id, db).await?,
+        "queue"     => handle_queue_selection(    ctx, interaction, channel_or_role_id).await?,
+        "red"       => handle_red_selection(      ctx, interaction, channel_or_role_id).await?,
+        "blue"      => handle_blue_selection(     ctx, interaction, channel_or_role_id).await?,
+        "runner"    => handle_runner_selection(   ctx, interaction, channel_or_role_id).await?,
+        "admin"     => handle_admin_selection(    ctx, interaction, channel_or_role_id, db).await?,
         _ => {}
     }
     
@@ -362,8 +361,8 @@ pub async fn handle_setup_interaction(ctx: &Context, interaction: &ComponentInte
 /// Handles dashboard channel selection
 async fn handle_dashboard_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
     let guild_id = interaction.guild_id.expect("Guild ID not found");
-    let guild = guild_id.to_partial_guild(&ctx.http).await?;
-    let user_id = interaction.user.id;
+    let guild    = guild_id.to_partial_guild(&ctx.http).await?;
+    let user_id  = interaction.user.id;
     
     // Store the selection in setup state
     SETUP_STATE.update_setup(user_id, guild_id, |config| {
@@ -380,10 +379,10 @@ async fn handle_dashboard_selection(ctx: &Context, interaction: &ComponentIntera
         ))
         .color(0x00ff00);
     
-    let channels = get_text_channels(&guild).await?;
+    let channels = get_text_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "queue");
     
-    let select_menu = CreateSelectMenu::new("setup_queue", channel_options)
+    let select_menu = CreateSelectMenu::new("setup_queue", CreateSelectMenuKind::String { options: channel_options })
         .placeholder("Select queue channel...")
         .max_values(1);
     
@@ -402,8 +401,8 @@ async fn handle_dashboard_selection(ctx: &Context, interaction: &ComponentIntera
 /// Handles queue channel selection
 async fn handle_queue_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
     let guild_id = interaction.guild_id.expect("Guild ID not found");
-    let guild = guild_id.to_partial_guild(&ctx.http).await?;
-    let user_id = interaction.user.id;
+    let guild    = guild_id.to_partial_guild(&ctx.http).await?;
+    let user_id  = interaction.user.id;
     
     // Store the selection in setup state
     SETUP_STATE.update_setup(user_id, guild_id, |config| {
@@ -420,10 +419,10 @@ async fn handle_queue_selection(ctx: &Context, interaction: &ComponentInteractio
         ))
         .color(0x00ff00);
     
-    let channels = get_voice_channels(&guild).await?;
+    let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "red");
     
-    let select_menu = CreateSelectMenu::new("setup_red", channel_options)
+    let select_menu = CreateSelectMenu::new("setup_red", CreateSelectMenuKind::String { options: channel_options })
         .placeholder("Select red team voice channel...")
         .max_values(1);
     
@@ -460,10 +459,10 @@ async fn handle_red_selection(ctx: &Context, interaction: &ComponentInteraction,
         ))
         .color(0x00ff00);
     
-    let channels = get_voice_channels(&guild).await?;
+    let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "blue");
     
-    let select_menu = CreateSelectMenu::new("setup_blue", channel_options)
+    let select_menu = CreateSelectMenu::new("setup_blue", CreateSelectMenuKind::String { options: channel_options })
         .placeholder("Select blue team voice channel...")
         .max_values(1);
     
@@ -503,7 +502,7 @@ async fn handle_blue_selection(ctx: &Context, interaction: &ComponentInteraction
     let roles = get_guild_roles(&guild).await?;
     let role_options = create_role_options(&roles, "runner");
     
-    let select_menu = CreateSelectMenu::new("setup_runner", role_options)
+    let select_menu = CreateSelectMenu::new("setup_runner", CreateSelectMenuKind::String { options: role_options })
         .placeholder("Select runner role...")
         .max_values(1);
     
@@ -543,7 +542,7 @@ async fn handle_runner_selection(ctx: &Context, interaction: &ComponentInteracti
     let roles = get_guild_roles(&guild).await?;
     let role_options = create_role_options(&roles, "admin");
     
-    let select_menu = CreateSelectMenu::new("setup_admin", role_options)
+    let select_menu = CreateSelectMenu::new("setup_admin", CreateSelectMenuKind::String { options: role_options })
         .placeholder("Select admin role...")
         .max_values(1);
     
