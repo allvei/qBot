@@ -8,29 +8,14 @@ use crate::models::setup_state::SETUP_STATE;
 use crate::models::command::{CommandContext as CC};
 use crate::handlers::{role::check_role};
 
-// Type aliases for convenience
 type CE   = CreateEmbed;
 type CIR  = CreateInteractionResponse;
 type CIRM = CreateInteractionResponseMessage;
 
-/// `/buffer`
-///
-/// * `user_mention` - The user mention to buffer.
-pub async fn cmd_buffer(cc: &CC<'_>,user_mention: String,) -> Result<()> {
-    info!("Processing buffer command for user mention: {}", user_mention);
-    if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can buffer players!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-    // TODO: Actually buffer the player
-    Ok(())
-}
-
 /// `/config`
 ///
-/// * `key`         - The key to modify.
-/// * `value`       - The value to set for the key.
+/// * `key`   - The key to modify.
+/// * `value` - The value to set for the key.
 pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Result<()> {
     info!("Processing config: key={}, value={:?}", key, value);
     if !check_role(cc, &Role::Admin).await? {

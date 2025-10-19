@@ -161,7 +161,7 @@ impl EventHandler for Handler {
                         info();
                         if let Some(user_option) = cdo.first() {
                             if let Some(user_id) = user_option.value.as_str() {
-                                admin::cmd_buffer(&cmd_ctx, user_id.to_string()).await.expect("Failed to buffer player")
+                                admin::cmd_buffer(&cmd_ctx, user_id).await.expect("Failed to buffer player")
                             }
                         }
                         Ok(())

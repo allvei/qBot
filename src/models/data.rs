@@ -4,6 +4,9 @@ use anyhow::Error;
 // CHECK ME
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serenity::all::parse_user_mention;
+use serenity::all::CreateInteractionResponse;
+use serenity::all::CreateInteractionResponseMessage;
 use serenity::all::{
     ButtonStyle, Cache, ChannelId, ChannelId as CI, Context, CreateButton, CreateEmbed,
     CreateEmbedFooter as CEF, CreateMessage as CM, GuildId as GI, Message, MessageId, RoleId as RI,
@@ -12,7 +15,11 @@ use serenity::all::{
 use sqlx::FromRow;
 use tracing::{error, info};
 
-use crate::{models::player::Player, ComponentContext};
+use crate::handlers::role::check_role;
+use crate::models::player::Role;
+use crate::{models::player::Player, models::command::*};
+use serenity::all::CreateInteractionResponse as CIR;
+use serenity::all::CreateInteractionResponseMessage as CIRM;
 
 // Example usage
 // define_global_ids! {
@@ -292,6 +299,24 @@ impl Group {
                     .disabled(disabled)
             })
             .collect()
+    }
+
+    /// `/buffer`
+    ///
+    /// * `user_mention` - The user mention to buffer.
+    pub async fn cmd_buffer(cc: &CommandContext<'_>,user_mention: &str,) -> Result<()> {
+        info!("Processing buffer command for user mention: {}", user_mention);
+        let user_id = parse_user_mention(user_mention);
+        if !check_role(cc, &Role::Admin).await? {
+            let response = CIR::Message(CIRM::new().content("Only admins can buffer players!").ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+
+        
+    
+        // TODO: Actually buffer the player
+        Ok(())
     }
 }
 
@@ -861,6 +886,13 @@ pub struct Session {
 }
 
 impl Session {
+    pub fn get_user(&self, discord_id: UserId) -> Result<Player> {
+        match self.pool.iter().find(|p| p.player.discord_id == discord_id) {
+            Some(player) => Ok(player.player),
+            None => Err(anyhow::anyhow!("User not found")),
+        }
+    }
+
     pub fn new(
         status: SessionStatus,
         pool: Vec<SessionPlayer>,
