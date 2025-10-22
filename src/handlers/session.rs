@@ -91,8 +91,9 @@ async fn move_players_to_team_channels(
     for player in &session.pool {
         if let Some(team) = &player.team {
             let target_channel = match team {
-                Team::Red => redvc,
-                Team::Blu => bluvc,
+                Team::Unassigned => continue,
+                Team::Red        => redvc,
+                Team::Blu        => bluvc,
             };
             let user_id = player.player.discord_id;
             if let Ok(mut member) = guild_id.member(&ctx.http, user_id).await {
@@ -147,7 +148,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, mut guild: Server) -> Result<
     };
 
     // Check if player is already in session
-    if group.get_user_session(player.discord_id).is_some() {
+    if group.get_user_session(player.discord_id).is_ok() {
         info!("Player {} is already in a session", player.discord_id);
         return Ok(());
     }
@@ -208,7 +209,6 @@ pub async fn shuffle(cc: &CommandContext<'_>, mut guild: Server) -> Result<()> {
     }
 
     // Get active group with session
-    // TODO: Replace 0 with the actual queue channel ID for the group you want
     let group = guild.get_group(cc.intax.channel_id).unwrap();
 
     if group.sessions.is_empty() {

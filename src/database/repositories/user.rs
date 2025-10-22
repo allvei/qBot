@@ -26,7 +26,7 @@ impl UserRepository {
         .await?;
 
         let steam_id = result.get::<Option<i64>, _>("steam_id").map(|id| id as u64);
-        let player = Player::construct(result.get::<u64, _>("discord_id").into(), steam_id);
+        let player = Player::add(result.get::<u64, _>("discord_id").into(), steam_id);
         
         Ok(player)
     }
@@ -46,7 +46,7 @@ impl UserRepository {
         .await?;
 
         let steam_id = result.get::<Option<i64>, _>("steam_id").map(|id| id as u64);
-        let player = Player::construct(result.get::<u64, _>("discord_id").into(), steam_id);
+        let player = Player::add(result.get::<u64, _>("discord_id").into(), steam_id);
         
         Ok(player)
     }
@@ -60,7 +60,7 @@ impl UserRepository {
             .execute(&self.pool)
             .await?;
 
-        Ok(Player::construct(discord_id, steam_id))
+        Ok(Player::add(discord_id, steam_id))
     }
 }
 

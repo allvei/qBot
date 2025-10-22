@@ -35,6 +35,7 @@ use models::manager::Manager;
 use crate::models::session::SessionPlayer;
 use crate::models::session::SessionStatus;
 use crate::models::ComponentContext;
+use crate::models::Player;
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
     CC::new(name.into(),).description(desc.into(),)
@@ -267,7 +268,8 @@ impl EventHandler for Handler {
         if channel.is_none() && old_channel.is_some() {
             info!("{} left {} VC", user_name, old_channel.unwrap().unwrap().name(&ctx.http).await.unwrap());
 
-            // TODO: create a function to get the session by channel
+            let session = group.get_user_session(user_id).unwrap();
+            session.add_player(user_id, steam_id); // TODO: steam_id
             return;
         }
 

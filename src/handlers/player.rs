@@ -73,10 +73,10 @@ async fn move_players_to_queue_channel(session: Session, group: Group, guild_id:
 /// * `session`    - The session with assigned teams.
 /// * `guild_id`   - The ID of the guild where the session is taking place.
 async fn move_players_to_team_channels(
-    ctx: &Context,
-    _db: &Arc<Database>,
-    group: Group,
-    session: &mut Session,
+    ctx:      &Context,
+    _db:      &Arc<Database>,
+    group:    Group,
+    session:  &mut Session,
     guild_id: GuildId
 ) -> Result<()> {
     // Get red/blue voice channel IDs from the first team in the group
@@ -93,8 +93,9 @@ async fn move_players_to_team_channels(
     for player in &session.pool {
         if let Some(team) = &player.team {
             let target_channel = match team {
-                Team::Red => red_vc,
-                Team::Blu => blu_vc,
+                Team::Unassigned => continue,
+                Team::Red        => red_vc,
+                Team::Blu        => blu_vc,
             };
             let user_id = player.player.discord_id;
             if let Ok(mut member) = guild_id.member(&ctx.http, user_id).await {
@@ -183,14 +184,14 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     }
 
     // Check if player is already in session
-    if group.get_user_session(user).is_some() {
+    if group.get_user_session(user).is_ok() {
         info!("Player {} is already in a session", player.discord_id);
         already_in_queue = true;
     } else {
         // Add player to the session
         if let Some(session) = group.sessions.last_mut() {
             if session.status == SessionStatus::Idle {
-                session.pool.push(SessionPlayer::construct(player));
+                session.pool.push(SessionPlayer::add(player));
                 queue_count = session.pool.len();
                 info!("Added player to session. Queue now has {} players", queue_count);
             }
@@ -358,7 +359,7 @@ pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     let channel_id = cc.intax.channel_id;
     let group = guild.get_group(channel_id).unwrap();
 
-    if let Some(mut session) = group.get_user_session(cc.intax.user.id) {
+    if let Ok(session) = group.get_user_session(cc.intax.user.id) {
         session.status = SessionStatus::Pull;
 
         // TODO: Persist group changes to DB if needed (no update_group method exists)

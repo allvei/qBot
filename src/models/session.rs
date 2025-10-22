@@ -24,6 +24,11 @@ impl Session {
         }
     }
 
+    pub fn add_player(&mut self, discord_id: UserId, steam_id: Option<u64>) {
+        let player = SessionPlayer::add(discord_id, steam_id);
+        self.pool.push(player);
+    }
+
     pub fn new(
         status: SessionStatus,
         pool: Vec<SessionPlayer>,
@@ -65,33 +70,31 @@ impl SessionStatus {
 // SessionPlayer
 #[derive(Debug, Clone, Copy, FromRow, Serialize, Deserialize)]
 pub struct SessionPlayer {
-    pub player: Player,
-    pub team: Option<Team>,
-    pub buffered: Option<Player>,
-    pub queue_vc: bool,
-    pub queue_cmd: bool,
+    pub player:       Player,
+    pub team:         Option<Team>,
+    pub is_buffered:  bool,
+    pub in_queue_vc:  bool,
+    pub in_queue_cmd: bool,
 }
 
 impl SessionPlayer {
-    pub fn construct(player: Player) -> Self {
+    pub fn add(discord_id: UserId, steam_id: Option<u64>) -> Self {
+        let player = Player::add(discord_id, steam_id);
         Self {
-            player,
-            team: None,
-            buffered: None,
-            queue_vc: false,
-            queue_cmd: false,
+            player:       player,
+            team:         None,
+            is_buffered:  false,
+            in_queue_vc:  false,
+            in_queue_cmd: false,
         }
     }
 
-    pub fn buff(
-        &mut self,
-        buffered: Option<Player>,
-    ) {
-        self.buffered = buffered;
+    pub fn buff(&mut self) {
+        self.is_buffered = true;
     }
 
     pub fn unbuff(&mut self) {
-        self.buffered = None;
+        self.is_buffered = false;
     }
 
     pub fn team(
@@ -102,7 +105,7 @@ impl SessionPlayer {
     }
 
     pub fn in_queue(&self) -> bool {
-        self.queue_vc || self.queue_cmd
+        self.in_queue_vc || self.in_queue_cmd
     }
 }
 
@@ -141,6 +144,7 @@ impl TeamChannel {
 // Team
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum Team {
+    Unassigned,
     Red,
     Blu,
 }
@@ -150,9 +154,10 @@ impl FromStr for Team {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "RED" => Ok(Team::Red),
-            "BLU" => Ok(Team::Blu),
-            _ => Err(Error::msg(format!("Unknown : {}", s))),
+            "UNASSIGNED" => Ok(Team::Unassigned),
+            "RED"        => Ok(Team::Red),
+            "BLU"        => Ok(Team::Blu),
+            _            => Err(Error::msg(format!("Unknown : {}", s))),
         }
     }
 }

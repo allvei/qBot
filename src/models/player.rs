@@ -22,7 +22,7 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn construct(discord_id: UserId, steam_id: Option<u64>) -> Player {
+    pub fn add(discord_id: UserId, steam_id: Option<u64>) -> Player {
         Player {
             discord_id,
             steam_id,

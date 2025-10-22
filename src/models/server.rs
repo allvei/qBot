@@ -142,12 +142,22 @@ impl Group {
 
     pub fn get_user_session(
         &mut self,
-        discord_id: UI,
-    ) -> Option<Session> {
-        self.sessions
-            .iter()
-            .find(|s| s.pool.iter().any(|p| p.player.discord_id == discord_id))
-            .cloned()
+        user_id: UI,
+    ) -> Result<&mut Session> {
+        match self.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.discord_id == user_id)) {
+            Some(session) => Ok(session),
+            None => Err(anyhow!("User not found in any session")),
+        }
+    }
+
+    pub fn get_session_player(
+        &mut self,
+        user_id: UI,
+    ) -> Result<&mut SessionPlayer> {
+        match self.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.discord_id == user_id)) {
+            Some(session) => Ok(session.pool.iter_mut().find(|p| p.player.discord_id == user_id).unwrap()),
+            None => Err(anyhow!("User not found in any session")),
+        }
     }
 
     /// Checks if this group contains the given channel_id in any of its channels
@@ -229,16 +239,17 @@ impl Group {
     /// * `user_mention` - The user mention to buffer.
     pub async fn cmd_buffer(cc: &CommandContext<'_>,user_mention: &str,) -> Result<()> {
         info!("Processing buffer command for user mention: {}", user_mention);
-        let _user_id = parse_user_mention(user_mention);
+        let user_id = parse_user_mention(user_mention).unwrap();
         if !check_role(cc, &Role::Admin).await? {
             let response = CIR::Message(CIRM::new().content("Only admins can buffer players!").ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
             return Ok(());
         }
-
-        
-    
-        // TODO: Actually buffer the player
+        let mut manager    = cc.manager.lock().await;
+        let server         = manager.get_server(cc.intax.guild_id.unwrap()).unwrap();
+        let group          = server.get_group(cc.intax.channel_id).unwrap();
+        let session_player = group.get_session_player(user_id).unwrap();
+        session_player.buff();
         Ok(())
     }
 
@@ -387,11 +398,11 @@ impl Group {
 
         // Check if player is already in session
         match self.get_user_session(user) {
-            Some(_session) => {
+            Ok(_session) => {
                 info!("Player is already in session");
                 already_in_queue = true;
             }
-            None => {
+            Err(_) => {
                 info!("Player is not in session");
             }
         };
@@ -414,14 +425,14 @@ impl Group {
         }
 
         // Check if player is already in session
-        if self.get_user_session(user).is_some() {
+        if self.get_user_session(user).is_ok() {
             info!("Player {} is already in a session", player.discord_id);
             already_in_queue = true;
         } else {
             // Add player to the session
             if let Some(session) = self.sessions.last_mut() {
                 if session.status == SessionStatus::Idle {
-                    session.pool.push(SessionPlayer::construct(player));
+                    session.pool.push(SessionPlayer::add(player));
                     queue_count = session.pool.len();
                     info!(
                         "Added player to session. Queue now has {} players",
