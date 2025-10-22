@@ -65,7 +65,7 @@ struct Handler {
     manager:  Arc<Mutex<Manager>>,
 }
 
-/// Handler for Discord events with database access
+/// Handler for Discord events
 #[async_trait]
 impl EventHandler for Handler {
     /// When the bot is ready
@@ -260,6 +260,9 @@ impl EventHandler for Handler {
         let user_name   = user.display_name();
         let channel     = new.channel_id;
         let old_channel = old.map(|s| s.channel_id);
+        let server      = new.guild_id.unwrap();
+        let mut manager = self.manager.lock().await;
+        let group       = manager.get_group(server, channel.unwrap()).unwrap();
 
         if channel.is_none() && old_channel.is_some() {
             info!("{} left {} VC", user_name, old_channel.unwrap().unwrap().name(&ctx.http).await.unwrap());
@@ -291,15 +294,15 @@ impl EventHandler for Handler {
 
             // We'll store notification information to use after the mutex is released
             let mut dashboard_channel = None;
-            let mut player_count = 0;
-            let mut should_notify = false;
+            let mut player_count      = 0;
+            let mut should_notify     = false;
 
             // Scope for the mutex lock
             {
                 let mut manager = self.manager.lock().await;
                 
                 // Find the guild by ID and check if the new channel is a queue channel in any group
-                if let Some(server) = manager.servers.iter_mut().find(|s| s.guild_id == new.guild_id.unwrap()) {
+                if let Some(server) = manager.servers.iter_mut().find(|s| s.guild_id == server) {
                     for group in server.groups.iter_mut() {
                         if group.channels.queue == channel.expect("Channel ID is None").get() {
                             // User joined queue channel
@@ -358,9 +361,7 @@ impl EventHandler for Handler {
                     .footer(CEF::new("Awaiting team generation..."));
 
                 // Create buttons for actions
-                let components = vec![CreateActionRow::Buttons(vec![CreateButton::new("shuffle")
-                    .style(ButtonStyle::Primary)
-                    .label("Shuffle Teams")])];
+                let components = group.create_dashboard_buttons();
 
                 // Send the message with both embed and components
                 if let Ok(msg) = channel.send_message(&ctx.http, CM::new().embed(embed).components(components)).await {

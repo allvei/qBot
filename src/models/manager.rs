@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, Result};
 use serenity::all::{Cache, GuildId};
-use tracing::{info, error};
+use tracing::info;
 
 use crate::models::session::*;
 use crate::models::server::*;

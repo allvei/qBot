@@ -4,7 +4,7 @@
 //! A Server represents a Discord guild with associated groups and sessions.
 
 use serde::{Deserialize, Serialize};
-use serenity::all::{parse_user_mention, ButtonStyle, Context, CreateMessage as CM, CreateButton, CreateEmbed, CreateEmbedFooter as CEF, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, Message};
+use serenity::all::{parse_user_mention, ButtonStyle, Context, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter as CEF, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateMessage as CM, Message};
 use serenity::all::{GuildId as GI, RoleId as RI, ChannelId as CI, MessageId as MI, UserId as UI};
 use tracing::info;
 use anyhow::{anyhow, Error, Result};
@@ -172,13 +172,14 @@ impl Group {
         ctx: &Context,
     ) -> Result<(), Error> {
         let embed = Group::dash_update(&self).await?;
-        self.dash_send(&ctx, embed).await;
-        Ok(())
+        match self.dash_send(&ctx, embed).await {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
-    /// Creates buttons for the dashboard in a modular way
-    /// Makes it easy to add or remove buttons
-    pub fn create_dashboard_buttons(&self) -> Vec<CreateButton> {
+    /// Creates buttons for the dashboard
+    pub fn create_dashboard_buttons(&self) -> Vec<CreateActionRow> {
         // Check if there's an live session to enable/disable buttons
         let has_live_session = !self.sessions.is_empty();
         let has_ready_session = self.sessions.iter().any(|s| s.pool.len() >= 8);
@@ -209,7 +210,7 @@ impl Group {
         ];
 
         // Generate buttons from configurations
-        button_configs
+        let buttons: Vec<CreateButton> = button_configs
             .into_iter()
             .map(|(action, label, style, disabled)| {
                 // Create the button with all specified properties
@@ -218,7 +219,9 @@ impl Group {
                     .style(style)
                     .disabled(disabled)
             })
-            .collect()
+            .collect();
+
+        vec![CreateActionRow::Buttons(buttons)]
     }
 
     /// `/buffer`
@@ -255,21 +258,9 @@ impl Group {
     pub async fn dash_update(&self) -> Result<CreateEmbed> {
         let mut embed = CreateEmbed::new().title("PUG Dashboard");
 
-        let sessions_idle: Vec<&Session> = self
-            .sessions
-            .iter()
-            .filter(|s| s.status == SessionStatus::Idle)
-            .collect();
-        let sessions_hot: Vec<&Session> = self
-            .sessions
-            .iter()
-            .filter(|s| s.status == SessionStatus::Hot)
-            .collect();
-        let sessions_live: Vec<&Session> = self
-            .sessions
-            .iter()
-            .filter(|s| s.status == SessionStatus::Live)
-            .collect();
+        let sessions_idle: Vec<&Session> = self.sessions.iter().filter(|s| s.status == SessionStatus::Idle).collect();
+        let sessions_hot:  Vec<&Session> = self.sessions.iter().filter(|s| s.status == SessionStatus::Hot) .collect();
+        let sessions_live: Vec<&Session> = self.sessions.iter().filter(|s| s.status == SessionStatus::Live).collect();
 
         let mut desc = String::new();
 
@@ -450,7 +441,10 @@ impl Group {
             .await?;
 
             // Update dashboard to reflect new state
-            self.dash_update().await?;
+            match self.dash_update().await {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e),
+            };
         }
 
         Ok(())
