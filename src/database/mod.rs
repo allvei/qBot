@@ -3,12 +3,12 @@ pub mod repositories;
 pub mod validator;
 
 use anyhow::Result;
-use serenity::all::{ChannelId, UserId};
+use serenity::all::{UserId};
 use sqlx::SqlitePool;
 use tracing::info;
 
 use crate::models::*;
-use crate::models::data::Guild;
+use crate::models::server::*;
 use repositories::{UserRepository, GroupRepository, ConfigRepository};
 use migrations::DatabaseMigrations;
 
@@ -59,22 +59,22 @@ impl Database {
 
     // Backward compatibility methods - delegate to repositories
     
-    /// Creates a new user in the database (backward compatibility)
+    /// Creates a new user in the database
     pub async fn new_user(&self, discord_id: UserId) -> Result<Player> {
         self.users.create_or_update(discord_id, Some(0)).await
     }
 
-    /// Gets a user by Discord ID (backward compatibility)
+    /// Gets a user by Discord ID
     pub async fn get_user(&self, discord_id: UserId) -> Result<Player> {
         self.users.get_by_discord_id(discord_id).await
     }
 
-    /// Updates a user's Steam ID (backward compatibility)
+    /// Updates a user's Steam ID
     pub async fn set_user(&self, discord_id: UserId, steam_id: Option<u64>) -> Result<Player> {
         self.users.update_steam_id(discord_id, steam_id).await
     }
 
-    /// Creates a new group (backward compatibility)
+    /// Creates a new group
     pub async fn new_group(
         &self,
         guild_id:         u64,
@@ -89,12 +89,7 @@ impl Database {
         self.groups.create_group(guild_id, dashboard, chat, queue, dashboard_msg_id, red, blu, session_quota).await
     }
 
-    /// Gets a group by channel ID (backward compatibility)
-    pub async fn get_group_by_channel(&self, channel_id: ChannelId) -> Result<Group> {
-        self.groups.get_by_channel(channel_id).await
-    }
-
-    /// Updates a group (backward compatibility)
+    /// Updates a group
     pub async fn set_group(
         &self,
         guild_id:      u64,
@@ -108,20 +103,20 @@ impl Database {
         self.groups.update_group(guild_id, queue_id, dashboard, chat, red, blu, session_quota).await
     }
 
-    /// Sets a configuration value (backward compatibility)
+    /// Sets a configuration value
     pub async fn set_config(&self, key: &str, value: &str, guild_id: u64) -> Result<()> {
         self.config.set_config(key, value, guild_id).await
     }
 
-    /// Gets configuration map for a guild (backward compatibility)
+    /// Gets configuration map for a guild
     pub async fn get_config_map(&self, guild_id: u64) -> Result<std::collections::HashMap<String, String>> {
         self.config.get_config_map(guild_id).await
     }
 
-    /// Gets configuration for a guild (backward compatibility)
-    pub async fn get_config(&self, guild_id: u64) -> Result<Guild> {
+    /// Gets configuration for a guild
+    pub async fn get_config(&self, guild_id: u64) -> Result<Server> {
         // For now, return a simple Guild with the guild_id
         // The actual configuration is handled through get_config_map
-        Ok(Guild::empty(serenity::all::GuildId::new(guild_id)))
+        Ok(Server::empty(serenity::all::GuildId::new(guild_id)))
     }
 }

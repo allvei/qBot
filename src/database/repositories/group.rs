@@ -4,7 +4,7 @@ use serenity::all::{ChannelId, MessageId};
 use sqlx::{Row, SqlitePool};
 use tracing::{info, warn, error};
 
-use crate::{models::data::{Channels, Dashboard, Group, TeamChannel}};
+use crate::models::{server::*, session::TeamChannel};
 use super::Repository;
 
 #[derive(Clone)]
@@ -19,82 +19,47 @@ impl GroupRepository {
 
     pub async fn create_group(
         &self,
-        guild_id: u64,
-        dashboard: u64,
-        chat: u64,
-        queue: u64,
-        dashboard_msg_id: u64,
-        red: u64,
-        blu: u64,
-        session_quota: u8,
+        guild_id:             u64,
+        dashboard_channel_id: u64,
+        chat_channel_id:      u64,
+        queue_vc_id:          u64,
+        dashboard_msg_id:     u64,
+        red_vc_id:            u64,
+        blu_vc_id:            u64,
+        session_quota:        u8,
     ) -> Result<Group> {
-        info!("Creating new group with queue: {}", queue);
+        info!("Creating new group with queue: {}", queue_vc_id);
         
         let result = sqlx::query(
             "INSERT INTO groups (guild_id, dashboard, chat, queue, dashboard_msg_id, red, blu, session_quota)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING id, group_id, timeout, dashboard, chat, queue, dashboard_msg_id, red, blu, session_quota"
         )
-        .bind(guild_id as i64)
-        .bind(dashboard as i64)
-        .bind(chat as i64)
-        .bind(queue as i64)
-        .bind(dashboard_msg_id as i64)
-        .bind(red as i64)
-        .bind(blu as i64)
-        .bind(session_quota as i64)
+        .bind(guild_id             as i64)
+        .bind(dashboard_channel_id as i64)
+        .bind(chat_channel_id      as i64)
+        .bind(queue_vc_id          as i64)
+        .bind(dashboard_msg_id     as i64)
+        .bind(red_vc_id            as i64)
+        .bind(blu_vc_id            as i64)
+        .bind(session_quota        as i64)
         .fetch_one(&self.pool)
         .await?;
 
         Ok(self.build_group_from_row(&result).unwrap())
     }
 
-    pub async fn get_by_channel(&self, channel_id: ChannelId) -> Result<Group> {
-        info!("Looking for group with channel_id: {}", channel_id);
-        
-        let result = sqlx::query(
-            "SELECT id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg_id, red, blu, session_increment, session_quota
-             FROM groups
-             WHERE dashboard = ? OR chat = ? OR queue = ? OR red = ? OR blu = ? OR dashboard_msg_id = ?"
-        )
-        .bind(channel_id.get() as i64)
-        .bind(channel_id.get() as i64)
-        .bind(channel_id.get() as i64)
-        .bind(channel_id.get() as i64)
-        .bind(channel_id.get() as i64)
-        .bind(channel_id.get() as i64)
-        .fetch_one(&self.pool)
-        .await;
-
-        match result {
-            Ok(row) => {
-                let group = self.build_group_from_row(&row)?;
-                self.validate_group_data(&group).await?;
-                Ok(group)
-            },
-            Err(sqlx::Error::RowNotFound) => {
-                error!("No group found for channel_id: {}. Available groups:", channel_id);
-                self.log_available_groups().await;
-                Err(anyhow::anyhow!(
-                    "No group configuration found for channel {}. Please configure a group for this channel.", 
-                    channel_id
-                ))
-            },
-            Err(e) => Err(anyhow::anyhow!("Database error: {}", e))
-        }
-    }
-
     pub async fn update_group(
         &self,
-        guild_id: u64,
-        queue_id: u64,
-        dashboard: u64,
-        chat: u64,
-        red: u64,
-        blu: u64,
-        session_quota: u8,
+        guild_id:             u64,
+        queue_vc_id:          u64,
+        dashboard_channel_id: u64,
+        chat_channel_id:      u64,
+        red_vc_id:            u64,
+        blu_vc_id:            u64,
+        session_quota:        u8,
     ) -> Result<Group> {
-        info!("Updating group with queue_id: {}", queue_id);
+        info!("Updating group with queue_id: {}", queue_vc_id);
         
         let result = sqlx::query(
             "UPDATE groups
@@ -102,13 +67,13 @@ impl GroupRepository {
              WHERE queue = ?
              RETURNING id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg_id, red, blu, session_increment, session_quota"
         )
-        .bind(guild_id as i64)
-        .bind(dashboard as i64)
-        .bind(chat as i64)
-        .bind(red as i64)
-        .bind(blu as i64)
-        .bind(session_quota as i64)
-        .bind(queue_id as i64)
+        .bind(guild_id             as i64)
+        .bind(dashboard_channel_id as i64)
+        .bind(chat_channel_id      as i64)
+        .bind(red_vc_id            as i64)
+        .bind(blu_vc_id            as i64)
+        .bind(session_quota        as i64)
+        .bind(queue_vc_id          as i64)
         .fetch_one(&self.pool)
         .await?;
 
@@ -120,22 +85,21 @@ impl GroupRepository {
         let queue = ChannelId::new(result.get::<i64, _>("queue") as u64);
         let red   = ChannelId::new(result.get::<i64, _>("red")   as u64);
         let blu   = ChannelId::new(result.get::<i64, _>("blu")   as u64);
+        let dashboard = ChannelId::new(result.get::<i64, _>("dashboard_channel_id") as u64);
 
         let group = Group::new(
-            result.try_get::<i64, _>("group_id").unwrap_or(0) as u8,
-            result.try_get::<i64, _>("session_quota").unwrap_or(12) as u8,
-            result.try_get::<i64, _>("timeout").unwrap_or(120) as u16,
-            Dashboard::new(
-                MessageId::new(result.try_get::<i64, _>("dashboard_msg_id").unwrap_or(0) as u64),
-                ChannelId::new(result.get::<i64, _>("dashboard") as u64)
-            ),
+            result.try_get::<i64, _>("group_id")     .unwrap_or(0)      as u8,
+            result.try_get::<i64, _>("session_quota").unwrap_or(12)     as u8,
+            result.try_get::<i64, _>("timeout")      .unwrap_or(120)    as u16,
+            MessageId::new(result.get::<i64, _>("dashboard_msg_id")     as u64),
             Channels::new(
                 chat,
                 queue,
                 vec![TeamChannel::new(
                     red,
                     blu,
-                )]
+                )],
+                dashboard,
             ),
             Vec::new(),
         );
@@ -144,8 +108,8 @@ impl GroupRepository {
     }
 
     fn build_teams_from_row(&self, result: &sqlx::sqlite::SqliteRow) -> Result<TeamChannel> {
-        let red = ChannelId::new(result.get::<i64, _>("red") as u64);
-        let blu = ChannelId::new(result.get::<i64, _>("blu") as u64);
+        let red  = ChannelId::new(result.get::<i64, _>("red") as u64);
+        let blu  = ChannelId::new(result.get::<i64, _>("blu") as u64);
         let team = TeamChannel::new(red, blu);
         Ok(team)
     }
@@ -171,7 +135,7 @@ impl GroupRepository {
     /// Validate group data integrity
     async fn validate_group_data(&self, group: &Group) -> Result<()> {
         // Check for placeholder values that indicate incomplete configuration
-        if group.dashboard.channel_id.get() == 1 || group.dashboard.msg.get() == 1 {
+        if group.channels.dashboard.get() == 1 || group.dashboard_msg.get() == 1 {
             warn!("Group {} has placeholder dashboard configuration", group.group_id);
         }
         
@@ -241,8 +205,8 @@ impl GroupRepository {
 impl Repository<Group, u8> for GroupRepository {
     async fn create(&self, group: &Group) -> Result<Group> {
         // Extract values from the group struct
-        let dashboard_ch = group.dashboard.channel_id.get();
-        let dashboard_msg = group.dashboard.msg.get();
+        let dashboard_ch = group.channels.dashboard.get();
+        let dashboard_msg = group.dashboard_msg.get();
         let chat = group.channels.queue.get();
         let queue = group.channels.queue_vc.get();
         let red = group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0);
@@ -264,7 +228,7 @@ impl Repository<Group, u8> for GroupRepository {
     }
 
     async fn update(&self, group: &Group) -> Result<Group> {
-        let dashboard_ch = group.dashboard.channel_id.get();
+        let dashboard_ch = group.channels.dashboard.get();
         let chat         = group.channels.queue.get();
         let queue        = group.channels.queue_vc.get();
         let red          = group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0);

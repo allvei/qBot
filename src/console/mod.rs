@@ -260,11 +260,11 @@ impl ConsoleHandler {
                 } else {
                     println!("=== Configuration for Guild {} ===", guild_id);
                     for group in groups {
-                        println!("Group ID: {}", group.group_id);
-                        println!("  Dashboard Channel: {}", group.dashboard.channel_id);
-                        println!("  Chat Channel: N/A");
-                        println!("  Queue Channel: {}", group.channels.queue);
-                        println!("  Dashboard Message ID: {}", group.dashboard.msg);
+                        println!("Group ID: {}"              , group.group_id);
+                        println!("  Dashboard Channel: {}"   , group.channels.dashboard);
+                        println!("  Chat Channel: {}"        , group.channels.queue);
+                        println!("  Queue Channel: {}"       , group.channels.queue_vc);
+                        println!("  Dashboard Message ID: {}", group.dashboard_msg);
                         if let Some(teams) = group.channels.teams.first() {
                             println!("  Red Team Channel: {}", teams.red_vc);
                             println!("  Blue Team Channel: {}", teams.blu_vc);
@@ -332,7 +332,7 @@ impl ConsoleHandler {
                 match group_repo.update_group(
                     queue_id,
                     guild_id,
-                    group.dashboard.channel_id.get(),
+                    group.channels.dashboard.into(),
                     0, // chat (not used)
                     group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
                     group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
@@ -349,13 +349,13 @@ impl ConsoleHandler {
                 match group_repo.update_group(
                     queue_id,
                     guild_id,
-                    group.dashboard.channel_id.get(),
+                    group.channels.dashboard.into(),
                     0, // chat (not used)
                     red_id,
                     group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
                     group.quota as u8,
                 ).await {
-                    Ok(_) => println!("✅ Updated red team channel to {} for guild {}", red_id, guild_id),
+                    Ok(_)  => println!("✅ Updated red team channel to {} for guild {}", red_id, guild_id),
                     Err(e) => println!("❌ Failed to update red team channel: {}", e),
                 }
             },
@@ -366,7 +366,7 @@ impl ConsoleHandler {
                 match group_repo.update_group(
                     queue_id,
                     guild_id,
-                    group.dashboard.channel_id.get(),
+                    group.channels.dashboard.into(),
                     0, // chat (not used)
                     group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
                     blue_id,

@@ -8,11 +8,11 @@ use serenity::all::{
     EditMember,
     GuildId,
 };
-use tracing::{info, warn, error};
+use tracing::{info, warn};
+use crate::Database;
+use crate::models::server::*;
+use crate::models::session::*;
 use crate::models::command::{CommandContext};
-use crate::models::player::Role;
-use crate::models::data::{ Group, Session, SessionPlayer, SessionStatus, Team };
-use crate::{Database};
 
 /// Checks if a user has the specified role.
 ///
@@ -114,39 +114,32 @@ async fn move_players_to_team_channels(
 //
 
 /// `/join` and `/leave`
-pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
+pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result<()> {
     info!("Processing queue command from user {}", cc.intax.user.id);
-    let user = cc.intax.user.id;
-    let channel = cc.intax.channel_id;
+    let user         = cc.intax.user.id;
+    let channel      = cc.intax.channel_id;
     let command_name = &cc.intax.data.name;
-    
-    // Get group from database as base configuration
-    let base_group = cc.db.get_group_by_channel(channel).await?;
     
     // Handle leave command
     if command_name == "leave" {
         let mut found = false;
         let mut queue_count = 0;
         
-        // Scope the manager lock to avoid Send issues
-        {
-            let mut manager = cc.manager.lock().await;
-            let group = manager.get_or_create_group(channel, &base_group);
-            
-            // Find and remove player from any session
-            for session in &mut group.sessions {
-                if session.status == SessionStatus::Idle {
-                    let initial_len = session.pool.len();
-                    session.pool.retain(|p| p.player.discord_id != user);
-                    if session.pool.len() < initial_len {
-                        found = true;
-                        queue_count = session.pool.len();
-                        info!("Removed player from session. Queue now has {} players", queue_count);
-                        break;
-                    }
+        let group = guild.get_group(channel).unwrap().clone();
+        
+        // Find and remove player from any session
+        for mut session in group.sessions {
+            if session.status == SessionStatus::Idle {
+                let initial_len = session.pool.len();
+                session.pool.retain(|p| p.player.discord_id != user);
+                if session.pool.len() < initial_len {
+                    found = true;
+                    queue_count = session.pool.len();
+                    info!("Removed player from session. Queue now has {} players", queue_count);
+                    break;
                 }
             }
-        } // Manager lock is dropped here
+        }
         
         if found {
             cc.create_bot_reply(&format!("❌ Left the queue! ({}/12 players)", queue_count)).await?;
@@ -173,40 +166,36 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
     let mut queue_count = 0;
     let mut already_in_queue = false;
     
-    // Scope the manager lock to avoid Send issues
-    {
-        let mut manager = cc.manager.lock().await;
-        let group = manager.get_or_create_group(channel, &base_group);
-        
-        // Check if we have idle sessions
-        match group.get_sessions_by_status(&SessionStatus::Idle).len() {
-            0 => {
-                info!("No idle sessions found, creating a new session");
-                group.create_session();
-            },
-            1 => {
-                info!("Found one existing idle session");
-            },
-            n => {
-                return Err(anyhow!("Found more than one idle session ({}). This is unexpected. ", n));
-            },
-        }
+    let group = guild.get_group(channel).unwrap();
+    
+    // Check if we have idle sessions
+    match group.get_sessions_by_status(&SessionStatus::Idle).len() {
+        0 => {
+            info!("No idle sessions found, creating a new session");
+            group.create_session();
+        },
+        1 => {
+            info!("Found one existing idle session");
+        },
+        n => {
+            return Err(anyhow!("Found more than one idle session ({}). This is unexpected. ", n));
+        },
+    }
 
-        // Check if player is already in session
-        if group.get_user_session(user).is_some() {
-            info!("Player {} is already in a session", player.discord_id);
-            already_in_queue = true;
-        } else {
-            // Add player to the session
-            if let Some(session) = group.sessions.last_mut() {
-                if session.status == SessionStatus::Idle {
-                    session.pool.push(SessionPlayer::construct(player));
-                    queue_count = session.pool.len();
-                    info!("Added player to session. Queue now has {} players", queue_count);
-                }
+    // Check if player is already in session
+    if group.get_user_session(user).is_some() {
+        info!("Player {} is already in a session", player.discord_id);
+        already_in_queue = true;
+    } else {
+        // Add player to the session
+        if let Some(session) = group.sessions.last_mut() {
+            if session.status == SessionStatus::Idle {
+                session.pool.push(SessionPlayer::construct(player));
+                queue_count = session.pool.len();
+                info!("Added player to session. Queue now has {} players", queue_count);
             }
         }
-    } // Manager lock is dropped here
+    }
     
     if already_in_queue {
         cc.create_bot_reply("You are already in the queue!").await?;
@@ -219,14 +208,12 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
 }
 
 /// `/status`
-pub async fn status<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
+pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result<()> {
     info!("Processing queue status command");
     let channel = cc.intax.channel_id;
-    let base_group = cc.db.get_group_by_channel(channel).await?;
     
     let (queue_count, queue_list) = {
-        let mut manager = cc.manager.lock().await;
-        let group = manager.get_or_create_group(channel, &base_group);
+        let group = guild.get_group(channel).unwrap();
         
         let idle_sessions = group.get_sessions_by_status(&SessionStatus::Idle);
         
@@ -259,7 +246,7 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
 }
 
 /// `/shuffle`
-pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
+pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     info!("Processing shuffle command");
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
@@ -268,7 +255,7 @@ pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
     }
 
     // Get active group with session
-    let group = cc.db.get_group_by_channel(cc.intax.channel_id).await?;
+    let group = guild.get_group(cc.intax.channel_id).unwrap();
 
     if group.sessions.is_empty() {
         cc.create_bot_reply("No active sessions.").await?;
@@ -319,11 +306,7 @@ pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
 }
 
 /// `/accept`
-pub async fn accept(cc: &CommandContext<'_>, session_id: &Option<String>) -> Result<()> {
-    info!(
-        "Processing accept command for session ID: {}",
-        session_id.clone().unwrap_or("None".to_string())
-    );
+pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
         cc.create_bot_reply("Only runners can accept sessions!").await?;
@@ -332,7 +315,7 @@ pub async fn accept(cc: &CommandContext<'_>, session_id: &Option<String>) -> Res
 
     // Get the group for the current channel
     let channel_id = cc.intax.channel_id;
-    let mut group = cc.db.get_group_by_channel(channel_id).await?;
+    let group = guild.get_group(channel_id).unwrap();
 
     match group.get_sessions_by_status(&SessionStatus::Hot).len() {
         0 => {
@@ -364,11 +347,7 @@ pub async fn accept(cc: &CommandContext<'_>, session_id: &Option<String>) -> Res
 /// * `interaction` - Ref to the command interaction.
 /// * `db`          - Ref to the database.
 /// * `session_id`  - The ID of the session to end.
-pub async fn end(cc: &CommandContext<'_>, session_id: Option<String>) -> Result<()> {
-    info!(
-        "Processing end command for session ID: {}",
-        session_id.clone().unwrap_or("None".to_string())
-    );
+pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
         cc.create_bot_reply("Only runners can end sessions!").await?;
@@ -377,7 +356,7 @@ pub async fn end(cc: &CommandContext<'_>, session_id: Option<String>) -> Result<
 
     // Get the group for the current channel
     let channel_id = cc.intax.channel_id;
-    let mut group = cc.db.get_group_by_channel(channel_id).await?;
+    let group = guild.get_group(channel_id).unwrap();
 
     if let Some(mut session) = group.get_user_session(cc.intax.user.id) {
         session.status = SessionStatus::Pull;

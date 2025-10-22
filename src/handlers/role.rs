@@ -4,7 +4,7 @@ use tracing::{
 };
 
 use crate::models::command::CommandContext;
-use crate::models::player::Role;
+use crate::models::server::Role;
 
 pub async fn check_role(
     cc: &CommandContext<'_>,

@@ -12,8 +12,13 @@ use anyhow::Result;
 use serenity::all::*;
 use serenity::async_trait;
 use serenity::builder::{
-    CreateCommand as CC, CreateCommandOption as CCO, CreateEmbed as CE, CreateEmbedFooter as CEF, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM,
-    CreateMessage as CM,
+    CreateCommand                    as CC,
+    CreateCommandOption              as CCO,
+    CreateEmbed                      as CE,
+    CreateEmbedFooter                as CEF,
+    CreateInteractionResponse        as CIR,
+    CreateInteractionResponseMessage as CIRM,
+    CreateMessage                    as CM,
 };
 use serenity::model::application::{Command, CommandOptionType as COT, Interaction};
 use serenity::model::gateway::Ready;
@@ -24,9 +29,11 @@ use tracing::{error, info, warn};
 use database::{Database, migrations::DatabaseMigrations};
 use handlers::{admin, player};
 use models::command::CommandContext;
-use models::data::{Group, SessionPlayer, SessionStatus};
+use models::server::*;
 use models::manager::Manager;
 
+use crate::models::session::SessionPlayer;
+use crate::models::session::SessionStatus;
 use crate::models::ComponentContext;
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
@@ -127,41 +134,41 @@ impl EventHandler for Handler {
                     db:      self.database.clone(),
                     manager: &self.manager.clone(),
                 };
-                let cd = &itx.data;
-                let cdo = &cd.options;
+                let cd          = &itx.data;
+                let cdo         = &cd.options;
+                let mut manager = self.manager.lock().await;
+                let server      = manager.get_server(itx.guild_id.unwrap()).unwrap();
 
                 let info = || {
                     info!("{}: /{}", user_name, itx.data.name);
                 };
 
-                let get_arg = |name: &str| -> Option<String> { itx.data.options.iter().find(|opt| opt.name == name).and_then(|opt| opt.value.as_str()).map(|s| s.to_string()) };
-
                 let result = match cd.name.as_str() {
                     "join" | "leave" => {
                         info();
-                        player::queue(&cmd_ctx).await
+                        player::queue(&cmd_ctx, server).await
                     }
                     "status" => {
                         info();
-                        player::status(&cmd_ctx).await
+                        player::status(&cmd_ctx, server).await
                     }
                     "shuffle" => {
                         info();
-                        player::shuffle(&cmd_ctx).await
+                        player::shuffle(&cmd_ctx, server).await
                     }
                     "accept" => {
                         info();
-                        player::accept(&cmd_ctx, &get_arg("id")).await
+                        player::accept(&cmd_ctx, server).await
                     }
                     "end" => {
                         info();
-                        player::end(&cmd_ctx, get_arg("id")).await
+                        player::end(&cmd_ctx, server).await
                     }
                     "buffer" => {
                         info();
                         if let Some(user_option) = cdo.first() {
                             if let Some(user_id) = user_option.value.as_str() {
-                                admin::cmd_buffer(&cmd_ctx, user_id).await.expect("Failed to buffer player")
+                                Group::cmd_buffer(&cmd_ctx, user_id).await.expect("Failed to buffer player")
                             }
                         }
                         Ok(())
@@ -175,11 +182,11 @@ impl EventHandler for Handler {
                     }
                     "init_dashboard" => {
                         info();
-                        admin::cmd_init_dashboard(&cmd_ctx).await
+                        admin::cmd_init_dashboard(&cmd_ctx, server).await
                     }
                     "dashboard" => {
                         info();
-                        admin::cmd_dashboard(&cmd_ctx).await
+                        admin::cmd_dashboard(&cmd_ctx, server).await
                     }
                     "setup" => {
                         info();
@@ -204,9 +211,9 @@ impl EventHandler for Handler {
             },
             Interaction::Component(itx) => {
                 // Handle button interactions
-                let user_name = &itx.user.name;
-                let manager   = &self.manager.lock().await;
-                let group     = manager.get_group(itx.guild_id.unwrap(), itx.channel_id).unwrap();
+                let user_name   = &itx.user.name;
+                let mut manager = self.manager.lock().await;
+                let group       = manager.get_group(itx.guild_id.unwrap(), itx.channel_id).unwrap();
                 info!("{} clicked button: {}", user_name, itx.data.custom_id);
                 
                 // Handle setup interactions first
@@ -227,7 +234,7 @@ impl EventHandler for Handler {
                 };
                 
                 // Handle different button actions based on custom_id
-                let result = group.dashboard.handle_button_interaction(&comp_ctx).await;
+                let result = group.dash_handle_button_interaction(&comp_ctx).await;
                 
                 if let Err(e) = result {
                     error!("Error handling button '{}': {}", itx.data.custom_id, e);
@@ -327,9 +334,9 @@ impl EventHandler for Handler {
                                     session.status = SessionStatus::Hot;
                                     info!("Session is now HOT with {} players", session.pool.len());
                                     // Store notification info to use after releasing the lock
-                                    dashboard_channel = Some(group.dashboard.channel_id);
-                                    player_count = session.pool.len();
-                                    should_notify = true;
+                                    dashboard_channel = Some(group.channels.dashboard);
+                                    player_count      = session.pool.len();
+                                    should_notify     = true;
                                 }
                             }
                             break; // We found the group, exit the loop
@@ -402,7 +409,7 @@ impl Handler {
 
     /// Sends a notification to the dashboard channel when a session is ready
     async fn notify(&self,ctx: &Context,group: &Group,) {
-        let dashboard_channel = group.dashboard.channel_id;
+        let dashboard_channel = group.channels.dashboard;
 
         // Ensure there are at least 8 players before slicing
         let mut player_mentions = Vec::new();

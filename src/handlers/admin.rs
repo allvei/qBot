@@ -2,11 +2,12 @@
 
 use anyhow::Result;
 use serenity::all::*;
-use tracing::{error, info};
-use crate::models::player::Role;
+use tracing::info;
+use crate::models::{server::Server};
 use crate::models::setup_state::SETUP_STATE;
 use crate::models::command::{CommandContext as CC};
-use crate::handlers::{role::check_role};
+use crate::models::server::Role;
+use crate::handlers::player::check_role;
 
 type CE   = CreateEmbed;
 type CIR  = CreateInteractionResponse;
@@ -65,7 +66,7 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
 }
 
 /// `/init_dashboard`
-pub async fn cmd_init_dashboard(cc: &CC<'_>,) -> Result<()> {
+pub async fn cmd_init_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
     info!("Processing init_dashboard command");
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can set up the dashboard!").ephemeral(true));
@@ -76,10 +77,10 @@ pub async fn cmd_init_dashboard(cc: &CC<'_>,) -> Result<()> {
     let channel_id = cc.intax.channel_id;
     
     // Get the group from database using channel_id since there can be multiple groups per guild
-    let group = match cc.db.get_group_by_channel(channel_id).await {
+    let group = match guild.get_group(channel_id) {
         Ok(group) => group,
         Err(e) => {
-            let response = CIR::Message(CIRM::new().content(format!("Failed to get group for this channel: {}", e)).ephemeral(true));
+            let response = CIR::Message(CIRM::new().content(format!("Failed to get group for this channel: {}", channel_id)).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
             return Ok(());
         }
@@ -120,7 +121,7 @@ fn parse_user_mention(mention: &str,) -> Result<u64> {
 /// `/dashboard`
 ///
 /// Creates or updates the dashboard in the current channel
-pub async fn cmd_dashboard(cc: &CC<'_>) -> Result<()> {
+pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
     info!("Processing dashboard command");
     
     // Check permissions - only runners/admins can create dashboard
@@ -130,17 +131,10 @@ pub async fn cmd_dashboard(cc: &CC<'_>) -> Result<()> {
     }
     
     let channel = cc.intax.channel_id;
-    let base_group = cc.db.get_group_by_channel(channel).await?;
-    
-    // Get current group state
-    let group_data = {
-        let mut manager = cc.manager.lock().await;
-        let group = manager.get_or_create_group(channel, &base_group);
-        group.clone()
-    };
+    let group = guild.get_group(channel).unwrap();
     
     // Create and send dashboard
-    base_group.dash_init(&cc.ctx).await?;
+    group.dash_init(&cc.ctx).await?;
     
     cc.create_bot_reply("✅ Dashboard created/updated successfully!").await?;
     
