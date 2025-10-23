@@ -1,0 +1,353 @@
+{
+	"windsurf.autocompleteSpeed": "fast",
+	"windsurf.autoExecutionPolicy": "off",
+	"windsurf.chatFontSize": "default",
+	"windsurf.rememberLastModelSelection": false,
+	"windsurf.openRecentConversation": false,
+	"windsurf.explainAndFixInCurrentConversation": false,
+	"terminal.integrated.gpuAcceleration": "off",
+	"windsurf.enableTabToJump": true,
+	"security.workspace.trust.untrustedFiles": "open",
+	"editor.renderWhitespace": "all",
+	"clangd.path": "/home/mark/.config/Windsurf/User/globalStorage/llvm-vs-code-extensions.vscode-clangd/install/20.1.8/clangd_20.1.8/bin/clangd",
+	"clangd.checkUpdates": true,
+	"git.autofetch": true,
+	"gitReminder.secondsUncommitted": 300,
+	"git.confirmSync": false,
+	"githubIssues.queries": [
+
+		{
+			"label": "My Issues",
+			"query": "is:open -linked:pr assignee:${user} repo:${owner}/${repository}",
+			"groupBy": [
+				"milestone"
+			]
+		},
+		{
+			"label": "Created Issues",
+			"query": "author:${user} -linked:pr state:open repo:${owner}/${repository} sort:created-desc"
+		},
+		{
+			"label": "All Issues without pull requests",
+			"query": "state:open -linked:pr repo:${owner}/${repository} sort:updated-desc"
+		},
+		{
+			"label": "Milestones",
+			"query": "is:open -linked:pr repo:${owner}/${repository}",
+			"groupBy": [
+				"milestone"
+			]
+		}
+	],
+	"editor.unicodeHighlight.invisibleCharacters": false,
+	"editor.minimap.scale": 2,
+	"editor.fontFamily": "\"JetBrainsMonoNL Nerd Font Mono\"",
+	"git.ignoreRebaseWarning": true,
+	"workbench.editor.enablePreview": false,
+	"git.enableSmartCommit": true,
+	"clangd.arguments": [
+		"clang(expected_class_name)"
+	],
+	"githubPullRequests.createOnPublishBranch": "never",
+	"rust-analyzer.check.command": "clippy",
+	"explorer.confirmDelete": false,
+	"evenBetterToml.formatter.indentEntries": false,
+	"evenBetterToml.formatter.compactArrays": true,
+	"evenBetterToml.formatter.compactEntries": false,
+	"evenBetterToml.formatter.compactInlineTables": false,
+	"evenBetterToml.formatter.trailingNewline": true,
+	"evenBetterToml.formatter.allowedBlankLines": 1,
+	"evenBetterToml.formatter.alignEntries": true,
+	"evenBetterToml.formatter.arrayAutoCollapse": false,
+	"evenBetterToml.formatter.arrayAutoExpand": false,
+	"evenBetterToml.formatter.indentTables": false,
+	"evenBetterToml.formatter.arrayTrailingComma": true,
+	"evenBetterToml.formatter.reorderArrays": false,
+	"evenBetterToml.formatter.alignComments": false,
+	"evenBetterToml.formatter.columnWidth": 0,
+	"githubPullRequests.experimental.notificationsView": true,
+	"githubPullRequests.overrideDefaultBranch": "development",
+	"SourcePawnLanguageServer.includeDirectories": [
+		"/home/mark/dev/sourcemodAPI/addons/sourcemod/scripting/include"
+	],
+	"SourcePawnLanguageServer.compiler.path": "/home/mark/dev/sourcemodAPI/addons/sourcemod/scripting/spcomp",
+	"explorer.confirmDragAndDrop": false,
+	"sourcepawn.formatterSettings": [
+		"AlignAfterOpenBracket: Align",
+		"PenaltyReturnTypeOnItsOwnLine: 1000000",
+		"AlignArrayOfStructures: Left",
+		"AlignConsecutiveAssignments: AcrossEmptyLinesAndComments",
+		"AlignConsecutiveBitFields: AcrossEmptyLinesAndComments",
+		"AlignConsecutiveDeclarations: AcrossEmptyLinesAndComments",
+		"AlignConsecutiveMacros: AcrossEmptyLinesAndComments",
+		"AlignEscapedNewlines: Left",
+		"AlignOperands: AlignAfterOperator",
+		"AlignTrailingComments: true",
+		"AllowAllArgumentsOnNextLine: true",
+		"AllowAllConstructorInitializersOnNextLine: true",
+		"AllowAllParametersOfDeclarationOnNextLine: true",
+		"AllowShortBlocksOnASingleLine: Always",
+		"AllowShortCaseLabelsOnASingleLine: true",
+		"AllowShortEnumsOnASingleLine: true",
+		"AllowShortFunctionsOnASingleLine: All",
+		"AllowShortIfStatementsOnASingleLine: AllIfsAndElse",
+		"AllowShortLambdasOnASingleLine: All",
+		"AllowShortLoopsOnASingleLine: false",
+		"AlwaysBreakAfterDefinitionReturnType: None",
+		"AlwaysBreakAfterReturnType: None",
+		"AlwaysBreakBeforeMultilineStrings: false",
+		"AlwaysBreakTemplateDeclarations: No",
+		"BasedOnStyle: Google",
+		"BinPackArguments: true",
+		"BinPackParameters: true",
+		"BreakBeforeBinaryOperators: NonAssignment",
+		"BreakBeforeBraces: Attach",
+		"BraceWrapping: { AfterCaseLabel: false, AfterClass: true, AfterControlStatement: Never, AfterEnum: false, AfterExternBlock: false, AfterFunction: false, AfterNamespace: false, AfterObjCDeclaration: true, AfterStruct: false, AfterUnion: false, BeforeCatch: false, BeforeElse: false, BeforeLambdaBody: false, BeforeWhile: false, IndentBraces: false, SplitEmptyFunction: true, SplitEmptyNamespace: true, SplitEmptyRecord: true }",
+		"BreakBeforeConceptDeclarations: false",
+		"BreakBeforeTernaryOperators: true",
+		"BreakConstructorInitializers: AfterColon",
+		"BreakInheritanceList: AfterComma",
+		"BreakStringLiterals: false",
+		"ColumnLimit: 0",
+		"CompactNamespaces: true",
+		"ConstructorInitializerAllOnOneLineOrOnePerLine: true",
+		"ConstructorInitializerIndentWidth: ${TabSize}",
+		"ContinuationIndentWidth: ${TabSize}",
+		"Cpp11BracedListStyle: true",
+		"EmptyLineBeforeAccessModifier: LogicalBlock",
+		"FixNamespaceComments: true",
+		"IncludeBlocks: Preserve",
+		"IndentAccessModifiers: false",
+		"IndentCaseBlocks: false",
+		"IndentCaseLabels: true",
+		"IndentExternBlock: Indent",
+		"IndentGotoLabels: false",
+		"IndentPPDirectives: BeforeHash",
+		"IndentRequires: true",
+		"IndentWidth: ${TabSize}",
+		"IndentWrappedFunctionNames: true",
+		"LambdaBodyIndentation: OuterScope",
+		"Language: Cpp",
+		"MaxEmptyLinesToKeep: 1",
+		"NamespaceIndentation: All",
+		"ObjCBinPackProtocolList: Always",
+		"ObjCBreakBeforeNestedBlockParam: false",
+		"ObjCSpaceBeforeProtocolList: false",
+		"ReflowComments: true",
+		"SortIncludes: Never",
+		"SpaceAfterCStyleCast: false",
+		"SpaceAfterLogicalNot: false",
+		"SpaceBeforeAssignmentOperators: true",
+		"SpaceBeforeCaseColon: false",
+		"SpaceBeforeCpp11BracedList: false",
+		"SpaceBeforeCtorInitializerColon: true",
+		"SpaceBeforeInheritanceColon: true",
+		"SpaceBeforeParens: ControlStatementsExceptControlMacros",
+		"SpaceBeforeRangeBasedForLoopColon: true",
+		"SpaceBeforeSquareBrackets: false",
+		"SpaceInEmptyBlock: false",
+		"SpaceInEmptyParentheses: false",
+		"SpacesBeforeTrailingComments: ${TabSize}",
+		"SpacesInConditionalStatement: true",
+		"SpacesInContainerLiterals: true",
+		"SpacesInCStyleCastParentheses: true",
+		"SpacesInParentheses: true",
+		"SpacesInSquareBrackets: true",
+		"Standard: Auto",
+		"TabWidth: ${TabSize}",
+		"UseTab: ${UseTab}",
+		"CommentPragmas: '^#define|#tryinclude|#pragma|#include'"
+	],
+	"redhat.telemetry.enabled": true,
+	"sourcepawn.AuthorName": "xCape",
+	"sourcepawn.GithubName": "allvei",
+	"sourcepawn.outputDirectoryPath": "/home/mark/dev/sourcemodAPI/addons/sourcemod/scripting/compiled/",
+	"sourcepawn.MainPathCompilation": false,
+	"sourcepawn.runServerCommandsAfterCompile": false,
+	"SourcePawnLanguageServer.eventsGameName": "Team Fortress 2",
+	"SourcePawnLanguageServer.hover.actions.references.enable": true,
+	"docsView.documentationView.updateMode": "sticky",
+	"editor.inlayHints.padding": true,
+	"rust-analyzer.inlayHints.typeHints.enable": false,
+	"rust-analyzer.inlayHints.closingBraceHints.minLines": 0,
+	"rust-analyzer.lens.implementations.enable": false,
+	"editor.hover.delay": 500,
+	"workbench.colorTheme": "Gruvbox Dark Hard",
+	"workbench.iconTheme": "material-icon-theme",
+	"workbench.editor.highlightModifiedTabs": true,
+	"rust-analyzer.rustfmt.overrideCommand": null,
+	"editor.bracketPairColorization.independentColorPoolPerBracketType": true,
+	"rust-analyzer.inlayHints.renderColons": false,
+	"editor.inlayHints.enabled": "offUnlessPressed",
+	"editor.guides.bracketPairs": true,
+	"editor.minimap.renderCharacters": false,
+	"editor.stickyScroll.defaultModel": "foldingProviderModel",
+	"editor.minimap.enabled": false,
+	"explicitFolding.rules": {
+		"*": [
+			{
+				"beginRegex": "\\s+\\{",
+				"endRegex":   "\\}(,|;)?$",
+				"foldLastLine": true
+			},
+			{
+				"beginRegex": "\\[",
+				"endRegex":   "\\]",
+				"foldLastLine": true
+			},
+		],
+		"cpp": [
+			{
+				"beginRegex": "\\)",
+				"endRegex":   "\\{",
+				"foldLastLine": false
+			},
+			{
+				"beginRegex": "\\{",
+				"endRegex":   "\\}",
+				"foldLastLine": false
+			},
+			{
+				"beginRegex": "(#ifdef|#if defined)",
+				"endRegex":   "#endif",
+				"foldLastLine": false
+			},
+			{
+				"beginRegex": "\\(",
+				"endRegex":   "\\)",
+				"foldLastLine": false
+			},
+			{
+				"whileRegex": "\\/\\/\\/",
+				"foldLastLine": true,
+			}
+		],
+		"sourcepawn": [
+			{
+				"beginRegex": "\\{",
+				"endRegex":   "\\}",
+				"foldLastLine": false
+			}
+		],
+		"rust": [
+			{
+				"whileRegex": "\\/\\/\\/",
+				"foldLastLine": true,
+				"autoFold": true
+			},
+			{
+				"whileRegex": "\\/\\/!",
+				"foldLastLine": true,
+				"autoFold": true
+			},
+			{
+				"beginRegex": "\\{",
+				"endRegex":   "\\}",
+				"foldLastLine": true
+			},
+			{
+				"beginRegex": "\\(",
+				"endRegex":   "\\)",
+				"foldLastLine": true
+			},
+			{
+				"whileRegex": "(pub )?use ",
+				"foldLastLine": true
+			},
+			{
+				"whileRegex": "(pub )?mod ",
+				"foldLastLine": true
+			},
+		]
+	},
+	"editor.defaultFoldingRangeProvider": "zokugun.explicit-folding",
+	"css.format.braceStyle": "expand",
+	"notebook.showFoldingControls": "always",
+	"editor.showFoldingControls": "always",
+	"explicitFolding.autoFold": "comments",
+	"[rust]": {
+		"editor.defaultFormatter": "rust-lang.rust-analyzer"
+	},
+	"editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+	"[html]": {
+		"editor.defaultFormatter": "vscode.html-language-features"
+	},
+	"accessibility.dimUnfocused.enabled": true,
+	"accessibility.underlineLinks": true,
+	"accessibility.signalOptions.debouncePositionChanges": true,
+	"editor.accessibilitySupport": "off",
+	"todo-tree.general.tags": [
+		"BUG",
+		"HACK",
+		"FIXME",
+		"TODO",
+		"P4SS"
+	],
+	"diffEditor.experimental.showMoves": true,
+	"diffEditor.hideUnchangedRegions.contextLineCount": 2,
+	"diffEditor.hideUnchangedRegions.minimumLineCount": 2,
+	"diffEditor.experimental.useTrueInlineView": true,
+	"diffEditor.diffAlgorithm": "legacy",
+	"[sourcepawn]": {
+		"editor.defaultFormatter": "Sarrus.sourcepawn-vscode"
+	},
+	"inlineFold.regex": "\\((.*)\\)",
+	"inlineFold.maskChar": "<=>",
+	"inlineFold.regexGroup": "1",
+	"inlineFold.supportedLanguages": [
+		"astro",
+		"vue",
+		"html",
+		"svelte",
+		"vue-html",
+		"php",
+		"blade",
+		"erb",
+		"twig",
+		"nunjucks",
+		"django-html",
+		"jinja-html",
+		"javascript",
+		"typescript",
+		"javascriptreact",
+		"typescriptreact",
+		"sourcepawn",
+		"rust"
+	],
+	"inlineFold.unfoldedOpacity": 1,
+	"search.maxResults": 2000,
+	"tailwind-fold.supportedLanguages": [
+
+		"html",
+		"typescriptreact",
+		"javascriptreact",
+		"typescript",
+		"javascript",
+		"vue-html",
+		"vue",
+		"php",
+		"markdown",
+		"coffeescript",
+		"svelte",
+		"astro",
+		"erb",
+		"rust"
+	],
+	"tailwind-fold.autoFold": false,
+	"remote.autoForwardPortsSource": "hybrid",
+	"terminal.integrated.fontFamily": "\"JetBrainsMonoNL NFP\"",
+	"editor.codeLensFontFamily": "\"JetBrainsMonoNL Nerd Font Mono\"",
+	"editor.inlayHints.fontFamily": "\"JetBrainsMonoNL Nerd Font Mono\"",
+	"editor.inlineSuggest.fontFamily": "\"JetBrainsMonoNL Nerd Font Mono\"",
+	"debug.console.fontFamily": "\"JetBrainsMono Nerd Font Propo\"",
+	"scm.inputFontFamily": "\"JetBrainsMonoNL NFP\"",
+	"notebook.output.fontFamily": "\"JetBrainsMonoNL NFP\"",
+	"githubPullRequests.createDefaultBaseBranch": "createdFromBranch",
+	"diffEditor.hideUnchangedRegions.enabled": true,
+	"diffEditor.renderSideBySide": false,
+	"githubPullRequests.pushBranch": "always",
+	"explicitFolding.debug": true,
+	"editor.fontSize": 16,
+	"problems.defaultViewMode": "table",
+	"rust-analyzer.hover.actions.references.enable": true,
+}

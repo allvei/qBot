@@ -78,10 +78,10 @@ pub struct SessionPlayer {
 }
 
 impl SessionPlayer {
-    pub fn add(discord_id: UserId, steam_id: Option<u64>) -> Self {
-        let player = Player::add(discord_id, steam_id);
+    pub fn add(discord_id: UserId) -> Self {
+        let player = Player::add(discord_id);
         Self {
-            player:       player,
+            player,
             team:         None,
             is_buffered:  false,
             in_queue_vc:  false,

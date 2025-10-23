@@ -26,18 +26,20 @@ impl Player {
         Player {
             discord_id,
             steam_id,
-            rank: None,
-            role: None,
+            rank:     None,
+            role:     None,
         }
     }
 
+    pub fn set_steam(&mut self, steam_id: Option<u64>) {
+        self.steam_id = steam_id;
+    }
+
     pub fn set_rank(&mut self, rank: Option<Rank>) {
-        info!("Setting rank for player {}: {:?}", self.discord_id, rank);
         self.rank = rank;
     }
 
     pub fn set_role(&mut self, role: Option<Role>) {
-        info!("Setting role for player {}: {:?}", self.discord_id, role);
         self.role = role;
     }
 

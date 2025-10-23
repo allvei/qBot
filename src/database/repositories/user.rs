@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serenity::all::UserId;
-use sqlx::{Row, SqlitePool};
+use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use tracing::info;
 
 use crate::models::Player;
@@ -24,11 +24,8 @@ impl UserRepository {
         .bind(discord_id.get() as i64)
         .fetch_one(&self.pool)
         .await?;
-
-        let steam_id = result.get::<Option<i64>, _>("steam_id").map(|id| id as u64);
-        let player = Player::add(result.get::<u64, _>("discord_id").into(), steam_id);
         
-        Ok(player)
+        Ok(Self::get_player(result))
     }
 
     pub async fn create_or_update(&self, discord_id: UserId, steam_id: Option<u64>) -> Result<Player> {
@@ -44,11 +41,15 @@ impl UserRepository {
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
         .fetch_one(&self.pool)
         .await?;
-
-        let steam_id = result.get::<Option<i64>, _>("steam_id").map(|id| id as u64);
-        let player = Player::add(result.get::<u64, _>("discord_id").into(), steam_id);
         
-        Ok(player)
+        Ok(Self::get_player(result))
+    }
+
+    fn get_player(result: sqlx::sqlite::SqliteRow) -> Player {
+        let p = Player::add(result.get::<u64, _>        ("discord_id").into(),
+                            result.get::<Option<i64>, _>("steam_id")  .map(|id| id as u64)
+                           );
+        p
     }
 
     pub async fn update_steam_id(&self, discord_id: UserId, steam_id: Option<u64>) -> Result<Player> {

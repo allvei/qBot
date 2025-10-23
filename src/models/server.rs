@@ -432,7 +432,7 @@ impl Group {
             // Add player to the session
             if let Some(session) = self.sessions.last_mut() {
                 if session.status == SessionStatus::Idle {
-                    session.pool.push(SessionPlayer::add(player));
+                    session.pool.push(SessionPlayer::add(player.discord_id));
                     queue_count = session.pool.len();
                     info!(
                         "Added player to session. Queue now has {} players",
