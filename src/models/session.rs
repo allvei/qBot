@@ -24,8 +24,8 @@ impl Session {
         }
     }
 
-    pub fn add_player(&mut self, discord_id: UserId, steam_id: Option<u64>) {
-        let player = SessionPlayer::add(discord_id, steam_id);
+    pub fn add_player(&mut self, discord_id: UserId) {
+        let player = SessionPlayer::add(discord_id);
         self.pool.push(player);
     }
 
@@ -79,7 +79,7 @@ pub struct SessionPlayer {
 
 impl SessionPlayer {
     pub fn add(discord_id: UserId) -> Self {
-        let player = Player::add(discord_id);
+        let player = Player::add(discord_id, None);
         Self {
             player,
             team:         None,

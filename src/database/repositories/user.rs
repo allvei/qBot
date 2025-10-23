@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serenity::all::UserId;
-use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use sqlx::{Row, SqlitePool};
 use tracing::info;
 
 use crate::models::Player;

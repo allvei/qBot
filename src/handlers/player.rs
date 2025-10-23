@@ -191,7 +191,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         // Add player to the session
         if let Some(session) = group.sessions.last_mut() {
             if session.status == SessionStatus::Idle {
-                session.pool.push(SessionPlayer::add(player));
+                session.pool.push(SessionPlayer::add(player.discord_id));
                 queue_count = session.pool.len();
                 info!("Added player to session. Queue now has {} players", queue_count);
             }
