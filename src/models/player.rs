@@ -6,8 +6,6 @@ use serde::{
 };
 use serenity::all::{Context, UserId};
 use sqlx::prelude::FromRow;
-use tracing::info;
-
 use crate::models::pug::Rank;
 use crate::models::server::Role;
 

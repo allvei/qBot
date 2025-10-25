@@ -1,4 +1,4 @@
-// Combined session handlers
+// Combined game handlers
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -11,7 +11,7 @@ use serenity::all::{
 use tracing::{info, warn};
 use crate::Database;
 use crate::models::server::*;
-use crate::models::session::*;
+use crate::models::game::*;
 use crate::models::command::{CommandContext};
 
 /// Checks if a user has the specified role.
@@ -37,9 +37,9 @@ pub async fn check_role(
 /// Splits the players into two teams.
 ///
 /// * `players` - The players to split into teams.
-pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<SessionPlayer>) {
+pub fn split_into_teams(players: &[GamePlayer]) -> (Vec<GamePlayer>, Vec<GamePlayer>) {
     let mut rng = rand::rng();
-    let mut player_list: Vec<SessionPlayer> = players.to_vec();
+    let mut player_list: Vec<GamePlayer> = players.to_vec();
     player_list.shuffle(&mut rng);
     let team_size = player_list.len() / 2;
     let team1 = player_list[0..team_size].to_vec();
@@ -49,10 +49,10 @@ pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<S
 
 
 /// Moves players back to the queue channel.
-async fn move_players_to_queue_channel(session: Session, group: Group, guild_id: GuildId, ctx: &Context) -> Result<()> {
+async fn move_players_to_queue_channel(game: Games, group: Group, guild_id: GuildId, ctx: &Context) -> Result<()> {
     // Check if queue channel is configured
     if group.channels.queue_vc != 0 {
-        for player in &session.pool {
+        for player in &game.pool {
             // Try to move the user back to queue
             let _ = ctx.http.edit_member(
                 guild_id,
@@ -70,13 +70,13 @@ async fn move_players_to_queue_channel(session: Session, group: Group, guild_id:
 /// * `ctx`        - Ref to the Serenity context.
 /// * `db`         - Ref to the database.
 /// * `group`      - The group containing team channel information.
-/// * `session`    - The session with assigned teams.
-/// * `guild_id`   - The ID of the guild where the session is taking place.
+/// * `game`    - The game with assigned teams.
+/// * `guild_id`   - The ID of the guild where the game is taking place.
 async fn move_players_to_team_channels(
     ctx:      &Context,
     _db:      &Arc<Database>,
     group:    Group,
-    session:  &mut Session,
+    game:  &mut Games,
     guild_id: GuildId
 ) -> Result<()> {
     // Get red/blue voice channel IDs from the first team in the group
@@ -90,7 +90,7 @@ async fn move_players_to_team_channels(
     }
 
     // Move players to red/blu voice channels
-    for player in &session.pool {
+    for player in &game.pool {
         if let Some(team) = &player.team {
             let target_channel = match team {
                 Team::Unassigned => continue,
@@ -128,15 +128,15 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         
         let group = guild.get_group(channel).unwrap().clone();
         
-        // Find and remove player from any session
-        for mut session in group.sessions {
-            if session.status == SessionStatus::Idle {
-                let initial_len = session.pool.len();
-                session.pool.retain(|p| p.player.discord_id != user);
-                if session.pool.len() < initial_len {
+        // Find and remove player from any game
+        for mut game in group.games {
+            if game.status == GameStatus::Idle {
+                let initial_len = game.pool.len();
+                game.pool.retain(|p| p.player.discord_id != user);
+                if game.pool.len() < initial_len {
                     found = true;
-                    queue_count = session.pool.len();
-                    info!("Removed player from session. Queue now has {} players", queue_count);
+                    queue_count = game.pool.len();
+                    info!("Removed player from game. Queue now has {} players", queue_count);
                     break;
                 }
             }
@@ -169,31 +169,31 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     
     let group = guild.get_group(channel).unwrap();
     
-    // Check if we have idle sessions
-    match group.get_sessions_by_status(&SessionStatus::Idle).len() {
+    // Check if we have idle games
+    match group.get_games_by_status(&GameStatus::Idle).len() {
         0 => {
-            info!("No idle sessions found, creating a new session");
-            group.create_session();
+            info!("No idle games found, creating a new game");
+            group.create_game();
         },
         1 => {
-            info!("Found one existing idle session");
+            info!("Found one existing idle game");
         },
         n => {
-            return Err(anyhow!("Found more than one idle session ({}). This is unexpected. ", n));
+            return Err(anyhow!("Found more than one idle game ({}). This is unexpected. ", n));
         },
     }
 
-    // Check if player is already in session
-    if group.get_user_session(user).is_ok() {
-        info!("Player {} is already in a session", player.discord_id);
+    // Check if player is already in game
+    if group.get_user_game(user).is_ok() {
+        info!("Player {} is already in a game", player.discord_id);
         already_in_queue = true;
     } else {
-        // Add player to the session
-        if let Some(session) = group.sessions.last_mut() {
-            if session.status == SessionStatus::Idle {
-                session.pool.push(SessionPlayer::add(player.discord_id));
-                queue_count = session.pool.len();
-                info!("Added player to session. Queue now has {} players", queue_count);
+        // Add player to the game
+        if let Some(game) = group.games.last_mut() {
+            if game.status == GameStatus::Idle {
+                game.pool.push(GamePlayer::add(player.discord_id));
+                queue_count = game.pool.len();
+                info!("Added player to game. Queue now has {} players", queue_count);
             }
         }
     }
@@ -216,15 +216,15 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Resul
     let (queue_count, queue_list) = {
         let group = guild.get_group(channel).unwrap();
         
-        let idle_sessions = group.get_sessions_by_status(&SessionStatus::Idle);
+        let idle_games = group.get_games_by_status(&GameStatus::Idle);
         
-        if idle_sessions.is_empty() {
+        if idle_games.is_empty() {
             (0, "No active queue found.".to_string())
         } else {
-            let session = &idle_sessions[0];
-            let count = session.pool.len();
+            let game = &idle_games[0];
+            let count = game.pool.len();
             let list = if count > 0 {
-                session.pool.iter()
+                game.pool.iter()
                     .enumerate()
                     .map(|(i, p)| format!("{}. <@{}>", i + 1, p.player.discord_id))
                     .collect::<Vec<_>>()
@@ -255,28 +255,28 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
         return Ok(());
     }
 
-    // Get active group with session
+    // Get active group with game
     let group = guild.get_group(cc.intax.channel_id).unwrap();
 
-    if group.sessions.is_empty() {
-        cc.create_bot_reply("No active sessions.").await?;
+    if group.games.is_empty() {
+        cc.create_bot_reply("No active games.").await?;
         return Ok(());
     }
 
-    let session = group.sessions.last().unwrap();
+    let game = group.games.last().unwrap();
 
-    if session.pool.len() < 8 {
+    if game.pool.len() < 8 {
         cc.create_bot_reply(
-            &format!("Not enough players in session. Need {} more.", 8 - session.pool.len())
+            &format!("Not enough players in game. Need {} more.", 8 - game.pool.len())
         ).await?;
         return Ok(());
     }
 
     // Collect players and split into teams (synchronous shuffle so no !Send types live across await)
-    let (mut red_team, mut blu_team) = split_into_teams(&session.pool);
+    let (mut red_team, mut blu_team) = split_into_teams(&game.pool);
     let mut updated_group = group.clone();
 
-    // Assign teams using SessionPlayer's team method
+    // Assign teams using GamePlayer's team method
     for sp in &mut red_team {
         sp.team(Team::Red);
     }
@@ -285,16 +285,16 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
     }
 
     // Update pool with new team assignments
-    updated_group.sessions.last_mut().unwrap().pool.clear();
-    updated_group.sessions.last_mut().unwrap().pool.extend(red_team.into_iter());
-    updated_group.sessions.last_mut().unwrap().pool.extend(blu_team.into_iter());
+    updated_group.games.last_mut().unwrap().pool.clear();
+    updated_group.games.last_mut().unwrap().pool.extend(red_team.into_iter());
+    updated_group.games.last_mut().unwrap().pool.extend(blu_team.into_iter());
 
-    updated_group.sessions.last_mut().unwrap().status = SessionStatus::Hot;
+    updated_group.games.last_mut().unwrap().status = GameStatus::Hot;
     // TODO: Persist updated_group changes to DB if needed (no update_group method exists)
     // You may need to implement this in your database layer.
 
-    let red_team_names: Vec<String> = updated_group.sessions.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Red)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
-    let blu_team_names: Vec<String> = updated_group.sessions.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Blu)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
+    let red_team_names: Vec<String> = updated_group.games.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Red)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
+    let blu_team_names: Vec<String> = updated_group.games.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Blu)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
 
     let embed_content = format!(
         "**🎲 Teams Generated!**\n\n**🔴 Red Team:**\n{}\n\n**🔵 Blue Team:**\n{}",
@@ -310,7 +310,7 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
 pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
-        cc.create_bot_reply("Only runners can accept sessions!").await?;
+        cc.create_bot_reply("Only runners can accept games!").await?;
         return Ok(());
     }
 
@@ -318,25 +318,25 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     let channel_id = cc.intax.channel_id;
     let group = guild.get_group(channel_id).unwrap();
 
-    match group.get_sessions_by_status(&SessionStatus::Hot).len() {
+    match group.get_games_by_status(&GameStatus::Hot).len() {
         0 => {
-            cc.create_bot_reply("No hot sessions found in this group.").await?;
+            cc.create_bot_reply("No hot games found in this group.").await?;
             return Ok(());
         },
         1 => {
-            info!("Found one existing hot session");
+            info!("Found one existing hot game");
         },
         n => {
-            return Err(anyhow!("Found more than one hot session ({}). This is unexpected. ", n));
+            return Err(anyhow!("Found more than one hot game ({}). This is unexpected. ", n));
         },
     };
 
-    let target_session = &mut group.get_sessions_by_status(&SessionStatus::Hot)[0];
+    let target_game = &mut group.get_games_by_status(&GameStatus::Hot)[0];
     
-    // Update session status to Push
-    target_session.status = SessionStatus::Push;
+    // Update game status to Push
+    target_game.status = GameStatus::Push;
 
-    cc.create_bot_reply("Session accepted! Players moved to team channels.").await?;
+    cc.create_bot_reply("Game accepted! Players moved to team channels.").await?;
 
 
     Ok(())
@@ -347,11 +347,11 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
 /// * `ctx`         - Ref to the Serenity context.
 /// * `interaction` - Ref to the command interaction.
 /// * `db`          - Ref to the database.
-/// * `session_id`  - The ID of the session to end.
+/// * `game_id`  - The ID of the game to end.
 pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
-        cc.create_bot_reply("Only runners can end sessions!").await?;
+        cc.create_bot_reply("Only runners can end games!").await?;
         return Ok(());
     }
 
@@ -359,8 +359,8 @@ pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     let channel_id = cc.intax.channel_id;
     let group = guild.get_group(channel_id).unwrap();
 
-    if let Ok(session) = group.get_user_session(cc.intax.user.id) {
-        session.status = SessionStatus::Pull;
+    if let Ok(game) = group.get_user_game(cc.intax.user.id) {
+        game.status = GameStatus::Pull;
 
         // TODO: Persist group changes to DB if needed (no update_group method exists)
         // You may need to implement this in your database layer.
@@ -368,16 +368,16 @@ pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
         // Move players to queue channel if we're in a guild
         if let Some(guild_id) = cc.intax.guild_id {
             move_players_to_queue_channel(
-                session.clone(),
+                game.clone(),
                 group.clone(),
                 guild_id,
                 cc.ctx
             ).await?;
         }
         
-        cc.create_bot_reply("Session has been ended. Players will be moved back to queue.").await?;
+        cc.create_bot_reply("Game has been ended. Players will be moved back to queue.").await?;
     } else {
-        cc.create_bot_reply("No active session found to end.").await?;
+        cc.create_bot_reply("No active game found to end.").await?;
     }
 
     Ok(())

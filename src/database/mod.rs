@@ -84,9 +84,9 @@ impl Database {
         dashboard_msg_id: u64,
         red:              u64,
         blu:              u64,
-        session_quota:    u8,
+        game_quota:    u8,
     ) -> Result<Group> {
-        self.groups.create_group(guild_id, dashboard, chat, queue, dashboard_msg_id, red, blu, session_quota).await
+        self.groups.create_group(guild_id, dashboard, chat, queue, dashboard_msg_id, red, blu, game_quota).await
     }
 
     /// Updates a group
@@ -98,9 +98,9 @@ impl Database {
         chat:          u64,
         red:           u64,
         blu:           u64,
-        session_quota: u8,
+        game_quota: u8,
     ) -> Result<Group> {
-        self.groups.update_group(guild_id, queue_id, dashboard, chat, red, blu, session_quota).await
+        self.groups.update_group(guild_id, queue_id, dashboard, chat, red, blu, game_quota).await
     }
 
     /// Sets a configuration value

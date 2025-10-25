@@ -28,14 +28,13 @@ use tracing::{error, info, warn};
 
 use database::{Database, migrations::DatabaseMigrations};
 use handlers::{admin, player};
+use models::dashboard::ButtonType;
 use models::command::CommandContext;
 use models::server::*;
 use models::manager::Manager;
 
-use crate::models::session::SessionPlayer;
-use crate::models::session::SessionStatus;
+use crate::models::game::GamePlayer;
 use crate::models::ComponentContext;
-use crate::models::Player;
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
     CC::new(name.into(),).description(desc.into(),)
@@ -82,13 +81,13 @@ impl EventHandler for Handler {
             cmd("leave",     "Leave the queue"),
             cmd("status",    "Check queue status"),
             cmd("shuffle",   "Generate teams from queue"),
-            cmd("accept",    "Accept/confirm generated teams").op("id",   "Session ID to accept (optional)", false),
-            cmd("end",       "End a session")                 .op("id",   "Session ID to end (optional)",    false),
-            cmd("buffer",    "Buffer a player")               .op("user", "User to buffer",                  true),
-            cmd("config",    "View or set bot configuration")
-                .op("key",   "Configuration key",   false)
-                .op("value", "Configuration value", false),
+            cmd("accept",    "Accept/confirm generated teams").op("id",    "Game ID to accept (optional)", false),
+            cmd("end",       "End a game")                 .op("id",    "Game ID to end (optional)",    false),
+            cmd("buffer",    "Buffer a player")               .op("user",  "User to buffer",                  true),
+            cmd("config",    "View or set bot configuration") .op("key",   "Configuration key",               false)
+                                                              .op("value", "Configuration value",             false),
             cmd("dashboard", "Create/update interactive dashboard"),
+            cmd("initgroup", "Initialize group"),
             cmd("setup",     "Run guild setup wizard"),
         ];
 
@@ -104,20 +103,41 @@ impl EventHandler for Handler {
             Ok(_config) => {
                 info!("{} connected successfully!", guild.name);
                 
-                // Validate that groups exist for this guild
+                // Load groups from database into manager
                 let group_repo = crate::database::repositories::GroupRepository::new(self.database.pool().clone());
-                match group_repo.group_exists_for_guild(guild_id).await {
-                    Ok(true) => {
-                        info!("Guild {} has group configurations", guild.name);
+                match group_repo.get_groups_for_guild(guild_id).await {
+                    Ok(groups) if !groups.is_empty() => {
+                        info!("Guild {} has {} group configuration(s)", guild.name, groups.len());
+                        
+                        // Add server to manager if it doesn't exist
+                        let mut manager = self.manager.lock().await;
+                        
+                        // Check if server already exists, if not create it
+                        if manager.get_server(guild.id).is_err() {
+                            let mut server = Server::new(guild.id, Roles::empty());
+                            // Add all groups to the server
+                            for group in groups {
+                                server.add_group(group);
+                            }
+                            manager.servers.push(server);
+                            info!("Loaded {} group(s) into memory for guild {}", manager.servers.last().unwrap().groups.len(), guild.name);
+                        }
                         
                         // Create dashboard for the guild automatically
                         self.create_guild_dashboard(&ctx, &guild).await;
                     },
-                    Ok(false) => {
-                        warn!("Guild {} has no group configurations. Bot commands may not work properly.", guild.name);
-                        info!("Consider creating a group configuration for guild_id: {}", guild_id);
+                    Ok(_) => {
+                        warn!("{} has no group configurations. ID: {}", guild.name, guild_id);
+                        
+                        // Add server to manager even without groups (for setup commands)
+                        let mut manager = self.manager.lock().await;
+                        if manager.get_server(guild.id).is_err() {
+                            let server = Server::empty(guild.id);
+                            manager.servers.push(server);
+                            info!("Added empty server for guild {} to memory", guild.name);
+                        }
                     },
-                    Err(e) => error!("Failed to check group configurations for guild {}: {}", guild.name, e),
+                    Err(e) => error!("Failed to load groups for guild {}: {}", guild.name, e),
                 }
             },
             Err(e) => error!("Failed to load config for guild {}: {}", guild.name, e),
@@ -128,8 +148,8 @@ impl EventHandler for Handler {
     async fn interaction_create(&self,ctx: Context,pl: Interaction,) {
         match pl {
             Interaction::Command(itx) => {
-                let user_name = &itx.user.name;
-                let cmd_ctx = CommandContext {
+                let user_name   = &itx.user.name;
+                let cmd_ctx     = CommandContext {
                     ctx:     &ctx,
                     intax:   &itx,
                     db:      self.database.clone(),
@@ -137,65 +157,79 @@ impl EventHandler for Handler {
                 };
                 let cd          = &itx.data;
                 let cdo         = &cd.options;
-                let mut manager = self.manager.lock().await;
-                let server      = manager.get_server(itx.guild_id.unwrap()).unwrap();
-
+                
                 let info = || {
                     info!("{}: /{}", user_name, itx.data.name);
                 };
-
+                
+                // Handle commands that don't need a server/group first
                 let result = match cd.name.as_str() {
-                    "join" | "leave" => {
+                    "setup" => {
                         info();
-                        player::queue(&cmd_ctx, server).await
-                    }
-                    "status" => {
-                        info();
-                        player::status(&cmd_ctx, server).await
-                    }
-                    "shuffle" => {
-                        info();
-                        player::shuffle(&cmd_ctx, server).await
-                    }
-                    "accept" => {
-                        info();
-                        player::accept(&cmd_ctx, server).await
-                    }
-                    "end" => {
-                        info();
-                        player::end(&cmd_ctx, server).await
-                    }
-                    "buffer" => {
-                        info();
-                        if let Some(user_option) = cdo.first() {
-                            if let Some(user_id) = user_option.value.as_str() {
-                                Group::cmd_buffer(&cmd_ctx, user_id).await.expect("Failed to buffer player")
-                            }
-                        }
-                        Ok(())
+                        admin::cmd_setup(&cmd_ctx).await
                     }
                     "config" => {
                         info();
                         let key   = cdo.iter().find(|opt| opt.name == "key")  .and_then(|opt| opt.value.as_str()).unwrap_or("").to_string();
                         let value = cdo.iter().find(|opt| opt.name == "value").and_then(|opt| opt.value.as_str()).map(|s| s.to_string());
-
                         admin::cmd_config(&cmd_ctx, key, value).await
                     }
-                    "init_dashboard" => {
-                        info();
-                        admin::cmd_init_dashboard(&cmd_ctx, server).await
-                    }
-                    "dashboard" => {
-                        info();
-                        admin::cmd_dashboard(&cmd_ctx, server).await
-                    }
-                    "setup" => {
-                        info();
-                        admin::cmd_setup(&cmd_ctx).await
-                    }
                     _ => {
-                        let response = CIR::Message(CIRM::new().content("Unknown command").ephemeral(true));
-                        itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                        // All other commands need a server
+                        let mut manager = self.manager.lock().await;
+                        let server = match manager.get_server(itx.guild_id.unwrap()) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                error!("Server not found: {}", e);
+                                let response = CIR::Message(CIRM::new().content("Server not configured. Please run `/setup` first.").ephemeral(true));
+                                let _ = itx.create_response(&ctx.http, response).await;
+                                return;
+                            }
+                        };
+
+                        match cd.name.as_str() {
+                            "join" | "leave" => {
+                                info();
+                                player::queue(&cmd_ctx, server).await
+                            }
+                            "status" => {
+                                info();
+                                player::status(&cmd_ctx, server).await
+                            }
+                            "shuffle" => {
+                                info();
+                                player::shuffle(&cmd_ctx, server).await
+                            }
+                            "accept" => {
+                                info();
+                                player::accept(&cmd_ctx, server).await
+                            }
+                            "end" => {
+                                info();
+                                player::end(&cmd_ctx, server).await
+                            }
+                            "buffer" => {
+                                info();
+                                if let Some(user_option) = cdo.first() {
+                                    if let Some(user_id) = user_option.value.as_str() {
+                                        Group::cmd_buffer(&cmd_ctx, user_id).await.expect("Failed to buffer player")
+                                    }
+                                }
+                                Ok(())
+                            }
+                            "initgroup" => {
+                                info();
+                                admin::cmd_init_group(&cmd_ctx, server).await
+                            }
+                            "dashboard" => {
+                                info();
+                                admin::cmd_dashboard(&cmd_ctx, server).await
+                            }
+                            _ => {
+                                let response = CIR::Message(CIRM::new().content("Unknown command").ephemeral(true));
+                                itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                            }
+                        }
                     }
                 };
 
@@ -213,12 +247,11 @@ impl EventHandler for Handler {
             Interaction::Component(itx) => {
                 // Handle button interactions
                 let user_name   = &itx.user.name;
-                let mut manager = self.manager.lock().await;
-                let group       = manager.get_group(itx.guild_id.unwrap(), itx.channel_id).unwrap();
-                info!("{} clicked button: {}", user_name, itx.data.custom_id);
+                let button_type = ButtonType::parse(&itx.data.custom_id);
+                info!("{} clicked button: {:?}", user_name, button_type);
                 
-                // Handle setup interactions first
-                if itx.data.custom_id.starts_with("setup_") {
+                // Handle setup/init interactions first (no group needed)
+                if button_type.is_setup_button() {
                     let result = admin::handle_setup_interaction(&ctx, &itx, &self.database).await;
                     if let Err(e) = result {
                         error!("Error handling setup interaction: {}", e);
@@ -226,12 +259,15 @@ impl EventHandler for Handler {
                     return;
                 }
                 
+                // For dashboard button interactions, we need a group
+                let mut manager = self.manager.lock().await;
+                let group       = manager.get_group(itx.guild_id.unwrap(), itx.channel_id).unwrap();
+                
                 // Create component context similar to command context
                 let comp_ctx = ComponentContext {
                     ctx:       &ctx,
                     component: &itx,
                     db:        self.database.clone(),
-                    manager:   &self.manager,
                 };
                 
                 // Handle different button actions based on custom_id
@@ -259,30 +295,28 @@ impl EventHandler for Handler {
         let user_id     = new.user_id;
         let user        = &ctx.http.get_user(user_id).await.unwrap();
         let user_name   = user.display_name();
-        let channel     = new.channel_id;
+        let channel_id  = new.channel_id.unwrap();
         let old_channel = old.map(|s| s.channel_id);
         let server      = new.guild_id.unwrap();
-        let mut manager = self.manager.lock().await;
-        let group       = manager.get_group(server, channel.unwrap()).unwrap();
 
-        if channel.is_none() && old_channel.is_some() {
+        // Handle user leaving a vc
+        if new.channel_id.is_none() && old_channel.is_some() {
             info!("{} left {} VC", user_name, old_channel.unwrap().unwrap().name(&ctx.http).await.unwrap());
-
-            let session = group.get_user_session(user_id).unwrap();
-            session.add_player(user_id, steam_id); // TODO: steam_id
+            // TODO: Handle leaving queue channel (remove from game)
+            return;
+        } else if new.channel_id.is_some(){
+            info!("{} joined {}", user_name, channel_id.name(&ctx.http).await.unwrap());
+        } else {
+            error!("User joined a vc but old channel was not none");
             return;
         }
-
-        // Handle user joining a queue channel
-        if let Some(new_tc_id) = channel {
-            info!("{} joined {} VC", user_name, new_tc_id.name(&ctx.http).await.unwrap());
-            // First, get the player data without holding the lock
-            let player = match self.database.get_user(user_id).await {
-                Ok(user) => {
-                    info!("Loaded user: {}", user_name);
+        
+        // Get player data
+        match self.database.get_user(user_id).await {
+            Ok(user) => {
                     user
-                },
-                Err(_) => match self.database.new_user(user_id).await {
+            },
+            Err(_) => match self.database.new_user(user_id).await {
                     Ok(new_user) => {
                         info!("New user: {}", user_name);
                         new_user
@@ -291,89 +325,57 @@ impl EventHandler for Handler {
                         error!("Failed to create new user: {}", e);
                         return;
                     }
-                },
-            };
+            },
+        };
 
-            // We'll store notification information to use after the mutex is released
-            let mut dashboard_channel = None;
-            let mut player_count      = 0;
-            let mut should_notify     = false;
-
-            // Scope for the mutex lock
-            {
-                let mut manager = self.manager.lock().await;
-                
-                // Find the guild by ID and check if the new channel is a queue channel in any group
-                if let Some(server) = manager.servers.iter_mut().find(|s| s.guild_id == server) {
-                    for group in server.groups.iter_mut() {
-                        if group.channels.queue == channel.expect("Channel ID is None").get() {
-                            // User joined queue channel
-                            info!("{} joined queue channel {}", user_name, channel.expect("Channel ID is None"));
-                            // Ensure there is at least one active session
-                            if group.sessions.is_empty() {
-                                info!("No active session, creating one");
-                                group.create_session();
+        // Mutex scope
+        {
+            let mut manager = self.manager.lock().await;
+            
+            // Find the guild by ID and check if the new channel is a queue channel in any group
+            match manager.get_group(server, channel_id) {
+                Ok(group) => {
+                    if group.channels.queue == channel_id {
+                        info!("{} joined queue channel {}", user_name, channel_id);
+                        if group.games.is_empty() { group.create_game(); }
+                        
+                        // Extract immutable data before mutable iteration
+                        let dashboard_channel = group.channels.dashboard;
+                        let player_exists = group.get_player(user_id).is_ok();
+                        
+                        if player_exists {
+                            error!("{} is already in the game", user_name);
+                        } else {
+                            let mut should_publish = false;
+                            let mut game_embed = None;
+                            
+                            for game in group.games.iter_mut() {
+                                if game.is_active() {
+                                    info!("Skipping active game, looking for idle game");
+                                    continue; // Skip active games, try next
+                                }
+                                game.pool.push(GamePlayer::add(user_id));
+                                info!("Added {} to game. Pool size: {}", user_name, game.pool.len());
+                                if game.player_count() >= 8 {
+                                    game_embed = Some(game.hot());
+                                    should_publish = true;
+                                    info!("Game ready notification prepared: dashboard={}, players={}", dashboard_channel, game.player_count());
+                                }
+                                break; // Player added to non-active game, stop searching
                             }
-                            // Get the current session (last in the vector)
-                            if let Some(session) = group.sessions.last_mut() {
-                                // Skip if user is already in the session
-                                if session.pool.iter().any(|sp| sp.player.discord_id == user_id.get()) {
-                                    info!("User {} is already in session", user_name);
-                                    break;
-                                }
-                                // Check if the session has space and is accepting players
-                                if session.pool.len() >= 12 {
-                                    info!("Session is full, cannot add more players");
-                                    break;
-                                }
-                                if matches!(session.status, SessionStatus::Live) {
-                                    info!("Session is already playing, cannot add more players");
-                                    break;
-                                }
-                                // Add player to session
-                                let _session_player = SessionPlayer::construct(player);
-                                session.pool.push(_session_player);
-                                info!("Added {} to session, now has {} players", user_name, session.pool.len());
-                                // If we have enough players, update session status
-                                if session.pool.len() >= 8 && !matches!(session.status, SessionStatus::Hot) {
-                                    session.status = SessionStatus::Hot;
-                                    info!("Session is now HOT with {} players", session.pool.len());
-                                    // Store notification info to use after releasing the lock
-                                    dashboard_channel = Some(group.channels.dashboard);
-                                    player_count      = session.pool.len();
-                                    should_notify     = true;
+                            
+                            // Publish dashboard after mutable iteration completes
+                            if should_publish {
+                                if let Some(embed) = game_embed {
+                                    let components = group.create_dashboard_buttons();
+                                    group.dash_publish(&ctx, dashboard_channel, embed, components).await;
                                 }
                             }
-                            break; // We found the group, exit the loop
                         }
                     }
-                } // Close the if let Some(guild) block
-            } // Mutex guard is released here
-
-            // Now perform async operations with the data we collected
-            if should_notify {
-                if let Some(dashboard_id) = dashboard_channel {
-                info!("Sending session ready notification: dashboard={}, players={}", dashboard_id, player_count);
-                let channel = dashboard_id;
-
-                // Create an embed message for the session ready notification
-                let embed = CE::new()
-                    .title("SESSION READY!")
-                    .description(format!("A match is ready to start with {} players!", player_count))
-                    .footer(CEF::new("Awaiting team generation..."));
-
-                // Create buttons for actions
-                let components = group.create_dashboard_buttons();
-
-                // Send the message with both embed and components
-                if let Ok(msg) = channel.send_message(&ctx.http, CM::new().embed(embed).components(components)).await {
-                    // Add a reaction to the message
-                    if let Err(e) = msg.react(&ctx.http, '✅').await {
-                        error!("Failed to add reaction: {}", e);
-                    }
-                } else {
-                    error!("Failed to send session ready notification");
-                }
+                },
+                Err(e) => {
+                    error!("Failed to get group: {}", e);
                 }
             }
         }
@@ -381,7 +383,6 @@ impl EventHandler for Handler {
 }
 
 impl Handler {
-
     /// Creates dashboard for a guild automatically when bot connects
     async fn create_guild_dashboard(&self, ctx: &Context, guild: &Guild) {
         info!("Creating dashboard for guild: {}", guild.name);
@@ -396,7 +397,7 @@ impl Handler {
                     let channel_name = channel_id.name(&ctx.http).await.unwrap();
                     
                     // Create dashboard in the queue channel
-                    match group.dash_init(&ctx).await {
+                    match group.dash_init(ctx).await {
                         Ok(_) => {
                             info!("Dashboard created successfully for channel {}", channel_name);
                         },
@@ -410,26 +411,26 @@ impl Handler {
         }
     }
 
-    /// Sends a notification to the dashboard channel when a session is ready
+    /// Sends a notification to the dashboard channel when a game is ready
     async fn notify(&self,ctx: &Context,group: &Group,) {
         let dashboard_channel = group.channels.dashboard;
 
         // Ensure there are at least 8 players before slicing
         let mut player_mentions = Vec::new();
         
-        // Get count from the latest session if available
-        let player_count = if let Some(session) = group.sessions.last() { session.pool.len() } else { 0 };
+        // Get count from the latest game if available
+        let player_count = if let Some(game) = group.games.last() { game.pool.len() } else { 0 };
         let players_to_mention = if player_count >= 8 { 8 } else { player_count };
 
-        // Access players in the latest session if available
-        if let Some(session) = group.sessions.last() {
-            for player in &session.pool[..players_to_mention] {
+        // Access players in the latest game if available
+        if let Some(game) = group.games.last() {
+            for player in &game.pool[..players_to_mention] {
                 player_mentions.push(format!("<@{}>", player.player.discord_id));
             }
         }
 
         let embed = CE::new()
-            .title("SESSION READY!")
+            .title("GAME READY!")
             .description(format!(
                 // TODO: format according to group quota
                 "**8 players in queue channel!**\n\n{}\n\nUse `/shuffle` to generate teams.",
@@ -439,9 +440,9 @@ impl Handler {
 
         // Send the message to the dashboard channel
         if let Err(e) = dashboard_channel.send_message(&ctx.http, CM::new().embed(embed)).await {
-            error!("Failed to send session ready notification: {:?}", e);
+            error!("Failed to send game ready notification: {:?}", e);
         } else {
-            info!("Sent session ready notification to dashboard channel");
+            info!("Sent ready notification to dashboard channel");
         }
     }
 }
@@ -496,15 +497,6 @@ async fn main(
 
     // Set the manager in the client data for global access
     client.data.write().await.insert::<GuildKey>(manager.clone());
-
-    // Start console handler in a separate task
-    let console_manager = Arc::new(Mutex::new(Manager::new()));
-    let console_db = db.pool().clone();
-    
-    tokio::spawn(async move {
-        let console_handler = console::ConsoleHandler::new_without_context(console_manager, console_db);
-        console_handler.start_console_loop().await;
-    });
 
     // Start listening for events by starting a single shard
     if let Err(why) = client.start().await {

@@ -31,5 +31,5 @@ A comprehensive Discord bot for managing 4v4 pickup games (PUGs) for passtime.tf
 
 ### Admin Commands
 
-- `/buffer [user]`        - Buffer a player (guarantee a spot in the current session)
+- `/buffer [user]`        - Buffer a player (guarantee a spot in the current game)
 - `/config [key] [value]` - View or modify bot configuration

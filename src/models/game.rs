@@ -2,21 +2,20 @@ use std::str::FromStr;
 
 use anyhow::{Error, Result};
 use serde::{Deserialize, Serialize};
-use serenity::all::{ChannelId as CI, UserId};
+use serenity::all::{ChannelId as CI, CreateEmbed as CE, CreateEmbedFooter as CEF, UserId};
 use sqlx::FromRow;
+use tracing::info;
 
 use crate::models::Player;
 
-
-
-// Session
+// Game
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Session {
-    pub status: SessionStatus,
-    pub pool: Vec<SessionPlayer>,   
+pub struct Games {
+    pub status: GameStatus,
+    pub pool: Vec<GamePlayer>,   
 }
 
-impl Session {
+impl Games {
     pub fn get_user(&self, discord_id: UserId) -> Result<Player> {
         match self.pool.iter().find(|p| p.player.discord_id == discord_id) {
             Some(player) => Ok(player.player),
@@ -25,51 +24,81 @@ impl Session {
     }
 
     pub fn add_player(&mut self, discord_id: UserId) {
-        let player = SessionPlayer::add(discord_id);
+        let player = GamePlayer::add(discord_id);
         self.pool.push(player);
     }
 
     pub fn new(
-        status: SessionStatus,
-        pool: Vec<SessionPlayer>,
+        status: GameStatus,
+        pool: Vec<GamePlayer>,
     ) -> Self {
         Self { status, pool }
     }
 
     pub fn is_active(&self) -> bool {
-        self.status.is_active()
+        matches!(self.status, GameStatus::Push | GameStatus::Live | GameStatus::Pull)
     }
 
+    pub fn is_hot(&self) -> bool {
+        matches!(self.status, GameStatus::Hot)
+    }
+
+    pub fn is_idle(&self) -> bool {
+        matches!(self.status, GameStatus::Idle)
+    }
+
+    pub fn idle(&mut self) {
+        self.status = GameStatus::Idle;
+    }
+
+    pub fn hot(&mut self) -> CE {
+        info!("Game is HOT with {} players", self.player_count());
+        self.status = GameStatus::Hot;
+        // Create an embed message for the game ready notification
+        let embed = CE::new()
+            .title("GAME READY!")
+            .description(format!("A match is ready to start with {} players!", self.player_count()))
+            .footer(CEF::new("Awaiting team generation..."));
+        embed
+    }
+
+    pub fn push(&mut self) {
+        self.status = GameStatus::Push;
+    }
+
+    pub fn live(&mut self) {
+        self.status = GameStatus::Live;
+    }
+
+    pub fn pull(&mut self) {
+        self.status = GameStatus::Pull;
+    }
+
+    pub fn player_count(&self) -> usize {
+        self.pool.len()
+    }
+    
     pub fn empty() -> Self {
         Self {
-            status: SessionStatus::Idle,
+            status: GameStatus::Idle,
             pool: Vec::new(),
         }
     }
 }
 
-// SessionStatus
+// GameStatus
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub enum SessionStatus {
+pub enum GameStatus {
     Idle, // Waiting for enough players to join
-    Hot,  // Waiting for runners to start the session
+    Hot,  // Waiting for runners to start the game
     Push, // Moving players to the team channels
     Live, // Game is active
     Pull, // Moving players back to the queue
 }
 
-impl SessionStatus {
-    pub fn is_active(&self) -> bool {
-        matches!(
-            self,
-            SessionStatus::Push | SessionStatus::Live | SessionStatus::Pull
-        )
-    }
-}
-
-// SessionPlayer
+// GamePlayer
 #[derive(Debug, Clone, Copy, FromRow, Serialize, Deserialize)]
-pub struct SessionPlayer {
+pub struct GamePlayer {
     pub player:       Player,
     pub team:         Option<Team>,
     pub is_buffered:  bool,
@@ -77,7 +106,7 @@ pub struct SessionPlayer {
     pub in_queue_cmd: bool,
 }
 
-impl SessionPlayer {
+impl GamePlayer {
     pub fn add(discord_id: UserId) -> Self {
         let player = Player::add(discord_id, None);
         Self {

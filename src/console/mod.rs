@@ -32,7 +32,7 @@ impl ConsoleHandler {
     }
 
     pub async fn start_console_loop(&self) {
-        info!("Console commands available: status, guilds, sessions, config <guild_id>, query <sql>, help, quit");
+        info!("Console commands available: status, guilds, games, config <guild_id>, query <sql>, help, quit");
         
         loop {
             print!("pfpug> ");
@@ -74,7 +74,7 @@ impl ConsoleHandler {
         match parts[0].to_lowercase().as_str() {
             "status"   => self.cmd_status().await?,
             "guilds"   => self.cmd_list_guilds().await?,
-            "sessions" => self.cmd_list_sessions().await?,
+            "games" => self.cmd_list_games().await?,
             "config"   => {
                 match parts.len() {
                     2 => {
@@ -91,7 +91,7 @@ impl ConsoleHandler {
                         println!("  config <guild_id> <key> <value> - Set configuration value");
                         println!("Examples:");
                         println!("  config TS1 dashboard 1385894822992281701");
-                        println!("  config 1410654395229536268 session_quota 4");
+                        println!("  config 1410654395229536268 game_quota 4");
                     }
                 }
             },
@@ -127,17 +127,17 @@ impl ConsoleHandler {
     async fn cmd_status(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let manager = self.manager.lock().await;
         let total_servers = manager.servers.len();
-        let mut total_sessions = 0;
-        let mut active_sessions = 0;
+        let mut total_games = 0;
+        let mut active_games = 0;
         let mut total_players = 0;
 
         for server in &manager.servers {
             for group in &server.groups {
-                total_sessions += group.sessions.len();
-                for session in &group.sessions {
-                    total_players += session.pool.len();
-                    if session.status.is_active() {
-                        active_sessions += 1;
+                total_games += group.games.len();
+                for game in &group.games {
+                    total_players += game.pool.len();
+                    if game.is_active() {
+                        active_games += 1;
                     }
                 }
             }
@@ -145,8 +145,8 @@ impl ConsoleHandler {
 
         println!("=== Bot Status ===");
         println!("Connected Guilds: {}", total_servers);
-        println!("Total Sessions: {}", total_sessions);
-        println!("Active Sessions: {}", active_sessions);
+        println!("Total Games: {}", total_games);
+        println!("Active Games: {}", active_games);
         println!("Total Players in Queue: {}", total_players);
         
         if let Some(ctx) = &self.ctx {
@@ -191,21 +191,21 @@ impl ConsoleHandler {
         Ok(())
     }
 
-    async fn cmd_list_sessions(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn cmd_list_games(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let manager = self.manager.lock().await;
-        println!("=== Active Sessions ===");
+        println!("=== Active Games ===");
         
-        let mut session_count = 0;
+        let mut game_count = 0;
         for server in &manager.servers {
             for group in &server.groups {
-                for (_i, session) in group.sessions.iter().enumerate() {
-                    session_count += 1;
-                    println!("Session {}: Guild {} - Group {} - {} players - Status: {:?}", 
-                        session_count, server.guild_id, group.group_id, session.pool.len(), session.status);
+                for (_i, game) in group.games.iter().enumerate() {
+                    game_count += 1;
+                    println!("Game {}: Guild {} - Group {} - {} players - Status: {:?}", 
+                        game_count, server.guild_id, group.group_id, game.pool.len(), game.status);
                     
-                    if !session.pool.is_empty() {
+                    if !game.pool.is_empty() {
                         print!("  Players: ");
-                        for (j, player) in session.pool.iter().enumerate() {
+                        for (j, player) in game.pool.iter().enumerate() {
                             if j > 0 { print!(", "); }
                             print!("{}", player.player.discord_id);
                         }
@@ -215,8 +215,8 @@ impl ConsoleHandler {
             }
         }
         
-        if session_count == 0 {
-            println!("No active sessions found.");
+        if game_count == 0 {
+            println!("No active games found.");
         }
 
         Ok(())
@@ -272,7 +272,7 @@ impl ConsoleHandler {
                             println!("  Red Team Channel: N/A");
                             println!("  Blue Team Channel: N/A");
                         }
-                        println!("  Session Quota: {}", group.quota);
+                        println!("  Game Quota: {}", group.quota);
                         println!("  Timeout: {} minutes", group.timeout);
                         println!();
                     }
@@ -320,12 +320,12 @@ impl ConsoleHandler {
                     Err(e) => println!("❌ Failed to update dashboard: {}", e),
                 }
             },
-            "session_quota" | "quota" => {
+            "game_quota" | "quota" => {
                 let quota: u8 = value.parse()
-                    .map_err(|_| format!("Invalid session quota: {}", value))?;
+                    .map_err(|_| format!("Invalid game quota: {}", value))?;
                 
                 if quota == 0 || quota > 20 {
-                    println!("❌ Session quota must be between 1 and 20");
+                    println!("❌ Game quota must be between 1 and 20");
                     return Ok(());
                 }
                 
@@ -338,8 +338,8 @@ impl ConsoleHandler {
                     group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
                     quota,
                 ).await {
-                    Ok(_) => println!("✅ Updated session quota to {} for guild {}", quota, guild_id),
-                    Err(e) => println!("❌ Failed to update session quota: {}", e),
+                    Ok(_) => println!("✅ Updated game quota to {} for guild {}", quota, guild_id),
+                    Err(e) => println!("❌ Failed to update game quota: {}", e),
                 }
             },
             "red" | "red_team" => {
@@ -378,7 +378,7 @@ impl ConsoleHandler {
             },
             _ => {
                 println!("❌ Unknown configuration key: {}", key);
-                println!("Available keys: dashboard, session_quota, red, blue");
+                println!("Available keys: dashboard, game_quota, red, blue");
             }
         }
 
@@ -400,7 +400,7 @@ impl ConsoleHandler {
             .map_err(|_| format!("Invalid quota: {}", quota_str))?;
 
         if quota == 0 || quota > 20 {
-            println!("❌ Session quota must be between 1 and 20");
+            println!("❌ Game quota must be between 1 and 20");
             return Ok(());
         }
 
@@ -436,7 +436,7 @@ impl ConsoleHandler {
                 println!("   Dashboard Channel: {}", dashboard_id);
                 println!("   Red Team Channel: {}", red_id);
                 println!("   Blue Team Channel: {}", blue_id);
-                println!("   Session Quota: {}", quota);
+                println!("   Game Quota: {}", quota);
             },
             Err(e) => {
                 println!("❌ Failed to create group configuration: {}", e);
@@ -482,7 +482,7 @@ impl ConsoleHandler {
         println!("=== Available Commands ===");
         println!("status                          - Show bot status and statistics");
         println!("guilds                          - List all connected guilds and their configurations");
-        println!("sessions                        - List all active sessions and players");
+        println!("games                        - List all active games and players");
         println!("config <guild_id>               - Print configuration for a specific guild");
         println!("config <guild_id> <key> <value> - Set configuration value");
         println!("create <guild_id> <queue> <dashboard> <red> <blue> <quota> - Create new group configuration");
@@ -492,13 +492,13 @@ impl ConsoleHandler {
         println!();
         println!("=== Config Command Examples ===");
         println!("config TS1 dashboard 1385894822992281701");
-        println!("config 1410654395229536268 session_quota 4");
+        println!("config 1410654395229536268 game_quota 4");
         println!("config TS1 red 1385464431185494086");
         println!("config TS1 blue 1385464563448680578");
         println!();
         println!("=== Create Command Example ===");
         println!("create 1383583686431080499 1388643261543088208 1385894822992281701 1385464431185494086 1385464563448680578 10");
         println!();
-        println!("Available config keys: dashboard, session_quota, red, blue");
+        println!("Available config keys: dashboard, game_quota, red, blue");
     }
 }

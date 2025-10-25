@@ -6,9 +6,9 @@
 //! ## Key Components
 //!
 //! - `queue`: Handlers for queue management commands
-//! - `session`: Handlers for session management commands
+//! - `game`: Handlers for game management commands
 //! - `admin`: Handlers for administrative commands
 
 pub mod admin;
 pub mod player;
-pub mod session;
+pub mod game;

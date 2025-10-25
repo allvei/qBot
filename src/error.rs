@@ -12,9 +12,9 @@ pub enum AppError {
     #[error("Player error: {0}")]
     PlayerError(String),
 
-    /// Error related to session operations
-    #[error("Session error: {0}")]
-    SessionError(String),
+    /// Error related to game operations
+    #[error("Game error: {0}")]
+    GameError(String),
 
     /// Error related to group operations
     #[error("Group error: {0}")]

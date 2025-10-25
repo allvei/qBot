@@ -19,9 +19,9 @@ impl DatabaseMigrations {
         info!("Running database migrations");
         
         self.create_config_table().await?;
-        self.create_users_table().await?;
+        self.create_users_table() .await?;
         self.create_groups_table().await?;
-        self.create_teams_table().await?;
+        self.create_teams_table() .await?;
         
         info!("All migrations completed successfully");
         Ok(())
@@ -57,9 +57,9 @@ impl DatabaseMigrations {
             info!("Config table not found, creating...");
             sqlx::query(
                 "CREATE TABLE config (
-                    guild    INTEGER NOT NULL,
-                    key      TEXT NOT NULL,
-                    value    TEXT,
+                    guild       INTEGER NOT NULL,
+                    key         TEXT NOT NULL,
+                    value       TEXT,
                     description TEXT,
                     PRIMARY KEY(guild, key)
                 )"
@@ -68,7 +68,8 @@ impl DatabaseMigrations {
             .await?;
         } else if !self.column_exists("config", "guild").await? {
             info!("Adding missing guild column to config table");
-            sqlx::query("ALTER TABLE config ADD COLUMN guild INTEGER NOT NULL DEFAULT 0")
+            sqlx::query("ALTER TABLE config
+                         ADD COLUMN guild INTEGER NOT NULL DEFAULT 0")
                 .execute(&self.pool)
                 .await?;
         }
@@ -81,9 +82,9 @@ impl DatabaseMigrations {
             info!("Users table not found, creating...");
             sqlx::query(
                 "CREATE TABLE users (
-                    id INTEGER PRIMARY KEY,
+                    id         INTEGER PRIMARY KEY,
                     discord_id INTEGER NOT NULL UNIQUE,
-                    steam_id INTEGER
+                    steam_id   INTEGER
                 )"
             )
             .execute(&self.pool)
@@ -91,8 +92,8 @@ impl DatabaseMigrations {
         } else {
             // Verify schema integrity
             let has_unique_constraint = self.check_unique_constraint("users", "discord_id").await?;
-            let has_discord_id = self.column_exists("users", "discord_id").await?;
-            let has_steam_id = self.column_exists("users", "steam_id").await?;
+            let has_discord_id        = self.column_exists(          "users", "discord_id").await?;
+            let has_steam_id          = self.column_exists(          "users", "steam_id").await?;
             
             if !has_discord_id || !has_steam_id || !has_unique_constraint {
                 info!("Users table schema is incomplete, recreating with proper schema...");
@@ -111,9 +112,9 @@ impl DatabaseMigrations {
                 sqlx::query("DROP TABLE users").execute(&self.pool).await?;
                 sqlx::query(
                     "CREATE TABLE users (
-                        id INTEGER PRIMARY KEY,
+                        id         INTEGER PRIMARY KEY,
                         discord_id INTEGER NOT NULL UNIQUE,
-                        steam_id INTEGER
+                        steam_id   INTEGER
                     )"
                 )
                 .execute(&self.pool)
@@ -123,7 +124,9 @@ impl DatabaseMigrations {
                 for row in backup_data {
                     let discord_id: i64 = row.get("discord_id");
                     let steam_id: Option<i64> = row.try_get("steam_id").ok();
-                    sqlx::query("INSERT OR IGNORE INTO users (discord_id, steam_id) VALUES (?, ?)")
+                    sqlx::query("INSERT OR IGNORE
+                                 INTO users (discord_id, steam_id)
+                                 VALUES (?, ?)")
                         .bind(discord_id)
                         .bind(steam_id)
                         .execute(&self.pool)
@@ -140,19 +143,19 @@ impl DatabaseMigrations {
             info!("Groups table not found, creating...");
             sqlx::query(
                 "CREATE TABLE groups (
-                    id INTEGER PRIMARY KEY,
-                    group_id INTEGER DEFAULT 0,
-                    timeout INTEGER DEFAULT 120,
-                    guild_id INTEGER NOT NULL,
-                    dashboard INTEGER NOT NULL,
-                    chat INTEGER NOT NULL,
-                    queue INTEGER NOT NULL,
-                    dashboard_msg_id INTEGER DEFAULT 0,
-                    red INTEGER NOT NULL,
-                    blu INTEGER NOT NULL,
-                    session INTEGER DEFAULT 0,
-                    session_increment INTEGER DEFAULT 0,
-                    session_quota INTEGER DEFAULT 10
+                    id                INTEGER PRIMARY KEY,
+                    group_id          INTEGER DEFAULT 0,
+                    timeout           INTEGER DEFAULT 120,
+                    guild_id          INTEGER NOT NULL,
+                    dashboard         INTEGER NOT NULL,
+                    chat              INTEGER NOT NULL,
+                    queue             INTEGER NOT NULL,
+                    dashboard_msg_id  INTEGER DEFAULT 0,
+                    red               INTEGER NOT NULL,
+                    blu               INTEGER NOT NULL,
+                    game           INTEGER DEFAULT 0,
+                    game_increment INTEGER DEFAULT 0,
+                    game_quota     INTEGER DEFAULT 10
                 )"
             )
             .execute(&self.pool)
@@ -166,19 +169,19 @@ impl DatabaseMigrations {
                 sqlx::query("DROP TABLE groups").execute(&self.pool).await?;
                 sqlx::query(
                     "CREATE TABLE groups (
-                        id INTEGER PRIMARY KEY,
-                        group_id INTEGER DEFAULT 0,
-                        timeout INTEGER DEFAULT 120,
-                        guild_id INTEGER NOT NULL,
-                        dashboard INTEGER NOT NULL,
-                        chat INTEGER NOT NULL,
-                        queue INTEGER NOT NULL,
-                        dashboard_msg_id INTEGER DEFAULT 0,
-                        red INTEGER NOT NULL,
-                        blu INTEGER NOT NULL,
-                        session INTEGER DEFAULT 0,
-                        session_increment INTEGER DEFAULT 0,
-                        session_quota INTEGER DEFAULT 10
+                        id                INTEGER PRIMARY KEY,
+                        group_id          INTEGER DEFAULT 0,
+                        timeout           INTEGER DEFAULT 120,
+                        guild_id          INTEGER NOT NULL,
+                        dashboard         INTEGER NOT NULL,
+                        chat              INTEGER NOT NULL,
+                        queue             INTEGER NOT NULL,
+                        dashboard_msg_id  INTEGER DEFAULT 0,
+                        red               INTEGER NOT NULL,
+                        blu               INTEGER NOT NULL,
+                        game           INTEGER DEFAULT 0,
+                        game_increment INTEGER DEFAULT 0,
+                        game_quota     INTEGER DEFAULT 10
                     )"
                 )
                 .execute(&self.pool)
@@ -193,11 +196,11 @@ impl DatabaseMigrations {
             info!("Teams table not found, creating...");
             sqlx::query(
                 "CREATE TABLE teams (
-                    id INTEGER PRIMARY KEY,
+                    id       INTEGER PRIMARY KEY,
                     guild_id INTEGER NOT NULL,
                     group_id INTEGER NOT NULL,
-                    red INTEGER NOT NULL,
-                    blu INTEGER NOT NULL
+                    red      INTEGER NOT NULL,
+                    blu      INTEGER NOT NULL
                 )"
             )
             .execute(&self.pool)
@@ -259,7 +262,7 @@ impl DatabaseMigrations {
         let required_columns = vec![
             "id", "group_id", "timeout", "guild_id", "dashboard", 
             "chat", "queue", "dashboard_msg_id", "red", "blu", 
-            "session", "session_increment", "session_quota"
+            "game", "game_increment", "game_quota"
         ];
         self.validate_table_columns("groups", &required_columns).await?;
         Ok(())
@@ -294,7 +297,9 @@ impl DatabaseMigrations {
         
         for guild_id in required_guild_ids {
             let count: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM groups WHERE guild_id = ?"
+                "SELECT COUNT(*)
+                FROM groups
+                WHERE guild_id = ?"
             )
             .bind(*guild_id as i64)
             .fetch_one(&self.pool)
@@ -316,7 +321,9 @@ impl DatabaseMigrations {
     /// Create a default group entry for a guild if none exists
     pub async fn ensure_default_group(&self, guild_id: u64) -> Result<()> {
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM groups WHERE guild_id = ?"
+            "SELECT COUNT(*)
+            FROM groups
+            WHERE guild_id = ?"
         )
         .bind(guild_id as i64)
         .fetch_one(&self.pool)
@@ -324,9 +331,16 @@ impl DatabaseMigrations {
         
         if count == 0 {
             info!("Creating default group for guild_id: {}", guild_id);
-            sqlx::query(
-                "INSERT INTO groups (group_id, guild_id, dashboard, chat, queue, red, blu) 
-                 VALUES (1, ?, 1, 1, 1, 1, 1)"
+            sqlx::query("INSERT INTO groups (
+                            group_id,
+                            guild_id,
+                            dashboard,
+                            chat,
+                            queue,
+                            red,
+                            blu
+                        )
+                        VALUES (1, ?, 1, 1, 1, 1, 1)"
             )
             .bind(guild_id as i64)
             .execute(&self.pool)

@@ -1,17 +1,33 @@
 // CHECK ME
 
-use anyhow::Result;
-use serenity::all::*;
+use anyhow::{anyhow, Result};
+use serenity::all::{
+    ChannelId                        as CI,
+    CreateInteractionResponseMessage,
+    ChannelType,
+    ComponentInteraction,
+    ComponentInteractionDataKind,
+    Context,
+    CreateActionRow,
+    CreateEmbed                      as CE,
+    CreateInteractionResponse,
+    CreateInteractionResponse        as CIR,
+    CreateInteractionResponseMessage as CIRM,
+    CreateMessage,
+    CreateSelectMenu,
+    CreateSelectMenuKind,
+    CreateSelectMenuOption,
+    GuildId,
+    PartialGuild,
+    RoleId,
+    UserId,
+};
 use tracing::info;
 use crate::models::{server::Server};
 use crate::models::setup_state::SETUP_STATE;
 use crate::models::command::{CommandContext as CC};
 use crate::models::server::Role;
 use crate::handlers::player::check_role;
-
-type CE   = CreateEmbed;
-type CIR  = CreateInteractionResponse;
-type CIRM = CreateInteractionResponseMessage;
 
 /// `/config`
 ///
@@ -21,7 +37,7 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
     info!("Processing config: key={}, value={:?}", key, value);
     if !check_role(cc, &Role::Admin).await? {
         info!("User is not an admin");
-        let response = CIR::Message(CIRM::new().content("Only session admins can modify the config!").ephemeral(true));
+        let response = CIR::Message(CIRM::new().content("Only game admins can modify the config!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
@@ -65,37 +81,68 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
     Ok(())
 }
 
-/// `/init_dashboard`
-pub async fn cmd_init_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
-    info!("Processing init_dashboard command");
+/// `/cmd_init_group`
+pub async fn cmd_init_group(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
+    info!("Processing cmd_init_group command");
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can set up the dashboard!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
     
-    let channel_id = cc.intax.channel_id;
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    let user_id = cc.intax.user.id;
+    let dashboard_channel = cc.intax.channel_id;
     
-    // Get the group from database using channel_id since there can be multiple groups per guild
-    let group = match guild.get_group(channel_id) {
-        Ok(group) => group,
-        Err(e) => {
-            let response = CIR::Message(CIRM::new().content(format!("Failed to get group for this channel: {}", channel_id)).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
-        }
-    };
+    // Initialize setup state with dashboard channel pre-filled
+    SETUP_STATE.start_setup(user_id, guild_id);
+    SETUP_STATE.update_setup(user_id, guild_id, |config| {
+        config.dashboard_channel = Some(dashboard_channel.get());
+    });
     
-    match group.dash_init(cc.ctx).await {
-        Ok(()) => {
-            let response = CIR::Message(CIRM::new().content("Dashboard setup complete!").ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-        },
-        Err(e) => {
-            let response = CIR::Message(CIRM::new().content(format!("Failed to set up dashboard: {}", e)).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-        }
-    }
+    // Start ephemeral setup flow
+    start_init_group_flow(cc, dashboard_channel).await?;
+    
+    Ok(())
+}
+
+/// Starts the interactive init_group setup flow with ephemeral messages
+async fn start_init_group_flow(cc: &CC<'_>, dashboard_channel: CI) -> Result<()> {
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    let guild = guild_id.to_partial_guild(&cc.ctx.http).await?;
+    
+    // Send welcome message
+    let welcome_embed = CE::new()
+        .title("Group Setup")
+        .description(format!(
+            "Welcome to the group setup for **{}**!\n\n\
+            This channel (<#{}>) will be used as the **dashboard channel**.\n\n\
+            I'll guide you through configuring the remaining channels step by step.\n\
+            You'll select channels using dropdown menus.\n\n\
+            **Step 1/4: Queue Text Channel**\n\
+            Select the text channel where players will use queue commands:",
+            guild.name, dashboard_channel.get()
+        ))
+        .color(0x00ff00);
+
+    // Get text channels for dropdown
+    let channels = get_text_channels(&guild, cc.ctx).await?;
+    let channel_options = create_channel_options(&channels, "init_queue");
+    
+    let select_menu = CreateSelectMenu::new("init_queue", CreateSelectMenuKind::String { options: channel_options })
+        .placeholder("Select queue channel...")
+        .max_values(1);
+    
+    let action_row = CreateActionRow::SelectMenu(select_menu);
+    
+    let response = CIR::Message(
+        CIRM::new()
+            .embed(welcome_embed)
+            .components(vec![action_row])
+            .ephemeral(true)
+    );
+    
+    cc.intax.create_response(&cc.ctx.http, response).await?;
     
     Ok(())
 }
@@ -213,7 +260,7 @@ async fn start_setup_flow(ctx: &Context, guild_id: GuildId, user_id: UserId, _db
 }
 
 /// Gets text channels from a guild
-async fn get_text_channels(guild: &PartialGuild, ctx: &Context) -> Result<Vec<(ChannelId, String)>> {
+async fn get_text_channels(guild: &PartialGuild, ctx: &Context) -> Result<Vec<(CI, String)>> {
     let mut channels = Vec::new();
     
     let guild_channels = guild.channels(&ctx.http).await?;
@@ -229,7 +276,7 @@ async fn get_text_channels(guild: &PartialGuild, ctx: &Context) -> Result<Vec<(C
 }
 
 /// Gets voice channels from a guild
-async fn get_voice_channels(guild: &PartialGuild, ctx: &Context) -> Result<Vec<(ChannelId, String)>> {
+async fn get_voice_channels(guild: &PartialGuild, ctx: &Context) -> Result<Vec<(CI, String)>> {
     let mut channels = Vec::new();
     
     let guild_channels = guild.channels(&ctx.http).await?;
@@ -261,7 +308,7 @@ async fn get_guild_roles(guild: &PartialGuild) -> Result<Vec<(RoleId, String)>> 
 }
 
 /// Creates channel select options for dropdown
-fn create_channel_options(channels: &[(ChannelId, String)], prefix: &str) -> Vec<CreateSelectMenuOption> {
+fn create_channel_options(channels: &[(CI, String)], prefix: &str) -> Vec<CreateSelectMenuOption> {
     channels.iter()
         .take(25) // Discord limit
         .map(|(id, name)| {
@@ -284,19 +331,11 @@ fn create_role_options(roles: &[(RoleId, String)], prefix: &str) -> Vec<CreateSe
 
 /// Handles setup interaction responses
 pub async fn handle_setup_interaction(ctx: &Context, interaction: &ComponentInteraction, db: &std::sync::Arc<crate::Database>) -> Result<()> {
-    let custom_id = &interaction.data.custom_id;
+    use crate::models::ButtonType;
     
-    if !custom_id.starts_with("setup_") {
-        return Ok(());
-    }
+    let button_type = ButtonType::parse(&interaction.data.custom_id);
     
-    // Parse the setup step and selected value
-    let parts: Vec<&str> = custom_id.split('_').collect();
-    if parts.len() < 2 {
-        return Ok(());
-    }
-    
-    let step = parts[1];
+    // Extract selected value from dropdown
     let selected_values = match &interaction.data.kind {
         ComponentInteractionDataKind::StringSelect { values } => values,
         _ => return Ok(()),
@@ -312,15 +351,28 @@ pub async fn handle_setup_interaction(ctx: &Context, interaction: &ComponentInte
         return Ok(());
     }
     
-    let channel_or_role_id: u64 = value_parts[1].parse()?;
+    // The ID is always the last part after splitting (e.g., "init_queue_123" -> "123")
+    let channel_or_role_id: u64 = value_parts.last()
+        .ok_or_else(|| anyhow!("No ID found in selected value"))?
+        .parse()?;
     
-    match step {
-        "dashboard" => handle_dashboard_selection(ctx, interaction, channel_or_role_id).await?,
-        "queue"     => handle_queue_selection(    ctx, interaction, channel_or_role_id).await?,
-        "red"       => handle_red_selection(      ctx, interaction, channel_or_role_id).await?,
-        "blue"      => handle_blue_selection(     ctx, interaction, channel_or_role_id).await?,
-        "runner"    => handle_runner_selection(   ctx, interaction, channel_or_role_id).await?,
-        "admin"     => handle_admin_selection(    ctx, interaction, channel_or_role_id, db).await?,
+    // Route based on button type
+    match button_type {
+        // Setup flow
+        ButtonType::SetupDashboard => handle_dashboard_selection(    ctx, interaction, channel_or_role_id).await?,
+        ButtonType::SetupQueue     => handle_queue_selection(        ctx, interaction, channel_or_role_id).await?,
+        ButtonType::SetupRed       => handle_red_selection(          ctx, interaction, channel_or_role_id).await?,
+        ButtonType::SetupBlue      => handle_blue_selection(         ctx, interaction, channel_or_role_id).await?,
+        ButtonType::SetupRunner    => handle_runner_selection(       ctx, interaction, channel_or_role_id).await?,
+        ButtonType::SetupAdmin     => handle_admin_selection(        ctx, interaction, channel_or_role_id, db).await?,
+        
+        // Init flow
+        ButtonType::InitQueue      => handle_init_queue_selection(   ctx, interaction, channel_or_role_id).await?,
+        ButtonType::InitQueueVc    => handle_init_queue_vc_selection(ctx, interaction, channel_or_role_id).await?,
+        ButtonType::InitRed        => handle_init_red_selection(     ctx, interaction, channel_or_role_id).await?,
+        ButtonType::InitBlue       => handle_init_blue_selection(    ctx, interaction, channel_or_role_id, db).await?,
+        
+        // Unknown button types are ignored
         _ => {}
     }
     
@@ -463,7 +515,7 @@ async fn handle_blue_selection(ctx: &Context, interaction: &ComponentInteraction
         .description(format!(
             "Blue team channel: <#{}>\n\n\
             **Step 5/6: Runner Role**\n\
-            Select the role that can manage PUG sessions:",
+            Select the role that can manage PUG games:",
             channel_id
         ))
         .color(0x00ff00);
@@ -563,16 +615,45 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
     let runner_role = config.runner_role.unwrap();
     let admin_role = role_id;
     
-    // Create the group configuration in database
+    // Create the initial dashboard message
+    let dashboard_channel_id = CI::new(dashboard_channel);
+    let initial_embed = CE::new()
+        .title("🎮 PUG Queue Dashboard")
+        .description("Queue is empty. Be the first to join!")
+        .color(0x00aaff);
+    
+    let dashboard_message = match dashboard_channel_id.send_message(&ctx.http, CreateMessage::new().embed(initial_embed)).await {
+        Ok(msg) => msg,
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("❌ Setup Failed")
+                .description(format!("Failed to create dashboard message: {}", e))
+                .color(0xff0000);
+            
+            let response = CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .embed(error_embed)
+                    .components(vec![])
+            );
+            
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+    
+    let dashboard_msg_id = dashboard_message.id.get();
+    
+    // Create the group configuration in database with properly configured values
+    // Note: queue_channel is a text channel, used for both chat and voice (simplified setup)
     match db.groups.create_group(
         guild_id.get(),
         dashboard_channel,
-        0, // chat channel (not used)
-        queue_channel,
-        0, // dashboard message ID (will be set later)
+        queue_channel, // queue text channel (used for chat)
+        queue_channel, // same channel used as voice channel (simplified setup)
+        dashboard_msg_id, // actual dashboard message ID
         red_channel,
         blue_channel,
-        10, // default session quota
+        10, // default game quota
     ).await {
         Ok(_) => {
             // Clean up setup state
@@ -589,8 +670,255 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                     • Blue Team: <#{}>\n\
                     • Runner Role: <@&{}>\n\
                     • Admin Role: <@&{}>\n\n\
-                    You can now use `/init_dashboard` in the dashboard channel to create the queue interface!",
+                    You can now use `/cmd_init_group` in the dashboard channel to create the queue interface!",
                     dashboard_channel, queue_channel, red_channel, blue_channel, runner_role, admin_role
+                ))
+                .color(0x00ff00);
+            
+            let response = CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .embed(success_embed)
+                    .components(vec![]) // Remove components
+            );
+            
+            interaction.create_response(&ctx.http, response).await?;
+        },
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("❌ Setup Failed")
+                .description(format!("Failed to save configuration: {}", e))
+                .color(0xff0000);
+            
+            let response = CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .embed(error_embed)
+                    .components(vec![])
+            );
+            
+            interaction.create_response(&ctx.http, response).await?;
+        }
+    }
+    
+    Ok(())
+}
+
+// ==================== INIT GROUP HANDLERS ====================
+
+/// Handles queue channel selection for init_group
+async fn handle_init_queue_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+    let guild_id = interaction.guild_id.expect("Guild ID not found");
+    let guild    = guild_id.to_partial_guild(&ctx.http).await?;
+    let user_id  = interaction.user.id;
+    
+    // Store the selection in setup state
+    SETUP_STATE.update_setup(user_id, guild_id, |config| {
+        config.queue_channel = Some(channel_id);
+    });
+    
+    let embed = CE::new()
+        .title("✅ Queue Text Channel Selected")
+        .description(format!(
+            "Queue text channel: <#{}>\n\n\
+            **Step 2/4: Queue Voice Channel**\n\
+            Select the voice channel players will join for the queue:",
+            channel_id
+        ))
+        .color(0x00ff00);
+    
+    let channels = get_voice_channels(&guild, ctx).await?;
+    let channel_options = create_channel_options(&channels, "init_queuevc");
+    
+    let select_menu = CreateSelectMenu::new("init_queuevc", CreateSelectMenuKind::String { options: channel_options })
+        .placeholder("Select queue voice channel...")
+        .max_values(1);
+    
+    let action_row = CreateActionRow::SelectMenu(select_menu);
+    
+    let response = CreateInteractionResponse::UpdateMessage(
+        CreateInteractionResponseMessage::new()
+            .embed(embed)
+            .components(vec![action_row])
+    );
+    
+    interaction.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
+/// Handles queue voice channel selection for init_group
+async fn handle_init_queue_vc_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+    let guild_id = interaction.guild_id.expect("Guild ID not found");
+    let guild    = guild_id.to_partial_guild(&ctx.http).await?;
+    let user_id  = interaction.user.id;
+    
+    // Store the selection in setup state
+    SETUP_STATE.update_setup(user_id, guild_id, |config| {
+        config.queue_vc_channel = Some(channel_id);
+    });
+    
+    let embed = CE::new()
+        .title("✅ Queue Voice Channel Selected")
+        .description(format!(
+            "Queue voice channel: <#{}>\n\n\
+            **Step 3/4: Red Team Voice Channel**\n\
+            Select the voice channel for the Red team:",
+            channel_id
+        ))
+        .color(0x00ff00);
+    
+    let channels = get_voice_channels(&guild, ctx).await?;
+    let channel_options = create_channel_options(&channels, "init_red");
+    
+    let select_menu = CreateSelectMenu::new("init_red", CreateSelectMenuKind::String { options: channel_options })
+        .placeholder("Select red team voice channel...")
+        .max_values(1);
+    
+    let action_row = CreateActionRow::SelectMenu(select_menu);
+    
+    let response = CreateInteractionResponse::UpdateMessage(
+        CreateInteractionResponseMessage::new()
+            .embed(embed)
+            .components(vec![action_row])
+    );
+    
+    interaction.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
+/// Handles red team channel selection for init_group
+async fn handle_init_red_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+    let guild_id = interaction.guild_id.expect("Guild ID not found");
+    let guild = guild_id.to_partial_guild(&ctx.http).await?;
+    let user_id = interaction.user.id;
+    
+    // Store the selection in setup state
+    SETUP_STATE.update_setup(user_id, guild_id, |config| {
+        config.red_channel = Some(channel_id);
+    });
+    
+    let embed = CE::new()
+        .title("✅ Red Team Channel Selected")
+        .description(format!(
+            "Red team channel: <#{}>\n\n\
+            **Step 4/4: Blue Team Voice Channel**\n\
+            Select the voice channel for the Blue team:",
+            channel_id
+        ))
+        .color(0x00ff00);
+    
+    let channels = get_voice_channels(&guild, ctx).await?;
+    let channel_options = create_channel_options(&channels, "init_blue");
+    
+    let select_menu = CreateSelectMenu::new("init_blue", CreateSelectMenuKind::String { options: channel_options })
+        .placeholder("Select blue team voice channel...")
+        .max_values(1);
+    
+    let action_row = CreateActionRow::SelectMenu(select_menu);
+    
+    let response = CreateInteractionResponse::UpdateMessage(
+        CreateInteractionResponseMessage::new()
+            .embed(embed)
+            .components(vec![action_row])
+    );
+    
+    interaction.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
+/// Handles blue team channel selection and completes init_group setup
+async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64, db: &std::sync::Arc<crate::Database>) -> Result<()> {
+    let guild_id = interaction.guild_id.expect("Guild ID not found");
+    let user_id = interaction.user.id;
+    
+    // Store the final selection and retrieve complete config
+    let config = SETUP_STATE.update_setup(user_id, guild_id, |config| {
+        config.blue_channel = Some(channel_id);
+    });
+    
+    // Validate all required fields are present
+    let config = match config {
+        Some(cfg) if cfg.dashboard_channel.is_some() 
+                  && cfg.queue_channel.is_some() 
+                  && cfg.queue_vc_channel.is_some()
+                  && cfg.red_channel.is_some() 
+                  && cfg.blue_channel.is_some() => cfg,
+        _ => {
+            let error_embed = CE::new()
+                .title("❌ Setup Error")
+                .description("Configuration is incomplete. Please restart the setup process.")
+                .color(0xff0000);
+            
+            let response = CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .embed(error_embed)
+                    .components(vec![])
+            );
+            
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+    
+    let dashboard_channel = config.dashboard_channel.unwrap();
+    let queue_channel     = config.queue_channel.unwrap();
+    let queue_vc_channel  = config.queue_vc_channel.unwrap();
+    let red_channel       = config.red_channel.unwrap();
+    let blue_channel      = channel_id;
+    
+    // Create the initial dashboard message
+    let dashboard_channel_id = CI::new(dashboard_channel);
+    let initial_embed = CE::new()
+        .title("🎮 PUG Queue Dashboard")
+        .description("Queue is empty. Be the first to join!")
+        .color(0x00aaff);
+    
+    let dashboard_message = match dashboard_channel_id.send_message(&ctx.http, CreateMessage::new().embed(initial_embed)).await {
+        Ok(msg) => msg,
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("❌ Setup Failed")
+                .description(format!("Failed to create dashboard message: {}", e))
+                .color(0xff0000);
+            
+            let response = CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .embed(error_embed)
+                    .components(vec![])
+            );
+            
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+    
+    let dashboard_msg_id = dashboard_message.id.get();
+    
+    // Create the group configuration in database with all properly configured values
+    match db.groups.create_group(
+        guild_id.get(),
+        dashboard_channel,
+        queue_channel, // queue text channel for chat
+        queue_vc_channel, // queue voice channel
+        dashboard_msg_id, // actual dashboard message ID
+        red_channel,
+        blue_channel,
+        10, // default game quota
+    ).await {
+        Ok(_) => {
+            // Clean up setup state
+            SETUP_STATE.complete_setup(user_id, guild_id);
+            
+            let success_embed = CE::new()
+                .title("🎉 Group Setup Complete!")
+                .description(format!(
+                    "Group configuration has been saved successfully!\n\n\
+                    **Configuration Summary:**\n\
+                    • Dashboard: <#{}>\n\
+                    • Queue Text: <#{}>\n\
+                    • Queue Voice: <#{}>\n\
+                    • Red Team: <#{}>\n\
+                    • Blue Team: <#{}>\n\n\
+                    The dashboard will now be initialized in <#{}> with the interactive queue interface!",
+                    dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel, dashboard_channel
                 ))
                 .color(0x00ff00);
             

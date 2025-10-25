@@ -9,5 +9,5 @@ pub mod models;
 
 // Re-export
 pub use database::*;
-pub use handlers::{admin, session};
+pub use handlers::{admin, game};
 pub use models::*;
