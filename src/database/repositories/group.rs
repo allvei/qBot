@@ -48,7 +48,7 @@ impl GroupRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        Ok(self.build_group_from_row(&result).unwrap())
+        Ok(self.build_group_from_row_async(&result).await.unwrap())
     }
 
     pub async fn update_group(
@@ -79,7 +79,7 @@ impl GroupRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        Ok(self.build_group_from_row(&result).unwrap())
+        Ok(self.build_group_from_row_async(&result).await.unwrap())
     }
 
     async fn build_group_from_row_async(&self, result: &sqlx::sqlite::SqliteRow) -> Result<Group> {
@@ -126,42 +126,6 @@ impl GroupRepository {
                 chat,
                 queue,
                 teams,
-                dashboard,
-            ),
-            Vec::new(),
-        );
-
-        Ok(group)
-    }
-    
-    fn build_group_from_row(&self, result: &sqlx::sqlite::SqliteRow) -> Result<Group> {
-        // Validate channel IDs before creating ChannelId objects
-        let chat_id      = result.get::<i64, _>("chat")  as u64;
-        let queue_id     = result.get::<i64, _>("queue") as u64;
-        let red_id       = result.get::<i64, _>("red")   as u64;
-        let blu_id       = result.get::<i64, _>("blu")   as u64;
-        let dashboard_id = result.get::<i64, _>("dashboard") as u64;
-        
-        // Reject groups with invalid (0) channel IDs - no undefined data allowed
-        if chat_id == 0 || queue_id == 0 || red_id == 0 || blu_id == 0 || dashboard_id == 0 {
-            return Err(anyhow!("Group has invalid channel configuration (0 IDs not allowed)"));
-        }
-        
-        let chat      = ChannelId::new(chat_id);
-        let queue     = ChannelId::new(queue_id);
-        let red       = ChannelId::new(red_id);
-        let blu       = ChannelId::new(blu_id);
-        let dashboard = ChannelId::new(dashboard_id);
-
-        let group = Group::new(
-            result.try_get::<i64, _>("group_id")     .unwrap_or(0)      as u8,
-            result.try_get::<i64, _>("game_quota").unwrap_or(12)     as u8,
-            result.try_get::<i64, _>("timeout")      .unwrap_or(120)    as u16,
-            MessageId::new(result.get::<i64, _>("dashboard_msg_id")     as u64),
-            Channels::new(
-                chat,
-                queue,
-                vec![TeamChannel::new(red, blu)], // Sync version uses fallback
                 dashboard,
             ),
             Vec::new(),

@@ -16,7 +16,7 @@ use migrations::DatabaseMigrations;
 #[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
-    pub users: UserRepository,
+    pub users:  UserRepository,
     pub groups: GroupRepository,
     pub config: ConfigRepository,
 }
@@ -44,8 +44,8 @@ impl Database {
         migrations.run_all().await?;
         
         // Initialize repositories
-        let users = UserRepository::new(pool.clone());
-        let groups = GroupRepository::new(pool.clone());
+        let users  = UserRepository  ::new(pool.clone());
+        let groups = GroupRepository ::new(pool.clone());
         let config = ConfigRepository::new(pool.clone());
         
         info!("Database connection established");

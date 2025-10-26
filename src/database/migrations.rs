@@ -230,13 +230,8 @@ impl DatabaseMigrations {
     pub async fn validate_schema(&self) -> Result<()> {
         info!("Validating database schema integrity");
         
-        // Validate config table
         self.validate_config_schema().await?;
-        
-        // Validate users table
-        self.validate_users_schema().await?;
-        
-        // Validate groups table
+        self.validate_users_schema() .await?;
         self.validate_groups_schema().await?;
         
         info!("Database schema validation completed successfully");
@@ -286,8 +281,6 @@ impl DatabaseMigrations {
                 ));
             }
         }
-        
-        info!("Table '{}' has all required columns", table_name);
         Ok(())
     }
 

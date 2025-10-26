@@ -128,13 +128,12 @@ impl EventHandler for Handler {
                     },
                     Ok(_) => {
                         warn!("{} has no group configurations. ID: {}", guild.name, guild_id);
-                        
-                        // Add server to manager even without groups (for setup commands)
+            
+                        // Add server to manager
                         let mut manager = self.manager.lock().await;
                         if manager.get_server(guild.id).is_err() {
                             let server = Server::empty(guild.id);
                             manager.servers.push(server);
-                            info!("Added empty server for guild {} to memory", guild.name);
                         }
                     },
                     Err(e) => error!("Failed to load groups for guild {}: {}", guild.name, e),
@@ -318,7 +317,6 @@ impl EventHandler for Handler {
             },
             Err(_) => match self.database.new_user(user_id).await {
                     Ok(new_user) => {
-                        info!("New user: {}", user_name);
                         new_user
                     },
                     Err(e) => {
@@ -341,7 +339,7 @@ impl EventHandler for Handler {
                         
                         // Extract immutable data before mutable iteration
                         let dashboard_channel = group.channels.dashboard;
-                        let player_exists = group.get_player(user_id).is_ok();
+                        let player_exists     = group.get_player(user_id).is_ok();
                         
                         if player_exists {
                             error!("{} is already in the game", user_name);
