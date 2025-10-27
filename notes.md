@@ -1,5 +1,11 @@
 # Todo
 
+## Currently
+
+- Failed to retrieve group
+- create buttons for dash
+- add plyr to queue on vc join
+
 ## Priority
 
 - Reply if conf not generated.

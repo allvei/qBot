@@ -1,5 +1,5 @@
 use anyhow::{Error, Result};
-use serenity::all::{ButtonStyle, ChannelId as CI, Context, CreateActionRow, CreateButton, CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM, Message};
+use serenity::all::{ButtonStyle, ChannelId as CI, Context, CreateActionRow, CreateButton, CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM, Message, Reaction};
 use tracing::{error, info};
 
 use crate::{models::{game::{GamePlayer, GameStatus, Games}, server::Group}, ComponentContext};
@@ -123,7 +123,7 @@ impl ButtonType {
 
 impl Group {
     /// Creates buttons for the dashboard
-    pub fn create_dashboard_buttons(&self) -> Vec<CreateActionRow> {
+    pub async fn create_dashboard_buttons(&self) -> Result<Vec<CreateActionRow>> {
         info!("Creating dashboard buttons for group {}", self.group_id);
         // Check if there's an live game to enable/disable buttons
         let has_live_game = !self.games.is_empty();
@@ -158,8 +158,10 @@ impl Group {
             .collect()
     }
 
-    pub async fn dash_publish(&self, ctx: &Context, channel: CI, embed: CE, components: Vec<CreateActionRow>) {
-        if let Ok(msg) = channel.send_message(&ctx.http, CM::new().embed(embed).components(components)).await {
+    pub async fn dash_publish(&self, ctx: &Context, channel: CI, embed: CE) {
+        let buttons = self.create_dashboard_buttons().await.unwrap();
+        let msg = channel.send_message(&ctx.http, CM::new().embed(embed).components(buttons)).await;
+        if let Ok(msg) = msg {
             // Add a reaction to the message
             if let Err(e) = msg.react(&ctx.http, '✅').await {
                 error!("Failed to add reaction: {}", e);
@@ -169,36 +171,18 @@ impl Group {
         }
     }
 
-    pub async fn has_dashboard(
-        &self,
-        ctx: &Context,
-    ) -> bool {
+    pub async fn has_dashboard(&self, ctx: &Context) -> bool {
         let channel = CI::new(self.channels.dashboard.into());
         let message = channel.message(&ctx.http, self.dashboard_msg).await;
         message.is_ok()
     }
 
-    pub async fn dash_init(
-        &self,
-        ctx: &Context,
-    ) -> Result<(), Error> {
+    pub async fn dash_init(&self, ctx: &Context) -> Result<(), Error> {
         let embed = Group::dash_update(self).await?;
-        match self.dash_send(ctx, embed).await {
+        match self.dash_publish(ctx, embed).await {
             Ok(_) => Ok(()),
             Err(e) => Err(e),
         }
-    }
-
-
-    pub async fn dash_send(
-        &self,
-        ctx: &Context,
-        embed: CE,
-    ) -> Result<Message> {
-        Ok(self
-            .channels.dashboard
-            .send_message(&ctx.http, CM::new().embed(embed))
-            .await?)
     }
 
     /// Initializes a dashboard based on current group state
@@ -298,9 +282,7 @@ impl Group {
     }
 
     /// Handles the join queue button
-    async fn dash_join_queue(
-        &mut self,
-        cc: &ComponentContext<'_>) -> Result<()> {
+    async fn dash_join_queue(&mut self,cc: &ComponentContext<'_>) -> Result<()> {
         let user = cc.component.user.id;
 
         // Get player info or create a new one
@@ -395,9 +377,7 @@ impl Group {
     }
 
     /// Handles the leave queue button
-    async fn dash_leave_queue(
-        &mut self,
-        cc: &ComponentContext<'_>) -> Result<()> {
+    async fn dash_leave_queue(&mut self,cc: &ComponentContext<'_>) -> Result<()> {
         let user    = cc.component.user.id;
 
         let mut found = false;
@@ -434,11 +414,7 @@ impl Group {
     }
 
     /// Handles the shuffle teams button
-    async fn dash_shuffle(
-        &mut self,
-        cc: &ComponentContext<'_>,
-        _game_id: Option<String>,
-    ) -> Result<()> {
+    async fn dash_shuffle(&mut self, cc: &ComponentContext<'_>, _game_id: Option<String>) -> Result<()> {
 
         let mut shuffled = false;
 
@@ -475,11 +451,7 @@ impl Group {
     }
 
     /// Handles the start match button
-    async fn dash_start(
-        &mut self,
-        cc: &ComponentContext<'_>,
-        _game_id: Option<String>,
-    ) -> Result<()> {
+    async fn dash_start(&mut self, cc: &ComponentContext<'_>, _game_id: Option<String>) -> Result<()> {
         let mut match_started = false;
 
         // Find the game to start
@@ -514,11 +486,7 @@ impl Group {
     }
 
     /// Handles the end match button
-    async fn dash_end(
-        &mut self,
-        cc: &ComponentContext<'_>,
-        _game_id: Option<String>,
-    ) -> Result<()> {
+    async fn dash_end(&mut self, cc: &ComponentContext<'_>, _game_id: Option<String>) -> Result<()> {
         let mut match_ended = false;
 
         // Find active games to end
@@ -553,10 +521,7 @@ impl Group {
     /// Processes all button interactions in a modular way
     ///
     /// * `cc` - The component context with button information
-    pub async fn dash_handle_button_interaction(
-        &mut self,
-        cc: &ComponentContext<'_>,
-    ) -> Result<()> {
+    pub async fn dash_handle_button_interaction(&mut self, cc: &ComponentContext<'_>) -> Result<()> {
         let custom_id = &cc.component.data.custom_id;
 
         // Log the button click
