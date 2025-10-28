@@ -1,4 +1,4 @@
-use anyhow::{Error, Result};
+use anyhow::{anyhow,Error, Result};
 use serenity::all::{ButtonStyle, ChannelId as CI, Context, CreateActionRow, CreateButton, CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM, Message, Reaction};
 use tracing::{error, info};
 
@@ -142,7 +142,7 @@ impl Group {
         // Generate buttons from configurations
         let buttons = Self::gen_buttons(button_configs);
 
-        vec![CreateActionRow::Buttons(buttons)]
+        Ok(vec![CreateActionRow::Buttons(buttons)])
     }
 
     fn gen_buttons(button_configs: Vec<(&'static str, &'static str, ButtonStyle, bool)>) -> Vec<CreateButton> {
@@ -158,7 +158,7 @@ impl Group {
             .collect()
     }
 
-    pub async fn dash_publish(&self, ctx: &Context, channel: CI, embed: CE) {
+    pub async fn dash_publish(&self, ctx: &Context, channel: CI, embed: CE) -> Result<(), Error>{
         let buttons = self.create_dashboard_buttons().await.unwrap();
         let msg = channel.send_message(&ctx.http, CM::new().embed(embed).components(buttons)).await;
         if let Ok(msg) = msg {
@@ -166,8 +166,10 @@ impl Group {
             if let Err(e) = msg.react(&ctx.http, '✅').await {
                 error!("Failed to add reaction: {}", e);
             }
+            Ok(())
         } else {
             error!("Failed to send game ready notification");
+            Err(anyhow!("Failed to send game ready notification"))
         }
     }
 
@@ -179,10 +181,7 @@ impl Group {
 
     pub async fn dash_init(&self, ctx: &Context) -> Result<(), Error> {
         let embed = Group::dash_update(self).await?;
-        match self.dash_publish(ctx, embed).await {
-            Ok(_) => Ok(()),
-            Err(e) => Err(e),
-        }
+        self.dash_publish(ctx, self.channels.dashboard, embed).await
     }
 
     /// Initializes a dashboard based on current group state
@@ -204,32 +203,21 @@ impl Group {
                 queue_players, quota
             ));
 
-            if queue_players < quota {
-                desc.push_str("**Players:**\n");
+            match queue_players.cmp(&quota) {
+                std::cmp::Ordering::Less => {
+                    desc.push_str("**Players:**\n");
 
-                for (i, player) in game_current.pool.iter().enumerate() {
-                    desc.push_str(&format!("{}. <@{}>\n", i + 1, player.player.discord_id));
+                    for (i, player) in game_current.pool.iter().enumerate() {
+                        desc.push_str(&format!("{}. <@{}>\n", i + 1, player.player.discord_id));
+                    }
+                    desc.push_str(&format!(
+                        "\n*Need {} more players to start*\n\n",
+                        quota - queue_players
+                    ));
                 }
-                desc.push_str(&format!(
-                    "\n*Need {} more players to start*\n\n",
-                    quota - queue_players
-                ));
-            } else if queue_players == quota {
-                desc.push_str("**🔥 READY TO START! 🔥**\n");
+                std::cmp::Ordering::Equal => {
+                    desc.push_str("**🔥 READY TO START! 🔥**\n");
 
-                let team_red = &game_current.pool[0..4];
-                desc.push_str("**🔴 Red:**\n");
-                list_players!(desc, team_red);
-
-                let team_blu = &game_current.pool[4..8];
-                desc.push_str("\n**🔵 Blue:**\n");
-                list_players!(desc, team_blu);
-
-                desc.push_str("\n");
-            } else {
-                desc.push_str("**🔥 MATCH READY! 🔥**\n");
-
-                if queue_players >= 8 {
                     let team_red = &game_current.pool[0..4];
                     desc.push_str("**🔴 Red:**\n");
                     list_players!(desc, team_red);
@@ -237,17 +225,32 @@ impl Group {
                     let team_blu = &game_current.pool[4..8];
                     desc.push_str("\n**🔵 Blue:**\n");
                     list_players!(desc, team_blu);
-                }
 
-                let extra_players = &game_current.pool[quota..];
-                if !extra_players.is_empty() {
-                    desc.push_str(&format!(
-                        "\n**⏳ Queued for Next ({}):**\n",
-                        extra_players.len()
-                    ));
-                    list_players!(desc, extra_players);
+                    desc.push_str("\n");
                 }
-                desc.push('\n');
+                std::cmp::Ordering::Greater => {
+                    desc.push_str("**🔥 MATCH READY! 🔥**\n");
+
+                    if queue_players >= 8 {
+                        let team_red = &game_current.pool[0..4];
+                        desc.push_str("**🔴 Red:**\n");
+                        list_players!(desc, team_red);
+
+                        let team_blu = &game_current.pool[4..8];
+                        desc.push_str("\n**🔵 Blue:**\n");
+                        list_players!(desc, team_blu);
+                    }
+
+                    let extra_players = &game_current.pool[quota..];
+                    if !extra_players.is_empty() {
+                        desc.push_str(&format!(
+                            "\n**⏳ Queued for Next ({}):**\n",
+                            extra_players.len()
+                        ));
+                        list_players!(desc, extra_players);
+                    }
+                    desc.push('\n');
+                }
             }
         } else {
             desc.push_str(

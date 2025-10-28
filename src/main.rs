@@ -365,8 +365,7 @@ impl EventHandler for Handler {
                             // Publish dashboard after mutable iteration completes
                             if should_publish {
                                 if let Some(embed) = game_embed {
-                                    let components = group.create_dashboard_buttons();
-                                    group.dash_publish(&ctx, dashboard_channel, embed, components).await;
+                                    group.dash_publish(&ctx, dashboard_channel, embed).await;
                                 }
                             }
                         }
