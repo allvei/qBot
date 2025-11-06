@@ -76,7 +76,7 @@ async fn move_players_to_team_channels(
     ctx:      &Context,
     _db:      &Arc<Database>,
     group:    Group,
-    game:  &mut Games,
+    game:     &mut Games,
     guild_id: GuildId
 ) -> Result<()> {
     // Get red/blue voice channel IDs from the first team in the group

@@ -52,12 +52,12 @@ impl Games {
     }
 
     pub fn hot(&mut self) -> CE {
-        info!("Game is HOT with {} players", self.player_count());
+        info!("Game is HOT with {} players", self.pool.len());
         self.status = GameStatus::Hot;
         // Create an embed message for the game ready notification
         let embed = CE::new()
             .title("GAME READY!")
-            .description(format!("A match is ready to start with {} players!", self.player_count()))
+            .description(format!("A match is ready to start with {} players!", self.pool.len()))
             .footer(CEF::new("Awaiting team generation..."));
         embed
     }
@@ -72,10 +72,6 @@ impl Games {
 
     pub fn pull(&mut self) {
         self.status = GameStatus::Pull;
-    }
-
-    pub fn player_count(&self) -> usize {
-        self.pool.len()
     }
     
     pub fn empty() -> Self {
