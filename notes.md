@@ -2,8 +2,6 @@
 
 ## Currently
 
-- Failed to retrieve group
-
 ## Priority
 
 - Reply if conf not generated.
