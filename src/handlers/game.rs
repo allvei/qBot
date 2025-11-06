@@ -138,7 +138,6 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, mut guild: Server) -> Result<
     // Get player info or create a new one
     let player = match cc.db.get_user(client_id).await {
         Ok(player) => {
-            info!("Found user in db!");
             player
         }
         Err(_) => {

@@ -2,8 +2,8 @@
 
 ## Currently
 
+- Properly edit dash once group is updated.
 - Failed to retrieve group
-- create buttons for dash
 - add plyr to queue on vc join
 
 ## Priority

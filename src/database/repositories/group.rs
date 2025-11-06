@@ -25,7 +25,7 @@ impl GroupRepository {
         dashboard_channel_id: u64,
         chat_channel_id:      u64,
         queue_vc_id:          u64,
-        dashboard_msg_id:     u64,
+        dashboard_msg:        u64,
         red_vc_id:            u64,
         blu_vc_id:            u64,
         game_quota:        u8,
@@ -33,18 +33,18 @@ impl GroupRepository {
         info!("Creating new group with queue: {}", queue_vc_id);
         
         let result = sqlx::query(
-            "INSERT INTO groups (guild_id, dashboard, chat, queue, dashboard_msg_id, red, blu, game_quota)
+            "INSERT INTO groups (guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_quota)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             RETURNING id, group_id, timeout, dashboard, chat, queue, dashboard_msg_id, red, blu, game_quota"
+             RETURNING id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_quota"
         )
         .bind(guild_id             as i64)
         .bind(dashboard_channel_id as i64)
         .bind(chat_channel_id      as i64)
         .bind(queue_vc_id          as i64)
-        .bind(dashboard_msg_id     as i64)
+        .bind(dashboard_msg        as i64)
         .bind(red_vc_id            as i64)
         .bind(blu_vc_id            as i64)
-        .bind(game_quota        as i64)
+        .bind(game_quota           as i64)
         .fetch_one(&self.pool)
         .await?;
 
@@ -67,14 +67,14 @@ impl GroupRepository {
             "UPDATE groups
              SET guild_id = ?, dashboard = ?, chat = ?, red = ?, blu = ?, game_quota = ?
              WHERE queue = ?
-             RETURNING id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg_id, red, blu, game_increment, game_quota"
+             RETURNING id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, game_quota"
         )
         .bind(guild_id             as i64)
         .bind(dashboard_channel_id as i64)
         .bind(chat_channel_id      as i64)
         .bind(red_vc_id            as i64)
         .bind(blu_vc_id            as i64)
-        .bind(game_quota        as i64)
+        .bind(game_quota           as i64)
         .bind(queue_vc_id          as i64)
         .fetch_one(&self.pool)
         .await?;
@@ -121,7 +121,7 @@ impl GroupRepository {
             group_id,
             result.try_get::<i64, _>("game_quota").unwrap_or(12)     as u8,
             result.try_get::<i64, _>("timeout")      .unwrap_or(120)    as u16,
-            MessageId::new(result.get::<i64, _>("dashboard_msg_id")     as u64),
+            MessageId::new(result.get::<i64, _>("dashboard_msg")     as u64),
             Channels::new(
                 chat,
                 queue,
@@ -213,7 +213,7 @@ impl GroupRepository {
     /// Get all groups for a guild
     pub async fn get_groups_for_guild(&self, guild_id: u64) -> Result<Vec<Group>> {
         let rows = sqlx::query(
-            "SELECT id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg_id, red, blu, game_increment, game_quota
+            "SELECT id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, game_quota
              FROM groups WHERE guild_id = ?"
         )
         .bind(guild_id as i64)
@@ -245,7 +245,7 @@ impl Repository<Group, u8> for GroupRepository {
 
     async fn get_by_id(&self, group_id: u8) -> Result<Group> {
         let result = sqlx::query(
-            "SELECT id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg_id, red, blu, game_increment, game_quota
+            "SELECT id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, game_quota
              FROM groups WHERE group_id = ?"
         )
         .bind(group_id as i64)

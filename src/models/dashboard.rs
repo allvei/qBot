@@ -1,8 +1,8 @@
 use anyhow::{anyhow,Error, Result};
-use serenity::all::{ButtonStyle, ChannelId as CI, Context, CreateActionRow, CreateButton, CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM, Message, Reaction};
+use serenity::all::{ButtonStyle, ChannelId as CI, Context, CreateActionRow, CreateButton, CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM, EditMessage, Message, Reaction};
 use tracing::{error, info};
 
-use crate::{models::{game::{GamePlayer, GameStatus, Games}, server::Group}, ComponentContext};
+use crate::{models::{game::{GameStatus, Games}, server::Group}, ComponentContext};
 
 macro_rules! list_players {
     ($desc:ident, $team:ident) => {
@@ -97,11 +97,11 @@ impl ButtonType {
     pub fn is_dashboard_action(&self) -> bool {
         matches!(
             self,
-            Self::DashboardJoin
-                | Self::DashboardLeave
-                | Self::DashboardShuffle
-                | Self::DashboardStart
-                | Self::DashboardEnd
+            Self::DashboardJoin    |
+            Self::DashboardLeave   |
+            Self::DashboardShuffle |
+            Self::DashboardStart   |
+            Self::DashboardEnd
         )
     }
     
@@ -122,6 +122,15 @@ impl ButtonType {
 }
 
 impl Group {
+    pub async fn dash_get(&self, ctx: &Context) -> Result<Message> {
+        let channel = CI::new(self.channels.dashboard.into());
+        let message = channel.message(&ctx.http, self.dashboard_msg).await;
+        match message {
+            Ok(msg) => Ok(msg),
+            Err(e) => Err(anyhow!("Failed to get dashboard message: {}", e)),
+        }
+    }
+
     /// Creates buttons for the dashboard
     pub async fn create_dashboard_buttons(&self) -> Result<Vec<CreateActionRow>> {
         info!("Creating dashboard buttons for group {}", self.group_id);
@@ -158,14 +167,17 @@ impl Group {
             .collect()
     }
 
-    pub async fn dash_publish(&self, ctx: &Context, channel: CI, embed: CE) -> Result<(), Error>{
-        let buttons = self.create_dashboard_buttons().await.unwrap();
-        let msg = channel.send_message(&ctx.http, CM::new().embed(embed).components(buttons)).await;
+    pub async fn has_dashboard(&self, ctx: &Context) -> bool {
+        let channel = CI::new(self.channels.dashboard.into());
+        let message = channel.message(&ctx.http, self.dashboard_msg).await;
+        message.is_ok()
+    }
+
+    pub async fn dash_publish(&mut self, ctx: &Context, channel: CI) -> Result<(), Error>{
+        let message = self.dash_init().await.unwrap();
+        let msg     = channel.send_message(&ctx.http, message).await;
         if let Ok(msg) = msg {
-            // Add a reaction to the message
-            if let Err(e) = msg.react(&ctx.http, '✅').await {
-                error!("Failed to add reaction: {}", e);
-            }
+            self.dashboard_msg = msg.id;
             Ok(())
         } else {
             error!("Failed to send game ready notification");
@@ -173,19 +185,8 @@ impl Group {
         }
     }
 
-    pub async fn has_dashboard(&self, ctx: &Context) -> bool {
-        let channel = CI::new(self.channels.dashboard.into());
-        let message = channel.message(&ctx.http, self.dashboard_msg).await;
-        message.is_ok()
-    }
-
-    pub async fn dash_init(&self, ctx: &Context) -> Result<(), Error> {
-        let embed = Group::dash_update(self).await?;
-        self.dash_publish(ctx, self.channels.dashboard, embed).await
-    }
-
-    /// Initializes a dashboard based on current group state
-    pub async fn dash_update(&self) -> Result<CE> {
+    /// Builds dashboard embed and components based on current group state
+    async fn build_dashboard_content(&mut self) -> Result<(CE, Vec<CreateActionRow>)> {
         let mut embed = CE::new().title("PUG Dashboard");
 
         let games_idle: Vec<&Games> = self.games.iter().filter(|s| s.status == GameStatus::Idle).collect();
@@ -281,26 +282,34 @@ impl Group {
             "Use the buttons below to manage the queue and matches",
         ));
 
-        Ok(embed)
+        let buttons = self.create_dashboard_buttons().await.unwrap();
+
+        Ok((embed, buttons))
+    }
+
+    /// Initializes a dashboard based on current group state
+    pub async fn dash_init(&mut self) -> Result<CM> {
+        let (embed, buttons) = self.build_dashboard_content().await?;
+        let message = CM::new().embed(embed).components(buttons);
+        Ok(message)
+    }
+
+    /// Updates a dashboard based on current group state
+    pub async fn dash_update(&mut self, ctx: &Context) -> Result<(), Error> {
+        let mut dash = self.dash_get(ctx).await.unwrap();
+        let (embed, buttons) = self.build_dashboard_content().await?;
+        
+        match dash.edit(&ctx.http, EditMessage::new().embed(embed).components(buttons)).await {
+            Ok(_) => {Ok(())},
+            Err(e) => {Err(e.into())}
+        }
     }
 
     /// Handles the join queue button
     async fn dash_join_queue(&mut self,cc: &ComponentContext<'_>) -> Result<()> {
         let user = cc.component.user.id;
 
-        // Get player info or create a new one
-        let player = match cc.db.get_user(user).await {
-            Ok(player) => {
-                info!("Found user in db!");
-                player
-            }
-            Err(_) => {
-                info!("Creating new user in db!");
-                cc.db.new_user(user).await?
-            }
-        };
-
-        let mut queue_count = 0;
+        let queue_count = 0;
         let mut already_in_queue = false;
 
         // Check if we have idle games
@@ -328,41 +337,6 @@ impl Group {
             }
         };
 
-        // Check if we have idle games
-        match self.get_games_by_status(&GameStatus::Idle).len() {
-            0 => {
-                info!("No idle games found, creating a new game");
-                self.create_game();
-            }
-            1 => {
-                info!("Found one existing idle game");
-            }
-            n => {
-                return Err(anyhow::anyhow!(
-                    "Found more than one idle game ({}). This is unexpected.",
-                    n
-                ));
-            }
-        }
-
-        // Check if player is already in game
-        if self.get_user_game(user).is_ok() {
-            info!("Player {} is already in a game", player.discord_id);
-            already_in_queue = true;
-        } else {
-            // Add player to the game
-            if let Some(game) = self.games.last_mut() {
-                if game.status == GameStatus::Idle {
-                    game.pool.push(GamePlayer::add(player.discord_id));
-                    queue_count = game.pool.len();
-                    info!(
-                        "Added player to game. Queue now has {} players",
-                        queue_count
-                    );
-                }
-            }
-        }
-
         if already_in_queue {
             cc.create_bot_reply("You are already in the queue!").await?;
         } else {
@@ -373,7 +347,12 @@ impl Group {
             .await?;
 
             // Update dashboard to reflect new state
-            let _ = self.dash_update().await;
+            match self.dash_update(cc.ctx).await {
+                Ok(_) => {},
+                Err(e) => {
+                    error!("Failed to update dashboard: {}", e);
+                }
+            }
         }
 
         Ok(())
@@ -408,7 +387,7 @@ impl Group {
                 .await?;
 
             // Update dashboard to reflect new state
-            let _ = self.dash_update().await;
+            self.dash_update(cc.ctx).await;
         } else {
             cc.create_bot_reply("You are not in the queue!").await?;
         }
@@ -442,7 +421,7 @@ impl Group {
                 .await?;
 
             // Update dashboard to show shuffled teams
-            let _ = self.dash_update().await;
+            self.dash_update(cc.ctx).await;
         } else {
             cc.create_bot_reply(
                 "❌ No game ready for shuffling. Need at least 8 players in queue.",
@@ -477,7 +456,7 @@ impl Group {
                 .await?;
 
             // Update dashboard to show match status
-            let _ = self.dash_update().await;
+            self.dash_update(cc.ctx).await;
         } else {
             cc.create_bot_reply(
                 "❌ No game ready to start. Need at least 8 players and shuffled teams.",
@@ -511,7 +490,7 @@ impl Group {
             .await?;
 
             // Update dashboard to show reset state
-            let _ = self.dash_update().await;
+            self.dash_update(cc.ctx).await;
         } else {
             cc.create_bot_reply("❌ No active match to end.").await?;
         }

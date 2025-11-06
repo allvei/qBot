@@ -344,8 +344,7 @@ impl EventHandler for Handler {
                         if player_exists {
                             error!("{} is already in the game", user_name);
                         } else {
-                            let mut should_publish = false;
-                            let mut game_embed = None;
+                            let mut should_update = false;
                             
                             for game in group.games.iter_mut() {
                                 if game.is_active() {
@@ -355,18 +354,15 @@ impl EventHandler for Handler {
                                 game.pool.push(GamePlayer::add(user_id));
                                 info!("Added {} to game. Pool size: {}", user_name, game.pool.len());
                                 if game.player_count() >= 8 {
-                                    game_embed = Some(game.hot());
-                                    should_publish = true;
+                                    should_update = true;
                                     info!("Game ready notification prepared: dashboard={}, players={}", dashboard_channel, game.player_count());
                                 }
                                 break; // Player added to non-active game, stop searching
                             }
                             
                             // Publish dashboard after mutable iteration completes
-                            if should_publish {
-                                if let Some(embed) = game_embed {
-                                    group.dash_publish(&ctx, dashboard_channel, embed).await;
-                                }
+                            if should_update {
+                                group.dash_update(&ctx).await;
                             }
                         }
                     }
@@ -388,13 +384,18 @@ impl Handler {
         let group_repo = crate::database::repositories::GroupRepository::new(self.database.pool().clone());
         match group_repo.get_groups_for_guild(guild.id.get()).await {
             Ok(groups) => {
-                for group in groups {
+                for mut group in groups {
+                    // Check if dashboard already exists
+                    if group.has_dashboard(ctx).await {
+                        group.dash_update(ctx).await;
+                        continue;
+                    }
                     // Create dashboard for each group's queue channel
-                    let channel_id = group.channels.queue;
+                    let channel_id   = group.channels.queue;
                     let channel_name = channel_id.name(&ctx.http).await.unwrap();
                     
                     // Create dashboard in the queue channel
-                    match group.dash_init(ctx).await {
+                    match group.dash_publish(ctx, channel_id).await {
                         Ok(_) => {
                             info!("Dashboard created successfully for channel {}", channel_name);
                         },

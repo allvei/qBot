@@ -150,7 +150,7 @@ impl DatabaseMigrations {
                     dashboard         INTEGER NOT NULL,
                     chat              INTEGER NOT NULL,
                     queue             INTEGER NOT NULL,
-                    dashboard_msg_id  INTEGER DEFAULT 0,
+                    dashboard_msg     INTEGER DEFAULT 0,
                     red               INTEGER NOT NULL,
                     blu               INTEGER NOT NULL,
                     game           INTEGER DEFAULT 0,
@@ -176,7 +176,7 @@ impl DatabaseMigrations {
                         dashboard         INTEGER NOT NULL,
                         chat              INTEGER NOT NULL,
                         queue             INTEGER NOT NULL,
-                        dashboard_msg_id  INTEGER DEFAULT 0,
+                        dashboard_msg     INTEGER DEFAULT 0,
                         red               INTEGER NOT NULL,
                         blu               INTEGER NOT NULL,
                         game           INTEGER DEFAULT 0,
@@ -256,7 +256,7 @@ impl DatabaseMigrations {
     async fn validate_groups_schema(&self) -> Result<()> {
         let required_columns = vec![
             "id", "group_id", "timeout", "guild_id", "dashboard", 
-            "chat", "queue", "dashboard_msg_id", "red", "blu", 
+            "chat", "queue", "dashboard_msg", "red", "blu", 
             "game", "game_increment", "game_quota"
         ];
         self.validate_table_columns("groups", &required_columns).await?;

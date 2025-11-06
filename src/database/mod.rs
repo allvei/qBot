@@ -77,16 +77,16 @@ impl Database {
     /// Creates a new group
     pub async fn new_group(
         &self,
-        guild_id:         u64,
-        dashboard:        u64,
-        chat:             u64,
-        queue:            u64,
-        dashboard_msg_id: u64,
-        red:              u64,
-        blu:              u64,
+        guild_id:      u64,
+        dashboard:     u64,
+        chat:          u64,
+        queue:         u64,
+        dashboard_msg: u64,
+        red:           u64,
+        blu:           u64,
         game_quota:    u8,
     ) -> Result<Group> {
-        self.groups.create_group(guild_id, dashboard, chat, queue, dashboard_msg_id, red, blu, game_quota).await
+        self.groups.create_group(guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_quota).await
     }
 
     /// Updates a group

@@ -22,7 +22,7 @@ use serenity::all::{
     RoleId,
     UserId,
 };
-use tracing::info;
+use tracing::{info, error};
 use crate::models::{server::Server};
 use crate::models::setup_state::SETUP_STATE;
 use crate::models::command::{CommandContext as CC};
@@ -181,7 +181,7 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
     let group = guild.get_group(channel).unwrap();
     
     // Create and send dashboard
-    group.dash_init(&cc.ctx).await?;
+    group.dash_publish(cc.ctx, channel).await?;
     
     cc.create_bot_reply("✅ Dashboard created/updated successfully!").await?;
     
@@ -864,19 +864,22 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
     let red_channel       = config.red_channel.unwrap();
     let blue_channel      = channel_id;
     
-    // Create the initial dashboard message
-    let dashboard_channel_id = CI::new(dashboard_channel);
-    let initial_embed = CE::new()
-        .title("🎮 PUG Queue Dashboard")
-        .description("Queue is empty. Be the first to join!")
-        .color(0x00aaff);
-    
-    let dashboard_message = match dashboard_channel_id.send_message(&ctx.http, CreateMessage::new().embed(initial_embed)).await {
-        Ok(msg) => msg,
+    // Create the group configuration in database with placeholder dashboard message ID
+    let mut group = match db.groups.create_group(
+        guild_id.get(),
+        dashboard_channel,
+        queue_channel, // queue text channel for chat
+        queue_vc_channel, // queue voice channel
+        0, // placeholder dashboard message ID - will be updated after publishing
+        red_channel,
+        blue_channel,
+        10, // default game quota
+    ).await {
+        Ok(group) => group,
         Err(e) => {
             let error_embed = CE::new()
                 .title("❌ Setup Failed")
-                .description(format!("Failed to create dashboard message: {}", e))
+                .description(format!("Failed to create group configuration: {}", e))
                 .color(0xff0000);
             
             let response = CreateInteractionResponse::UpdateMessage(
@@ -890,61 +893,62 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
         }
     };
     
-    let dashboard_msg_id = dashboard_message.id.get();
-    
-    // Create the group configuration in database with all properly configured values
-    match db.groups.create_group(
-        guild_id.get(),
-        dashboard_channel,
-        queue_channel, // queue text channel for chat
-        queue_vc_channel, // queue voice channel
-        dashboard_msg_id, // actual dashboard message ID
-        red_channel,
-        blue_channel,
-        10, // default game quota
-    ).await {
-        Ok(_) => {
-            // Clean up setup state
-            SETUP_STATE.complete_setup(user_id, guild_id);
-            
-            let success_embed = CE::new()
-                .title("🎉 Group Setup Complete!")
-                .description(format!(
-                    "Group configuration has been saved successfully!\n\n\
-                    **Configuration Summary:**\n\
-                    • Dashboard: <#{}>\n\
-                    • Queue Text: <#{}>\n\
-                    • Queue Voice: <#{}>\n\
-                    • Red Team: <#{}>\n\
-                    • Blue Team: <#{}>\n\n\
-                    The dashboard will now be initialized in <#{}> with the interactive queue interface!",
-                    dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel, dashboard_channel
-                ))
-                .color(0x00ff00);
-            
-            let response = CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
-                    .embed(success_embed)
-                    .components(vec![]) // Remove components
-            );
-            
-            interaction.create_response(&ctx.http, response).await?;
-        },
-        Err(e) => {
-            let error_embed = CE::new()
-                .title("❌ Setup Failed")
-                .description(format!("Failed to save configuration: {}", e))
-                .color(0xff0000);
-            
-            let response = CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
-                    .embed(error_embed)
-                    .components(vec![])
-            );
-            
-            interaction.create_response(&ctx.http, response).await?;
-        }
+    // Publish the dashboard using the proper dash_publish method
+    let dashboard_channel_id = CI::new(dashboard_channel);
+    if let Err(e) = group.dash_publish(ctx, dashboard_channel_id).await {
+        let error_embed = CE::new()
+            .title("❌ Setup Failed")
+            .description(format!("Failed to create dashboard message: {}", e))
+            .color(0xff0000);
+        
+        let response = CreateInteractionResponse::UpdateMessage(
+            CreateInteractionResponseMessage::new()
+                .embed(error_embed)
+                .components(vec![])
+        );
+        
+        interaction.create_response(&ctx.http, response).await?;
+        return Ok(());
     }
+    
+    // Update the database with the actual dashboard message ID
+    let dashboard_msg_id = group.dashboard_msg.get();
+    if let Err(e) = sqlx::query(
+        "UPDATE groups SET dashboard_msg = ? WHERE guild_id = ? AND dashboard = ?"
+    )
+    .bind(dashboard_msg_id as i64)
+    .bind(guild_id.get() as i64)
+    .bind(dashboard_channel as i64)
+    .execute(db.pool())
+    .await {
+        error!("Failed to update dashboard message ID: {}", e);
+    }
+    
+    // Clean up setup state
+    SETUP_STATE.complete_setup(user_id, guild_id);
+    
+    let success_embed = CE::new()
+        .title("🎉 Group Setup Complete!")
+        .description(format!(
+            "Group configuration has been saved successfully!\n\n\
+            **Configuration Summary:**\n\
+            • Dashboard: <#{}>\n\
+            • Queue Text: <#{}>\n\
+            • Queue Voice: <#{}>\n\
+            • Red Team: <#{}>\n\
+            • Blue Team: <#{}>\n\n\
+            The dashboard has been initialized in <#{}> with the interactive queue interface!",
+            dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel, dashboard_channel
+        ))
+        .color(0x00ff00);
+    
+    let response = CreateInteractionResponse::UpdateMessage(
+        CreateInteractionResponseMessage::new()
+            .embed(success_embed)
+            .components(vec![]) // Remove components
+    );
+    
+    interaction.create_response(&ctx.http, response).await?;
     
     Ok(())
 }
