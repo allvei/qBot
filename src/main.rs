@@ -33,7 +33,7 @@ use models::command::CommandContext;
 use models::server::*;
 use models::manager::Manager;
 
-use crate::models::game::GamePlayer;
+use crate::models::game::{GamePlayer, GameStatus};
 use crate::models::ComponentContext;
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
@@ -294,21 +294,54 @@ impl EventHandler for Handler {
         let user_id     = new.user_id;
         let user        = &ctx.http.get_user(user_id).await.unwrap();
         let user_name   = user.display_name();
-        let channel_id  = new.channel_id.unwrap();
         let old_channel = old.map(|s| s.channel_id);
         let server      = new.guild_id.unwrap();
 
         // Handle user leaving a vc
         if new.channel_id.is_none() && old_channel.is_some() {
-            info!("{} left {} VC", user_name, old_channel.unwrap().unwrap().name(&ctx.http).await.unwrap());
-            // TODO: Handle leaving queue channel (remove from game)
-            return;
-        } else if new.channel_id.is_some(){
-            info!("{} joined {}", user_name, channel_id.name(&ctx.http).await.unwrap());
-        } else {
-            error!("User joined a vc but old channel was not none");
+            let left_channel_id = old_channel.unwrap().unwrap();
+            info!("{} left {} VC", user_name, left_channel_id.name(&ctx.http).await.unwrap());
+            
+            // Check if they left a queue voice channel and remove them from the game
+            let mut manager = self.manager.lock().await;
+            if let Ok(group) = manager.get_group(server, left_channel_id) {
+                if group.channels.queue_vc == left_channel_id {
+                    info!("{} left queue voice channel, removing from game", user_name);
+                    
+                    let mut player_removed = false;
+                    for game in &mut group.games {
+                        if game.status == GameStatus::Idle {
+                            let initial_len = game.pool.len();
+                            game.pool.retain(|p| p.player.discord_id != user_id);
+                            if game.pool.len() < initial_len {
+                                player_removed = true;
+                                info!("Removed {} from game. Pool size: {}", user_name, game.pool.len());
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Update dashboard after player leaves
+                    if player_removed {
+                        if let Err(e) = group.dash_update(&ctx).await {
+                            error!("Failed to update dashboard: {}", e);
+                        }
+                    }
+                }
+            }
             return;
         }
+        
+        // Handle user joining a vc
+        let channel_id = match new.channel_id {
+            Some(id) => id,
+            None => {
+                error!("Voice state update with no channel_id for joining case");
+                return;
+            }
+        };
+        
+        info!("{} joined {}", user_name, channel_id.name(&ctx.http).await.unwrap());
         
         // Get player data
         match self.database.get_user(user_id).await {
@@ -330,11 +363,11 @@ impl EventHandler for Handler {
         {
             let mut manager = self.manager.lock().await;
             
-            // Find the guild by ID and check if the new channel is a queue channel in any group
+            // Find the guild by ID and check if the new channel is a queue voice channel in any group
             match manager.get_group(server, channel_id) {
                 Ok(group) => {
-                    if group.channels.queue == channel_id {
-                        info!("{} joined queue channel {}", user_name, channel_id);
+                    if group.channels.queue_vc == channel_id {
+                        info!("{} joined queue voice channel {}", user_name, channel_id);
                         if group.games.is_empty() { group.create_game(); }
                         
                         // Extract immutable data before mutable iteration
@@ -344,7 +377,7 @@ impl EventHandler for Handler {
                         if player_exists {
                             error!("{} is already in the game", user_name);
                         } else {
-                            let mut should_update = false;
+                            let mut player_added = false;
                             
                             for game in group.games.iter_mut() {
                                 if game.is_active() {
@@ -353,16 +386,18 @@ impl EventHandler for Handler {
                                 }
                                 game.pool.push(GamePlayer::add(user_id));
                                 info!("Added {} to game. Pool size: {}", user_name, game.pool.len());
+                                player_added = true;
                                 if game.player_count() >= 8 {
-                                    should_update = true;
-                                    info!("Game ready notification prepared: dashboard={}, players={}", dashboard_channel, game.player_count());
+                                    info!("Game ready: dashboard={}, players={}", dashboard_channel, game.player_count());
                                 }
                                 break; // Player added to non-active game, stop searching
                             }
                             
-                            // Publish dashboard after mutable iteration completes
-                            if should_update {
-                                group.dash_update(&ctx).await;
+                            // Update dashboard after any player joins
+                            if player_added {
+                                if let Err(e) = group.dash_update(&ctx).await {
+                                    error!("Failed to update dashboard: {}", e);
+                                }
                             }
                         }
                     }

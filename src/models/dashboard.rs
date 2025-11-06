@@ -200,39 +200,22 @@ impl Group {
             let quota = self.quota as usize;
 
             desc.push_str(&format!(
-                "**📋 Current Queue ({}/{})**\n",
+                "**Current Queue ({}/{}):**\n",
                 queue_players, quota
             ));
 
-            match queue_players.cmp(&quota) {
-                std::cmp::Ordering::Less => {
-                    desc.push_str("**Players:**\n");
-
-                    for (i, player) in game_current.pool.iter().enumerate() {
-                        desc.push_str(&format!("{}. <@{}>\n", i + 1, player.player.discord_id));
+            if game_current.pool.is_empty() {
+                desc.push_str("*None*\n");
+            } else {
+                match queue_players.cmp(&quota) {
+                    std::cmp::Ordering::Less => {
+                        for (i, player) in game_current.pool.iter().enumerate() {
+                            desc.push_str(&format!("{}. <@{}>\n", i + 1, player.player.discord_id));
+                        }
                     }
-                    desc.push_str(&format!(
-                        "\n*Need {} more players to start*\n\n",
-                        quota - queue_players
-                    ));
-                }
-                std::cmp::Ordering::Equal => {
-                    desc.push_str("**🔥 READY TO START! 🔥**\n");
+                    std::cmp::Ordering::Equal => {
+                        desc.push_str("**🔥 READY TO START! 🔥**\n");
 
-                    let team_red = &game_current.pool[0..4];
-                    desc.push_str("**🔴 Red:**\n");
-                    list_players!(desc, team_red);
-
-                    let team_blu = &game_current.pool[4..8];
-                    desc.push_str("\n**🔵 Blue:**\n");
-                    list_players!(desc, team_blu);
-
-                    desc.push_str("\n");
-                }
-                std::cmp::Ordering::Greater => {
-                    desc.push_str("**🔥 MATCH READY! 🔥**\n");
-
-                    if queue_players >= 8 {
                         let team_red = &game_current.pool[0..4];
                         desc.push_str("**🔴 Red:**\n");
                         list_players!(desc, team_red);
@@ -240,17 +223,32 @@ impl Group {
                         let team_blu = &game_current.pool[4..8];
                         desc.push_str("\n**🔵 Blue:**\n");
                         list_players!(desc, team_blu);
-                    }
 
-                    let extra_players = &game_current.pool[quota..];
-                    if !extra_players.is_empty() {
-                        desc.push_str(&format!(
-                            "\n**⏳ Queued for Next ({}):**\n",
-                            extra_players.len()
-                        ));
-                        list_players!(desc, extra_players);
+                        desc.push_str("\n");
                     }
-                    desc.push('\n');
+                    std::cmp::Ordering::Greater => {
+                        desc.push_str("**🔥 MATCH READY! 🔥**\n");
+
+                        if queue_players >= 8 {
+                            let team_red = &game_current.pool[0..4];
+                            desc.push_str("**🔴 Red:**\n");
+                            list_players!(desc, team_red);
+
+                            let team_blu = &game_current.pool[4..8];
+                            desc.push_str("\n**🔵 Blue:**\n");
+                            list_players!(desc, team_blu);
+                        }
+
+                        let extra_players = &game_current.pool[quota..];
+                        if !extra_players.is_empty() {
+                            desc.push_str(&format!(
+                                "\n**⏳ Queued for Next ({}):**\n",
+                                extra_players.len()
+                            ));
+                            list_players!(desc, extra_players);
+                        }
+                        desc.push('\n');
+                    }
                 }
             }
         } else {
@@ -278,9 +276,7 @@ impl Group {
         }
 
         embed = embed.description(desc);
-        embed = embed.footer(CEF::new(
-            "Use the buttons below to manage the queue and matches",
-        ));
+        // embed = embed.footer(CEF::new("Use the buttons below to manage the queue and matches"));
 
         let buttons = self.create_dashboard_buttons().await.unwrap();
 
@@ -309,7 +305,7 @@ impl Group {
     async fn dash_join_queue(&mut self,cc: &ComponentContext<'_>) -> Result<()> {
         let user = cc.component.user.id;
 
-        let queue_count = 0;
+        let mut queue_count = 0;
         let mut already_in_queue = false;
 
         // Check if we have idle games
@@ -327,25 +323,22 @@ impl Group {
         };
 
         // Check if player is already in game
-        match self.get_user_game(user) {
-            Ok(_game) => {
-                info!("Player is already in game");
-                already_in_queue = true;
+        if self.get_user_game(user).is_ok() {
+            info!("Player {} is already in a game", user);
+            already_in_queue = true;
+        } else {
+            // Add player to the idle game
+            if let Some(game) = self.games.iter_mut().find(|g| g.status == GameStatus::Idle) {
+                use crate::models::game::GamePlayer;
+                game.pool.push(GamePlayer::add(user));
+                queue_count = game.pool.len();
+                info!("Added player to game. Queue now has {} players", queue_count);
             }
-            Err(_) => {
-                info!("Player is not in game");
-            }
-        };
+        }
 
         if already_in_queue {
             cc.create_bot_reply("You are already in the queue!").await?;
         } else {
-            cc.create_bot_reply(&format!(
-                "✅ Joined the queue! ({}/12 players)",
-                queue_count
-            ))
-            .await?;
-
             // Update dashboard to reflect new state
             match self.dash_update(cc.ctx).await {
                 Ok(_) => {},
@@ -383,10 +376,7 @@ impl Group {
         }
 
         if found {
-            cc.create_bot_reply(&format!("❌ Left the queue! ({}/12 players)", queue_count))
-                .await?;
-
-            // Update dashboard to reflect new state
+            // Update dashboard
             self.dash_update(cc.ctx).await;
         } else {
             cc.create_bot_reply("You are not in the queue!").await?;

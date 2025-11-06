@@ -126,10 +126,10 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         let mut found = false;
         let mut queue_count = 0;
         
-        let group = guild.get_group(channel).unwrap().clone();
+        let group = guild.get_group(channel)?;
         
         // Find and remove player from any game
-        for mut game in group.games {
+        for game in &mut group.games {
             if game.status == GameStatus::Idle {
                 let initial_len = game.pool.len();
                 game.pool.retain(|p| p.player.discord_id != user);
@@ -143,10 +143,13 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         }
         
         if found {
-            cc.create_bot_reply(&format!("❌ Left the queue! ({}/12 players)", queue_count)).await?;
+            cc.create_bot_reply(&format!("❌ Left the queue! ({}/{} players)", queue_count, group.quota)).await?;
         } else {
             cc.create_bot_reply("You are not in the queue!").await?;
         }
+        
+        // Update dashboard
+        group.dash_update(cc.ctx).await?;
         
         return Ok(());
     }
@@ -201,9 +204,12 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     if already_in_queue {
         cc.create_bot_reply("You are already in the queue!").await?;
     } else {
-        cc.create_bot_reply(&format!("✅ Joined the queue! ({}/12 players)", queue_count)).await?;
+        cc.create_bot_reply(&format!("✅ Joined the queue! ({}/{} players)", queue_count, group.quota)).await?;
     }
 
+    // Update dashboard
+    group.dash_update(cc.ctx).await?;
+    
     info!("Command processed successfully, sending response");
     Ok(())
 }
@@ -213,13 +219,13 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Resul
     info!("Processing queue status command");
     let channel = cc.intax.channel_id;
     
-    let (queue_count, queue_list) = {
+    let (queue_count, queue_list, quota) = {
         let group = guild.get_group(channel).unwrap();
         
         let idle_games = group.get_games_by_status(&GameStatus::Idle);
         
         if idle_games.is_empty() {
-            (0, "No active queue found.".to_string())
+            (0, "No active queue found.".to_string(), group.quota)
         } else {
             let game = &idle_games[0];
             let count = game.pool.len();
@@ -232,14 +238,14 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Resul
             } else {
                 "Queue is empty".to_string()
             };
-            (count, list)
+            (count, list, group.quota)
         }
     }; // Manager lock is dropped here
     
     if queue_count == 0 && queue_list == "No active queue found." {
         cc.create_bot_reply("No active queue found.").await?;
     } else {
-        let status_message = format!("**Queue Status ({}/12 players)**\n{}", queue_count, queue_list);
+        let status_message = format!("**Queue Status ({}/{} players)**\n{}", queue_count, quota, queue_list);
         cc.create_bot_reply(&status_message).await?;
     }
     
@@ -301,6 +307,9 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
         red_team_names.join("\n"),
         blu_team_names.join("\n")
     );
+
+    // Update dashboard
+    group.dash_update(cc.ctx).await?;
     
     cc.create_bot_reply(&embed_content).await?;
     Ok(())
@@ -335,6 +344,10 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     
     // Update game status to Push
     target_game.status = GameStatus::Push;
+
+
+    // Update dashboard
+    group.dash_update(cc.ctx).await?;
 
     cc.create_bot_reply("Game accepted! Players moved to team channels.").await?;
 
@@ -379,6 +392,9 @@ pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     } else {
         cc.create_bot_reply("No active game found to end.").await?;
     }
+
+    // Update dashboard
+    group.dash_update(cc.ctx).await?;
 
     Ok(())
 }
