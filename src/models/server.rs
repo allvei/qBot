@@ -11,7 +11,7 @@ use anyhow::{anyhow, Error, Result};
 
 use crate::handlers::player::check_role;
 use crate::models::data::*;
-use crate::models::game::*;
+use crate::models::session::*;
 use crate::models::{CommandContext, ComponentContext};
 
 
@@ -76,7 +76,7 @@ pub struct Group {
     pub quota:         u8,
     pub dashboard_msg: MI,
     pub channels:      Channels,
-    pub games:         Vec<Games>,
+    pub games:         Vec<Session>,
 }
 
 impl Group {
@@ -86,7 +86,7 @@ impl Group {
         timeout:       u16,
         dashboard_msg: MI,
         channels:      Channels,
-        games:         Vec<Games>,
+        games:         Vec<Session>,
     ) -> Self {
         Self {
             group_id,
@@ -98,10 +98,10 @@ impl Group {
         }
     }
 
-    pub fn create_game(&mut self) -> &mut Games {
+    pub fn create_game(&mut self) -> &mut Session {
         info!("Creating new game");
         self.games
-            .push(Games::new(GameStatus::Idle, Vec::new()));
+            .push(Session::new(SessionStatus::Idle, Vec::new()));
         self.games.last_mut().unwrap()
     }
 
@@ -110,7 +110,7 @@ impl Group {
         if let Some(pos) = self
             .games
             .iter()
-            .position(|s| s.status == GameStatus::Idle)
+            .position(|s| s.status == SessionStatus::Idle)
         {
             self.games.remove(pos);
             info!("Game successfully ended and removed");
@@ -123,8 +123,8 @@ impl Group {
 
     pub fn get_games_by_status(
         &mut self,
-        status: &GameStatus,
-    ) -> Vec<&Games> {
+        status: &SessionStatus,
+    ) -> Vec<&Session> {
         self.games
             .iter()
             .filter(|s| s.status == *status)
@@ -134,7 +134,7 @@ impl Group {
     pub fn get_user_game(
         &mut self,
         user_id: UI,
-    ) -> Result<&mut Games> {
+    ) -> Result<&mut Session> {
         match self.games.iter_mut().find(|s| s.pool.iter().any(|p| p.player.discord_id == user_id)) {
             Some(game) => Ok(game),
             None => Err(anyhow!("User not found in any game")),
@@ -179,7 +179,7 @@ impl Group {
     }
 
     pub async fn is_quota_met(&mut self) -> bool {
-        let g = self.get_games_by_status(&GameStatus::Idle);
+        let g = self.get_games_by_status(&SessionStatus::Idle);
         if g.len() > 1 {
             warn!("Multiple idle games found, faulty");
         }

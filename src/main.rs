@@ -7,6 +7,7 @@ mod models;
 use std::env;
 use std::sync::Arc;
 
+use pfpug::*;
 use tokio::sync::Mutex;
 
 use tracing::{error, info, warn};
@@ -28,15 +29,6 @@ use serenity::model::application::{Command, CommandOptionType as COT, Interactio
 use serenity::model::gateway::Ready;
 use serenity::model::voice::VoiceState;
 use serenity::prelude::*;
-
-use database::{Database, migrations::DatabaseMigrations};
-use handlers::{admin, player};
-use models::dashboard::ButtonType;
-use models::command::CommandContext;
-use models::server::*;
-use models::manager::Manager;
-use models::game::{GamePlayer, GameStatus};
-use models::ComponentContext;
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
     CC::new(name.into(),).description(desc.into(),)
@@ -312,7 +304,7 @@ impl EventHandler for Handler {
                     
                     let mut player_removed = false;
                     for game in &mut group.games {
-                        if game.status == GameStatus::Idle {
+                        if game.status == SessionStatus::Idle {
                             let initial_len = game.pool.len();
                             game.pool.retain(|p| p.player.discord_id != user_id);
                             if game.pool.len() < initial_len {
@@ -386,7 +378,7 @@ impl EventHandler for Handler {
                                     info!("Skipping active game, looking for idle game");
                                     continue; // Skip active games, try next
                                 }
-                                game.pool.push(GamePlayer::add(user_id));
+                                game.add_player(user_id);
                                 info!("Added {} to game. Pool size: {}", user_name, game.pool.len());
                                 player_added = true;
                                 if game.pool.len() >= 8 {

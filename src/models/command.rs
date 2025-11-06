@@ -14,17 +14,17 @@ use crate::models::manager::Manager as GameManager;
 
 #[derive(Clone)]
 pub struct CommandContext<'a> {
-    pub ctx: &'a Context,
-    pub intax: &'a CommandInteraction,
-    pub db: Arc<Database>,
+    pub ctx:     &'a Context,
+    pub intax:   &'a CommandInteraction,
+    pub db:      Arc<Database>,
     pub manager: &'a Arc<Mutex<GameManager>>,
 }
 
 #[derive(Clone)]
 pub struct ComponentContext<'a> {
-    pub ctx: &'a Context,
+    pub ctx:       &'a Context,
     pub component: &'a ComponentInteraction,
-    pub db: Arc<Database>,
+    pub db:        Arc<Database>,
 }
 
 impl CommandContext<'_> {

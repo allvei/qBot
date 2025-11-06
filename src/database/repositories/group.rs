@@ -4,7 +4,7 @@ use serenity::all::{ChannelId, MessageId};
 use sqlx::{Row, SqlitePool};
 use tracing::{info, warn, error};
 
-use crate::models::{server::*, game::TeamChannel};
+use crate::models::{server::*, session::TeamChannel};
 use super::Repository;
 
 #[derive(Clone)]

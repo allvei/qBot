@@ -10,12 +10,12 @@ use crate::models::Player;
 
 // Game
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Games {
-    pub status: GameStatus,
+pub struct Session {
+    pub status: SessionStatus,
     pub pool: Vec<GamePlayer>,   
 }
 
-impl Games {
+impl Session {
     pub fn get_user(&self, discord_id: UserId) -> Result<Player> {
         match self.pool.iter().find(|p| p.player.discord_id == discord_id) {
             Some(player) => Ok(player.player),
@@ -29,31 +29,31 @@ impl Games {
     }
 
     pub fn new(
-        status: GameStatus,
+        status: SessionStatus,
         pool: Vec<GamePlayer>,
     ) -> Self {
         Self { status, pool }
     }
 
     pub fn is_active(&self) -> bool {
-        matches!(self.status, GameStatus::Push | GameStatus::Live | GameStatus::Pull)
+        matches!(self.status, SessionStatus::Push | SessionStatus::Live | SessionStatus::Pull)
     }
 
     pub fn is_hot(&self) -> bool {
-        matches!(self.status, GameStatus::Hot)
+        matches!(self.status, SessionStatus::Hot)
     }
 
     pub fn is_idle(&self) -> bool {
-        matches!(self.status, GameStatus::Idle)
+        matches!(self.status, SessionStatus::Idle)
     }
 
     pub fn idle(&mut self) {
-        self.status = GameStatus::Idle;
+        self.status = SessionStatus::Idle;
     }
 
     pub fn hot(&mut self) -> CE {
         info!("Game is HOT with {} players", self.pool.len());
-        self.status = GameStatus::Hot;
+        self.status = SessionStatus::Hot;
         // Create an embed message for the game ready notification
         
         CE::new().title("GAME READY!")
@@ -62,20 +62,20 @@ impl Games {
     }
 
     pub fn push(&mut self) {
-        self.status = GameStatus::Push;
+        self.status = SessionStatus::Push;
     }
 
     pub fn live(&mut self) {
-        self.status = GameStatus::Live;
+        self.status = SessionStatus::Live;
     }
 
     pub fn pull(&mut self) {
-        self.status = GameStatus::Pull;
+        self.status = SessionStatus::Pull;
     }
     
     pub fn empty() -> Self {
         Self {
-            status: GameStatus::Idle,
+            status: SessionStatus::Idle,
             pool: Vec::new(),
         }
     }
@@ -83,7 +83,7 @@ impl Games {
 
 // GameStatus
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub enum GameStatus {
+pub enum SessionStatus {
     Idle, // Waiting for enough players to join
     Hot,  // Waiting for runners to start the game
     Push, // Moving players to the team channels

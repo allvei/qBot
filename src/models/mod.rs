@@ -6,7 +6,7 @@ pub mod manager;
 pub mod player;
 pub mod server;
 pub mod setup_state;
-pub mod game;
+pub mod session;
 
 pub use dashboard::*;
 pub use command::*;
@@ -14,3 +14,5 @@ pub use data::*;
 pub use pug::*;
 pub use player::*;
 pub use server::*;
+pub use session::*;
+pub use manager::*;

@@ -8,7 +8,6 @@ use sqlx::SqlitePool;
 use tracing::info;
 
 use crate::models::*;
-use crate::models::server::*;
 use repositories::{UserRepository, GroupRepository, ConfigRepository};
 use migrations::DatabaseMigrations;
 

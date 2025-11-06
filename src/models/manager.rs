@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use serenity::all::{Cache, GuildId};
 use tracing::info;
 
-use crate::models::game::*;
+use crate::models::session::*;
 use crate::models::server::*;
 use serenity::all::ChannelId;
 
@@ -85,7 +85,7 @@ impl Manager {
         for server in &mut self.servers {
             for group in &mut server.groups {
                 group.games.retain(|game| {
-                    !(game.status == GameStatus::Idle && game.pool.is_empty())
+                    !(game.status == SessionStatus::Idle && game.pool.is_empty())
                 });
             }
         }

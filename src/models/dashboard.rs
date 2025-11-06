@@ -2,7 +2,7 @@ use anyhow::{anyhow,Error, Result};
 use serenity::all::{ButtonStyle, ChannelId as CI, Context, CreateActionRow, CreateButton, CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM, EditMessage, Message, Reaction};
 use tracing::{error, info};
 
-use crate::{models::{game::{GameStatus, Games}, server::Group}, ComponentContext};
+use crate::{models::{session::{SessionStatus, Session}, server::Group}, ComponentContext};
 
 macro_rules! list_players {
     ($desc:ident, $team:ident) => {
@@ -185,7 +185,7 @@ impl Group {
         let mut desc = String::new();
         
         let quota = self.quota as usize;
-        let games_idle: Vec<&Games> = self.get_games_by_status(&GameStatus::Idle);
+        let games_idle: Vec<&Session> = self.get_games_by_status(&SessionStatus::Idle);
         if let Some(game_current) = games_idle.first() {
             let queue_players = game_current.pool.len();
             
@@ -239,7 +239,7 @@ impl Group {
             desc.push_str("**📋 Queue Status**\n*No active games. Join the queue to get started!*\n\n");
         }
 
-        let games_hot:  Vec<&Games> = self.get_games_by_status(&GameStatus::Hot);
+        let games_hot:  Vec<&Session> = self.get_games_by_status(&SessionStatus::Hot);
         // Show hot games (waiting to start)
         if !games_hot.is_empty() {
             desc.push_str("**🔥 Ready games:**\n");
@@ -249,7 +249,7 @@ impl Group {
             desc.push('\n');
         }
 
-        let games_live: Vec<&Games> = self.get_games_by_status(&GameStatus::Live);
+        let games_live: Vec<&Session> = self.get_games_by_status(&SessionStatus::Live);
         // Show live matches
         if !games_live.is_empty() {
             desc.push_str("**⚡ Live Matches:**\n");
@@ -292,7 +292,7 @@ impl Group {
         let mut already_in_queue = false;
 
         // Check if we have idle games
-        match self.get_games_by_status(&GameStatus::Idle).len() {
+        match self.get_games_by_status(&SessionStatus::Idle).len() {
             0 => {
                 info!("No idle games found, creating a new game");
                 self.create_game();
@@ -311,9 +311,8 @@ impl Group {
             already_in_queue = true;
         } else {
             // Add player to the idle game
-            if let Some(game) = self.games.iter_mut().find(|g| g.status == GameStatus::Idle) {
-                use crate::models::game::GamePlayer;
-                game.pool.push(GamePlayer::add(user));
+            if let Some(game) = self.games.iter_mut().find(|g| g.status == SessionStatus::Idle) {
+                game.add_player(user);
                 info!("Added player to game. Queue now has {} players", game.pool.len());
             }
         }
@@ -341,7 +340,7 @@ impl Group {
 
         // Find and remove player from any game
         for game in &mut self.games {
-            if game.status == GameStatus::Idle {
+            if game.status == SessionStatus::Idle {
                 let initial_len = game.pool.len();
                 game.pool.retain(|p| p.player.discord_id != user);
                 if game.pool.len() < initial_len {
@@ -368,7 +367,7 @@ impl Group {
         let mut shuffled = false;
 
         // Find the game to shuffle
-        if let Some(game) = self.games.iter_mut().find(|s| s.status == GameStatus::Idle && s.pool.len() >= 8)
+        if let Some(game) = self.games.iter_mut().find(|s| s.status == SessionStatus::Idle && s.pool.len() >= 8)
         {
             // Shuffle the players using rand crate
             use rand::seq::SliceRandom;
@@ -395,10 +394,10 @@ impl Group {
 
         // Find the game to start
         if let Some(game) = self.games.iter_mut()
-            .find(|s| s.status == GameStatus::Idle && s.pool.len() >= 8)
+            .find(|s| s.status == SessionStatus::Idle && s.pool.len() >= 8)
         {
             // Change game status to Hot (ready to start)
-            game.status   = GameStatus::Hot;
+            game.status   = SessionStatus::Hot;
             match_started = true;
             info!("Match started for game with {} players",game.pool.len());
         }
@@ -421,10 +420,10 @@ impl Group {
 
         // Find active games to end
         for game in &mut self.games {
-            if game.status == GameStatus::Hot || game.status == GameStatus::Live {
+            if game.status == SessionStatus::Hot || game.status == SessionStatus::Live {
                 // Clear the game and reset to idle
                 game.pool.clear();
-                game.status = GameStatus::Idle;
+                game.status = SessionStatus::Idle;
                 match_ended = true;
                 info!("Match ended and game reset");
                 break;
