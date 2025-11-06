@@ -2,32 +2,15 @@
 
 use anyhow::{anyhow, Result};
 use serenity::all::{
-    ChannelId                        as CI,
-    CreateInteractionResponseMessage,
-    ChannelType,
-    ComponentInteraction,
-    ComponentInteractionDataKind,
-    Context,
-    CreateActionRow,
-    CreateEmbed                      as CE,
-    CreateInteractionResponse,
-    CreateInteractionResponse        as CIR,
-    CreateInteractionResponseMessage as CIRM,
-    CreateMessage,
-    CreateSelectMenu,
-    CreateSelectMenuKind,
-    CreateSelectMenuOption,
-    GuildId,
-    PartialGuild,
-    RoleId,
-    UserId,
+    ChannelId as CI, ChannelType, ComponentInteraction, ComponentInteractionDataKind,
+    Context, CreateActionRow, CreateEmbed as CE, CreateInteractionResponse as CIR,
+    CreateInteractionResponseMessage as CIRM, CreateMessage, CreateSelectMenu,
+    CreateSelectMenuKind, CreateSelectMenuOption, GuildId, PartialGuild, RoleId, UserId,
 };
-use tracing::{info, error};
-use crate::models::{server::Server};
-use crate::models::setup_state::SETUP_STATE;
-use crate::models::types::{CommandContext as CC};
-use crate::models::server::Role;
+use tracing::{error, info};
+
 use crate::handlers::player::check_role;
+use crate::models::{CommandContext as CC, Role, Server, SETUP_STATE};
 
 /// `/config`
 ///
@@ -409,8 +392,8 @@ async fn handle_dashboard_selection(ctx: &Context, interaction: &ComponentIntera
     
     let action_row = CreateActionRow::SelectMenu(select_menu);
     
-    let response = CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new()
+    let response = CIR::UpdateMessage(
+        CIRM::new()
             .embed(embed)
             .components(vec![action_row])
     );
@@ -449,8 +432,8 @@ async fn handle_queue_selection(ctx: &Context, interaction: &ComponentInteractio
     
     let action_row = CreateActionRow::SelectMenu(select_menu);
     
-    let response = CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new()
+    let response = CIR::UpdateMessage(
+        CIRM::new()
             .embed(embed)
             .components(vec![action_row])
     );
@@ -489,8 +472,8 @@ async fn handle_red_selection(ctx: &Context, interaction: &ComponentInteraction,
     
     let action_row = CreateActionRow::SelectMenu(select_menu);
     
-    let response = CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new()
+    let response = CIR::UpdateMessage(
+        CIRM::new()
             .embed(embed)
             .components(vec![action_row])
     );
@@ -529,8 +512,8 @@ async fn handle_blue_selection(ctx: &Context, interaction: &ComponentInteraction
     
     let action_row = CreateActionRow::SelectMenu(select_menu);
     
-    let response = CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new()
+    let response = CIR::UpdateMessage(
+        CIRM::new()
             .embed(embed)
             .components(vec![action_row])
     );
@@ -569,8 +552,8 @@ async fn handle_runner_selection(ctx: &Context, interaction: &ComponentInteracti
     
     let action_row = CreateActionRow::SelectMenu(select_menu);
     
-    let response = CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new()
+    let response = CIR::UpdateMessage(
+        CIRM::new()
             .embed(embed)
             .components(vec![action_row])
     );
@@ -597,8 +580,8 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                 .description("Configuration is incomplete. Please restart the setup process.")
                 .color(0xff0000);
             
-            let response = CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
+            let response = CIR::UpdateMessage(
+                CIRM::new()
                     .embed(error_embed)
                     .components(vec![])
             );
@@ -630,8 +613,8 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                 .description(format!("Failed to create dashboard message: {}", e))
                 .color(0xff0000);
             
-            let response = CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
+            let response = CIR::UpdateMessage(
+                CIRM::new()
                     .embed(error_embed)
                     .components(vec![])
             );
@@ -675,8 +658,8 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                 ))
                 .color(0x00ff00);
             
-            let response = CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
+            let response = CIR::UpdateMessage(
+                CIRM::new()
                     .embed(success_embed)
                     .components(vec![]) // Remove components
             );
@@ -689,8 +672,8 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                 .description(format!("Failed to save configuration: {}", e))
                 .color(0xff0000);
             
-            let response = CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
+            let response = CIR::UpdateMessage(
+                CIRM::new()
                     .embed(error_embed)
                     .components(vec![])
             );
@@ -734,8 +717,8 @@ async fn handle_init_queue_selection(ctx: &Context, interaction: &ComponentInter
     
     let action_row = CreateActionRow::SelectMenu(select_menu);
     
-    let response = CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new()
+    let response = CIR::UpdateMessage(
+        CIRM::new()
             .embed(embed)
             .components(vec![action_row])
     );
@@ -774,8 +757,8 @@ async fn handle_init_queue_vc_selection(ctx: &Context, interaction: &ComponentIn
     
     let action_row = CreateActionRow::SelectMenu(select_menu);
     
-    let response = CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new()
+    let response = CIR::UpdateMessage(
+        CIRM::new()
             .embed(embed)
             .components(vec![action_row])
     );
@@ -814,8 +797,8 @@ async fn handle_init_red_selection(ctx: &Context, interaction: &ComponentInterac
     
     let action_row = CreateActionRow::SelectMenu(select_menu);
     
-    let response = CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new()
+    let response = CIR::UpdateMessage(
+        CIRM::new()
             .embed(embed)
             .components(vec![action_row])
     );
@@ -847,8 +830,8 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
                 .description("Configuration is incomplete. Please restart the setup process.")
                 .color(0xff0000);
             
-            let response = CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
+            let response = CIR::UpdateMessage(
+                CIRM::new()
                     .embed(error_embed)
                     .components(vec![])
             );
@@ -882,8 +865,8 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
                 .description(format!("Failed to create group configuration: {}", e))
                 .color(0xff0000);
             
-            let response = CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
+            let response = CIR::UpdateMessage(
+                CIRM::new()
                     .embed(error_embed)
                     .components(vec![])
             );
@@ -901,8 +884,8 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
             .description(format!("Failed to create dashboard message: {}", e))
             .color(0xff0000);
         
-        let response = CreateInteractionResponse::UpdateMessage(
-            CreateInteractionResponseMessage::new()
+        let response = CIR::UpdateMessage(
+            CIRM::new()
                 .embed(error_embed)
                 .components(vec![])
         );
@@ -942,8 +925,8 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
         ))
         .color(0x00ff00);
     
-    let response = CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new()
+    let response = CIR::UpdateMessage(
+        CIRM::new()
             .embed(success_embed)
             .components(vec![]) // Remove components
     );

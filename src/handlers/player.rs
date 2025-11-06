@@ -3,16 +3,14 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use rand::seq::SliceRandom;
-use serenity::all::{
-    Context,
-    EditMember,
-    GuildId,
-};
+use serenity::all::{Context, EditMember, GuildId};
+
 use tracing::{info, warn};
+
 use crate::Database;
-use crate::models::server::*;
-use crate::models::session::*;
-use crate::models::types::{CommandContext};
+use crate::models::{
+    CommandContext, GamePlayer, Group, Role, Roles, Server, Session, SessionStatus, Team,
+};
 
 /// Checks if a user has the specified role.
 ///

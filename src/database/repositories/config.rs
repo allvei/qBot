@@ -1,11 +1,12 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use sqlx::{Row, SqlitePool};
-use std::collections::HashMap;
-use tracing::{info, error};
+use tracing::{error, info};
 
-use crate::models::constants::ConfigFormat;
 use super::Repository;
+use crate::models::ConfigFormat;
 
 #[derive(Clone)]
 pub struct ConfigRepository {

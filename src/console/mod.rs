@@ -1,12 +1,13 @@
 use std::io::{self, Write};
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use serenity::prelude::Context;
-use sqlx::{SqlitePool, Row};
-use tracing::{info, error};
 
-use crate::models::manager::Manager;
-use crate::database::repositories::GroupRepository;
+use serenity::prelude::Context;
+use sqlx::{Row, SqlitePool};
+use tokio::sync::Mutex;
+use tracing::{error, info};
+
+use pfpug::database::repositories::GroupRepository;
+use pfpug::models::Manager;
 
 pub struct ConsoleHandler {
     manager: Arc<Mutex<Manager>>,

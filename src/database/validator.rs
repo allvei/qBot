@@ -1,6 +1,6 @@
 use anyhow::Result;
 use sqlx::SqlitePool;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 use super::migrations::DatabaseMigrations;
 use super::repositories::GroupRepository;

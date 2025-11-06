@@ -1,22 +1,20 @@
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use serenity::all::{
-    CommandInteraction,
-    ComponentInteraction,
-    Context,
-    CreateInteractionResponse as CIR,
-    CreateInteractionResponseMessage as CIRM,
-    RoleId,
-    UserId,
+    CommandInteraction, ComponentInteraction, Context,
+    CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM,
+    RoleId, UserId,
 };
 use sqlx::prelude::FromRow;
+use tokio::sync::Mutex;
 
 use crate::database::Database;
-use crate::models::manager::Manager as GameManager;
-use crate::models::constants::*;
-use crate::models::server::Role;
+use crate::models::{
+    Manager as GameManager, Role,
+    EU_APPRENTICE_R_ID, EU_BEGINNER_R_ID, EU_GRANDMASTER_R_ID, EU_JOURNEYMAN_R_ID,
+    EU_MASTER_ELITE_R_ID, EU_MASTER_R_ID, EU_NOVICE_R_ID,
+};
 
 // ============================================================================
 // Command Contexts

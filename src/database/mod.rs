@@ -3,13 +3,13 @@ pub mod repositories;
 pub mod validator;
 
 use anyhow::Result;
-use serenity::all::{UserId};
+use serenity::all::UserId;
 use sqlx::SqlitePool;
 use tracing::info;
 
-use crate::models::*;
-use repositories::{UserRepository, GroupRepository, ConfigRepository};
+use crate::models::{FileManager, Group, Player, Server};
 use migrations::DatabaseMigrations;
+use repositories::{ConfigRepository, GroupRepository, UserRepository};
 
 /// Main database interface that orchestrates all repositories
 #[derive(Clone)]

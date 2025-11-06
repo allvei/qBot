@@ -1,11 +1,11 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serenity::all::{ChannelId, MessageId};
 use sqlx::{Row, SqlitePool};
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
-use crate::models::{server::*, session::TeamChannel};
 use super::Repository;
+use crate::models::{Channels, Group, Roles, TeamChannel};
 
 #[derive(Clone)]
 pub struct GroupRepository {

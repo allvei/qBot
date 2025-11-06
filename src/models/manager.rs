@@ -4,12 +4,10 @@
 //! The Manager is responsible for managing multiple servers and their groups/games.
 
 use anyhow::{anyhow, Result};
-use serenity::all::{Cache, GuildId};
+use serenity::all::{Cache, ChannelId, GuildId};
 use tracing::info;
 
-use crate::models::session::*;
-use crate::models::server::*;
-use serenity::all::ChannelId;
+use crate::models::{Group, Roles, Server, Session, SessionStatus};
 
 /// Manages multiple servers and their associated groups/games
 #[derive(Default, Clone)]

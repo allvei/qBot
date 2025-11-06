@@ -4,29 +4,25 @@ mod console;
 use std::env;
 use std::sync::Arc;
 
-use pfpug::*;
-use pfpug::database::migrations::DatabaseMigrations;
-use tokio::sync::Mutex;
-
-use tracing::{error, info, warn};
-
 use anyhow::Result;
-
-use serenity::all::*;
+use serenity::all::{
+    Client, Command, CommandOptionType as COT, Context, EventHandler, Guild, GuildId,
+    GatewayIntents, Interaction, Ready, VoiceState,
+};
+use serenity::prelude::TypeMapKey;
 use serenity::async_trait;
 use serenity::builder::{
-    CreateCommand                    as CC,
-    CreateCommandOption              as CCO,
-    CreateEmbed                      as CE,
-    CreateEmbedFooter                as CEF,
-    CreateInteractionResponse        as CIR,
-    CreateInteractionResponseMessage as CIRM,
-    CreateMessage                    as CM,
+    CreateCommand as CC, CreateCommandOption as CCO, CreateEmbed as CE,
+    CreateEmbedFooter as CEF, CreateInteractionResponse as CIR,
+    CreateInteractionResponseMessage as CIRM, CreateMessage as CM,
 };
-use serenity::model::application::{Command, CommandOptionType as COT, Interaction};
-use serenity::model::gateway::Ready;
-use serenity::model::voice::VoiceState;
-use serenity::prelude::*;
+use tokio::sync::Mutex;
+use tracing::{error, info, warn};
+
+use pfpug::database::migrations::DatabaseMigrations;
+use pfpug::database::repositories::GroupRepository;
+use pfpug::handlers::{admin, player};
+use pfpug::{ButtonType, CommandContext, ComponentContext, Database, Group, Manager, Roles, Server, SessionStatus};
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
     CC::new(name.into(),).description(desc.into(),)
@@ -96,7 +92,7 @@ impl EventHandler for Handler {
                 info!("{} connected successfully!", guild.name);
                 
                 // Load groups from database into manager
-                let group_repo = crate::database::repositories::GroupRepository::new(self.database.pool().clone());
+                let group_repo = GroupRepository::new(self.database.pool().clone());
                 match group_repo.get_groups_for_guild(guild_id).await {
                     Ok(groups) if !groups.is_empty() => {
                         info!("Guild {} has {} group configuration(s)", guild.name, groups.len());
@@ -408,7 +404,7 @@ impl Handler {
         info!("Creating dashboard for guild: {}", guild.name);
         
         // Get all groups for this guild from database
-        let group_repo = crate::database::repositories::GroupRepository::new(self.database.pool().clone());
+        let group_repo = GroupRepository::new(self.database.pool().clone());
         match group_repo.get_groups_for_guild(guild.id.get()).await {
             Ok(groups) => {
                 for mut group in groups {

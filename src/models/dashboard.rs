@@ -1,8 +1,12 @@
-use anyhow::{anyhow,Error, Result};
-use serenity::all::{ButtonStyle, ChannelId as CI, Context, CreateActionRow, CreateButton, CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM, EditMessage, Message, Reaction};
+use anyhow::{anyhow, Error, Result};
+use serenity::all::{
+    ButtonStyle, ChannelId as CI, Context, CreateActionRow, CreateButton,
+    CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM,
+    EditMessage, Message, Reaction,
+};
 use tracing::{error, info};
 
-use crate::{models::{session::{SessionStatus, Session}, server::Group}, ComponentContext};
+use crate::models::{ComponentContext, Group, Session, SessionStatus};
 
 macro_rules! list_players {
     ($desc:ident, $team:ident) => {

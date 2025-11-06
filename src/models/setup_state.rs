@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use serenity::all::{UserId, GuildId};
+
+use serenity::all::{GuildId, UserId};
 
 /// Temporary storage for setup configuration state
 #[derive(Debug, Clone)]

@@ -2,7 +2,9 @@ use std::str::FromStr;
 
 use anyhow::{Error, Result};
 use serde::{Deserialize, Serialize};
-use serenity::all::{ChannelId as CI, CreateEmbed as CE, CreateEmbedFooter as CEF, UserId};
+use serenity::all::{
+    ChannelId as CI, CreateEmbed as CE, CreateEmbedFooter as CEF, UserId,
+};
 use sqlx::FromRow;
 use tracing::info;
 
