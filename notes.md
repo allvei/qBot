@@ -1,40 +1,43 @@
 # Todo
 
-## Currently
+## Testing
+
+- Moving players
+  - Move to team channels
+  - Move to queue channel
+- Shuffle
+- Start match
+- End match
 
 ## Priority
 
 - Reply if conf not generated.
 - Functional dashboard
   - Buttons:
-    - Join queue
-    - Leave queue
     - Shuffle players
     - Start match
     - End match
   - Automatically update to list current players in the queue, if quota met, generate teams and show gen result
   - If over quota, list other players as queued for next game
   - List current matches and their status
+- First come first serve system, person with the longest time spent in queue has position.
+- New team generation algorithm
+- Command to handle roles - ?
+- During setup or group creation, offer to create the group channels.
+
+## Secondary
+
 - New features:
   - Bait command/button
     - cancels current game and removes self from the queue
     - if a player is in the queue with the same or similar elo already, instead of cancelling current game, just sub the player.
-  - substitute command
+  - Substitute command
     - in game command requires 3/4 of the team to agree to get a sub
     - bot sends a ping to request a sub
 - Scheduled add up with options for length and delay.
-- First come first serve system, person with the longest time spent in queue has position.
-- Dashboard with buttons to join/leave queue, along with other common commands as buttons (eg move players)
-- Different elo for different classes
-- New team generation algorithm
-- Linked VC and chat queues
-- Command to handle roles
-- During setup or group creation, offer to create the group channels.
 - 4 team gen
-
-## Secondary
-
-- map pool look trends
+- Different elo for different classes
+- Map pool look trends
 - Add terminal commands:
   - Status
   - List guilds

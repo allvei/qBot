@@ -78,18 +78,18 @@ impl ButtonType {
     pub fn is_setup_button(&self) -> bool {
         matches!(
             self,
-            Self::SetupDashboard
-                | Self::SetupQueue
-                | Self::SetupRed
-                | Self::SetupBlue
-                | Self::SetupRunner
-                | Self::SetupAdmin
-                | Self::InitDashboard
-                | Self::InitQueue
-                | Self::InitQueueVc
-                | Self::InitRed
-                | Self::InitBlue
-                | Self::InitQuota
+            Self::SetupDashboard |
+            Self::SetupQueue     |
+            Self::SetupRed       |
+            Self::SetupBlue      |
+            Self::SetupRunner    |
+            Self::SetupAdmin     |
+            Self::InitDashboard  |
+            Self::InitQueue      |
+            Self::InitQueueVc    |
+            Self::InitRed        |
+            Self::InitBlue       |
+            Self::InitQuota
         )
     }
     
@@ -122,12 +122,13 @@ impl ButtonType {
 }
 
 impl Group {
+    /// Get the dashboard message
     pub async fn dash_get(&self, ctx: &Context) -> Result<Message> {
         let channel = CI::new(self.channels.dashboard.into());
         let message = channel.message(&ctx.http, self.dashboard_msg).await;
         match message {
             Ok(msg) => Ok(msg),
-            Err(e) => Err(anyhow!("Failed to get dashboard message: {}", e)),
+            Err(e)  => Err(anyhow!("Failed to get dashboard message: {}", e)),
         }
     }
 
@@ -135,7 +136,7 @@ impl Group {
     pub async fn create_dashboard_buttons(&self) -> Result<Vec<CreateActionRow>> {
         info!("Creating dashboard buttons for group {}", self.group_id);
         // Check if there's an live game to enable/disable buttons
-        let has_live_game = !self.games.is_empty();
+        let has_live_game  = !self.games.is_empty();
         let has_ready_game = self.games.iter().any(|s| s.pool.len() >= 8);
 
         // Define button configurations - this makes it easy to add/remove buttons
@@ -155,16 +156,10 @@ impl Group {
     }
 
     fn gen_buttons(button_configs: Vec<(&'static str, &'static str, ButtonStyle, bool)>) -> Vec<CreateButton> {
-        button_configs
-            .into_iter()
-            .map(|(action, label, style, disabled)| {
+        button_configs.into_iter().map(|(action, label, style, disabled)| {
                 // Create the button with all specified properties
-                CreateButton::new(action)
-                    .label(label)
-                    .style(style)
-                    .disabled(disabled)
-            })
-            .collect()
+                CreateButton::new(action).label(label).style(style).disabled(disabled)
+            }).collect()
     }
 
     pub async fn has_dashboard(&self, ctx: &Context) -> bool {
@@ -174,8 +169,7 @@ impl Group {
     }
 
     pub async fn dash_publish(&mut self, ctx: &Context, channel: CI) -> Result<(), Error>{
-        let message = self.dash_init().await.unwrap();
-        let msg     = channel.send_message(&ctx.http, message).await;
+        let msg = channel.send_message(&ctx.http, self.dash_init().await.unwrap()).await;
         if let Ok(msg) = msg {
             self.dashboard_msg = msg.id;
             Ok(())
@@ -188,22 +182,15 @@ impl Group {
     /// Builds dashboard embed and components based on current group state
     async fn build_dashboard_content(&mut self) -> Result<(CE, Vec<CreateActionRow>)> {
         let mut embed = CE::new().title("PUG Dashboard");
-
-        let games_idle: Vec<&Games> = self.games.iter().filter(|s| s.status == GameStatus::Idle).collect();
-        let games_hot:  Vec<&Games> = self.games.iter().filter(|s| s.status == GameStatus::Hot) .collect();
-        let games_live: Vec<&Games> = self.games.iter().filter(|s| s.status == GameStatus::Live).collect();
-
         let mut desc = String::new();
-
+        
+        let quota = self.quota as usize;
+        let games_idle: Vec<&Games> = self.get_games_by_status(&GameStatus::Idle);
         if let Some(game_current) = games_idle.first() {
             let queue_players = game_current.pool.len();
-            let quota = self.quota as usize;
-
-            desc.push_str(&format!(
-                "**Current Queue ({}/{}):**\n",
-                queue_players, quota
-            ));
-
+            
+            desc.push_str(&format!("**Current Queue ({}/{}):**\n",queue_players, quota));
+            
             if game_current.pool.is_empty() {
                 desc.push_str("*None*\n");
             } else {
@@ -215,7 +202,7 @@ impl Group {
                     }
                     std::cmp::Ordering::Equal => {
                         desc.push_str("**🔥 READY TO START! 🔥**\n");
-
+                        
                         let team_red = &game_current.pool[0..4];
                         desc.push_str("**🔴 Red:**\n");
                         list_players!(desc, team_red);
@@ -239,12 +226,9 @@ impl Group {
                             list_players!(desc, team_blu);
                         }
 
-                        let extra_players = &game_current.pool[quota..];
+                        let extra_players = &game_current.pool[(quota as usize)..];
                         if !extra_players.is_empty() {
-                            desc.push_str(&format!(
-                                "\n**⏳ Queued for Next ({}):**\n",
-                                extra_players.len()
-                            ));
+                            desc.push_str(&format!("\n**⏳ Queued for Next ({}):**\n",extra_players.len()));
                             list_players!(desc, extra_players);
                         }
                         desc.push('\n');
@@ -252,11 +236,10 @@ impl Group {
                 }
             }
         } else {
-            desc.push_str(
-                "**📋 Queue Status**\n*No active games. Join the queue to get started!*\n\n",
-            );
+            desc.push_str("**📋 Queue Status**\n*No active games. Join the queue to get started!*\n\n");
         }
 
+        let games_hot:  Vec<&Games> = self.get_games_by_status(&GameStatus::Hot);
         // Show hot games (waiting to start)
         if !games_hot.is_empty() {
             desc.push_str("**🔥 Ready games:**\n");
@@ -266,6 +249,7 @@ impl Group {
             desc.push('\n');
         }
 
+        let games_live: Vec<&Games> = self.get_games_by_status(&GameStatus::Live);
         // Show live matches
         if !games_live.is_empty() {
             desc.push_str("**⚡ Live Matches:**\n");
@@ -337,7 +321,7 @@ impl Group {
         }
 
         if already_in_queue {
-            cc.create_bot_reply("You are already in the queue!").await?;
+            cc.create_bot_reply("You are already in the queue!").await;
         } else {
             // Update dashboard to reflect new state
             match self.dash_update(cc.ctx).await {
@@ -366,10 +350,7 @@ impl Group {
                 if game.pool.len() < initial_len {
                     found = true;
                     queue_count = game.pool.len();
-                    info!(
-                        "Removed player from game. Queue now has {} players",
-                        queue_count
-                    );
+                    info!("Removed player from game. Queue now has {} players", queue_count);
                     break;
                 }
             }
@@ -391,32 +372,22 @@ impl Group {
         let mut shuffled = false;
 
         // Find the game to shuffle
-        if let Some(game) = self
-            .games
-            .iter_mut()
-            .find(|s| s.status == GameStatus::Idle && s.pool.len() >= 8)
+        if let Some(game) = self.games.iter_mut().find(|s| s.status == GameStatus::Idle && s.pool.len() >= 8)
         {
             // Shuffle the players using rand crate
             use rand::seq::SliceRandom;
             game.pool.shuffle(&mut rand::rng());
             shuffled = true;
-            info!(
-                "Teams shuffled for game with {} players",
-                game.pool.len()
-            );
+            info!("Teams shuffled for game with {} players",game.pool.len());
         }
 
         if shuffled {
-            cc.create_bot_reply("🔀 Teams shuffled! Check the dashboard for new team assignments.")
-                .await?;
+            cc.create_bot_reply("🔀 Teams shuffled! Check the dashboard for new team assignments.").await?;
 
             // Update dashboard to show shuffled teams
             self.dash_update(cc.ctx).await;
         } else {
-            cc.create_bot_reply(
-                "❌ No game ready for shuffling. Need at least 8 players in queue.",
-            )
-            .await?;
+            cc.create_bot_reply("❌ No game ready for shuffling. Need at least 8 players in queue.").await?;
         }
 
         Ok(())
@@ -427,31 +398,22 @@ impl Group {
         let mut match_started = false;
 
         // Find the game to start
-        if let Some(game) = self
-            .games
-            .iter_mut()
+        if let Some(game) = self.games.iter_mut()
             .find(|s| s.status == GameStatus::Idle && s.pool.len() >= 8)
         {
             // Change game status to Hot (ready to start)
-            game.status = GameStatus::Hot;
+            game.status   = GameStatus::Hot;
             match_started = true;
-            info!(
-                "Match started for game with {} players",
-                game.pool.len()
-            );
+            info!("Match started for game with {} players",game.pool.len());
         }
 
         if match_started {
-            cc.create_bot_reply("🔥 Match started! Teams are now ready to play.")
-                .await?;
+            cc.create_bot_reply("🔥 Match started! Teams are now ready to play.").await?;
 
             // Update dashboard to show match status
             self.dash_update(cc.ctx).await;
         } else {
-            cc.create_bot_reply(
-                "❌ No game ready to start. Need at least 8 players and shuffled teams.",
-            )
-            .await?;
+            cc.create_bot_reply("❌ No game ready to start. Need at least 8 players and shuffled teams.").await?;
         }
 
         Ok(())
@@ -474,10 +436,7 @@ impl Group {
         }
 
         if match_ended {
-            cc.create_bot_reply(
-                "✅ Match ended! Sesh has been reset and is ready for new players.",
-            )
-            .await?;
+            cc.create_bot_reply("✅ Match ended! Sesh has been reset and is ready for new players.").await?;
 
             // Update dashboard to show reset state
             self.dash_update(cc.ctx).await;

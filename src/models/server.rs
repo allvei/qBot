@@ -124,9 +124,9 @@ impl Group {
     pub fn get_games_by_status(
         &mut self,
         status: &GameStatus,
-    ) -> Vec<&mut Games> {
+    ) -> Vec<&Games> {
         self.games
-            .iter_mut()
+            .iter()
             .filter(|s| s.status == *status)
             .collect()
     }

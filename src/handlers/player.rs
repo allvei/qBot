@@ -327,7 +327,9 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     let channel_id = cc.intax.channel_id;
     let group = guild.get_group(channel_id).unwrap();
 
-    match group.get_games_by_status(&GameStatus::Hot).len() {
+    // Check hot game count first
+    let hot_game_count = group.games.iter().filter(|g| g.status == GameStatus::Hot).count();
+    match hot_game_count {
         0 => {
             cc.create_bot_reply("No hot games found in this group.").await?;
             return Ok(());
@@ -336,14 +338,17 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
             info!("Found one existing hot game");
         },
         n => {
-            return Err(anyhow!("Found more than one hot game ({}). This is unexpected. ", n));
+            return Err(anyhow!("Found more than one hot game ({}). This is unexpected.", n));
         },
-    };
-
-    let target_game = &mut group.get_games_by_status(&GameStatus::Hot)[0];
+    }
     
-    // Update game status to Push
-    target_game.status = GameStatus::Push;
+    // Now get mutable access to the hot game
+    let hot_game = group.games
+        .iter_mut()
+        .find(|g| g.status == GameStatus::Hot)
+        .unwrap(); // Safe because we verified count above
+    
+    hot_game.push();
 
 
     // Update dashboard
