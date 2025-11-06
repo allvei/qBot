@@ -46,10 +46,9 @@ impl UserRepository {
     }
 
     fn get_player(result: sqlx::sqlite::SqliteRow) -> Player {
-        let p = Player::add(result.get::<u64, _>        ("discord_id").into(),
-                            result.get::<Option<i64>, _>("steam_id")  .map(|id| id as u64)
-                           );
-        p
+        Player::add(result.get::<u64, _>        ("discord_id").into(),
+                    result.get::<Option<i64>, _>("steam_id")  .map(|id| id as u64)
+                   )
     }
 
     pub async fn update_steam_id(&self, discord_id: UserId, steam_id: Option<u64>) -> Result<Player> {

@@ -6,9 +6,13 @@ mod models;
 
 use std::env;
 use std::sync::Arc;
+
 use tokio::sync::Mutex;
 
+use tracing::{error, info, warn};
+
 use anyhow::Result;
+
 use serenity::all::*;
 use serenity::async_trait;
 use serenity::builder::{
@@ -24,7 +28,6 @@ use serenity::model::application::{Command, CommandOptionType as COT, Interactio
 use serenity::model::gateway::Ready;
 use serenity::model::voice::VoiceState;
 use serenity::prelude::*;
-use tracing::{error, info, warn};
 
 use database::{Database, migrations::DatabaseMigrations};
 use handlers::{admin, player};
@@ -32,9 +35,8 @@ use models::dashboard::ButtonType;
 use models::command::CommandContext;
 use models::server::*;
 use models::manager::Manager;
-
-use crate::models::game::{GamePlayer, GameStatus};
-use crate::models::ComponentContext;
+use models::game::{GamePlayer, GameStatus};
+use models::ComponentContext;
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
     CC::new(name.into(),).description(desc.into(),)
@@ -387,8 +389,8 @@ impl EventHandler for Handler {
                                 game.pool.push(GamePlayer::add(user_id));
                                 info!("Added {} to game. Pool size: {}", user_name, game.pool.len());
                                 player_added = true;
-                                if game.player_count() >= 8 {
-                                    info!("Game ready: dashboard={}, players={}", dashboard_channel, game.player_count());
+                                if game.pool.len() >= 8 {
+                                    info!("Game ready: dashboard={}, players={}", dashboard_channel, game.pool.len());
                                 }
                                 break; // Player added to non-active game, stop searching
                             }

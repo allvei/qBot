@@ -67,11 +67,11 @@ async fn move_players_to_queue_channel(game: Games, group: Group, guild_id: Guil
 
 /// Moves players to their respective team channels.
 ///
-/// * `ctx`        - Ref to the Serenity context.
-/// * `db`         - Ref to the database.
-/// * `group`      - The group containing team channel information.
-/// * `game`    - The game with assigned teams.
-/// * `guild_id`   - The ID of the guild where the game is taking place.
+/// * `ctx`      - Ref to the Serenity context.
+/// * `db`       - Ref to the database.
+/// * `group`    - The group containing team channel information.
+/// * `game`     - The game with assigned teams.
+/// * `guild_id` - The ID of the guild where the game is taking place.
 async fn move_players_to_team_channels(
     ctx:      &Context,
     _db:      &Arc<Database>,

@@ -55,11 +55,10 @@ impl Games {
         info!("Game is HOT with {} players", self.pool.len());
         self.status = GameStatus::Hot;
         // Create an embed message for the game ready notification
-        let embed = CE::new()
-            .title("GAME READY!")
-            .description(format!("A match is ready to start with {} players!", self.pool.len()))
-            .footer(CEF::new("Awaiting team generation..."));
-        embed
+        
+        CE::new().title("GAME READY!")
+                 .description(format!("A match is ready to start with {} players!", self.pool.len()))
+                 .footer(CEF::new("Awaiting team generation..."))
     }
 
     pub fn push(&mut self) {

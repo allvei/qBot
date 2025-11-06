@@ -1,7 +1,7 @@
 // CHECK ME
 #![allow(clippy::missing_docs_in_private_items)]
 
-// Library crate for testable modules
+// Library crate for modules
 pub mod database;
 pub mod error;
 pub mod handlers;

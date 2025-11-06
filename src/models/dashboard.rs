@@ -211,7 +211,7 @@ impl Group {
                         desc.push_str("\n**🔵 Blue:**\n");
                         list_players!(desc, team_blu);
 
-                        desc.push_str("\n");
+                        desc.push('\n');
                     }
                     std::cmp::Ordering::Greater => {
                         desc.push_str("**🔥 MATCH READY! 🔥**\n");
@@ -226,7 +226,7 @@ impl Group {
                             list_players!(desc, team_blu);
                         }
 
-                        let extra_players = &game_current.pool[(quota as usize)..];
+                        let extra_players = &game_current.pool[quota..];
                         if !extra_players.is_empty() {
                             desc.push_str(&format!("\n**⏳ Queued for Next ({}):**\n",extra_players.len()));
                             list_players!(desc, extra_players);
@@ -289,7 +289,6 @@ impl Group {
     async fn dash_join_queue(&mut self,cc: &ComponentContext<'_>) -> Result<()> {
         let user = cc.component.user.id;
 
-        let mut queue_count = 0;
         let mut already_in_queue = false;
 
         // Check if we have idle games
@@ -315,8 +314,7 @@ impl Group {
             if let Some(game) = self.games.iter_mut().find(|g| g.status == GameStatus::Idle) {
                 use crate::models::game::GamePlayer;
                 game.pool.push(GamePlayer::add(user));
-                queue_count = game.pool.len();
-                info!("Added player to game. Queue now has {} players", queue_count);
+                info!("Added player to game. Queue now has {} players", game.pool.len());
             }
         }
 
@@ -340,7 +338,6 @@ impl Group {
         let user    = cc.component.user.id;
 
         let mut found = false;
-        let mut queue_count = 0;
 
         // Find and remove player from any game
         for game in &mut self.games {
@@ -349,8 +346,7 @@ impl Group {
                 game.pool.retain(|p| p.player.discord_id != user);
                 if game.pool.len() < initial_len {
                     found = true;
-                    queue_count = game.pool.len();
-                    info!("Removed player from game. Queue now has {} players", queue_count);
+                    info!("Removed player from game. Queue now has {} players", game.pool.len());
                     break;
                 }
             }
