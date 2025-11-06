@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serenity::all::{parse_user_mention, ButtonStyle, Context, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter as CEF, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateMessage as CM, Message};
 use serenity::all::{GuildId as GI, RoleId as RI, ChannelId as CI, MessageId as MI, UserId as UI};
-use tracing::info;
+use tracing::{info, warn};
 use anyhow::{anyhow, Error, Result};
 
 use crate::handlers::player::check_role;
@@ -176,6 +176,27 @@ impl Group {
         let game_player    = group  .get_player(user_id).unwrap();
         game_player.buff();
         Ok(())
+    }
+
+    pub async fn is_quota_met(&mut self) -> bool {
+        let g = self.get_games_by_status(&GameStatus::Idle);
+        if g.len() > 1 {
+            warn!("Multiple idle games found, faulty");
+        }
+        let l = g[0].pool.len();
+        let q = self.quota as usize;
+        match l.cmp(&q) {
+            std::cmp::Ordering::Less => {
+                false
+            },
+            std::cmp::Ordering::Equal => {
+                true
+            },
+            std::cmp::Ordering::Greater => {
+                warn!("Quota met late, more players than quota");
+                true
+            },
+        }
     }
 }
 
