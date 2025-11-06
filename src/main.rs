@@ -1,13 +1,11 @@
 // CHECK ME
 mod console;
-mod database;
-mod handlers;
-mod models;
 
 use std::env;
 use std::sync::Arc;
 
 use pfpug::*;
+use pfpug::database::migrations::DatabaseMigrations;
 use tokio::sync::Mutex;
 
 use tracing::{error, info, warn};

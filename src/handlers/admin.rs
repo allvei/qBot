@@ -25,7 +25,7 @@ use serenity::all::{
 use tracing::{info, error};
 use crate::models::{server::Server};
 use crate::models::setup_state::SETUP_STATE;
-use crate::models::command::{CommandContext as CC};
+use crate::models::types::{CommandContext as CC};
 use crate::models::server::Role;
 use crate::handlers::player::check_role;
 

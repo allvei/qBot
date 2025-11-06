@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use crate::Database;
 use crate::models::server::*;
 use crate::models::session::*;
-use crate::models::command::{CommandContext};
+use crate::models::types::{CommandContext};
 
 /// Checks if a user has the specified role.
 ///

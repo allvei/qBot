@@ -4,7 +4,7 @@ use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use tracing::{info, error};
 
-use crate::models::data::ConfigFormat;
+use crate::models::constants::ConfigFormat;
 use super::Repository;
 
 #[derive(Clone)]
