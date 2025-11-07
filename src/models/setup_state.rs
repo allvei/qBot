@@ -6,15 +6,15 @@ use serenity::all::{GuildId, UserId};
 /// Temporary storage for setup configuration state
 #[derive(Debug, Clone)]
 pub struct SetupConfig {
-    pub guild_id: u64,
+    pub guild_id:          u64,
     pub dashboard_channel: Option<u64>,
-    pub dashboard_msg_id: Option<u64>,
-    pub queue_channel: Option<u64>,
-    pub queue_vc_channel: Option<u64>,
-    pub red_channel: Option<u64>,
-    pub blue_channel: Option<u64>,
-    pub runner_role: Option<u64>,
-    pub admin_role: Option<u64>,
+    pub dashboard_msg_id:  Option<u64>,
+    pub queue_channel:     Option<u64>,
+    pub queue_vc_channel:  Option<u64>,
+    pub red_channel:       Option<u64>,
+    pub blue_channel:      Option<u64>,
+    pub runner_role:       Option<u64>,
+    pub admin_role:        Option<u64>,
 }
 
 impl SetupConfig {
