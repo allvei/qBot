@@ -308,9 +308,9 @@ impl Group {
             in_sesh = true;
         } else {
             // Add player to the idle game
-            if let Some(game) = self.sessions.iter_mut().find(|g| g.status == SessionStatus::Idle) {
-                game.add_player(user);
-                info!("Added player to game. Queue now has {} players", game.pool.len());
+            if let Some(session) = self.sessions.iter_mut().find(|s| s.status == SessionStatus::Idle) {
+                session.add_player(user);
+                info!("Added player to session. Queue now has {} players", session.pool.len());
             }
         }
 

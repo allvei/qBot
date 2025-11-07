@@ -22,23 +22,23 @@ impl SetupConfig {
         Self {
             guild_id,
             dashboard_channel: None,
-            dashboard_msg_id: None,
-            queue_channel: None,
-            queue_vc_channel: None,
-            red_channel: None,
-            blue_channel: None,
-            runner_role: None,
-            admin_role: None,
+            dashboard_msg_id:  None,
+            queue_channel:     None,
+            queue_vc_channel:  None,
+            red_channel:       None,
+            blue_channel:      None,
+            runner_role:       None,
+            admin_role:        None,
         }
     }
 
     pub fn is_complete(&self) -> bool {
         self.dashboard_channel.is_some() &&
-        self.queue_channel.is_some() &&
-        self.red_channel.is_some() &&
-        self.blue_channel.is_some() &&
-        self.runner_role.is_some() &&
-        self.admin_role.is_some()
+        self.queue_channel    .is_some() &&
+        self.red_channel      .is_some() &&
+        self.blue_channel     .is_some() &&
+        self.runner_role      .is_some() &&
+        self.admin_role       .is_some()
     }
 }
 

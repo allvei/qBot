@@ -190,11 +190,11 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         already_in_queue = true;
     } else {
         // Add player to the game
-        if let Some(game) = group.sessions.last_mut() {
-            if game.status == SessionStatus::Idle {
-                game.add_player(player.discord_id);
-                queue_count = game.pool.len();
-                info!("Added player to game. Queue now has {} players", queue_count);
+        if let Some(session) = group.sessions.last_mut() {
+            if session.status == SessionStatus::Idle {
+                session.add_player(player.discord_id);
+                queue_count = session.pool.len();
+                info!("Added player to session. Queue now has {} players", queue_count);
             }
         }
     }

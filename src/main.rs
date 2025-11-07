@@ -367,25 +367,23 @@ impl EventHandler for Handler {
                         } else {
                             let mut player_added = false;
                             
-                            for game in group.sessions.iter_mut() {
-                                if game.is_active() {
-                                    info!("Skipping active game, looking for idle game");
-                                    continue; // Skip active games, try next
+                            for session in group.sessions.iter_mut() {
+                                if session.is_active() {
+                                    info!("Skipping active session, looking for idle session");
+                                    continue; // Skip active sessions, try next
                                 }
-                                game.add_player(user_id);
-                                info!("Added {} to game. Pool size: {}", user_name, game.pool.len());
+                                session.add_player(user_id);
+                                info!("Added {} to session. Pool size: {}", user_name, session.pool.len());
                                 player_added = true;
-                                if game.pool.len() >= 8 {
-                                    info!("Game ready: dashboard={}, players={}", dashboard_channel, game.pool.len());
+                                if session.pool.len() >= 8 {
+                                    info!("Session ready: dashboard={}, players={}", dashboard_channel, session.pool.len());
                                 }
-                                break; // Player added to non-active game, stop searching
+                                break; // Player added to non-active session, stop searching
                             }
                             
                             // Update dashboard after any player joins
                             if player_added {
-                                if let Err(e) = group.dash_update(&ctx).await {
-                                    error!("Failed to update dashboard: {}", e);
-                                }
+                                if let Err(e) = group.dash_update(&ctx).await;
                             }
                         }
                     }
