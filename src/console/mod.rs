@@ -134,8 +134,8 @@ impl ConsoleHandler {
 
         for server in &manager.servers {
             for group in &server.groups {
-                total_games += group.games.len();
-                for game in &group.games {
+                total_games += group.sessions.len();
+                for game in &group.sessions {
                     total_players += game.pool.len();
                     if game.is_active() {
                         active_games += 1;
@@ -199,7 +199,7 @@ impl ConsoleHandler {
         let mut game_count = 0;
         for server in &manager.servers {
             for group in &server.groups {
-                for game in group.games.iter() {
+                for game in group.sessions.iter() {
                     game_count += 1;
                     println!("Game {}: Guild {} - Group {} - {} players - Status: {:?}", 
                         game_count, server.guild_id, group.group_id, game.pool.len(), game.status);

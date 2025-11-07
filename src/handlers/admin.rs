@@ -92,19 +92,44 @@ pub async fn cmd_init_group(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
 /// Starts the interactive init_group setup flow with ephemeral messages
 async fn start_init_group_flow(cc: &CC<'_>, dashboard_channel: CI) -> Result<()> {
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    let user_id = cc.intax.user.id;
     let guild = guild_id.to_partial_guild(&cc.ctx.http).await?;
     
-    // Send welcome message
+    // Step 1: Create dashboard message immediately with "loading..." placeholder
+    let loading_embed = CE::new()
+        .title("🎮 PUG Queue Dashboard")
+        .description("⏳ Setting up queue system...")
+        .color(0xffaa00);
+    
+    let dashboard_msg = match dashboard_channel.send_message(&cc.ctx.http, 
+        CreateMessage::new().embed(loading_embed)
+    ).await {
+        Ok(msg) => msg,
+        Err(e) => {
+            let error_response = CIR::Message(
+                CIRM::new()
+                    .content(format!("❌ Failed to create dashboard message: {}", e))
+                    .ephemeral(true)
+            );
+            cc.intax.create_response(&cc.ctx.http, error_response).await?;
+            return Ok(());
+        }
+    };
+    
+    // Store dashboard message ID in setup state
+    SETUP_STATE.update_setup(user_id, guild_id, |config| {
+        config.dashboard_msg_id = Some(dashboard_msg.id.get());
+    });
+    
+    // Send welcome message with next step
     let welcome_embed = CE::new()
-        .title("Group Setup")
+        .title("✅ Dashboard Created")
         .description(format!(
-            "Welcome to the group setup for **{}**!\n\n\
-            This channel (<#{}>) will be used as the **dashboard channel**.\n\n\
-            I'll guide you through configuring the remaining channels step by step.\n\
-            You'll select channels using dropdown menus.\n\n\
-            **Step 1/4: Queue Text Channel**\n\
+            "Dashboard message created in <#{}>\n\n\
+            Now let's configure the remaining channels for **{}**.\n\n\
+            **Step 2/5: Queue Text Channel**\n\
             Select the text channel where players will use queue commands:",
-            guild.name, dashboard_channel.get()
+            dashboard_channel.get(), guild.name
         ))
         .color(0x00ff00);
 
@@ -156,7 +181,7 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
     
     // Check permissions - only runners/admins can create dashboard
     if !check_role(cc, &Role::Runner).await? && !check_role(cc, &Role::Admin).await? {
-        cc.create_bot_reply("Only runners and admins can create the dashboard!").await?;
+        cc.reply("Only runners and admins can create the dashboard!").await?;
         return Ok(());
     }
     
@@ -166,7 +191,7 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
     // Create and send dashboard
     group.dash_publish(cc.ctx, channel).await?;
     
-    cc.create_bot_reply("✅ Dashboard created/updated successfully!").await?;
+    cc.reply("✅ Dashboard created/updated successfully!").await?;
     
     Ok(())
 }
@@ -702,7 +727,7 @@ async fn handle_init_queue_selection(ctx: &Context, interaction: &ComponentInter
         .title("✅ Queue Text Channel Selected")
         .description(format!(
             "Queue text channel: <#{}>\n\n\
-            **Step 2/4: Queue Voice Channel**\n\
+            **Step 3/5: Queue Voice Channel**\n\
             Select the voice channel players will join for the queue:",
             channel_id
         ))
@@ -742,7 +767,7 @@ async fn handle_init_queue_vc_selection(ctx: &Context, interaction: &ComponentIn
         .title("✅ Queue Voice Channel Selected")
         .description(format!(
             "Queue voice channel: <#{}>\n\n\
-            **Step 3/4: Red Team Voice Channel**\n\
+            **Step 4/5: Red Team Voice Channel**\n\
             Select the voice channel for the Red team:",
             channel_id
         ))
@@ -782,7 +807,7 @@ async fn handle_init_red_selection(ctx: &Context, interaction: &ComponentInterac
         .title("✅ Red Team Channel Selected")
         .description(format!(
             "Red team channel: <#{}>\n\n\
-            **Step 4/4: Blue Team Voice Channel**\n\
+            **Step 5/5: Blue Team Voice Channel**\n\
             Select the voice channel for the Blue team:",
             channel_id
         ))
@@ -820,6 +845,7 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
     // Validate all required fields are present
     let config = match config {
         Some(cfg) if cfg.dashboard_channel.is_some() 
+                  && cfg.dashboard_msg_id.is_some()
                   && cfg.queue_channel.is_some() 
                   && cfg.queue_vc_channel.is_some()
                   && cfg.red_channel.is_some() 
@@ -842,23 +868,47 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
     };
     
     let dashboard_channel = config.dashboard_channel.unwrap();
+    let dashboard_msg_id  = config.dashboard_msg_id.unwrap();
     let queue_channel     = config.queue_channel.unwrap();
     let queue_vc_channel  = config.queue_vc_channel.unwrap();
     let red_channel       = config.red_channel.unwrap();
     let blue_channel      = channel_id;
     
-    // Create the group configuration in database with placeholder dashboard message ID
-    let mut group = match db.groups.create_group(
+    // Create the group configuration in database with actual dashboard message ID
+    match db.groups.create_group(
         guild_id.get(),
         dashboard_channel,
-        queue_channel, // queue text channel for chat
-        queue_vc_channel, // queue voice channel
-        0, // placeholder dashboard message ID - will be updated after publishing
+        queue_channel,
+        queue_vc_channel,
+        dashboard_msg_id, // Real dashboard message ID from step 1
         red_channel,
         blue_channel,
         10, // default game quota
     ).await {
-        Ok(group) => group,
+        Ok(group) => {
+            // Update the dashboard message with the actual dashboard content
+            use crate::models::{Group, Channels, TeamChannel};
+            use serenity::all::{ChannelId as CI2, MessageId as MI};
+            
+            let mut temp_group = Group::new(
+                group.group_id,
+                10,
+                120,
+                MI::new(dashboard_msg_id),
+                Channels::new(
+                    CI2::new(queue_channel),
+                    CI2::new(queue_vc_channel),
+                    vec![TeamChannel::new(CI2::new(red_channel), CI2::new(blue_channel))],
+                    CI2::new(dashboard_channel),
+                ),
+                Vec::new(),
+            );
+            
+            // Update the dashboard message to show the proper dashboard UI
+            if let Err(e) = temp_group.dash_update(ctx).await {
+                error!("Failed to update dashboard message: {}", e);
+            }
+        },
         Err(e) => {
             let error_embed = CE::new()
                 .title("❌ Setup Failed")
@@ -874,37 +924,6 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
             interaction.create_response(&ctx.http, response).await?;
             return Ok(());
         }
-    };
-    
-    // Publish the dashboard using the proper dash_publish method
-    let dashboard_channel_id = CI::new(dashboard_channel);
-    if let Err(e) = group.dash_publish(ctx, dashboard_channel_id).await {
-        let error_embed = CE::new()
-            .title("❌ Setup Failed")
-            .description(format!("Failed to create dashboard message: {}", e))
-            .color(0xff0000);
-        
-        let response = CIR::UpdateMessage(
-            CIRM::new()
-                .embed(error_embed)
-                .components(vec![])
-        );
-        
-        interaction.create_response(&ctx.http, response).await?;
-        return Ok(());
-    }
-    
-    // Update the database with the actual dashboard message ID
-    let dashboard_msg_id = group.dashboard_msg.get();
-    if let Err(e) = sqlx::query(
-        "UPDATE groups SET dashboard_msg = ? WHERE guild_id = ? AND dashboard = ?"
-    )
-    .bind(dashboard_msg_id as i64)
-    .bind(guild_id.get() as i64)
-    .bind(dashboard_channel as i64)
-    .execute(db.pool())
-    .await {
-        error!("Failed to update dashboard message ID: {}", e);
     }
     
     // Clean up setup state

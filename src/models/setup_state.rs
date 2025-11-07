@@ -8,6 +8,7 @@ use serenity::all::{GuildId, UserId};
 pub struct SetupConfig {
     pub guild_id: u64,
     pub dashboard_channel: Option<u64>,
+    pub dashboard_msg_id: Option<u64>,
     pub queue_channel: Option<u64>,
     pub queue_vc_channel: Option<u64>,
     pub red_channel: Option<u64>,
@@ -21,6 +22,7 @@ impl SetupConfig {
         Self {
             guild_id,
             dashboard_channel: None,
+            dashboard_msg_id: None,
             queue_channel: None,
             queue_vc_channel: None,
             red_channel: None,

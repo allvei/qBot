@@ -297,7 +297,7 @@ impl EventHandler for Handler {
                     info!("{} left queue voice channel, removing from game", user_name);
                     
                     let mut player_removed = false;
-                    for game in &mut group.games {
+                    for game in &mut group.sessions {
                         if game.status == SessionStatus::Idle {
                             let initial_len = game.pool.len();
                             game.pool.retain(|p| p.player.discord_id != user_id);
@@ -356,7 +356,7 @@ impl EventHandler for Handler {
                 Ok(group) => {
                     if group.channels.queue_vc == channel_id {
                         info!("{} joined queue voice channel {}", user_name, channel_id);
-                        if group.games.is_empty() { group.create_game(); }
+                        if group.sessions.is_empty() { group.create_game(); }
                         
                         // Extract immutable data before mutable iteration
                         let dashboard_channel = group.channels.dashboard;
@@ -367,7 +367,7 @@ impl EventHandler for Handler {
                         } else {
                             let mut player_added = false;
                             
-                            for game in group.games.iter_mut() {
+                            for game in group.sessions.iter_mut() {
                                 if game.is_active() {
                                     info!("Skipping active game, looking for idle game");
                                     continue; // Skip active games, try next
@@ -440,11 +440,11 @@ impl Handler {
         let mut player_mentions = Vec::new();
         
         // Get count from the latest game if available
-        let player_count = if let Some(game) = group.games.last() { game.pool.len() } else { 0 };
+        let player_count = if let Some(game) = group.sessions.last() { game.pool.len() } else { 0 };
         let players_to_mention = if player_count >= 8 { 8 } else { player_count };
 
         // Access players in the latest game if available
-        if let Some(game) = group.games.last() {
+        if let Some(game) = group.sessions.last() {
             for player in &game.pool[..players_to_mention] {
                 player_mentions.push(format!("<@{}>", player.player.discord_id));
             }

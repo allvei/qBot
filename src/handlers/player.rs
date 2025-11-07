@@ -127,7 +127,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         let group = guild.get_group(channel)?;
         
         // Find and remove player from any game
-        for game in &mut group.games {
+        for game in &mut group.sessions {
             if game.status == SessionStatus::Idle {
                 let initial_len = game.pool.len();
                 game.pool.retain(|p| p.player.discord_id != user);
@@ -141,9 +141,9 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         }
         
         if found {
-            cc.create_bot_reply(&format!("❌ Left the queue! ({}/{} players)", queue_count, group.quota)).await?;
+            cc.reply(&format!("❌ Left the queue! ({}/{} players)", queue_count, group.quota)).await?;
         } else {
-            cc.create_bot_reply("You are not in the queue!").await?;
+            cc.reply("You are not in the queue!").await?;
         }
         
         // Update dashboard
@@ -190,7 +190,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         already_in_queue = true;
     } else {
         // Add player to the game
-        if let Some(game) = group.games.last_mut() {
+        if let Some(game) = group.sessions.last_mut() {
             if game.status == SessionStatus::Idle {
                 game.add_player(player.discord_id);
                 queue_count = game.pool.len();
@@ -200,9 +200,9 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     }
     
     if already_in_queue {
-        cc.create_bot_reply("You are already in the queue!").await?;
+        cc.reply("You are already in the queue!").await?;
     } else {
-        cc.create_bot_reply(&format!("✅ Joined the queue! ({}/{} players)", queue_count, group.quota)).await?;
+        cc.reply(&format!("✅ Joined the queue! ({}/{} players)", queue_count, group.quota)).await?;
     }
 
     // Update dashboard
@@ -241,10 +241,9 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Resul
     }; // Manager lock is dropped here
     
     if queue_count == 0 && queue_list == "No active queue found." {
-        cc.create_bot_reply("No active queue found.").await?;
+        cc.reply("No active queue found.").await?;
     } else {
-        let status_message = format!("**Queue Status ({}/{} players)**\n{}", queue_count, quota, queue_list);
-        cc.create_bot_reply(&status_message).await?;
+        cc.reply(&format!("**Queue Status ({}/{} players)**\n{}", queue_count, quota, queue_list)).await?;
     }
     
     Ok(())
@@ -255,24 +254,22 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
     info!("Processing shuffle command");
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
-        cc.create_bot_reply("Only runners can shuffle teams!").await?;
+        cc.reply("Only runners can shuffle teams!").await?;
         return Ok(());
     }
 
     // Get active group with game
     let group = guild.get_group(cc.intax.channel_id).unwrap();
 
-    if group.games.is_empty() {
-        cc.create_bot_reply("No active games.").await?;
+    if group.sessions.is_empty() {
+        cc.reply("No active games.").await?;
         return Ok(());
     }
 
-    let game = group.games.last().unwrap();
+    let game = group.sessions.last().unwrap();
 
     if game.pool.len() < 8 {
-        cc.create_bot_reply(
-            &format!("Not enough players in game. Need {} more.", 8 - game.pool.len())
-        ).await?;
+        cc.reply(&format!("Not enough players in game. Need {} more.", 8 - game.pool.len())).await?;
         return Ok(());
     }
 
@@ -289,16 +286,16 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
     }
 
     // Update pool with new team assignments
-    updated_group.games.last_mut().unwrap().pool.clear();
-    updated_group.games.last_mut().unwrap().pool.extend(red_team.into_iter());
-    updated_group.games.last_mut().unwrap().pool.extend(blu_team.into_iter());
+    updated_group.sessions.last_mut().unwrap().pool.clear();
+    updated_group.sessions.last_mut().unwrap().pool.extend(red_team.into_iter());
+    updated_group.sessions.last_mut().unwrap().pool.extend(blu_team.into_iter());
 
-    updated_group.games.last_mut().unwrap().status = SessionStatus::Hot;
+    updated_group.sessions.last_mut().unwrap().status = SessionStatus::Hot;
     // TODO: Persist updated_group changes to DB if needed (no update_group method exists)
     // You may need to implement this in your database layer.
 
-    let red_team_names: Vec<String> = updated_group.games.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Red)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
-    let blu_team_names: Vec<String> = updated_group.games.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Blu)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
+    let red_team_names: Vec<String> = updated_group.sessions.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Red)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
+    let blu_team_names: Vec<String> = updated_group.sessions.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Blu)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
 
     let embed_content = format!(
         "**🎲 Teams Generated!**\n\n**🔴 Red Team:**\n{}\n\n**🔵 Blue Team:**\n{}",
@@ -309,7 +306,7 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
     // Update dashboard
     group.dash_update(cc.ctx).await?;
     
-    cc.create_bot_reply(&embed_content).await?;
+    cc.reply(&embed_content).await?;
     Ok(())
 }
 
@@ -317,7 +314,7 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
 pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
-        cc.create_bot_reply("Only runners can accept games!").await?;
+        cc.reply("Only runners can accept games!").await?;
         return Ok(());
     }
 
@@ -326,10 +323,10 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     let group = guild.get_group(channel_id).unwrap();
 
     // Check hot game count first
-    let hot_game_count = group.games.iter().filter(|g| g.status == SessionStatus::Hot).count();
+    let hot_game_count = group.sessions.iter().filter(|g| g.status == SessionStatus::Hot).count();
     match hot_game_count {
         0 => {
-            cc.create_bot_reply("No hot games found in this group.").await?;
+            cc.reply("No hot games found in this group.").await?;
             return Ok(());
         },
         1 => {
@@ -341,7 +338,7 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     }
     
     // Now get mutable access to the hot game
-    let hot_game = group.games
+    let hot_game = group.sessions
         .iter_mut()
         .find(|g| g.status == SessionStatus::Hot)
         .unwrap(); // Safe because we verified count above
@@ -352,7 +349,7 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     // Update dashboard
     group.dash_update(cc.ctx).await?;
 
-    cc.create_bot_reply("Game accepted! Players moved to team channels.").await?;
+    cc.reply("Game accepted! Players moved to team channels.").await?;
 
 
     Ok(())
@@ -367,7 +364,7 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
 pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
-        cc.create_bot_reply("Only runners can end games!").await?;
+        cc.reply("Only runners can end games!").await?;
         return Ok(());
     }
 
@@ -391,9 +388,9 @@ pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
             ).await?;
         }
         
-        cc.create_bot_reply("Game has been ended. Players will be moved back to queue.").await?;
+        cc.reply("Game has been ended. Players will be moved back to queue.").await?;
     } else {
-        cc.create_bot_reply("No active game found to end.").await?;
+        cc.reply("No active game found to end.").await?;
     }
 
     // Update dashboard

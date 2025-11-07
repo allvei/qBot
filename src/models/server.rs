@@ -82,7 +82,7 @@ pub struct Group {
     pub quota:         u8,
     pub dashboard_msg: MI,
     pub channels:      Channels,
-    pub games:         Vec<Session>,
+    pub sessions:         Vec<Session>,
 }
 
 impl Group {
@@ -100,25 +100,25 @@ impl Group {
             timeout,
             dashboard_msg,
             channels,
-            games,
+            sessions: games,
         }
     }
 
     pub fn create_game(&mut self) -> &mut Session {
         info!("Creating new game");
-        self.games
+        self.sessions
             .push(Session::new(SessionStatus::Idle, Vec::new()));
-        self.games.last_mut().unwrap()
+        self.sessions.last_mut().unwrap()
     }
 
     pub fn end_game(&mut self) -> bool {
         info!("Attempting to end game");
         if let Some(pos) = self
-            .games
+            .sessions
             .iter()
             .position(|s| s.status == SessionStatus::Idle)
         {
-            self.games.remove(pos);
+            self.sessions.remove(pos);
             info!("Game successfully ended and removed");
             true
         } else {
@@ -131,7 +131,7 @@ impl Group {
         &mut self,
         status: &SessionStatus,
     ) -> Vec<&Session> {
-        self.games
+        self.sessions
             .iter()
             .filter(|s| s.status == *status)
             .collect()
@@ -141,7 +141,7 @@ impl Group {
         &mut self,
         user_id: UI,
     ) -> Result<&mut Session> {
-        match self.games.iter_mut().find(|s| s.pool.iter().any(|p| p.player.discord_id == user_id)) {
+        match self.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.discord_id == user_id)) {
             Some(game) => Ok(game),
             None => Err(anyhow!("User not found in any game")),
         }
@@ -151,7 +151,7 @@ impl Group {
         &mut self,
         user_id: UI,
     ) -> Result<&mut GamePlayer> {
-        match self.games.iter_mut().find(|s| s.pool.iter().any(|p| p.player.discord_id == user_id)) {
+        match self.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.discord_id == user_id)) {
             Some(game) => Ok(game.pool.iter_mut().find(|p| p.player.discord_id == user_id).unwrap()),
             None => Err(anyhow!("User not found in any game")),
         }

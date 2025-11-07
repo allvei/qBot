@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Error, Result};
 use serenity::all::{
-    ButtonStyle, ChannelId as CI, Context, CreateActionRow, CreateButton,
+    ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
     CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM,
     EditMessage, Message, Reaction,
 };
 use tracing::{error, info};
 
-use crate::models::{ComponentContext, Group, Session, SessionStatus};
+use crate::models::{ComponentContext as CC, Group, Session, SessionStatus};
 
 macro_rules! list_players {
     ($desc:ident, $team:ident) => {
@@ -128,48 +128,45 @@ impl ButtonType {
 impl Group {
     /// Get the dashboard message
     pub async fn dash_get(&self, ctx: &Context) -> Result<Message> {
-        let channel = CI::new(self.channels.dashboard.into());
-        let message = channel.message(&ctx.http, self.dashboard_msg).await;
-        match message {
+        let ch = CI::new(self.channels.dashboard.into());
+        let msg = ch.message(&ctx.http, self.dashboard_msg).await;
+        match msg {
             Ok(msg) => Ok(msg),
             Err(e)  => Err(anyhow!("Failed to get dashboard message: {}", e)),
         }
     }
 
     /// Creates buttons for the dashboard
-    pub async fn create_dashboard_buttons(&self) -> Result<Vec<CreateActionRow>> {
+    pub async fn create_dashboard_buttons(&self) -> Result<Vec<CAR>> {
         info!("Creating dashboard buttons for group {}", self.group_id);
-        // Check if there's an live game to enable/disable buttons
-        let has_live_game  = !self.games.is_empty();
-        let has_ready_game = self.games.iter().any(|s| s.pool.len() >= 8);
 
-        // Define button configurations - this makes it easy to add/remove buttons
+        let has_live = !self.sessions.is_empty();
+        let has_rdy  = self.sessions.iter().any(|s| s.pool.len() >= 8);
+
+        let bs = BS::Secondary;
         let button_configs = vec![
-            // (custom_id, label, style, disabled)
-            ("join",    "Join queue",  ButtonStyle::Secondary, false),
-            ("leave",   "Leave queue", ButtonStyle::Secondary, false),
-            ("shuffle", "Shuffle",     ButtonStyle::Secondary, !has_ready_game),
-            ("start",   "Start match", ButtonStyle::Secondary, !has_live_game),
-            ("end",     "End match",   ButtonStyle::Secondary, !has_live_game),
+            ("join",    "Join queue",  bs, false),
+            ("leave",   "Leave queue", bs, false),
+            ("shuffle", "Shuffle",     bs, !has_rdy),
+            ("start",   "Start match", bs, !has_live),
+            ("end",     "End match",   bs, !has_live),
         ];
 
-        // Generate buttons from configurations
         let buttons = Self::gen_buttons(button_configs);
 
-        Ok(vec![CreateActionRow::Buttons(buttons)])
+        Ok(vec![CAR::Buttons(buttons)])
     }
-
-    fn gen_buttons(button_configs: Vec<(&'static str, &'static str, ButtonStyle, bool)>) -> Vec<CreateButton> {
+    
+    fn gen_buttons(button_configs: Vec<(&'static str, &'static str, BS, bool)>) -> Vec<CB> {
         button_configs.into_iter().map(|(action, label, style, disabled)| {
-                // Create the button with all specified properties
-                CreateButton::new(action).label(label).style(style).disabled(disabled)
-            }).collect()
+            CB::new(action).label(label).style(style).disabled(disabled)
+        }).collect()
     }
 
     pub async fn has_dashboard(&self, ctx: &Context) -> bool {
-        let channel = CI::new(self.channels.dashboard.into());
-        let message = channel.message(&ctx.http, self.dashboard_msg).await;
-        message.is_ok()
+        let ch = CI::new(self.channels.dashboard.into());
+        let msg = ch.message(&ctx.http, self.dashboard_msg).await;
+        msg.is_ok()
     }
 
     pub async fn dash_publish(&mut self, ctx: &Context, channel: CI) -> Result<(), Error>{
@@ -184,8 +181,8 @@ impl Group {
     }
 
     /// Builds dashboard embed and components based on current group state
-    async fn build_dashboard_content(&mut self) -> Result<(CE, Vec<CreateActionRow>)> {
-        let mut embed = CE::new().title("PUG Dashboard");
+    async fn build_dashboard_content(&mut self) -> Result<(CE, Vec<CAR>)> {
+        let mut emb  = CE::new().title("PUG Dashboard");
         let mut desc = String::new();
         
         let quota = self.quota as usize;
@@ -263,12 +260,12 @@ impl Group {
             desc.push('\n');
         }
 
-        embed = embed.description(desc);
+        emb = emb.description(desc);
         // embed = embed.footer(CEF::new("Use the buttons below to manage the queue and matches"));
 
         let buttons = self.create_dashboard_buttons().await.unwrap();
 
-        Ok((embed, buttons))
+        Ok((emb, buttons))
     }
 
     /// Initializes a dashboard based on current group state
@@ -290,10 +287,10 @@ impl Group {
     }
 
     /// Handles the join queue button
-    async fn dash_join_queue(&mut self,cc: &ComponentContext<'_>) -> Result<()> {
+    async fn dash_join(&mut self,cc: &CC<'_>) -> Result<()> {
         let user = cc.component.user.id;
 
-        let mut already_in_queue = false;
+        let mut in_sesh = false;
 
         // Check if we have idle games
         match self.get_games_by_status(&SessionStatus::Idle).len() {
@@ -301,129 +298,115 @@ impl Group {
                 info!("No idle games found, creating a new game");
                 self.create_game();
             }
-            1 => {
-                info!("Found one existing idle game");
-            }
-            n => {
-                return Err(anyhow::anyhow!("Multiple idle games found: {}", n));
-            }
+            1 => info!("Found one existing idle game"),
+            n => return Err(anyhow::anyhow!("Multiple idle games found: {}", n)),
         };
 
         // Check if player is already in game
         if self.get_user_game(user).is_ok() {
             info!("Player {} is already in a game", user);
-            already_in_queue = true;
+            in_sesh = true;
         } else {
             // Add player to the idle game
-            if let Some(game) = self.games.iter_mut().find(|g| g.status == SessionStatus::Idle) {
+            if let Some(game) = self.sessions.iter_mut().find(|g| g.status == SessionStatus::Idle) {
                 game.add_player(user);
                 info!("Added player to game. Queue now has {} players", game.pool.len());
             }
         }
 
-        if already_in_queue {
-            cc.create_bot_reply("You are already in the queue!").await;
+        if !in_sesh {
+            self.dash_update(cc.ctx).await;
+            cc.acknowledge().await;
         } else {
-            // Update dashboard to reflect new state
-            match self.dash_update(cc.ctx).await {
-                Ok(_) => {},
-                Err(e) => {
-                    error!("Failed to update dashboard: {}", e);
-                }
-            }
+            cc.reply("You are already in the queue!").await;
         }
 
         Ok(())
     }
 
     /// Handles the leave queue button
-    async fn dash_leave_queue(&mut self,cc: &ComponentContext<'_>) -> Result<()> {
-        let user    = cc.component.user.id;
+    async fn dash_leave(&mut self, cc: &CC<'_>) -> Result<()> {
+        let user = cc.component.user.id;
 
-        let mut found = false;
+        let mut in_sesh = false;
 
         // Find and remove player from any game
-        for game in &mut self.games {
+        for game in &mut self.sessions {
             if game.status == SessionStatus::Idle {
                 let initial_len = game.pool.len();
                 game.pool.retain(|p| p.player.discord_id != user);
                 if game.pool.len() < initial_len {
-                    found = true;
+                    in_sesh = true;
                     info!("Removed player from game. Queue now has {} players", game.pool.len());
                     break;
                 }
             }
         }
 
-        if found {
-            // Update dashboard
+        if in_sesh {
             self.dash_update(cc.ctx).await;
+            cc.acknowledge().await;
         } else {
-            cc.create_bot_reply("You are not in the queue!").await?;
+            cc.reply("You are not in the queue!").await?;
         }
 
         Ok(())
     }
 
     /// Handles the shuffle teams button
-    async fn dash_shuffle(&mut self, cc: &ComponentContext<'_>, _game_id: Option<String>) -> Result<()> {
-
-        let mut shuffled = false;
+    async fn dash_shuffle(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
+        let mut is_shuffled = false;
 
         // Find the game to shuffle
-        if let Some(game) = self.games.iter_mut().find(|s| s.status == SessionStatus::Idle && s.pool.len() >= 8)
+        if let Some(game) = self.sessions.iter_mut().find(|s| s.status == SessionStatus::Idle && s.pool.len() >= 8)
         {
             // Shuffle the players using rand crate
             use rand::seq::SliceRandom;
             game.pool.shuffle(&mut rand::rng());
-            shuffled = true;
+            is_shuffled = true;
             info!("Teams shuffled for game with {} players",game.pool.len());
         }
 
-        if shuffled {
-            cc.create_bot_reply("🔀 Teams shuffled! Check the dashboard for new team assignments.").await?;
-
-            // Update dashboard to show shuffled teams
+        if is_shuffled {
             self.dash_update(cc.ctx).await;
+            cc.acknowledge().await;
         } else {
-            cc.create_bot_reply("❌ No game ready for shuffling. Need at least 8 players in queue.").await?;
+            cc.reply("❌ No game ready for shuffling. Need at least 8 players in queue.").await?;
         }
 
         Ok(())
     }
 
     /// Handles the start match button
-    async fn dash_start(&mut self, cc: &ComponentContext<'_>, _game_id: Option<String>) -> Result<()> {
-        let mut match_started = false;
+    async fn dash_start(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
+        let mut is_live = false;
 
         // Find the game to start
-        if let Some(game) = self.games.iter_mut()
+        if let Some(game) = self.sessions.iter_mut()
             .find(|s| s.status == SessionStatus::Idle && s.pool.len() >= 8)
         {
             // Change game status to Hot (ready to start)
             game.status   = SessionStatus::Hot;
-            match_started = true;
+            is_live = true;
             info!("Match started for game with {} players",game.pool.len());
         }
 
-        if match_started {
-            cc.create_bot_reply("🔥 Match started! Teams are now ready to play.").await?;
-
-            // Update dashboard to show match status
+        if is_live {
             self.dash_update(cc.ctx).await;
+            cc.acknowledge().await;
         } else {
-            cc.create_bot_reply("❌ No game ready to start. Need at least 8 players and shuffled teams.").await?;
+            cc.reply("❌ No game ready to start. Need at least 8 players and shuffled teams.").await?;
         }
 
         Ok(())
     }
 
     /// Handles the end match button
-    async fn dash_end(&mut self, cc: &ComponentContext<'_>, _game_id: Option<String>) -> Result<()> {
+    async fn dash_end(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
         let mut match_ended = false;
 
         // Find active games to end
-        for game in &mut self.games {
+        for game in &mut self.sessions {
             if game.status == SessionStatus::Hot || game.status == SessionStatus::Live {
                 // Clear the game and reset to idle
                 game.pool.clear();
@@ -435,12 +418,10 @@ impl Group {
         }
 
         if match_ended {
-            cc.create_bot_reply("✅ Match ended! Sesh has been reset and is ready for new players.").await?;
-
-            // Update dashboard to show reset state
             self.dash_update(cc.ctx).await;
+            cc.acknowledge().await;
         } else {
-            cc.create_bot_reply("❌ No active match to end.").await?;
+            cc.reply("❌ No active match to end.").await?;
         }
 
         Ok(())
@@ -451,26 +432,21 @@ impl Group {
     /// Processes all button interactions in a modular way
     ///
     /// * `cc` - The component context with button information
-    pub async fn dash_handle_button_interaction(&mut self, cc: &ComponentContext<'_>) -> Result<()> {
+    pub async fn dash_handle_button_interaction(&mut self, cc: &CC<'_>) -> Result<()> {
         let custom_id = &cc.component.data.custom_id;
 
-        // Log the button click
-        info!("Button clicked: {}", custom_id);
-
-        // Split the custom_id to extract action and optional game ID
-        // Format: "action:game_id" or just "action"
         let parts: Vec<&str> = custom_id.split(':').collect();
-        let action = parts[0];
+        let action  = parts[0];
         let game_id = parts.get(1).map(|s| s.to_string());
 
         match action {
-            "join"    => self.dash_join_queue(cc).await,
-            "leave"   => self.dash_leave_queue(cc).await,
+            "join"    => self.dash_join(cc) .await,
+            "leave"   => self.dash_leave(cc).await,
             "shuffle" => self.dash_shuffle(cc, game_id).await,
-            "start"   => self.dash_start(cc, game_id).await,
-            "end"     => self.dash_end(cc, game_id).await,
+            "start"   => self.dash_start(cc,   game_id).await,
+            "end"     => self.dash_end(cc,     game_id).await,
             _ => {
-                cc.create_bot_reply(&format!("Unknown button action: {}", action))
+                cc.reply(&format!("Unknown button action: {}", action))
                     .await?;
                 Ok(())
             }

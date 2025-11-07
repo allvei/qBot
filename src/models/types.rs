@@ -36,20 +36,21 @@ pub struct ComponentContext<'a> {
 }
 
 impl CommandContext<'_> {
-    pub async fn create_bot_reply(&self, message: &str) -> Result<(), anyhow::Error> {
-        let response = CIR::Message(
-            CIRM::new().content(message).ephemeral(true)
-        );
+    pub async fn reply(&self, message: &str) -> Result<(), anyhow::Error> {
+        let response = CIR::Message(CIRM::new().content(message));
         self.intax.create_response(&self.ctx.http, response).await?;
         Ok(())
     }
 }
 
 impl ComponentContext<'_> {
-    pub async fn create_bot_reply(&self, message: &str) -> Result<(), anyhow::Error> {
-        let response = CIR::Message(
-            CIRM::new().content(message).ephemeral(true)
-        );
+    pub async fn reply(&self, message: &str) -> Result<(), anyhow::Error> {
+        let response = CIR::Message(CIRM::new().content(message));
+        self.component.create_response(&self.ctx.http, response).await?;
+        Ok(())
+    }
+    pub async fn acknowledge(&self) -> Result<(), anyhow::Error> {
+        let response = CIR::Acknowledge;
         self.component.create_response(&self.ctx.http, response).await?;
         Ok(())
     }

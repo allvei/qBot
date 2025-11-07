@@ -82,7 +82,7 @@ impl Manager {
     pub fn cleanup_empty_games(&mut self) {
         for server in &mut self.servers {
             for group in &mut server.groups {
-                group.games.retain(|game| {
+                group.sessions.retain(|game| {
                     !(game.status == SessionStatus::Idle && game.pool.is_empty())
                 });
             }

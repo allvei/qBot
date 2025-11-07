@@ -89,17 +89,19 @@ impl GroupRepository {
         let red_id       = result.get::<i64, _>("red")   as u64;
         let blu_id       = result.get::<i64, _>("blu")   as u64;
         let dashboard_id = result.get::<i64, _>("dashboard") as u64;
+        let dashboard_msg_id = result.get::<i64, _>("dashboard_msg") as u64;
         
-        // Reject groups with invalid (0) channel IDs - no undefined data allowed
+        // Reject groups with invalid (0) IDs - no undefined data allowed
         let invalid_ids = [
-            (chat_id      == 0, "chat"),
-            (queue_id     == 0, "queue"),
-            (red_id       == 0, "red"),
-            (blu_id       == 0, "blu"),
-            (dashboard_id == 0, "dashboard")
+            (chat_id          == 0, "chat"),
+            (queue_id         == 0, "queue"),
+            (red_id           == 0, "red"),
+            (blu_id           == 0, "blu"),
+            (dashboard_id     == 0, "dashboard"),
+            (dashboard_msg_id == 0, "dashboard_msg")
         ];
         if let Some((true, id)) = invalid_ids.iter().find(|(is_zero, _)| *is_zero) {
-            return Err(anyhow!("Group has invalid {} channel configuration (0 ID not allowed)", id));
+            return Err(anyhow!("Group has invalid {} configuration (0 ID not allowed)", id));
         }
         
         let chat      = ChannelId::new(chat_id);
@@ -120,8 +122,8 @@ impl GroupRepository {
         let group = Group::new(
             group_id,
             result.try_get::<i64, _>("game_quota").unwrap_or(12)     as u8,
-            result.try_get::<i64, _>("timeout")      .unwrap_or(120)    as u16,
-            MessageId::new(result.get::<i64, _>("dashboard_msg")     as u64),
+            result.try_get::<i64, _>("timeout")   .unwrap_or(120)    as u16,
+            MessageId::new(dashboard_msg_id),
             Channels::new(
                 chat,
                 queue,
