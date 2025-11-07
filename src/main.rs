@@ -19,10 +19,10 @@ use serenity::builder::{
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
-use pfpug::database::migrations::DatabaseMigrations;
-use pfpug::database::repositories::GroupRepository;
-use pfpug::handlers::{admin, player};
-use pfpug::{ButtonType, CommandContext, ComponentContext, Database, Group, Manager, Roles, Server, SessionStatus};
+use pf-pug-bot::database::migrations::DatabaseMigrations;
+use pf-pug-bot::database::repositories::GroupRepository;
+use pf-pug-bot::handlers::{admin, player};
+use pf-pug-bot::{ButtonType, CommandContext, ComponentContext, Database, Group, Manager, Roles, Server, SessionStatus};
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
     CC::new(name.into(),).description(desc.into(),)
@@ -480,7 +480,7 @@ async fn main(
     // Load environment variables
     dotenvy::dotenv().ok();
     let token        = env::var("DISCORD_TOKEN").expect("Expected a Discord token in the environment");
-    let db_file      = env::var("DATABASE_URL").unwrap_or_else(|_| "./pfpug.db".to_string());
+    let db_file      = env::var("DATABASE_URL").unwrap_or_else(|_| "./pf-pug-bot.db".to_string());
     let database_url = format!("sqlite:{}",db_file);
 
     // Initialize database connection

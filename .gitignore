@@ -1,9 +1,9 @@
 /target
 .env.example
 .env
-pfpug.code-workspace
+pf-pug-bot.code-workspace
 add.bat
-pfpug.db
-pfpug.db-shm
-pfpug.db-wal
-pfpug.db
+pf-pug-bot.db
+pf-pug-bot.db-shm
+pf-pug-bot.db-wal
+pf-pug-bot.db

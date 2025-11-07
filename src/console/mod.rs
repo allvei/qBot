@@ -6,8 +6,8 @@ use sqlx::{Row, SqlitePool};
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
-use pfpug::database::repositories::GroupRepository;
-use pfpug::models::Manager;
+use pf-pug-bot::database::repositories::GroupRepository;
+use pf-pug-bot::models::Manager;
 
 pub struct ConsoleHandler {
     manager: Arc<Mutex<Manager>>,
@@ -36,7 +36,7 @@ impl ConsoleHandler {
         info!("Console commands available: status, guilds, games, config <guild_id>, query <sql>, help, quit");
         
         loop {
-            print!("pfpug> ");
+            print!("pf-pug-bot> ");
             io::stdout().flush().unwrap();
             
             let mut input = String::new();
