@@ -20,6 +20,33 @@ use crate::models::{
     ADMIN_R_ID, BLU_VC_ID, CHAT_TC_ID, DASHBOARD_TC_ID, QUEUE_TC_ID, RED_VC_ID, RUNNER_R_ID,
 };
 
+/// Helper function to calculate mean, median, and standard deviation for team ELOs
+fn calculate_stats(elos: &[f64]) -> (f64, f64, f64) {
+    if elos.is_empty() {
+        return (0.0, 0.0, 0.0);
+    }
+    
+    // Calculate mean
+    let sum: f64 = elos.iter().sum();
+    let mean = sum / elos.len() as f64;
+    
+    // Calculate median
+    let mut sorted = elos.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median = if sorted.len() % 2 == 0 {
+        let mid = sorted.len() / 2;
+        (sorted[mid - 1] + sorted[mid]) / 2.0
+    } else {
+        sorted[sorted.len() / 2]
+    };
+    
+    // Calculate standard deviation
+    let variance: f64 = elos.iter().map(|&elo| (elo - mean).powi(2)).sum::<f64>() / elos.len() as f64;
+    let std_dev = variance.sqrt();
+    
+    (mean, median, std_dev)
+}
+
 
 /// Represents a game server with IP and name
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,11 +201,115 @@ impl Group {
         }
     }
 
+    pub async fn hot(&mut self, ctx: &Context) {
+        self.get_queue().hot();
+        self.notify(ctx).await;
+        self.generate_teams(ctx).await;
+    }
+
+    pub async fn generate_teams(&mut self, ctx: &Context) {
+        use itertools::Itertools;
+        
+        info!("Generating balanced teams using BCH algorithm");
+        
+        // Get the current game (should be hot or idle with enough players)
+        let game = self.get_queue();
+        
+        // Need at least 8 players for team generation
+        if game.pool.len() < 8 {
+            warn!("Not enough players for team generation: {}", game.pool.len());
+            return;
+        }
+        
+        // Extract player ELOs (use default ELO if rank is None)
+        let players_with_elo: Vec<(usize, u32)> = game.pool
+            .iter()
+            .enumerate()
+            .map(|(idx, gp)| {
+                let elo = gp.player.rank.map(|r| r.elo()).unwrap_or(30); // Default to Novice (30)
+                (idx, elo)
+            })
+            .collect();
+        
+        // We'll balance exactly 8 players (first 8 in queue)
+        let pool_size = 8.min(game.pool.len());
+        let players_to_balance: Vec<(usize, u32)> = players_with_elo.into_iter().take(pool_size).collect();
+        
+        // Generate all possible team splits (C(8,4) = 70 combinations)
+        let team_size = pool_size / 2;
+        let mut best_split: Option<(Vec<usize>, Vec<usize>)> = None;
+        let mut best_score = f64::INFINITY;
+        
+        for team_a_indices in (0..pool_size).combinations(team_size) {
+            let team_b_indices: Vec<usize> = (0..pool_size)
+                .filter(|i| !team_a_indices.contains(i))
+                .collect();
+            
+            // Get ELOs for each team
+            let team_a_elos: Vec<f64> = team_a_indices
+                .iter()
+                .map(|&i| players_to_balance[i].1 as f64)
+                .collect();
+            
+            let team_b_elos: Vec<f64> = team_b_indices
+                .iter()
+                .map(|&i| players_to_balance[i].1 as f64)
+                .collect();
+            
+            // Calculate statistics for both teams
+            let (avg_a, med_a, std_a) = calculate_stats(&team_a_elos);
+            let (avg_b, med_b, std_b) = calculate_stats(&team_b_elos);
+            
+            // BCH score: sum of absolute differences
+            let score = (avg_a - avg_b).abs() + (med_a - med_b).abs() + (std_a - std_b).abs();
+            
+            if score < best_score {
+                best_score = score;
+                best_split = Some((team_a_indices, team_b_indices));
+            }
+        }
+        
+        if let Some((red_indices, blu_indices)) = best_split {
+            info!("Best team balance found with score: {:.2}", best_score);
+            
+            // Assign teams based on the best split
+            let mut new_pool = Vec::new();
+            
+            // First add red team players
+            for &idx in &red_indices {
+                let mut player = game.pool[players_to_balance[idx].0];
+                player.team(crate::models::Team::Red);
+                new_pool.push(player);
+            }
+            
+            // Then add blue team players
+            for &idx in &blu_indices {
+                let mut player = game.pool[players_to_balance[idx].0];
+                player.team(crate::models::Team::Blu);
+                new_pool.push(player);
+            }
+            
+            // Add remaining players (if more than 8)
+            for i in pool_size..game.pool.len() {
+                new_pool.push(game.pool[i]);
+            }
+            
+            // Update the pool with balanced teams
+            game.pool = new_pool;
+            
+            info!("Teams generated and assigned successfully");
+        } else {
+            warn!("Failed to generate balanced teams");
+        }
+        
+        // Update dashboard to show the new teams
+        self.dash_update(ctx).await.ok();
+    }
+
     pub async fn queue_player(&mut self, user_id: UI, ctx: &Context) {
         self.get_queue().add_player(user_id);
         if self.is_quota() {
-            self.notify(ctx).await;
-            self.get_queue().hot();
+            self.hot(ctx).await;
         }
         self.dash_update(ctx).await;
     }

@@ -240,11 +240,21 @@ impl Group {
         }
 
         let games_hot:  Vec<&Session> = self.get_games_by_status(&SessionStatus::Hot);
-        // Show hot games (waiting to start)
+        // Show hot games (waiting to start) with team composition
         if !games_hot.is_empty() {
-            desc.push_str("**🔥 Ready games:**\n");
-            for _game in games_hot {
-                desc.push_str("• Ready to start!\n");
+            desc.push_str("**🔥 Ready to Start:**\n");
+            for game in games_hot {
+                if game.pool.len() >= 8 {
+                    let team_red = &game.pool[0..4];
+                    desc.push_str("**🔴 Red:**\n");
+                    list_players!(desc, team_red);
+
+                    let team_blu = &game.pool[4..8];
+                    desc.push_str("\n**🔵 Blue:**\n");
+                    list_players!(desc, team_blu);
+                } else {
+                    desc.push_str("• Ready to start!\n");
+                }
             }
             desc.push('\n');
         }

@@ -18,14 +18,7 @@ pub struct Session {
 }
 
 impl Session {
-
     /// Get a player by their Discord ID
-    ///
-    /// ### Arguments
-    /// * `discord_id` - The Discord ID of the player to find
-    ///
-    /// ### Returns
-    /// * `Result<Player>` - The player if found, Err otherwise
     pub fn get_user(&self, discord_id: UserId) -> Result<Player> {
         match self.pool.iter().find(|p| p.player.discord_id == discord_id) {
             Some(player) => Ok(player.player),

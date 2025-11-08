@@ -36,14 +36,6 @@ pub trait CmdOp:
 
 impl CmdOp for CC {
     /// Adds an option to the command
-    ///
-    /// ### Arguments
-    /// * `name`
-    /// * `desc`
-    /// * `req` - Is it required?
-    ///
-    /// ### Returns
-    /// The command with the added option
     fn op(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self {
         self.add_option(CCO::new(COT::String, name, desc).required(req))
     }
@@ -71,7 +63,7 @@ impl EventHandler for Handler {
             cmd("status",    "Check queue status"),
             cmd("shuffle",   "Generate teams from queue"),
             cmd("accept",    "Accept/confirm generated teams").op("id",    "Game ID to accept (optional)", false),
-            cmd("end",       "End a game")                 .op("id",    "Game ID to end (optional)",    false),
+            cmd("end",       "End a game")                    .op("id",    "Game ID to end (optional)",    false),
             cmd("buffer",    "Buffer a player")               .op("user",  "User to buffer",                  true),
             cmd("config",    "View or set bot configuration") .op("key",   "Configuration key",               false)
                                                               .op("value", "Configuration value",             false),
