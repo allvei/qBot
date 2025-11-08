@@ -241,7 +241,89 @@ impl EventHandler for Handler {
                 
                 // For dashboard button interactions, we need a group
                 let mut manager = self.manager.lock().await;
-                let group       = manager.get_group(itx.guild_id.unwrap(), itx.channel_id).unwrap();
+                let guild_id = itx.guild_id.unwrap();
+                let channel_id = itx.channel_id;
+                
+                // Try to get the group from the manager
+                let group = match manager.get_group(guild_id, channel_id) {
+                    Ok(group) => group,
+                    Err(_) => {
+                        // Group not in manager - try to recover from database
+                        info!("Group not found in manager for channel {}, attempting recovery from database", channel_id);
+                        
+                        // Get the message ID from the interaction
+                        let message_id = itx.message.id;
+                        let guild_id_u64 = guild_id.get();
+                        let channel_id_u64 = channel_id.get();
+                        let message_id_u64 = message_id.get();
+                        
+                        // Load groups from database for this guild
+                        let group_repo = GroupRepository::new(self.database.pool().clone());
+                        match group_repo.get_groups_for_guild(guild_id_u64).await {
+                            Ok(groups) => {
+                                // Find the group that matches this dashboard channel
+                                if let Some(mut recovered_group) = groups.into_iter()
+                                    .find(|g| g.channels.dashboard.get() == channel_id_u64) 
+                                {
+                                    info!("Found group in database for dashboard channel {}", channel_id);
+                                    
+                                    // Update the dashboard message ID in the database
+                                    if let Err(e) = group_repo.update_dashboard_msg(guild_id_u64, channel_id_u64, message_id_u64).await {
+                                        error!("Failed to update dashboard message ID: {}", e);
+                                    } else {
+                                        info!("Updated dashboard message ID to {} in database", message_id_u64);
+                                        // Update the in-memory group too
+                                        recovered_group.dashboard_msg = message_id;
+                                    }
+                                    
+                                    // Add the recovered group to the manager
+                                    let server = manager.get_server(guild_id);
+                                    if let Ok(server) = server {
+                                        server.groups.push(recovered_group);
+                                        info!("Recovered group added to manager");
+                                        
+                                        // Now get the group from the manager
+                                        manager.get_group(guild_id, channel_id).unwrap()
+                                    } else {
+                                        error!("Could not get server for guild {}", guild_id);
+                                        let error_response = CIR::Message(
+                                            CIRM::new()
+                                                .content("⚠️ Dashboard state was lost. Please run `/setup` to reconfigure.")
+                                                .ephemeral(true)
+                                        );
+                                        if let Err(e) = itx.create_response(&ctx.http, error_response).await {
+                                            error!("Failed to send error response: {}", e);
+                                        }
+                                        return;
+                                    }
+                                } else {
+                                    error!("No group found in database for dashboard channel {}", channel_id);
+                                    let error_response = CIR::Message(
+                                        CIRM::new()
+                                            .content("⚠️ Dashboard configuration not found. Please run `/setup` to configure this channel.")
+                                            .ephemeral(true)
+                                    );
+                                    if let Err(e) = itx.create_response(&ctx.http, error_response).await {
+                                        error!("Failed to send error response: {}", e);
+                                    }
+                                    return;
+                                }
+                            },
+                            Err(e) => {
+                                error!("Failed to load groups from database: {}", e);
+                                let error_response = CIR::Message(
+                                    CIRM::new()
+                                        .content("⚠️ Failed to access database. Please contact an administrator.")
+                                        .ephemeral(true)
+                                );
+                                if let Err(e) = itx.create_response(&ctx.http, error_response).await {
+                                    error!("Failed to send error response: {}", e);
+                                }
+                                return;
+                            }
+                        }
+                    }
+                };
                 
                 // Create component context similar to command context
                 let comp_ctx = ComponentContext {
@@ -349,7 +431,7 @@ impl EventHandler for Handler {
                 Ok(group) => {
                     if group.channels.queue_vc == channel_id {
                         info!("{} joined queue voice channel {}", user_name, channel_id);
-                        if group.sessions.is_empty() { group.create_game(); }
+                        if group.sessions.is_empty() { group.create_session(); }
                         
                         // Extract immutable data before mutable iteration
                         let dashboard_channel = group.channels.dashboard;
@@ -380,6 +462,11 @@ impl Handler {
         match group_repo.get_groups_for_guild(guild.id.get()).await {
             Ok(groups) => {
                 for mut group in groups {
+                    // Check if group has sessions
+                    if group.sessions.is_empty() {
+                        group.create_session();
+                    }
+
                     // Check if dashboard already exists
                     if group.has_dashboard(ctx).await {
                         group.dash_update(ctx).await;

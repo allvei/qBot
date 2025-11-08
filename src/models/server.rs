@@ -78,8 +78,10 @@ impl Server {
     pub fn add_group(
         &mut self,
         group: Group,
-    ) {
+    ) -> Result<()> {
         self.groups.push(group);
+        self.groups.last_mut().unwrap().create_session();
+        Ok(())
     }
 
     pub fn empty(guild_id: GI) -> Self {
@@ -131,7 +133,7 @@ impl Group {
         }
     }
 
-    pub fn create_game(&mut self) -> &mut Session {
+    pub fn create_session(&mut self) -> &mut Session {
         info!("Creating new game");
         self.sessions
             .push(Session::new(SessionStatus::Idle, Vec::new()));
@@ -154,11 +156,11 @@ impl Group {
         }
     }
 
-    pub fn get_queue(&mut self) -> &mut Session {
+    pub async fn get_queue(&mut self) -> Result<&mut Session, Error> {
         self.sessions
             .iter_mut()
             .find(|s| s.status == SessionStatus::Idle)
-            .unwrap()
+            .ok_or(anyhow!("No idle session found"))
     }
 
     pub fn get_games_by_status(
@@ -201,10 +203,11 @@ impl Group {
         }
     }
 
-    pub async fn hot(&mut self, ctx: &Context) {
-        self.get_queue().hot();
+    pub async fn hot(&mut self, ctx: &Context) -> Result<(), Error> {
+        self.get_queue().await?.hot();
         self.notify(ctx).await;
         self.generate_teams(ctx).await;
+        Ok(())
     }
 
     pub async fn generate_teams(&mut self, ctx: &Context) {
@@ -213,7 +216,7 @@ impl Group {
         info!("Generating balanced teams using BCH algorithm");
         
         // Get the current game (should be hot or idle with enough players)
-        let game = self.get_queue();
+        let game = self.get_queue().await.unwrap();
         
         // Need at least 8 players for team generation
         if game.pool.len() < 8 {
@@ -307,7 +310,7 @@ impl Group {
     }
 
     pub async fn queue_player(&mut self, user_id: UI, ctx: &Context) {
-        self.get_queue().add_player(user_id);
+        self.get_queue().await.unwrap().add_player(user_id);
         if self.is_quota() {
             self.hot(ctx).await;
         }
@@ -494,3 +497,36 @@ impl Channels {
     }
 }
 
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_group_meets_quota() {
+        let mut group = Group::new(
+            1,
+            4,
+            120,
+            MI::new(1),
+            Channels::new(
+                CI::new(1),
+                CI::new(1),
+                vec![TeamChannel::new(CI::new(1), CI::new(1))],
+                CI::new(1),
+            ),
+            Vec::new(),
+        );
+        
+        group.create_session();
+        
+        // Add players one by one - each call borrows and immediately drops
+        group.sessions.last_mut().unwrap().add_player(UI::new(1));
+        group.sessions.last_mut().unwrap().add_player(UI::new(2));
+        group.sessions.last_mut().unwrap().add_player(UI::new(3));
+        
+        assert!(!group.is_quota());
+        
+        group.sessions.last_mut().unwrap().add_player(UI::new(4));
+        
+        assert!(group.is_quota());
+    }
+}

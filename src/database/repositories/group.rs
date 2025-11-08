@@ -229,6 +229,24 @@ impl GroupRepository {
         
         Ok(groups)
     }
+
+    /// Update dashboard message ID for a group by its dashboard channel ID
+    pub async fn update_dashboard_msg(&self, guild_id: u64, dashboard_channel_id: u64, dashboard_msg_id: u64) -> Result<()> {
+        info!("Updating dashboard message ID for guild {} dashboard channel {}", guild_id, dashboard_channel_id);
+        
+        sqlx::query(
+            "UPDATE groups
+             SET dashboard_msg = ?
+             WHERE guild_id = ? AND dashboard = ?"
+        )
+        .bind(dashboard_msg_id as i64)
+        .bind(guild_id as i64)
+        .bind(dashboard_channel_id as i64)
+        .execute(&self.pool)
+        .await?;
+        
+        Ok(())
+    }
 }
 
 #[async_trait]

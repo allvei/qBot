@@ -169,14 +169,14 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     
     let group = guild.get_group(channel).unwrap();
     
-    // Check if we have idle games
+    // Check if we have idle sessions
     match group.get_games_by_status(&SessionStatus::Idle).len() {
         0 => {
-            info!("No idle games found, creating a new game");
-            group.create_game();
+            info!("No idle sessions found, creating a new session");
+            group.create_session();
         },
         1 => {
-            info!("Found one existing idle game");
+            info!("Found one existing idle session");
         },
         n => {
             return Err(anyhow!("Found more than one idle game ({}). This is unexpected. ", n));

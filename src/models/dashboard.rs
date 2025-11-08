@@ -140,7 +140,7 @@ impl Group {
     pub async fn create_dashboard_buttons(&mut self) -> Result<Vec<CAR>> {
         info!("Creating dashboard buttons for group {}", self.group_id);
 
-        let queue   = self.get_queue();
+        let queue   = self.get_queue().await.unwrap();
         let is_hot  = queue.is_hot();
         let is_live = queue.is_active();
 
@@ -242,7 +242,7 @@ impl Group {
         let games_hot:  Vec<&Session> = self.get_games_by_status(&SessionStatus::Hot);
         // Show hot games (waiting to start) with team composition
         if !games_hot.is_empty() {
-            desc.push_str("**🔥 Ready to Start:**\n");
+            desc.push_str("**Ready to Start:**\n");
             for game in games_hot {
                 if game.pool.len() >= 8 {
                     let team_red = &game.pool[0..4];
@@ -262,7 +262,7 @@ impl Group {
         let games_live: Vec<&Session> = self.get_games_by_status(&SessionStatus::Live);
         // Show live matches
         if !games_live.is_empty() {
-            desc.push_str("**⚡ Live Matches:**\n");
+            desc.push_str("**Live Matches:**\n");
             for _game in games_live {
                 desc.push_str("• Live\n");
             }
@@ -305,7 +305,7 @@ impl Group {
         match self.get_games_by_status(&SessionStatus::Idle).len() {
             0 => {
                 info!("No idle games found, creating a new game");
-                self.create_game();
+                self.create_session();
             }
             1 => info!("Found one existing idle game"),
             n => return Err(anyhow::anyhow!("Multiple idle games found: {}", n)),
