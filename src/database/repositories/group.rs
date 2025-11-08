@@ -169,7 +169,7 @@ impl GroupRepository {
             warn!("Group {} has placeholder dashboard configuration", group.group_id);
         }
         
-        if group.channels.queue.get() == 1 || group.channels.queue_vc.get() == 1 {
+        if group.channels.queue_chat.get() == 1 || group.channels.queue_vc.get() == 1 {
             warn!("Group {} has placeholder channel configuration", group.group_id);
         }
         
@@ -237,7 +237,7 @@ impl Repository<Group, u8> for GroupRepository {
         // Extract values from the group struct
         let dashboard_ch  = group.channels.dashboard.get();
         let dashboard_msg = group.dashboard_msg     .get();
-        let chat          = group.channels.queue    .get();
+        let chat          = group.channels.queue_chat    .get();
         let queue         = group.channels.queue_vc .get();
         let red           = group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0);
         let blu           = group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0);
@@ -259,7 +259,7 @@ impl Repository<Group, u8> for GroupRepository {
 
     async fn update(&self, group: &Group) -> Result<Group> {
         let dashboard_ch = group.channels.dashboard.get();
-        let chat         = group.channels.queue    .get();
+        let chat         = group.channels.queue_chat    .get();
         let queue        = group.channels.queue_vc .get();
         let red          = group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0);
         let blu          = group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0);

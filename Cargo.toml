@@ -1,14 +1,14 @@
 [package]
-name    = "pf-pug-bot"
+name    = "pf_pug_bot"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "pf-pug-bot"
+name = "pf_pug_bot"
 path = "src/main.rs"
 
 [lib]
-name = "pf-pug-bot"
+name = "pf_pug_bot"
 path = "src/lib.rs"
 
 [dependencies]

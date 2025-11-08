@@ -11,6 +11,13 @@
 
 ## Priority
 
+1. Measure quota each time a player is added to the pool. If quota met:
+    - Notify players in the queue
+    - Generate teams
+    - Activate the start match button
+2. Start button pressed
+    - Move generated teams to their channels
+
 - Reply if conf not generated.
 - Functional dashboard
   - Buttons:

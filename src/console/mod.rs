@@ -6,8 +6,8 @@ use sqlx::{Row, SqlitePool};
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
-use pf-pug-bot::database::repositories::GroupRepository;
-use pf-pug-bot::models::Manager;
+use pf_pug_bot::database::repositories::GroupRepository;
+use pf_pug_bot::models::Manager;
 
 pub struct ConsoleHandler {
     manager: Arc<Mutex<Manager>>,
@@ -36,7 +36,7 @@ impl ConsoleHandler {
         info!("Console commands available: status, guilds, games, config <guild_id>, query <sql>, help, quit");
         
         loop {
-            print!("pf-pug-bot> ");
+            print!("pf_pug_bot> ");
             io::stdout().flush().unwrap();
             
             let mut input = String::new();
@@ -174,7 +174,7 @@ impl ConsoleHandler {
                             Ok(groups) => {
                                 println!("  ✅ {} group(s) configured", groups.len());
                                 for group in groups {
-                                    println!("    - Group {}: Queue Channel {}", group.group_id, group.channels.queue);
+                                    println!("    - Group {}: Queue Channel {}", group.group_id, group.channels.queue_chat);
                                 }
                             },
                             Err(e) => {
@@ -263,7 +263,7 @@ impl ConsoleHandler {
                     for group in groups {
                         println!("Group ID: {}"              , group.group_id);
                         println!("  Dashboard Channel: {}"   , group.channels.dashboard);
-                        println!("  Chat Channel: {}"        , group.channels.queue);
+                        println!("  Chat Channel: {}"        , group.channels.queue_chat);
                         println!("  Queue Channel: {}"       , group.channels.queue_vc);
                         println!("  Dashboard Message ID: {}", group.dashboard_msg);
                         if let Some(teams) = group.channels.teams.first() {
@@ -301,7 +301,7 @@ impl ConsoleHandler {
 
         // For now, update the first group (most common case)
         let group = &groups[0];
-        let queue_id = group.channels.queue.get();
+        let queue_id = group.channels.queue_chat.get();
 
         match key.to_lowercase().as_str() {
             "dashboard" => {

@@ -146,7 +146,6 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
             cc.reply("You are not in the queue!").await?;
         }
         
-        // Update dashboard
         group.dash_update(cc.ctx).await?;
         
         return Ok(());
@@ -165,7 +164,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         }
     };
 
-    let mut queue_count = 0;
+    let queue_count = 0;
     let mut already_in_queue = false;
     
     let group = guild.get_group(channel).unwrap();
@@ -189,14 +188,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         info!("Player {} is already in a game", player.discord_id);
         already_in_queue = true;
     } else {
-        // Add player to the game
-        if let Some(session) = group.sessions.last_mut() {
-            if session.status == SessionStatus::Idle {
-                session.add_player(player.discord_id);
-                queue_count = session.pool.len();
-                info!("Added player to session. Queue now has {} players", queue_count);
-            }
-        }
+        group.queue_player(player.discord_id, cc.ctx).await;
     }
     
     if already_in_queue {

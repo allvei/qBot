@@ -18,6 +18,14 @@ pub struct Session {
 }
 
 impl Session {
+
+    /// Get a player by their Discord ID
+    ///
+    /// ### Arguments
+    /// * `discord_id` - The Discord ID of the player to find
+    ///
+    /// ### Returns
+    /// * `Result<Player>` - The player if found, Err otherwise
     pub fn get_user(&self, discord_id: UserId) -> Result<Player> {
         match self.pool.iter().find(|p| p.player.discord_id == discord_id) {
             Some(player) => Ok(player.player),
@@ -25,11 +33,13 @@ impl Session {
         }
     }
 
+    /// Add a player to the session
     pub fn add_player(&mut self, discord_id: UserId) {
         let player = GamePlayer::add(discord_id);
         self.pool.push(player);
     }
 
+    /// Create a new session
     pub fn new(
         status: SessionStatus,
         pool: Vec<GamePlayer>,
@@ -37,22 +47,27 @@ impl Session {
         Self { status, pool }
     }
 
+    /// Check if the session is active
     pub fn is_active(&self) -> bool {
         matches!(self.status, SessionStatus::Push | SessionStatus::Live | SessionStatus::Pull)
     }
 
+    /// Check if the session is hot
     pub fn is_hot(&self) -> bool {
         matches!(self.status, SessionStatus::Hot)
     }
 
+    /// Check if the session is idle
     pub fn is_idle(&self) -> bool {
         matches!(self.status, SessionStatus::Idle)
     }
 
+    /// Set the session to idle
     pub fn idle(&mut self) {
         self.status = SessionStatus::Idle;
     }
 
+    /// Set the session to hot
     pub fn hot(&mut self) -> CE {
         info!("Game is HOT with {} players", self.pool.len());
         self.status = SessionStatus::Hot;
@@ -63,18 +78,22 @@ impl Session {
                  .footer(CEF::new("Awaiting team generation..."))
     }
 
+    /// Set the session to push
     pub fn push(&mut self) {
         self.status = SessionStatus::Push;
     }
 
+    /// Set the session to live
     pub fn live(&mut self) {
         self.status = SessionStatus::Live;
     }
 
+    /// Set the session to pull
     pub fn pull(&mut self) {
         self.status = SessionStatus::Pull;
     }
     
+    /// Create an empty session
     pub fn empty() -> Self {
         Self {
             status: SessionStatus::Idle,

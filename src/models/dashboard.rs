@@ -137,29 +137,28 @@ impl Group {
     }
 
     /// Creates buttons for the dashboard
-    pub async fn create_dashboard_buttons(&self) -> Result<Vec<CAR>> {
+    pub async fn create_dashboard_buttons(&mut self) -> Result<Vec<CAR>> {
         info!("Creating dashboard buttons for group {}", self.group_id);
 
-        let has_live = !self.sessions.is_empty();
-        let has_rdy  = self.sessions.iter().any(|s| s.pool.len() >= 8);
+        let queue   = self.get_queue();
+        let is_hot  = queue.is_hot();
+        let is_live = queue.is_active();
 
         let bs = BS::Secondary;
-        let button_configs = vec![
-            ("join",    "Join queue",  bs, false),
-            ("leave",   "Leave queue", bs, false),
-            ("shuffle", "Shuffle",     bs, !has_rdy),
-            ("start",   "Start match", bs, !has_live),
-            ("end",     "End match",   bs, !has_live),
+        let buttons = vec![
+            ("join",    "Join",    bs, true),
+            ("leave",   "Leave",   bs, true),
+            ("shuffle", "Shuffle", bs, is_hot),
+            ("start",   "Start",   bs, is_hot),
+            ("end",     "End",     bs, is_live),
         ];
 
-        let buttons = Self::gen_buttons(button_configs);
-
-        Ok(vec![CAR::Buttons(buttons)])
+        Ok(vec![CAR::Buttons(Self::gen_buttons(buttons))])
     }
     
     fn gen_buttons(button_configs: Vec<(&'static str, &'static str, BS, bool)>) -> Vec<CB> {
-        button_configs.into_iter().map(|(action, label, style, disabled)| {
-            CB::new(action).label(label).style(style).disabled(disabled)
+        button_configs.into_iter().map(|(action, label, style, enabled)| {
+            CB::new(action).label(label).style(style).disabled(!enabled)
         }).collect()
     }
 
@@ -288,7 +287,7 @@ impl Group {
 
     /// Handles the join queue button
     async fn dash_join(&mut self,cc: &CC<'_>) -> Result<()> {
-        let user = cc.component.user.id;
+        let user_id = cc.component.user.id;
 
         let mut in_sesh = false;
 
@@ -303,15 +302,11 @@ impl Group {
         };
 
         // Check if player is already in game
-        if self.get_user_game(user).is_ok() {
-            info!("Player {} is already in a game", user);
+        if self.get_user_game(user_id).is_ok() {
+            info!("Player {} is already in a game", user_id);
             in_sesh = true;
         } else {
-            // Add player to the idle game
-            if let Some(session) = self.sessions.iter_mut().find(|s| s.status == SessionStatus::Idle) {
-                session.add_player(user);
-                info!("Added player to session. Queue now has {} players", session.pool.len());
-            }
+            self.queue_player(user_id, cc.ctx).await;
         }
 
         if !in_sesh {
@@ -451,5 +446,19 @@ impl Group {
                 Ok(())
             }
         }
+    }
+
+    pub async fn lock_button(&mut self, cc: &CC<'_>) -> Result<()> {
+        let mut dash = self.dash_get(cc.ctx).await.unwrap();
+        let buttons = self.create_dashboard_buttons().await.unwrap();
+        dash.edit(&cc.ctx.http, EditMessage::new().components(buttons)).await;
+        Ok(())
+    }
+
+    pub async fn unlock_button(&mut self, cc: &CC<'_>) -> Result<()> {
+        let mut dash = self.dash_get(cc.ctx).await.unwrap();
+        let buttons = self.create_dashboard_buttons().await.unwrap();
+        dash.edit(&cc.ctx.http, EditMessage::new().components(buttons)).await;
+        Ok(())
     }
 }

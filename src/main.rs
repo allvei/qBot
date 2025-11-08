@@ -5,6 +5,7 @@ use std::env;
 use std::sync::Arc;
 
 use anyhow::Result;
+use pf_pug_bot::player::queue;
 use serenity::all::{
     Client, Command, CommandOptionType as COT, Context, EventHandler, Guild, GuildId,
     GatewayIntents, Interaction, Ready, VoiceState,
@@ -19,10 +20,10 @@ use serenity::builder::{
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
-use pf-pug-bot::database::migrations::DatabaseMigrations;
-use pf-pug-bot::database::repositories::GroupRepository;
-use pf-pug-bot::handlers::{admin, player};
-use pf-pug-bot::{ButtonType, CommandContext, ComponentContext, Database, Group, Manager, Roles, Server, SessionStatus};
+use pf_pug_bot::database::migrations::DatabaseMigrations;
+use pf_pug_bot::database::repositories::GroupRepository;
+use pf_pug_bot::handlers::{admin, player};
+use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, Database, Group, Manager, Roles, Server, SessionStatus};
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
     CC::new(name.into(),).description(desc.into(),)
@@ -365,26 +366,7 @@ impl EventHandler for Handler {
                         if player_exists {
                             error!("{} is already in the game", user_name);
                         } else {
-                            let mut player_added = false;
-                            
-                            for session in group.sessions.iter_mut() {
-                                if session.is_active() {
-                                    info!("Skipping active session, looking for idle session");
-                                    continue; // Skip active sessions, try next
-                                }
-                                session.add_player(user_id);
-                                info!("Added {} to session. Pool size: {}", user_name, session.pool.len());
-                                player_added = true;
-                                if session.pool.len() >= 8 {
-                                    info!("Session ready: dashboard={}, players={}", dashboard_channel, session.pool.len());
-                                }
-                                break; // Player added to non-active session, stop searching
-                            }
-                            
-                            // Update dashboard after any player joins
-                            if player_added {
-                                if let Err(e) = group.dash_update(&ctx).await;
-                            }
+                            group.queue_player(user_id, &ctx).await;
                         }
                     }
                 },
@@ -412,7 +394,7 @@ impl Handler {
                         continue;
                     }
                     // Create dashboard for each group's queue channel
-                    let channel_id   = group.channels.queue;
+                    let channel_id   = group.channels.queue_chat;
                     let channel_name = channel_id.name(&ctx.http).await.unwrap();
                     
                     // Create dashboard in the queue channel
@@ -478,7 +460,7 @@ async fn main(
     // Load environment variables
     dotenvy::dotenv().ok();
     let token        = env::var("DISCORD_TOKEN").expect("Expected a Discord token in the environment");
-    let db_file      = env::var("DATABASE_URL").unwrap_or_else(|_| "./pf-pug-bot.db".to_string());
+    let db_file      = env::var("DATABASE_URL").unwrap_or_else(|_| "./pf_pug_bot.db".to_string());
     let database_url = format!("sqlite:{}",db_file);
 
     // Initialize database connection

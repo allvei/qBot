@@ -82,7 +82,7 @@ pub struct Group {
     pub quota:         u8,
     pub dashboard_msg: MI,
     pub channels:      Channels,
-    pub sessions:         Vec<Session>,
+    pub sessions:      Vec<Session>,
 }
 
 impl Group {
@@ -127,12 +127,29 @@ impl Group {
         }
     }
 
+    pub fn get_queue(&mut self) -> &mut Session {
+        self.sessions
+            .iter_mut()
+            .find(|s| s.status == SessionStatus::Idle)
+            .unwrap()
+    }
+
     pub fn get_games_by_status(
-        &mut self,
+        &self,
         status: &SessionStatus,
     ) -> Vec<&Session> {
         self.sessions
             .iter()
+            .filter(|s| s.status == *status)
+            .collect()
+    }
+
+    pub fn get_games_by_status_mut(
+        &mut self,
+        status: &SessionStatus,
+    ) -> Vec<&mut Session> {
+        self.sessions
+            .iter_mut()
             .filter(|s| s.status == *status)
             .collect()
     }
@@ -155,6 +172,20 @@ impl Group {
             Some(game) => Ok(game.pool.iter_mut().find(|p| p.player.discord_id == user_id).unwrap()),
             None => Err(anyhow!("User not found in any game")),
         }
+    }
+
+    pub async fn queue_player(&mut self, user_id: UI, ctx: &Context) {
+        self.get_queue().add_player(user_id);
+        if self.is_quota() {
+            self.notify(ctx).await;
+            self.get_queue().hot();
+        }
+        self.dash_update(ctx).await;
+    }
+
+    pub async fn add_player(&mut self, session: &mut Session, user_id: UI, ctx: &Context) {
+        session.add_player(user_id);
+        self.dash_update(ctx).await;
     }
 
     /// Checks if this group contains the given channel_id in any of its channels
@@ -184,7 +215,7 @@ impl Group {
         Ok(())
     }
 
-    pub async fn is_quota_met(&mut self) -> bool {
+    pub fn is_quota(&self) -> bool {
         let g = self.get_games_by_status(&SessionStatus::Idle);
         if g.len() > 1 {
             warn!("Multiple idle games found, faulty");
@@ -203,6 +234,26 @@ impl Group {
                 true
             },
         }
+    }
+
+    /// Notifies the queue chat that quota has been met
+    pub async fn notify(&self, ctx: &Context) {
+        let queue_chat = self.channels.queue_chat;
+        let mut player_mentions = Vec::new();
+        if let Some(game) = self.sessions.last() {
+            for player in &game.pool {
+                player_mentions.push(format!("<@{}>", player.player.discord_id));
+            }
+        }
+        
+        let embed = CreateEmbed::new()
+            .title("Quota Met")
+            .description(format!(
+                "PUG is ready, please join the queue channel!\n\n{}",
+                player_mentions.join("\n")
+            ));
+        let msg = CM::new().embed(embed);
+        queue_chat.send_message(&ctx.http, msg).await;
     }
 }
 
@@ -260,7 +311,7 @@ pub enum Divisons {
 // Channels
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channels {
-    pub queue:     CI,
+    pub queue_chat:     CI,
     pub queue_vc:  CI,
     pub teams:     Vec<TeamChannel>,
     pub dashboard: CI,
@@ -268,13 +319,13 @@ pub struct Channels {
 
 impl Channels {
     pub fn new(
-        queue:     CI,
+        queue_chat:     CI,
         queue_vc:  CI,
         teams:     Vec<TeamChannel>,
         dashboard: CI,
     ) -> Self {
         Self {
-            queue,
+            queue_chat,
             queue_vc,
             teams,
             dashboard,
@@ -292,7 +343,7 @@ impl Channels {
 
     pub fn empty() -> Self {
         Self {
-            queue:     CI::new(1),
+            queue_chat:     CI::new(1),
             queue_vc:  CI::new(1),
             teams:     Vec::new(),
             dashboard: CI::new(1),
@@ -305,7 +356,7 @@ impl Channels {
         &self,
         channel_id: CI,
     ) -> bool {
-        self.queue == channel_id
+        self.queue_chat == channel_id
             || self.queue_vc  == channel_id
             || self.dashboard == channel_id
             || self.teams.iter().any(|team| team.contains_channel(channel_id))
