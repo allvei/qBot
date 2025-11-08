@@ -1,5 +1,5 @@
 // CHECK ME
-mod console;
+mod command;
 
 use std::env;
 use std::sync::Arc;
