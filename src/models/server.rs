@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 use crate::handlers::player::check_role;
 use crate::models::{
-    CommandContext, ComponentContext, FileManager, GamePlayer, Session, SessionStatus, TeamChannel,
+    CommandContext, ComponentContext, FileManager, SessionPlayer, Session, SessionStatus, TeamChannel,
     ADMIN_R_ID, BLU_VC_ID, CHAT_TC_ID, DASHBOARD_TC_ID, QUEUE_TC_ID, RED_VC_ID, RUNNER_R_ID,
 };
 
@@ -163,7 +163,7 @@ impl Group {
             .ok_or(anyhow!("No idle session found"))
     }
 
-    pub fn get_games_by_status(
+    pub fn get_sessions_by_status(
         &self,
         status: &SessionStatus,
     ) -> Vec<&Session> {
@@ -183,7 +183,7 @@ impl Group {
             .collect()
     }
 
-    pub fn get_user_game(
+    pub async fn get_user_session(
         &mut self,
         user_id: UI,
     ) -> Result<&mut Session> {
@@ -196,7 +196,7 @@ impl Group {
     pub fn get_player(
         &mut self,
         user_id: UI,
-    ) -> Result<&mut GamePlayer> {
+    ) -> Result<&mut SessionPlayer> {
         match self.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.discord_id == user_id)) {
             Some(game) => Ok(game.pool.iter_mut().find(|p| p.player.discord_id == user_id).unwrap()),
             None => Err(anyhow!("User not found in any game")),
@@ -350,7 +350,7 @@ impl Group {
     }
 
     pub fn is_quota(&self) -> bool {
-        let g = self.get_games_by_status(&SessionStatus::Idle);
+        let g = self.get_sessions_by_status(&SessionStatus::Idle);
         if g.len() > 1 {
             warn!("Multiple idle games found, faulty");
         }

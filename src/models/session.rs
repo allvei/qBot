@@ -14,7 +14,7 @@ use crate::models::Player;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub status: SessionStatus,
-    pub pool: Vec<GamePlayer>,   
+    pub pool: Vec<SessionPlayer>,   
 }
 
 impl Session {
@@ -28,14 +28,18 @@ impl Session {
 
     /// Add a player to the session
     pub fn add_player(&mut self, discord_id: UserId) {
-        let player = GamePlayer::add(discord_id);
+        let player = SessionPlayer::add(discord_id);
         self.pool.push(player);
+    }
+
+    pub fn remove_player(&mut self, discord_id: UserId) {
+        self.pool.retain(|p| p.player.discord_id != discord_id);
     }
 
     /// Create a new session
     pub fn new(
         status: SessionStatus,
-        pool: Vec<GamePlayer>,
+        pool: Vec<SessionPlayer>,
     ) -> Self {
         Self { status, pool }
     }
@@ -95,7 +99,7 @@ impl Session {
     }
 }
 
-// GameStatus
+// SessionStatus
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum SessionStatus {
     Idle, // Waiting for enough players to join
@@ -105,9 +109,9 @@ pub enum SessionStatus {
     Pull, // Moving players back to the queue
 }
 
-// GamePlayer
+// SessionPlayer
 #[derive(Debug, Clone, Copy, FromRow, Serialize, Deserialize)]
-pub struct GamePlayer {
+pub struct SessionPlayer {
     pub player:       Player,
     pub team:         Option<Team>,
     pub is_buffered:  bool,
@@ -115,7 +119,7 @@ pub struct GamePlayer {
     pub in_queue_cmd: bool,
 }
 
-impl GamePlayer {
+impl SessionPlayer {
     pub fn add(discord_id: UserId) -> Self {
         let player = Player::add(discord_id, None);
         Self {

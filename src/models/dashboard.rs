@@ -185,7 +185,7 @@ impl Group {
         let mut desc = String::new();
         
         let quota = self.quota as usize;
-        let games_idle: Vec<&Session> = self.get_games_by_status(&SessionStatus::Idle);
+        let games_idle: Vec<&Session> = self.get_sessions_by_status(&SessionStatus::Idle);
         if let Some(game_current) = games_idle.first() {
             let queue_players = game_current.pool.len();
             
@@ -239,7 +239,7 @@ impl Group {
             desc.push_str("**📋 Queue Status**\n*No active games. Join the queue to get started!*\n\n");
         }
 
-        let games_hot:  Vec<&Session> = self.get_games_by_status(&SessionStatus::Hot);
+        let games_hot:  Vec<&Session> = self.get_sessions_by_status(&SessionStatus::Hot);
         // Show hot games (waiting to start) with team composition
         if !games_hot.is_empty() {
             desc.push_str("**Ready to Start:**\n");
@@ -259,7 +259,7 @@ impl Group {
             desc.push('\n');
         }
 
-        let games_live: Vec<&Session> = self.get_games_by_status(&SessionStatus::Live);
+        let games_live: Vec<&Session> = self.get_sessions_by_status(&SessionStatus::Live);
         // Show live matches
         if !games_live.is_empty() {
             desc.push_str("**Live Matches:**\n");
@@ -301,8 +301,8 @@ impl Group {
 
         let mut in_sesh = false;
 
-        // Check if we have idle games
-        match self.get_games_by_status(&SessionStatus::Idle).len() {
+        // Check if we have idle sessions
+        match self.get_sessions_by_status(&SessionStatus::Idle).len() {
             0 => {
                 info!("No idle games found, creating a new game");
                 self.create_session();
@@ -312,7 +312,7 @@ impl Group {
         };
 
         // Check if player is already in game
-        if self.get_user_game(user_id).is_ok() {
+        if self.get_user_session(user_id).await.is_ok() {
             info!("Player {} is already in a game", user_id);
             in_sesh = true;
         } else {
@@ -320,8 +320,8 @@ impl Group {
         }
 
         if !in_sesh {
-            self.dash_update(cc.ctx).await;
             cc.acknowledge().await;
+            self.dash_update(cc.ctx).await;
         } else {
             cc.reply("You are already in the queue!").await;
         }
@@ -333,27 +333,17 @@ impl Group {
     async fn dash_leave(&mut self, cc: &CC<'_>) -> Result<()> {
         let user = cc.component.user.id;
 
-        let mut in_sesh = false;
-
-        // Find and remove player from any game
-        for game in &mut self.sessions {
-            if game.status == SessionStatus::Idle {
-                let initial_len = game.pool.len();
-                game.pool.retain(|p| p.player.discord_id != user);
-                if game.pool.len() < initial_len {
-                    in_sesh = true;
-                    info!("Removed player from game. Queue now has {} players", game.pool.len());
-                    break;
-                }
+        match self.get_user_session(user).await {
+            Ok(session) => {
+                session.remove_player(user);
+                info!("Removed player from game. Queue now has {} players", session.pool.len());
+            }
+            Err(e) => {
+                cc.reply("You are not in the queue!").await?;
             }
         }
-
-        if in_sesh {
-            self.dash_update(cc.ctx).await;
-            cc.acknowledge().await;
-        } else {
-            cc.reply("You are not in the queue!").await?;
-        }
+        cc.acknowledge().await;
+        self.dash_update(cc.ctx).await;
 
         Ok(())
     }
@@ -373,8 +363,8 @@ impl Group {
         }
 
         if is_shuffled {
-            self.dash_update(cc.ctx).await;
             cc.acknowledge().await;
+            self.dash_update(cc.ctx).await;
         } else {
             cc.reply("❌ No game ready for shuffling. Need at least 8 players in queue.").await?;
         }
@@ -397,8 +387,8 @@ impl Group {
         }
 
         if is_live {
-            self.dash_update(cc.ctx).await;
             cc.acknowledge().await;
+            self.dash_update(cc.ctx).await;
         } else {
             cc.reply("❌ No game ready to start. Need at least 8 players and shuffled teams.").await?;
         }
@@ -423,8 +413,8 @@ impl Group {
         }
 
         if match_ended {
-            self.dash_update(cc.ctx).await;
             cc.acknowledge().await;
+            self.dash_update(cc.ctx).await;
         } else {
             cc.reply("❌ No active match to end.").await?;
         }

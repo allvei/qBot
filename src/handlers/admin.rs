@@ -9,6 +9,7 @@ use serenity::all::{
 };
 use tracing::{error, info};
 
+use crate::DEFAULT_QUOTA;
 use crate::handlers::player::check_role;
 use crate::models::{CommandContext as CC, Role, Server, SETUP_STATE};
 
@@ -883,7 +884,7 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
         dashboard_msg_id, // Real dashboard message ID from step 1
         red_channel,
         blue_channel,
-        10, // default game quota
+        DEFAULT_QUOTA,
     ).await {
         Ok(group) => {
             // Update the dashboard message with the actual dashboard content
@@ -892,7 +893,7 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
             
             let mut temp_group = Group::new(
                 group.group_id,
-                10,
+                DEFAULT_QUOTA,
                 120,
                 MI::new(dashboard_msg_id),
                 Channels::new(

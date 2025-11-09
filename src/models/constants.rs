@@ -20,6 +20,8 @@ macro_rules! define_global_ids {
     };
 }
 
+pub const DEFAULT_QUOTA: u8 = 8;
+
 define_global_ids! {
   RUNNER_R_ID          => 1386951114225746040,
   ADMIN_R_ID           => 1386951155052974141,

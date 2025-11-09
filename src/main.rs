@@ -55,6 +55,17 @@ impl EventHandler for Handler {
 
         let guild_count = ctx.cache.guilds().len();
         info!("Connected guilds: {}", guild_count);
+        
+        // Spawn console command handler in a separate task
+        let console_handler = command::ConsoleHandler::new(
+            self.manager.clone(),
+            self.database.pool().clone(),
+            Arc::new(ctx.clone()),
+        );
+        
+        tokio::spawn(async move {
+            console_handler.start_console_loop().await;
+        });
 
         // Register slash commands globally or for specific guild
         let cmds = vec![

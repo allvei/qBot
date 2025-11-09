@@ -67,6 +67,17 @@ impl Manager {
         }
     }
 
+    /// Get a group by guild ID and group ID
+    pub fn get_group_by_id(&mut self, guild_id: GuildId, group_id: u8) -> Result<&mut Group> {
+        let server = self.get_server(guild_id)?;
+        let group = server.groups.iter_mut().find(|g| g.group_id == group_id);
+        if let Some(group) = group {
+            Ok(group)
+        } else {
+            Err(anyhow!("Group {} not found for guild ID: {}", group_id, guild_id.get()))
+        }
+    }
+
     /// Update group state in the manager
     ///
     /// ### Arguments

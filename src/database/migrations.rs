@@ -155,7 +155,7 @@ impl DatabaseMigrations {
                     blu               INTEGER NOT NULL,
                     game           INTEGER DEFAULT 0,
                     game_increment INTEGER DEFAULT 0,
-                    game_quota     INTEGER DEFAULT 10
+                    quota     INTEGER DEFAULT 10
                 )"
             )
             .execute(&self.pool)
@@ -181,7 +181,7 @@ impl DatabaseMigrations {
                         blu               INTEGER NOT NULL,
                         game           INTEGER DEFAULT 0,
                         game_increment INTEGER DEFAULT 0,
-                        game_quota     INTEGER DEFAULT 10
+                        quota     INTEGER DEFAULT 10
                     )"
                 )
                 .execute(&self.pool)
@@ -257,7 +257,7 @@ impl DatabaseMigrations {
         let required_columns = vec![
             "id", "group_id", "timeout", "guild_id", "dashboard", 
             "chat", "queue", "dashboard_msg", "red", "blu", 
-            "game", "game_increment", "game_quota"
+            "game", "game_increment", "quota"
         ];
         self.validate_table_columns("groups", &required_columns).await?;
         Ok(())

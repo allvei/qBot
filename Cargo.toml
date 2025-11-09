@@ -28,6 +28,7 @@ uuid               = { version = "1.0",                             features = [
 itertools          = "0.14.0"
 async-trait        = "0.1"
 lazy_static        = "1.4"
+rustyline          = "14.0"
 
 [lints.rust]
 # missing_docs_in_private_items = "warn"

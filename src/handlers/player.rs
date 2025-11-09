@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 use crate::Database;
 use crate::models::{
-    CommandContext, GamePlayer, Group, Role, Roles, Server, Session, SessionStatus, Team,
+    CommandContext, SessionPlayer, Group, Role, Roles, Server, Session, SessionStatus, Team,
 };
 
 /// Checks if a user has the specified role.
@@ -35,9 +35,9 @@ pub async fn check_role(
 /// Splits the players into two teams.
 ///
 /// * `players` - The players to split into teams.
-pub fn split_into_teams(players: &[GamePlayer]) -> (Vec<GamePlayer>, Vec<GamePlayer>) {
+pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<SessionPlayer>) {
     let mut rng = rand::rng();
-    let mut player_list: Vec<GamePlayer> = players.to_vec();
+    let mut player_list: Vec<SessionPlayer> = players.to_vec();
     player_list.shuffle(&mut rng);
     let team_size = player_list.len() / 2;
     let team1 = player_list[0..team_size].to_vec();
@@ -170,7 +170,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     let group = guild.get_group(channel).unwrap();
     
     // Check if we have idle sessions
-    match group.get_games_by_status(&SessionStatus::Idle).len() {
+    match group.get_sessions_by_status(&SessionStatus::Idle).len() {
         0 => {
             info!("No idle sessions found, creating a new session");
             group.create_session();
@@ -184,7 +184,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     }
 
     // Check if player is already in game
-    if group.get_user_game(user).is_ok() {
+    if group.get_user_session(user).is_ok() {
         info!("Player {} is already in a game", player.discord_id);
         already_in_queue = true;
     } else {
@@ -212,7 +212,7 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Resul
     let (queue_count, queue_list, quota) = {
         let group = guild.get_group(channel).unwrap();
         
-        let idle_games = group.get_games_by_status(&SessionStatus::Idle);
+        let idle_games = group.get_sessions_by_status(&SessionStatus::Idle);
         
         if idle_games.is_empty() {
             (0, "No active queue found.".to_string(), group.quota)
@@ -364,7 +364,7 @@ pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     let channel_id = cc.intax.channel_id;
     let group = guild.get_group(channel_id).unwrap();
 
-    if let Ok(game) = group.get_user_game(cc.intax.user.id) {
+    if let Ok(game) = group.get_user_session(cc.intax.user.id) {
         game.status = SessionStatus::Pull;
 
         // TODO: Persist group changes to DB if needed (no update_group method exists)

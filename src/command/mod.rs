@@ -1,13 +1,114 @@
-use std::io::{self, Write};
 use std::sync::Arc;
 
+use rustyline::completion::{Completer, Pair};
+use rustyline::error::ReadlineError;
+use rustyline::highlight::{Highlighter, MatchingBracketHighlighter};
+use rustyline::hint::HistoryHinter;
+use rustyline::validate::Validator;
+use rustyline::{CompletionType, Config, Editor};
+use rustyline::Helper;
+use serenity::all::UserId;
 use serenity::prelude::Context;
 use sqlx::{Row, SqlitePool};
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
 use pf_pug_bot::database::repositories::GroupRepository;
-use pf_pug_bot::models::Manager;
+use pf_pug_bot::models::{Manager, Team};
+
+struct CommandHelper {
+    completer: CommandCompleter,
+    highlighter: MatchingBracketHighlighter,
+    hinter: HistoryHinter,
+}
+
+impl Helper for CommandHelper {}
+
+impl Completer for CommandHelper {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        ctx: &rustyline::Context<'_>,
+    ) -> Result<(usize, Vec<Pair>), ReadlineError> {
+        self.completer.complete(line, pos, ctx)
+    }
+}
+
+impl Highlighter for CommandHelper {
+    fn highlight<'l>(&self, line: &'l str, pos: usize) -> std::borrow::Cow<'l, str> {
+        self.highlighter.highlight(line, pos)
+    }
+
+    fn highlight_char(&self, line: &str, pos: usize, forced: bool) -> bool {
+        self.highlighter.highlight_char(line, pos, forced)
+    }
+}
+
+impl rustyline::hint::Hinter for CommandHelper {
+    type Hint = String;
+
+    fn hint(&self, line: &str, pos: usize, ctx: &rustyline::Context<'_>) -> Option<String> {
+        self.hinter.hint(line, pos, ctx)
+    }
+}
+
+impl Validator for CommandHelper {}
+
+struct CommandCompleter {
+    commands: Vec<String>,
+}
+
+impl CommandCompleter {
+    fn new() -> Self {
+        Self {
+            commands: vec![
+                "status".to_string(),
+                "guilds".to_string(),
+                "games".to_string(),
+                "config".to_string(),
+                "create".to_string(),
+                "query".to_string(),
+                "forcegen".to_string(),
+                "fakeplayer".to_string(),
+                "testnotify".to_string(),
+                "help".to_string(),
+                "quit".to_string(),
+                "exit".to_string(),
+            ],
+        }
+    }
+}
+
+impl Completer for CommandCompleter {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &rustyline::Context<'_>,
+    ) -> Result<(usize, Vec<Pair>), ReadlineError> {
+        let line = &line[..pos];
+        let mut candidates = Vec::new();
+
+        // Only complete the first word (command name)
+        if !line.contains(' ') {
+            for cmd in &self.commands {
+                if cmd.starts_with(line) {
+                    candidates.push(Pair {
+                        display: cmd.clone(),
+                        replacement: cmd.clone(),
+                    });
+                }
+            }
+        }
+
+        Ok((0, candidates))
+    }
+}
 
 pub struct ConsoleHandler {
     manager: Arc<Mutex<Manager>>,
@@ -33,16 +134,31 @@ impl ConsoleHandler {
     }
 
     pub async fn start_console_loop(&self) {
-        info!("Console commands available: status, guilds, games, config <guild_id>, query <sql>, help, quit");
+        info!("Console commands available: status, guilds, games, config, create, query, forcegen, fakeplayer, testnotify, help, quit");
+        info!("Use Tab for autocompletion, Up/Down arrows for command history");
+        
+        let config = Config::builder()
+            .completion_type(CompletionType::List)
+            .auto_add_history(true)
+            .build();
+
+        let helper = CommandHelper {
+            completer: CommandCompleter::new(),
+            highlighter: MatchingBracketHighlighter::new(),
+            hinter: HistoryHinter::new(),
+        };
+
+        let mut rl = Editor::with_config(config).unwrap();
+        rl.set_helper(Some(helper));
+        
+        // Load history if it exists
+        let _ = rl.load_history(".pf_pug_bot_history");
         
         loop {
-            print!("pf_pug_bot> ");
-            io::stdout().flush().unwrap();
-            
-            let mut input = String::new();
-            match io::stdin().read_line(&mut input) {
-                Ok(_) => {
-                    let input = input.trim();
+            let readline = rl.readline("pf_pug_bot> ");
+            match readline {
+                Ok(line) => {
+                    let input = line.trim();
                     if input.is_empty() {
                         continue;
                     }
@@ -58,12 +174,23 @@ impl ConsoleHandler {
                         }
                     }
                 },
-                Err(e) => {
-                    error!("Failed to read input: {}", e);
+                Err(ReadlineError::Interrupted) => {
+                    info!("CTRL-C");
+                    continue;
+                },
+                Err(ReadlineError::Eof) => {
+                    info!("CTRL-D");
+                    break;
+                },
+                Err(err) => {
+                    error!("Error reading line: {:?}", err);
                     break;
                 }
             }
         }
+        
+        // Save history
+        let _ = rl.save_history(".pf_pug_bot_history");
     }
 
     async fn handle_command(&self, input: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
@@ -82,17 +209,17 @@ impl ConsoleHandler {
                         // Read config: config <guild_id>
                         self.cmd_print_config(parts[1]).await?;
                     },
-                    4 => {
-                        // Set config: config <guild_id> <key> <value>
-                        self.cmd_set_config(parts[1], parts[2], parts[3]).await?;
+                    5 => {
+                        // Set config: config <guild_id> <group_id> <key> <value>
+                        self.cmd_set_config(parts[1], parts[2], parts[3], parts[4]).await?;
                     },
                     _ => {
                         println!("Usage:");
-                        println!("  config <guild_id>           - Show configuration");
-                        println!("  config <guild_id> <key> <value> - Set configuration value");
+                        println!("  config <guild_id>                         - Show configuration");
+                        println!("  config <guild_id> <group_id> <key> <value> - Set group configuration");
                         println!("Examples:");
-                        println!("  config TS1 dashboard 1385894822992281701");
-                        println!("  config 1410654395229536268 game_quota 4");
+                        println!("  config TS1 0 quota 8");
+                        println!("  config TS1 0 timeout 120");
                     }
                 }
             },
@@ -110,6 +237,42 @@ impl ConsoleHandler {
                 } else {
                     let sql = parts[1..].join(" ");
                     self.cmd_query_db(&sql).await?;
+                }
+            },
+            "forcegen" => {
+                if parts.len() < 3 {
+                    println!("Usage: forcegen <guild_id> <group_id>");
+                    println!("Example: forcegen 1383583686431080499 0");
+                } else {
+                    self.cmd_force_generate_teams(parts[1], parts[2]).await?;
+                }
+            },
+            "fakeplayer" => {
+                match parts.len() {
+                    3 => {
+                        // fakeplayer <guild_name> <count> - defaults to group 0
+                        self.cmd_add_fake_players(parts[1], "0", parts[2]).await?;
+                    },
+                    4 => {
+                        // fakeplayer <guild_id> <group_id> <count>
+                        self.cmd_add_fake_players(parts[1], parts[2], parts[3]).await?;
+                    },
+                    _ => {
+                        println!("Usage:");
+                        println!("  fakeplayer <guild_name> <count>              - Add fake players to group 0");
+                        println!("  fakeplayer <guild_id> <group_id> <count>     - Add fake players to specific group");
+                        println!("Examples:");
+                        println!("  fakeplayer TS1 8");
+                        println!("  fakeplayer 1383583686431080499 0 8");
+                    }
+                }
+            },
+            "testnotify" => {
+                if parts.len() < 3 {
+                    println!("Usage: testnotify <guild_id> <group_id>");
+                    println!("Example: testnotify 1383583686431080499 0");
+                } else {
+                    self.cmd_test_notify(parts[1], parts[2]).await?;
                 }
             },
             "help" => self.cmd_help(),
@@ -201,8 +364,8 @@ impl ConsoleHandler {
             for group in &server.groups {
                 for game in group.sessions.iter() {
                     game_count += 1;
-                    println!("Game {}: Guild {} - Group {} - {} players - Status: {:?}", 
-                        game_count, server.guild_id, group.group_id, game.pool.len(), game.status);
+                    println!("Game {}: Guild {} - Group ID {} - {} players - Status: {:?}", 
+                        game_count, server.guild_id.get(), group.group_id, game.pool.len(), game.status);
                     
                     if !game.pool.is_empty() {
                         print!("  Players: ");
@@ -287,23 +450,82 @@ impl ConsoleHandler {
         Ok(())
     }
 
-    async fn cmd_set_config(&self, guild_identifier: &str, key: &str, value: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn cmd_set_config(&self, guild_identifier: &str, group_id_str: &str, key: &str, value: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
+        let group_id: u8 = group_id_str.parse()
+            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
         
-        // Get existing groups for this guild
         let group_repo = GroupRepository::new(self.database.clone());
         let groups = group_repo.get_groups_for_guild(guild_id).await?;
         
-        if groups.is_empty() {
-            println!("No configuration found for guild ID: {}. Cannot set values.", guild_id);
-            return Ok(());
-        }
-
-        // For now, update the first group (most common case)
-        let group = &groups[0];
+        let group = groups.iter().find(|g| g.group_id == group_id)
+            .ok_or(format!("Group {} not found for guild {}", group_id, guild_id))?;
+        
         let queue_id = group.channels.queue_chat.get();
 
         match key.to_lowercase().as_str() {
+            "quota" | "game_quota" => {
+                let quota: u8 = value.parse()
+                    .map_err(|_| format!("Invalid quota value: {}", value))?;
+                
+                if quota == 0 || quota > 20 {
+                    println!("❌ Quota must be between 1 and 20");
+                    return Ok(());
+                }
+                
+                // Update database
+                match group_repo.update_group(
+                    queue_id,
+                    guild_id,
+                    group.channels.dashboard.get(),
+                    0, // chat (not used)
+                    group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
+                    group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
+                    quota,
+                ).await {
+                    Ok(_) => {
+                        println!("✅ Updated quota to {} for guild {} group {}", quota, guild_id, group_id);
+                        
+                        // Update in-memory manager and dashboard
+                        if let Some(ctx) = &self.ctx {
+                            let mut manager = self.manager.lock().await;
+                            if let Ok(group) = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id) {
+                                group.quota = quota;
+                                
+                                // Update dashboard to reflect new quota
+                                if let Err(e) = group.dash_update(ctx).await {
+                                    println!("⚠️  Failed to update dashboard: {}", e);
+                                } else {
+                                    println!("✅ Dashboard updated successfully");
+                                }
+                            }
+                        } else {
+                            println!("⚠️  Context not available, dashboard not updated");
+                        }
+                    },
+                    Err(e) => println!("❌ Failed to update quota: {}", e),
+                }
+            },
+            "timeout" => {
+                let timeout: u16 = value.parse()
+                    .map_err(|_| format!("Invalid timeout value: {}", value))?;
+                
+                // Update in-memory manager
+                if let Some(ctx) = &self.ctx {
+                    let mut manager = self.manager.lock().await;
+                    if let Ok(group) = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id) {
+                        group.timeout = timeout;
+                        println!("✅ Updated timeout to {} minutes for guild {} group {}", timeout, guild_id, group_id);
+                        
+                        // Update dashboard
+                        if let Err(e) = group.dash_update(ctx).await {
+                            println!("⚠️  Failed to update dashboard: {}", e);
+                        }
+                    }
+                } else {
+                    println!("❌ Context not available");
+                }
+            },
             "dashboard" => {
                 let dashboard_id: u64 = value.parse()
                     .map_err(|_| format!("Invalid dashboard channel ID: {}", value))?;
@@ -319,28 +541,6 @@ impl ConsoleHandler {
                 ).await {
                     Ok(_) => println!("✅ Updated dashboard channel to {} for guild {}", dashboard_id, guild_id),
                     Err(e) => println!("❌ Failed to update dashboard: {}", e),
-                }
-            },
-            "game_quota" | "quota" => {
-                let quota: u8 = value.parse()
-                    .map_err(|_| format!("Invalid game quota: {}", value))?;
-                
-                if quota == 0 || quota > 20 {
-                    println!("❌ Game quota must be between 1 and 20");
-                    return Ok(());
-                }
-                
-                match group_repo.update_group(
-                    queue_id,
-                    guild_id,
-                    group.channels.dashboard.into(),
-                    0, // chat (not used)
-                    group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
-                    group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
-                    quota,
-                ).await {
-                    Ok(_) => println!("✅ Updated game quota to {} for guild {}", quota, guild_id),
-                    Err(e) => println!("❌ Failed to update game quota: {}", e),
                 }
             },
             "red" | "red_team" => {
@@ -379,7 +579,7 @@ impl ConsoleHandler {
             },
             _ => {
                 println!("❌ Unknown configuration key: {}", key);
-                println!("Available keys: dashboard, game_quota, red, blue");
+                println!("Available keys: quota, timeout, dashboard, red, blue");
             }
         }
 
@@ -448,12 +648,6 @@ impl ConsoleHandler {
     }
 
     async fn cmd_query_db(&self, sql: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Only allow SELECT queries for safety
-        if !sql.trim().to_lowercase().starts_with("select") {
-            println!("Only SELECT queries are allowed for safety.");
-            return Ok(());
-        }
-
         match sqlx::query(sql).fetch_all(&self.database).await {
             Ok(rows) => {
                 println!("Query executed successfully. Rows returned: {}", rows.len());
@@ -479,27 +673,154 @@ impl ConsoleHandler {
         Ok(())
     }
 
+    async fn cmd_force_generate_teams(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let guild_id = self.resolve_guild_id(guild_identifier).await?;
+        let group_id: u8 = group_id_str.parse()
+            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        
+        if let Some(ctx) = &self.ctx {
+            let mut manager = self.manager.lock().await;
+            let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+            
+            // Check if there's a session with enough players
+            if let Ok(session) = group.get_queue().await {                
+                println!("🔄 Forcing team generation for guild {} group {} with {} players...", guild_id, group_id, session.pool.len());
+                group.generate_teams(ctx).await;
+                println!("✅ Teams generated successfully!");
+                
+                // Show the teams
+                if let Ok(session) = group.get_queue().await {
+                    println!("\n=== Generated Teams ===");
+                    let red_players: Vec<_> = session.pool.iter()
+                        .filter(|p| p.team == Some(Team::Red))
+                        .collect();
+                    let blu_players: Vec<_> = session.pool.iter()
+                        .filter(|p| p.team == Some(Team::Blu))
+                        .collect();
+                    
+                    println!("Red Team ({} players):", red_players.len());
+                    for p in red_players {
+                        println!("  - {}", p.player.discord_id);
+                    }
+                    
+                    println!("\nBlue Team ({} players):", blu_players.len());
+                    for p in blu_players {
+                        println!("  - {}", p.player.discord_id);
+                    }
+                }
+            } else {
+                println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
+            }
+        } else {
+            println!("❌ Context not available. Cannot generate teams without Discord context.");
+        }
+        
+        Ok(())
+    }
+
+    async fn cmd_add_fake_players(&self, guild_identifier: &str, group_id_str: &str, count_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let guild_id = self.resolve_guild_id(guild_identifier).await?;
+        let group_id: u8 = group_id_str.parse()
+            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        let count: usize = count_str.parse()
+            .map_err(|_| format!("Invalid player count: {}", count_str))?;
+        
+        if count == 0 || count > 20 {
+            println!("❌ Player count must be between 1 and 20");
+            return Ok(());
+        }
+        
+        let mut manager = self.manager.lock().await;
+        let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+        
+        // Ensure there's a session
+        if group.sessions.is_empty() {
+            group.create_session();
+        }
+        
+        // Get the idle session
+        if let Ok(session) = group.get_queue().await {
+            println!("🔄 Adding {} fake player(s) to guild {} group {}...", count, guild_id, group_id);
+            
+            // Generate fake player IDs starting from a high number to avoid conflicts
+            let base_id = 9000000000000000000_u64;
+            for i in 0..count {
+                let fake_id = UserId::new(base_id + i as u64);
+                session.add_player(fake_id);
+            }
+            
+            println!("✅ Added {} fake player(s). Total players in queue: {}", count, session.pool.len());
+            
+            // Update dashboard if context is available
+            if let Some(ctx) = &self.ctx {
+                if let Err(e) = group.dash_update(ctx).await {
+                    println!("⚠️  Failed to update dashboard: {}", e);
+                }
+            }
+        } else {
+            println!("❌ Failed to get queue for guild {} group {}", guild_id, group_id);
+        }
+        
+        Ok(())
+    }
+
+    async fn cmd_test_notify(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let guild_id = self.resolve_guild_id(guild_identifier).await?;
+        let group_id: u8 = group_id_str.parse()
+            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        
+        if let Some(ctx) = &self.ctx {
+            let manager = self.manager.lock().await;
+            let server = manager.servers.iter().find(|s| s.guild_id.get() == guild_id)
+                .ok_or(format!("Server not found for guild ID: {}", guild_id))?;
+            
+            let group = server.groups.iter().find(|g| g.group_id == group_id)
+                .ok_or(format!("Group {} not found for guild {}", group_id, guild_id))?;
+            
+            println!("🔄 Testing notify method for guild {} group {}...", guild_id, group_id);
+            group.notify(ctx).await;
+            println!("✅ Notify method called successfully!");
+            println!("   Check the queue chat channel for the notification message.");
+        } else {
+            println!("❌ Context not available. Cannot test notify without Discord context.");
+        }
+        
+        Ok(())
+    }
+
     fn cmd_help(&self) {
         println!("=== Available Commands ===");
-        println!("status                          - Show bot status and statistics");
-        println!("guilds                          - List all connected guilds and their configurations");
-        println!("games                        - List all active games and players");
-        println!("config <guild_id>               - Print configuration for a specific guild");
-        println!("config <guild_id> <key> <value> - Set configuration value");
+        println!("status                                            - Show bot status and statistics");
+        println!("guilds                                            - List all connected guilds and their configurations");
+        println!("games                                             - List all active games and players");
+        println!("config <guild_id>                                 - Print configuration for a specific guild");
+        println!("config <guild_id> <group_id> <key> <value>        - Set group configuration");
         println!("create <guild_id> <queue> <dashboard> <red> <blue> <quota> - Create new group configuration");
-        println!("query <sql>                     - Execute a SELECT query on the database");
-        println!("help                            - Show this help message");
-        println!("quit/exit                       - Shutdown the console (bot will continue running)");
+        println!("query <sql>                                       - Execute a SELECT query on the database");
+        println!();
+        println!("=== Testing Commands ===");
+        println!("forcegen   <guild_id> <group_id>                  - Force team generation for the current queue");
+        println!("fakeplayer <guild_name> <count>                   - Add fake players to group 0");
+        println!("fakeplayer <guild_id> <group_id> <count>          - Add fake players to specific group");
+        println!("testnotify <guild_id> <group_id>                  - Test the notify method (sends notification to queue chat)");
+        println!();
+        println!("help                                              - Show this help message");
+        println!("quit/exit                                         - Shutdown the console (bot will continue running)");
         println!();
         println!("=== Config Command Examples ===");
-        println!("config TS1 dashboard 1385894822992281701");
-        println!("config 1410654395229536268 game_quota 4");
-        println!("config TS1 red 1385464431185494086");
-        println!("config TS1 blue 1385464563448680578");
+        println!("config TS1                         # Show all group configs for guild");
+        println!("config TS1 0 quota 8               # Set quota to 8 for group 0");
+        println!("config TS1 0 timeout 120           # Set timeout to 120 minutes");
         println!();
         println!("=== Create Command Example ===");
         println!("create 1383583686431080499 1388643261543088208 1385894822992281701 1385464431185494086 1385464563448680578 10");
         println!();
-        println!("Available config keys: dashboard, game_quota, red, blue");
+        println!("=== Testing Command Examples ===");
+        println!("forcegen   TS1 0                   # Force team generation");
+        println!("fakeplayer TS1 8                   # Add 8 fake players to group 0");
+        println!("fakeplayer 1383583686431080499 0 8 # Add 8 fake players to specific group");
+        println!("testnotify TS1 0                   # Test notify method");
+        println!();
+        println!("Available config keys: quota, timeout, dashboard, red, blue");
     }
 }
