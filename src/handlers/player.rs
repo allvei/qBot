@@ -184,7 +184,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     }
 
     // Check if player is already in game
-    if group.get_user_session(user).is_ok() {
+    if group.get_user_session(user).await.is_ok() {
         info!("Player {} is already in a game", player.discord_id);
         already_in_queue = true;
     } else {
@@ -364,7 +364,7 @@ pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     let channel_id = cc.intax.channel_id;
     let group = guild.get_group(channel_id).unwrap();
 
-    if let Ok(game) = group.get_user_session(cc.intax.user.id) {
+    if let Ok(game) = group.get_user_session(cc.intax.user.id).await {
         game.status = SessionStatus::Pull;
 
         // TODO: Persist group changes to DB if needed (no update_group method exists)
