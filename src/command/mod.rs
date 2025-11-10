@@ -106,7 +106,7 @@ impl CommandRegistry {
         
         commands.insert("query", Command {
             name: "query",
-            description: "Execute a SELECT query on the database",
+            description: "Execute a query on the database",
             usage: vec!["query <sql>"],
             examples: vec![
                 "query SELECT * FROM groups",
@@ -149,12 +149,76 @@ impl CommandRegistry {
             category: CommandCategory::Testing,
         });
         
+        commands.insert("showqueue", Command {
+            name: "showqueue",
+            description: "Display queue with player details and timestamps",
+            usage: vec!["showqueue <guild_id> <group_id>"],
+            examples: vec!["showqueue TS1 0"],
+            category: CommandCategory::Testing,
+        });
+        
+        commands.insert("showteams", Command {
+            name: "showteams",
+            description: "Display team compositions with stats (if generated)",
+            usage: vec!["showteams <guild_id> <group_id>"],
+            examples: vec!["showteams TS1 0"],
+            category: CommandCategory::Testing,
+        });
+        
+        commands.insert("clearqueue", Command {
+            name: "clearqueue",
+            description: "Remove all players from the queue",
+            usage: vec!["clearqueue <guild_id> <group_id>"],
+            examples: vec!["clearqueue TS1 0"],
+            category: CommandCategory::Testing,
+        });
+        
+        commands.insert("removeplayer", Command {
+            name: "removeplayer",
+            description: "Remove a player from the queue by index (0-based)",
+            usage: vec!["removeplayer <guild_id> <group_id> <index>"],
+            examples: vec!["removeplayer TS1 0 2  # Remove player at index 2"],
+            category: CommandCategory::Testing,
+        });
+        
+        commands.insert("forcehot", Command {
+            name: "forcehot",
+            description: "Force session to Hot status (bypass quota check)",
+            usage: vec!["forcehot <guild_id> <group_id>"],
+            examples: vec!["forcehot TS1 0"],
+            category: CommandCategory::Testing,
+        });
+        
+        commands.insert("forcepush", Command {
+            name: "forcepush",
+            description: "Force push players to team channels and set Live",
+            usage: vec!["forcepush <guild_id> <group_id>"],
+            examples: vec!["forcepush TS1 0"],
+            category: CommandCategory::Testing,
+        });
+        
+        commands.insert("forcepull", Command {
+            name: "forcepull",
+            description: "Force pull players back to queue and reset to Idle",
+            usage: vec!["forcepull <guild_id> <group_id>"],
+            examples: vec!["forcepull TS1 0"],
+            category: CommandCategory::Testing,
+        });
+        
+        commands.insert("simulate", Command {
+            name: "simulate",
+            description: "Simulate complete game cycle (fill → hot → push → live → pull → idle)",
+            usage: vec!["simulate <guild_id> <group_id>"],
+            examples: vec!["simulate TS1 0"],
+            category: CommandCategory::Testing,
+        });
+        
         // System commands
         commands.insert("help", Command {
             name: "help",
-            description: "Show all available commands with usage and examples",
-            usage: vec!["help"],
-            examples: vec!["help"],
+            description: "Show all available commands",
+            usage: vec!["help", "help -v"],
+            examples: vec!["help", "help -v  # Show verbose output with usage and examples"],
             category: CommandCategory::System,
         });
         
@@ -181,47 +245,76 @@ impl CommandRegistry {
         self.commands.keys().map(|&s| s.to_string()).collect()
     }
     
-    fn print_help(&self) {
-        println!("=== Console Command Reference ===");
-        println!();
-        
-        // Group commands by category
-        let categories = vec![
-            CommandCategory::Core,
-            CommandCategory::Config,
-            CommandCategory::Testing,
-            CommandCategory::System,
-        ];
-        
-        for category in categories {
-            println!("## {}", category.name());
+    fn print_help(&self, verbose: bool) {
+        if verbose {
+            // Verbose output with full details
+            println!("=== Console Command Reference ===");
             println!();
             
-            let mut category_commands: Vec<_> = self.commands.values()
-                .filter(|cmd| cmd.category == category)
-                .collect();
-            category_commands.sort_by_key(|cmd| cmd.name);
+            let categories = vec![
+                CommandCategory::Core,
+                CommandCategory::Config,
+                CommandCategory::Testing,
+                CommandCategory::System,
+            ];
             
-            for cmd in category_commands {
-                println!("### {}", cmd.name);
-                println!("    {}", cmd.description);
+            for category in categories {
+                println!("## {}", category.name());
                 println!();
-                println!("    Usage:");
-                for usage in &cmd.usage {
-                    println!("      {}", usage);
-                }
-                if !cmd.examples.is_empty() {
+                
+                let mut category_commands: Vec<_> = self.commands.values()
+                    .filter(|cmd| cmd.category == category)
+                    .collect();
+                category_commands.sort_by_key(|cmd| cmd.name);
+                
+                for cmd in category_commands {
+                    println!("### {}", cmd.name);
+                    println!("    {}", cmd.description);
                     println!();
-                    println!("    Examples:");
-                    for example in &cmd.examples {
-                        println!("      {}", example);
+                    println!("    Usage:");
+                    for usage in &cmd.usage {
+                        println!("      {}", usage);
                     }
+                    if !cmd.examples.is_empty() {
+                        println!();
+                        println!("    Examples:");
+                        for example in &cmd.examples {
+                            println!("      {}", example);
+                        }
+                    }
+                    println!();
+                }
+            }
+            
+            println!("Available config keys: quota, timeout, dashboard, red, blue");
+        } else {
+            // Compact output - just command names and descriptions
+            println!("=== Available Commands ===");
+            println!();
+            
+            let categories = vec![
+                CommandCategory::Core,
+                CommandCategory::Config,
+                CommandCategory::Testing,
+                CommandCategory::System,
+            ];
+            
+            for category in categories {
+                println!("{}:", category.name());
+                
+                let mut category_commands: Vec<_> = self.commands.values()
+                    .filter(|cmd| cmd.category == category)
+                    .collect();
+                category_commands.sort_by_key(|cmd| cmd.name);
+                
+                for cmd in category_commands {
+                    println!("  {} - {}", cmd.name, cmd.description);
                 }
                 println!();
             }
+            
+            println!("Use 'help -v' for detailed usage and examples");
         }
-        
-        println!("Available config keys: quota, timeout, dashboard, red, blue");
     }
 }
 
@@ -528,7 +621,106 @@ impl ConsoleHandler {
                     self.cmd_test_notify(parts[1], parts[2]).await?;
                 }
             },
-            "help" => self.registry.print_help(),
+            "showqueue" => {
+                if parts.len() < 3 {
+                    if let Some(cmd) = self.registry.commands.get("showqueue") {
+                        println!("Usage:");
+                        for usage in &cmd.usage {
+                            println!("  {}", usage);
+                        }
+                    }
+                } else {
+                    self.cmd_show_queue(parts[1], parts[2]).await?;
+                }
+            },
+            "showteams" => {
+                if parts.len() < 3 {
+                    if let Some(cmd) = self.registry.commands.get("showteams") {
+                        println!("Usage:");
+                        for usage in &cmd.usage {
+                            println!("  {}", usage);
+                        }
+                    }
+                } else {
+                    self.cmd_show_teams(parts[1], parts[2]).await?;
+                }
+            },
+            "clearqueue" => {
+                if parts.len() < 3 {
+                    if let Some(cmd) = self.registry.commands.get("clearqueue") {
+                        println!("Usage:");
+                        for usage in &cmd.usage {
+                            println!("  {}", usage);
+                        }
+                    }
+                } else {
+                    self.cmd_clear_queue(parts[1], parts[2]).await?;
+                }
+            },
+            "removeplayer" => {
+                if parts.len() < 4 {
+                    if let Some(cmd) = self.registry.commands.get("removeplayer") {
+                        println!("Usage:");
+                        for usage in &cmd.usage {
+                            println!("  {}", usage);
+                        }
+                    }
+                } else {
+                    self.cmd_remove_player(parts[1], parts[2], parts[3]).await?;
+                }
+            },
+            "forcehot" => {
+                if parts.len() < 3 {
+                    if let Some(cmd) = self.registry.commands.get("forcehot") {
+                        println!("Usage:");
+                        for usage in &cmd.usage {
+                            println!("  {}", usage);
+                        }
+                    }
+                } else {
+                    self.cmd_force_hot(parts[1], parts[2]).await?;
+                }
+            },
+            "forcepush" => {
+                if parts.len() < 3 {
+                    if let Some(cmd) = self.registry.commands.get("forcepush") {
+                        println!("Usage:");
+                        for usage in &cmd.usage {
+                            println!("  {}", usage);
+                        }
+                    }
+                } else {
+                    self.cmd_force_push(parts[1], parts[2]).await?;
+                }
+            },
+            "forcepull" => {
+                if parts.len() < 3 {
+                    if let Some(cmd) = self.registry.commands.get("forcepull") {
+                        println!("Usage:");
+                        for usage in &cmd.usage {
+                            println!("  {}", usage);
+                        }
+                    }
+                } else {
+                    self.cmd_force_pull(parts[1], parts[2]).await?;
+                }
+            },
+            "simulate" => {
+                if parts.len() < 3 {
+                    if let Some(cmd) = self.registry.commands.get("simulate") {
+                        println!("Usage:");
+                        for usage in &cmd.usage {
+                            println!("  {}", usage);
+                        }
+                    }
+                } else {
+                    self.cmd_simulate_cycle(parts[1], parts[2]).await?;
+                }
+            },
+            "help" => {
+                let verbose = parts.len() > 1 && (parts[1] == "-v" || parts[1] == "--verbose");
+                self.registry.print_help(verbose);
+            },
             "quit" | "exit" => {
                 println!("Shutting down console...");
                 return Ok(true);
@@ -1036,6 +1228,293 @@ impl ConsoleHandler {
             println!("   Check the queue chat channel for the notification message.");
         } else {
             println!("❌ Context not available. Cannot test notify without Discord context.");
+        }
+        
+        Ok(())
+    }
+
+    async fn cmd_show_queue(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let guild_id = self.resolve_guild_id(guild_identifier).await?;
+        let group_id: u8 = group_id_str.parse()
+            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        
+        let mut manager = self.manager.lock().await;
+        let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+        let quota = group.quota;
+        
+        if let Ok(session) = group.get_queue().await {
+            println!("\n=== Queue for Guild {} Group {} ===", guild_id, group_id);
+            println!("Status: {:?}", session.status);
+            println!("Players in queue: {}/{}", session.pool.len(), quota);
+            
+            if session.pool.is_empty() {
+                println!("  (No players in queue)");
+            } else {
+                println!("\nPlayers:");
+                for (i, player) in session.pool.iter().enumerate() {
+                    let team_str = match player.team {
+                        Some(Team::Red) => " [RED]",
+                        Some(Team::Blu) => " [BLU]",
+                        Some(Team::Unassigned) | None => "",
+                    };
+                    println!("  {}. {}{}", i, player.player.discord_id, team_str);
+                }
+            }
+        } else {
+            println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
+        }
+        
+        Ok(())
+    }
+
+    async fn cmd_show_teams(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let guild_id = self.resolve_guild_id(guild_identifier).await?;
+        let group_id: u8 = group_id_str.parse()
+            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        
+        let mut manager = self.manager.lock().await;
+        let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+        
+        if let Ok(session) = group.get_queue().await {
+            let red_players: Vec<_> = session.pool.iter()
+                .filter(|p| p.team == Some(Team::Red))
+                .collect();
+            let blu_players: Vec<_> = session.pool.iter()
+                .filter(|p| p.team == Some(Team::Blu))
+                .collect();
+            
+            if red_players.is_empty() && blu_players.is_empty() {
+                println!("❌ No teams have been generated yet.");
+                println!("   Use 'forcegen' to generate teams.");
+            } else {
+                println!("\n=== Teams for Guild {} Group {} ===", guild_id, group_id);
+                
+                println!("\n🔴 Red Team ({} players):", red_players.len());
+                for p in red_players {
+                    let elo = p.player.rank.map(|r| r.elo()).unwrap_or(30);
+                    println!("  - {} (ELO: {})", p.player.discord_id, elo);
+                }
+                
+                println!("\n🔵 Blue Team ({} players):", blu_players.len());
+                for p in blu_players {
+                    let elo = p.player.rank.map(|r| r.elo()).unwrap_or(30);
+                    println!("  - {} (ELO: {})", p.player.discord_id, elo);
+                }
+            }
+        } else {
+            println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
+        }
+        
+        Ok(())
+    }
+
+    async fn cmd_clear_queue(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let guild_id = self.resolve_guild_id(guild_identifier).await?;
+        let group_id: u8 = group_id_str.parse()
+            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        
+        let mut manager = self.manager.lock().await;
+        let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+        
+        if let Ok(session) = group.get_queue().await {
+            let player_count = session.pool.len();
+            session.pool.clear();
+            println!("✅ Cleared {} player(s) from the queue", player_count);
+            
+            // Update dashboard if context is available
+            if let Some(ctx) = &self.ctx {
+                if let Err(e) = group.dash_update(ctx).await {
+                    println!("⚠️  Failed to update dashboard: {}", e);
+                }
+            }
+        } else {
+            println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
+        }
+        
+        Ok(())
+    }
+
+    async fn cmd_remove_player(&self, guild_identifier: &str, group_id_str: &str, index_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let guild_id = self.resolve_guild_id(guild_identifier).await?;
+        let group_id: u8 = group_id_str.parse()
+            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        let index: usize = index_str.parse()
+            .map_err(|_| format!("Invalid index: {}", index_str))?;
+        
+        let mut manager = self.manager.lock().await;
+        let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+        
+        if let Ok(session) = group.get_queue().await {
+            if index >= session.pool.len() {
+                println!("❌ Index {} is out of bounds. Queue has {} player(s)", index, session.pool.len());
+            } else {
+                let removed_player = session.pool.remove(index);
+                println!("✅ Removed player {} from position {}", removed_player.player.discord_id, index);
+                
+                // Update dashboard if context is available
+                if let Some(ctx) = &self.ctx {
+                    if let Err(e) = group.dash_update(ctx).await {
+                        println!("⚠️  Failed to update dashboard: {}", e);
+                    }
+                }
+            }
+        } else {
+            println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
+        }
+        
+        Ok(())
+    }
+
+    async fn cmd_force_hot(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let guild_id = self.resolve_guild_id(guild_identifier).await?;
+        let group_id: u8 = group_id_str.parse()
+            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        
+        if let Some(ctx) = &self.ctx {
+            let mut manager = self.manager.lock().await;
+            let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+            
+            if let Ok(_session) = group.get_queue().await {
+                println!("🔄 Forcing session to Hot status...");
+                group.hot(ctx).await?;
+                println!("✅ Session is now Hot!");
+                println!("   Teams have been generated and players have been notified.");
+            } else {
+                println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
+            }
+        } else {
+            println!("❌ Context not available. Cannot force hot without Discord context.");
+        }
+        
+        Ok(())
+    }
+
+    async fn cmd_force_push(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let guild_id = self.resolve_guild_id(guild_identifier).await?;
+        let group_id: u8 = group_id_str.parse()
+            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        
+        if let Some(ctx) = &self.ctx {
+            let mut manager = self.manager.lock().await;
+            let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+            
+            println!("🔄 Forcing push to team channels...");
+            match group.push(ctx).await {
+                Ok(_) => {
+                    println!("✅ Players pushed to team channels!");
+                    println!("   Session is now Live.");
+                },
+                Err(e) => {
+                    println!("❌ Failed to push players: {}", e);
+                }
+            }
+        } else {
+            println!("❌ Context not available. Cannot force push without Discord context.");
+        }
+        
+        Ok(())
+    }
+
+    async fn cmd_force_pull(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let guild_id = self.resolve_guild_id(guild_identifier).await?;
+        let group_id: u8 = group_id_str.parse()
+            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        
+        if let Some(ctx) = &self.ctx {
+            let mut manager = self.manager.lock().await;
+            let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+            
+            println!("🔄 Forcing pull back to queue...");
+            match group.pull(ctx).await {
+                Ok(_) => {
+                    println!("✅ Players pulled back to queue!");
+                    println!("   Session reset to Idle.");
+                },
+                Err(e) => {
+                    println!("❌ Failed to pull players: {}", e);
+                }
+            }
+        } else {
+            println!("❌ Context not available. Cannot force pull without Discord context.");
+        }
+        
+        Ok(())
+    }
+
+    async fn cmd_simulate_cycle(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let guild_id = self.resolve_guild_id(guild_identifier).await?;
+        let group_id: u8 = group_id_str.parse()
+            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        
+        if let Some(ctx) = &self.ctx {
+            println!("\n🎮 Starting complete game cycle simulation...\n");
+            
+            // Step 1: Add fake players to fill quota
+            {
+                let mut manager = self.manager.lock().await;
+                let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+                let quota = group.quota as usize;
+                
+                if group.sessions.is_empty() {
+                    group.create_session();
+                }
+                
+                if let Ok(session) = group.get_queue().await {
+                    let current_count = session.pool.len();
+                    if current_count < quota {
+                        let needed = quota - current_count;
+                        println!("1️⃣  Adding {} fake player(s) to reach quota ({})...", needed, quota);
+                        
+                        let base_id = 9000000000000000000_u64;
+                        for i in 0..needed {
+                            let fake_id = UserId::new(base_id + i as u64);
+                            session.add_player(fake_id);
+                        }
+                        println!("   ✅ Queue now has {} players\n", session.pool.len());
+                    } else {
+                        println!("1️⃣  Queue already has {} players (quota: {})\n", current_count, quota);
+                    }
+                }
+            }
+            
+            // Step 2: Force Hot
+            println!("2️⃣  Setting session to Hot...");
+            {
+                let mut manager = self.manager.lock().await;
+                let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+                group.hot(ctx).await?;
+                println!("   ✅ Session is Hot, teams generated\n");
+            }
+            
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            
+            // Step 3: Push to team channels
+            println!("3️⃣  Pushing players to team channels...");
+            {
+                let mut manager = self.manager.lock().await;
+                let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+                match group.push(ctx).await {
+                    Ok(_) => println!("   ✅ Players pushed, session is Live\n"),
+                    Err(e) => println!("   ⚠️  Push failed: {}\n", e),
+                }
+            }
+            
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            
+            // Step 4: Pull back to queue
+            println!("4️⃣  Pulling players back to queue...");
+            {
+                let mut manager = self.manager.lock().await;
+                let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+                match group.pull(ctx).await {
+                    Ok(_) => println!("   ✅ Players pulled back, session reset to Idle\n"),
+                    Err(e) => println!("   ⚠️  Pull failed: {}\n", e),
+                }
+            }
+            
+            println!("🏁 Complete game cycle simulation finished!\n");
+        } else {
+            println!("❌ Context not available. Cannot simulate cycle without Discord context.");
         }
         
         Ok(())
