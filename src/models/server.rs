@@ -292,8 +292,11 @@ impl Group {
         
         info!("Generating balanced teams using BCH algorithm");
         
-        // Get the current game (should be hot or idle with enough players)
-        let game = self.get_queue().await.unwrap();
+        // Get the hot game (session was just set to hot before this is called)
+        let game = self.sessions
+            .iter_mut()
+            .find(|s| s.status == SessionStatus::Hot)
+            .expect("No hot session found for team generation");
         
         // Need at least 8 players for team generation
         if game.pool.len() < 8 {
@@ -456,13 +459,13 @@ impl Group {
             }
         }
         
+        // Use embed for header and raw pings in message content to properly ping users
         let embed = CreateEmbed::new()
-            .title("Quota Met")
-            .description(format!(
-                "PUG is ready, please join the queue channel!\n\n{}",
-                player_mentions.join("\n")
-            ));
-        let msg = CM::new().embed(embed);
+            .title("🔥 Quota Met")
+            .description("PUG is ready, please join the queue channel!");
+        
+        let content = player_mentions.join(" ");
+        let msg = CM::new().embed(embed).content(content);
         queue_chat.send_message(&ctx.http, msg).await;
     }
 
