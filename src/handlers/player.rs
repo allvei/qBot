@@ -142,8 +142,6 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         
         if found {
             cc.reply(&format!("❌ Left the queue! ({}/{} players)", queue_count, group.quota)).await?;
-        } else {
-            cc.reply("You are not in the queue!").await?;
         }
         
         group.dash_update(cc.ctx).await?;
@@ -164,9 +162,6 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         }
     };
 
-    let queue_count = 0;
-    let mut already_in_queue = false;
-    
     let group = guild.get_group(channel).unwrap();
     
     // Check if we have idle sessions
@@ -185,17 +180,14 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
 
     // Check if player is already in game
     if group.get_user_session(user).await.is_ok() {
-        info!("Player {} is already in a game", player.discord_id);
-        already_in_queue = true;
+        info!("Player {} is already in the queue", player.discord_id);
     } else {
         group.queue_player(player.discord_id, cc.ctx).await;
     }
     
-    if already_in_queue {
-        cc.reply("You are already in the queue!").await?;
-    } else {
-        cc.reply(&format!("✅ Joined the queue! ({}/{} players)", queue_count, group.quota)).await?;
-    }
+    // Always acknowledge (silently if already in queue)
+    let current_queue = group.get_queue().await.unwrap().pool.len();
+    cc.reply(&format!("✅ Joined the queue! ({}/{} players)", current_queue, group.quota)).await?;
 
     // Update dashboard
     group.dash_update(cc.ctx).await?;
