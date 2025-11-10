@@ -450,16 +450,24 @@ impl EventHandler for Handler {
                 Ok(group) => {
                     if group.channels.queue_vc == channel_id {
                         info!("{} joined queue voice channel {}", user_name, channel_id);
-                        if group.sessions.is_empty() { group.create_session(); }
                         
-                        // Extract immutable data before mutable iteration
-                        let dashboard_channel = group.channels.dashboard;
-                        let player_exists     = group.get_player(user_id).is_ok();
+                        // Ensure there's at least one session
+                        if group.sessions.is_empty() { 
+                            group.create_session(); 
+                        }
                         
-                        if player_exists {
-                            error!("{} is already in the game", user_name);
+                        // Check if player is already in a session
+                        if group.get_player(user_id).is_ok() {
+                            info!("{} is already in the queue", user_name);
                         } else {
+                            // Add player to queue
+                            info!("{} joined queue from voice channel", user_name);
                             group.queue_player(user_id, &ctx).await;
+                        }
+                        
+                        // Update dashboard to reflect the change
+                        if let Err(e) = group.dash_update(&ctx).await {
+                            error!("Failed to update dashboard: {}", e);
                         }
                     }
                 },
