@@ -11,26 +11,26 @@
 
 ## Priority
 
-1. Measure quota each time a player is added to the pool. If quota met:
-    - Notify players in the queue
-    - Generate teams
-    - Activate the start match button
-2. Start button pressed
-    - Move generated teams to their channels
+1. ✅ Measure quota each time a player is added to the pool. If quota met:
+    - ✅ Notify players in the queue
+    - ✅ Generate teams
+    - ✅ Activate the start match button
+2. ✅ Start button pressed
+    - ✅ Move generated teams to their channels
 
-- Reply if conf not generated.
-- Functional dashboard
+- ✅ Reply if conf not generated.
+- ✅ Functional dashboard
   - Buttons:
-    - Shuffle players
-    - Start match
-    - End match
-  - Automatically update to list current players in the queue, if quota met, generate teams and show gen result
-  - If over quota, list other players as queued for next game
-  - List current matches and their status
-- First come first serve system, person with the longest time spent in queue has position.
-- New team generation algorithm
-- Command to handle roles - ?
-- During setup or group creation, offer to create the group channels.
+    - ✅ Shuffle players
+    - ✅ Start match
+    - ✅ End match
+  - ✅ Automatically update to list current players in the queue, if quota met, generate teams and show gen result
+  - ✅ If over quota, list other players as queued for next game
+  - ✅ List current matches and their status
+- ✅ First come first serve system, person with the longest time spent in queue has position.
+- ✅ New team generation algorithm (BCH - Balanced Composite Heuristic)
+- ✅ Command to handle roles (`/roles` command implemented)
+- ✅ During setup or group creation, offer to create the group channels (guidance added to setup wizard)
 
 ## Secondary
 

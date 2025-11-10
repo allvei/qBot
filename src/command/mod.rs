@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::collections::HashMap;
 
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
@@ -15,6 +16,214 @@ use tracing::{error, info};
 
 use pf_pug_bot::database::repositories::GroupRepository;
 use pf_pug_bot::models::{Manager, Team};
+
+/// Command definition with all metadata for auto-generated documentation
+struct Command {
+    name: &'static str,
+    description: &'static str,
+    usage: Vec<&'static str>,
+    examples: Vec<&'static str>,
+    category: CommandCategory,
+}
+
+#[derive(PartialEq, Eq, Hash)]
+enum CommandCategory {
+    Core,
+    Config,
+    Testing,
+    System,
+}
+
+impl CommandCategory {
+    fn name(&self) -> &'static str {
+        match self {
+            CommandCategory::Core => "Core Commands",
+            CommandCategory::Config => "Configuration",
+            CommandCategory::Testing => "Testing Commands",
+            CommandCategory::System => "System",
+        }
+    }
+}
+
+struct CommandRegistry {
+    commands: HashMap<&'static str, Command>,
+}
+
+impl CommandRegistry {
+    fn new() -> Self {
+        let mut commands = HashMap::new();
+        
+        // Core commands
+        commands.insert("status", Command {
+            name: "status",
+            description: "Show bot status and statistics",
+            usage: vec!["status"],
+            examples: vec!["status"],
+            category: CommandCategory::Core,
+        });
+        
+        commands.insert("guilds", Command {
+            name: "guilds",
+            description: "List all connected guilds and their configurations",
+            usage: vec!["guilds"],
+            examples: vec!["guilds"],
+            category: CommandCategory::Core,
+        });
+        
+        commands.insert("games", Command {
+            name: "games",
+            description: "List all active games and players",
+            usage: vec!["games"],
+            examples: vec!["games"],
+            category: CommandCategory::Core,
+        });
+        
+        // Config commands
+        commands.insert("config", Command {
+            name: "config",
+            description: "View or modify guild and group configurations",
+            usage: vec![
+                "config <guild_id>",
+                "config <guild_id> <group_id> <key> <value>",
+            ],
+            examples: vec![
+                "config TS1                  # Show all configs",
+                "config TS1 0 quota 8        # Set quota to 8",
+                "config TS1 0 timeout 120    # Set timeout",
+            ],
+            category: CommandCategory::Config,
+        });
+        
+        commands.insert("create", Command {
+            name: "create",
+            description: "Create a new group configuration",
+            usage: vec!["create <guild_id> <queue_ch> <dashboard_ch> <red_ch> <blue_ch> <quota>"],
+            examples: vec![
+                "create 1383583686431080499 1388643261543088208 1385894822992281701 1385464431185494086 1385464563448680578 10",
+            ],
+            category: CommandCategory::Config,
+        });
+        
+        commands.insert("query", Command {
+            name: "query",
+            description: "Execute a SELECT query on the database",
+            usage: vec!["query <sql>"],
+            examples: vec![
+                "query SELECT * FROM groups",
+                "query SELECT * FROM players WHERE discord_id = 123456",
+            ],
+            category: CommandCategory::Config,
+        });
+        
+        // Testing commands
+        commands.insert("forcegen", Command {
+            name: "forcegen",
+            description: "Force team generation for the current queue",
+            usage: vec!["forcegen <guild_id> <group_id>"],
+            examples: vec![
+                "forcegen TS1 0",
+                "forcegen 1383583686431080499 0",
+            ],
+            category: CommandCategory::Testing,
+        });
+        
+        commands.insert("fakeplayer", Command {
+            name: "fakeplayer",
+            description: "Add fake players to a queue for testing",
+            usage: vec![
+                "fakeplayer <guild_name> <count>",
+                "fakeplayer <guild_id> <group_id> <count>",
+            ],
+            examples: vec![
+                "fakeplayer TS1 8            # Add 8 to group 0",
+                "fakeplayer 1383583686431080499 0 8",
+            ],
+            category: CommandCategory::Testing,
+        });
+        
+        commands.insert("testnotify", Command {
+            name: "testnotify",
+            description: "Test the notify method (sends notification to queue chat)",
+            usage: vec!["testnotify <guild_id> <group_id>"],
+            examples: vec!["testnotify TS1 0"],
+            category: CommandCategory::Testing,
+        });
+        
+        // System commands
+        commands.insert("help", Command {
+            name: "help",
+            description: "Show all available commands with usage and examples",
+            usage: vec!["help"],
+            examples: vec!["help"],
+            category: CommandCategory::System,
+        });
+        
+        commands.insert("quit", Command {
+            name: "quit",
+            description: "Shutdown the console (bot continues running)",
+            usage: vec!["quit"],
+            examples: vec!["quit"],
+            category: CommandCategory::System,
+        });
+        
+        commands.insert("exit", Command {
+            name: "exit",
+            description: "Shutdown the console (bot continues running)",
+            usage: vec!["exit"],
+            examples: vec!["exit"],
+            category: CommandCategory::System,
+        });
+        
+        Self { commands }
+    }
+    
+    fn get_command_names(&self) -> Vec<String> {
+        self.commands.keys().map(|&s| s.to_string()).collect()
+    }
+    
+    fn print_help(&self) {
+        println!("=== Console Command Reference ===");
+        println!();
+        
+        // Group commands by category
+        let categories = vec![
+            CommandCategory::Core,
+            CommandCategory::Config,
+            CommandCategory::Testing,
+            CommandCategory::System,
+        ];
+        
+        for category in categories {
+            println!("## {}", category.name());
+            println!();
+            
+            let mut category_commands: Vec<_> = self.commands.values()
+                .filter(|cmd| cmd.category == category)
+                .collect();
+            category_commands.sort_by_key(|cmd| cmd.name);
+            
+            for cmd in category_commands {
+                println!("### {}", cmd.name);
+                println!("    {}", cmd.description);
+                println!();
+                println!("    Usage:");
+                for usage in &cmd.usage {
+                    println!("      {}", usage);
+                }
+                if !cmd.examples.is_empty() {
+                    println!();
+                    println!("    Examples:");
+                    for example in &cmd.examples {
+                        println!("      {}", example);
+                    }
+                }
+                println!();
+            }
+        }
+        
+        println!("Available config keys: quota, timeout, dashboard, red, blue");
+    }
+}
 
 struct CommandHelper {
     completer: CommandCompleter,
@@ -62,22 +271,9 @@ struct CommandCompleter {
 }
 
 impl CommandCompleter {
-    fn new() -> Self {
+    fn new(registry: &CommandRegistry) -> Self {
         Self {
-            commands: vec![
-                "status".to_string(),
-                "guilds".to_string(),
-                "games".to_string(),
-                "config".to_string(),
-                "create".to_string(),
-                "query".to_string(),
-                "forcegen".to_string(),
-                "fakeplayer".to_string(),
-                "testnotify".to_string(),
-                "help".to_string(),
-                "quit".to_string(),
-                "exit".to_string(),
-            ],
+            commands: registry.get_command_names(),
         }
     }
 }
@@ -114,6 +310,7 @@ pub struct ConsoleHandler {
     manager: Arc<Mutex<Manager>>,
     database: SqlitePool,
     ctx: Option<Arc<Context>>,
+    registry: CommandRegistry,
 }
 
 impl ConsoleHandler {
@@ -122,6 +319,7 @@ impl ConsoleHandler {
             manager,
             database,
             ctx: Some(ctx),
+            registry: CommandRegistry::new(),
         }
     }
 
@@ -130,11 +328,13 @@ impl ConsoleHandler {
             manager,
             database,
             ctx: None,
+            registry: CommandRegistry::new(),
         }
     }
 
     pub async fn start_console_loop(&self) {
-        info!("Console commands available: status, guilds, games, config, create, query, forcegen, fakeplayer, testnotify, help, quit");
+        let command_names: Vec<_> = self.registry.get_command_names();
+        info!("Console commands available: {}", command_names.join(", "));
         info!("Use Tab for autocompletion, Up/Down arrows for command history");
         
         let config = Config::builder()
@@ -143,7 +343,7 @@ impl ConsoleHandler {
             .build();
 
         let helper = CommandHelper {
-            completer: CommandCompleter::new(),
+            completer: CommandCompleter::new(&self.registry),
             highlighter: MatchingBracketHighlighter::new(),
             hinter: HistoryHinter::new(),
         };
@@ -214,26 +414,53 @@ impl ConsoleHandler {
                         self.cmd_set_config(parts[1], parts[2], parts[3], parts[4]).await?;
                     },
                     _ => {
-                        println!("Usage:");
-                        println!("  config <guild_id>                         - Show configuration");
-                        println!("  config <guild_id> <group_id> <key> <value> - Set group configuration");
-                        println!("Examples:");
-                        println!("  config TS1 0 quota 8");
-                        println!("  config TS1 0 timeout 120");
+                        if let Some(cmd) = self.registry.commands.get("config") {
+                            println!("Usage:");
+                            for usage in &cmd.usage {
+                                println!("  {}", usage);
+                            }
+                            if !cmd.examples.is_empty() {
+                                println!("Examples:");
+                                for example in &cmd.examples {
+                                    println!("  {}", example);
+                                }
+                            }
+                        }
                     }
                 }
             },
             "create" => {
                 if parts.len() < 7 {
-                    println!("Usage: create <guild_id> <queue_channel> <dashboard_channel> <red_channel> <blue_channel> <quota>");
-                    println!("Example: create 1383583686431080499 1388643261543088208 1385894822992281701 1385464431185494086 1385464563448680578 10");
+                    if let Some(cmd) = self.registry.commands.get("create") {
+                        println!("Usage:");
+                        for usage in &cmd.usage {
+                            println!("  {}", usage);
+                        }
+                        if !cmd.examples.is_empty() {
+                            println!("Examples:");
+                            for example in &cmd.examples {
+                                println!("  {}", example);
+                            }
+                        }
+                    }
                 } else {
                     self.cmd_create_config(parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]).await?;
                 }
             },
             "query" => {
                 if parts.len() < 2 {
-                    println!("Usage: query <sql>");
+                    if let Some(cmd) = self.registry.commands.get("query") {
+                        println!("Usage:");
+                        for usage in &cmd.usage {
+                            println!("  {}", usage);
+                        }
+                        if !cmd.examples.is_empty() {
+                            println!("Examples:");
+                            for example in &cmd.examples {
+                                println!("  {}", example);
+                            }
+                        }
+                    }
                 } else {
                     let sql = parts[1..].join(" ");
                     self.cmd_query_db(&sql).await?;
@@ -241,8 +468,18 @@ impl ConsoleHandler {
             },
             "forcegen" => {
                 if parts.len() < 3 {
-                    println!("Usage: forcegen <guild_id> <group_id>");
-                    println!("Example: forcegen 1383583686431080499 0");
+                    if let Some(cmd) = self.registry.commands.get("forcegen") {
+                        println!("Usage:");
+                        for usage in &cmd.usage {
+                            println!("  {}", usage);
+                        }
+                        if !cmd.examples.is_empty() {
+                            println!("Examples:");
+                            for example in &cmd.examples {
+                                println!("  {}", example);
+                            }
+                        }
+                    }
                 } else {
                     self.cmd_force_generate_teams(parts[1], parts[2]).await?;
                 }
@@ -258,24 +495,40 @@ impl ConsoleHandler {
                         self.cmd_add_fake_players(parts[1], parts[2], parts[3]).await?;
                     },
                     _ => {
-                        println!("Usage:");
-                        println!("  fakeplayer <guild_name> <count>              - Add fake players to group 0");
-                        println!("  fakeplayer <guild_id> <group_id> <count>     - Add fake players to specific group");
-                        println!("Examples:");
-                        println!("  fakeplayer TS1 8");
-                        println!("  fakeplayer 1383583686431080499 0 8");
+                        if let Some(cmd) = self.registry.commands.get("fakeplayer") {
+                            println!("Usage:");
+                            for usage in &cmd.usage {
+                                println!("  {}", usage);
+                            }
+                            if !cmd.examples.is_empty() {
+                                println!("Examples:");
+                                for example in &cmd.examples {
+                                    println!("  {}", example);
+                                }
+                            }
+                        }
                     }
                 }
             },
             "testnotify" => {
                 if parts.len() < 3 {
-                    println!("Usage: testnotify <guild_id> <group_id>");
-                    println!("Example: testnotify 1383583686431080499 0");
+                    if let Some(cmd) = self.registry.commands.get("testnotify") {
+                        println!("Usage:");
+                        for usage in &cmd.usage {
+                            println!("  {}", usage);
+                        }
+                        if !cmd.examples.is_empty() {
+                            println!("Examples:");
+                            for example in &cmd.examples {
+                                println!("  {}", example);
+                            }
+                        }
+                    }
                 } else {
                     self.cmd_test_notify(parts[1], parts[2]).await?;
                 }
             },
-            "help" => self.cmd_help(),
+            "help" => self.registry.print_help(),
             "quit" | "exit" => {
                 println!("Shutting down console...");
                 return Ok(true);
@@ -788,39 +1041,4 @@ impl ConsoleHandler {
         Ok(())
     }
 
-    fn cmd_help(&self) {
-        println!("=== Available Commands ===");
-        println!("status                                            - Show bot status and statistics");
-        println!("guilds                                            - List all connected guilds and their configurations");
-        println!("games                                             - List all active games and players");
-        println!("config <guild_id>                                 - Print configuration for a specific guild");
-        println!("config <guild_id> <group_id> <key> <value>        - Set group configuration");
-        println!("create <guild_id> <queue> <dashboard> <red> <blue> <quota> - Create new group configuration");
-        println!("query <sql>                                       - Execute a SELECT query on the database");
-        println!();
-        println!("=== Testing Commands ===");
-        println!("forcegen   <guild_id> <group_id>                  - Force team generation for the current queue");
-        println!("fakeplayer <guild_name> <count>                   - Add fake players to group 0");
-        println!("fakeplayer <guild_id> <group_id> <count>          - Add fake players to specific group");
-        println!("testnotify <guild_id> <group_id>                  - Test the notify method (sends notification to queue chat)");
-        println!();
-        println!("help                                              - Show this help message");
-        println!("quit/exit                                         - Shutdown the console (bot will continue running)");
-        println!();
-        println!("=== Config Command Examples ===");
-        println!("config TS1                         # Show all group configs for guild");
-        println!("config TS1 0 quota 8               # Set quota to 8 for group 0");
-        println!("config TS1 0 timeout 120           # Set timeout to 120 minutes");
-        println!();
-        println!("=== Create Command Example ===");
-        println!("create 1383583686431080499 1388643261543088208 1385894822992281701 1385464431185494086 1385464563448680578 10");
-        println!();
-        println!("=== Testing Command Examples ===");
-        println!("forcegen   TS1 0                   # Force team generation");
-        println!("fakeplayer TS1 8                   # Add 8 fake players to group 0");
-        println!("fakeplayer 1383583686431080499 0 8 # Add 8 fake players to specific group");
-        println!("testnotify TS1 0                   # Test notify method");
-        println!();
-        println!("Available config keys: quota, timeout, dashboard, red, blue");
-    }
 }

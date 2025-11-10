@@ -138,8 +138,6 @@ impl Group {
 
     /// Creates buttons for the dashboard
     pub async fn create_dashboard_buttons(&mut self) -> Result<Vec<CAR>> {
-        info!("Creating dashboard buttons for group {}", self.group_id);
-
         let queue   = self.get_queue().await.unwrap();
         let is_hot  = queue.is_hot();
         let is_live = queue.is_active();

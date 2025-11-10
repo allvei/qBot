@@ -210,6 +210,83 @@ impl Group {
         Ok(())
     }
 
+    pub async fn push(&mut self, ctx: &Context) -> Result<(), Error> {
+        // Extract channel IDs first to avoid borrowing conflicts
+        let red_vc = self.channels.teams[0].red_vc;
+        let blu_vc = self.channels.teams[0].blu_vc;
+        
+        // Get game and set status to Push
+        let game = self.get_queue().await?;
+        game.push();
+        
+        // Extract player moves
+        let player_moves: Vec<(UI, CI)> = game.pool
+            .iter()
+            .filter_map(|player| {
+                match player.team {
+                    Some(crate::models::Team::Red) => Some((player.player.discord_id, red_vc)),
+                    Some(crate::models::Team::Blu) => Some((player.player.discord_id, blu_vc)),
+                    _ => None,
+                }
+            })
+            .collect();
+        
+        // Drop the mutable borrow and move users to team channels
+        for (user_id, channel_id) in player_moves {
+            if let Err(e) = self.move_user(user_id, channel_id, ctx).await {
+                warn!("Failed to move user {}: {}", user_id, e);
+            }
+        }
+        
+        // Set game status to Live
+        let game = self.get_queue().await?;
+        game.live();
+        info!("Match is now LIVE with {} players", game.pool.len());
+        
+        self.dash_update(ctx).await;
+        Ok(())
+
+    }
+
+    pub async fn pull(&mut self, ctx: &Context) -> Result<(), Error> {
+        // Extract queue vc channel ID
+        let queue_vc = self.channels.queue_vc;
+        
+        // Find the active game (Hot or Live status)
+        let game = self.sessions
+            .iter_mut()
+            .find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live)
+            .ok_or(anyhow!("No active game to pull"))?;
+        
+        game.pull();
+        
+        // Extract all players to move back to queue
+        let player_ids: Vec<UI> = game.pool
+            .iter()
+            .map(|player| player.player.discord_id)
+            .collect();
+        
+        // Move all players back to queue voice channel
+        for user_id in player_ids {
+            if let Err(e) = self.move_user(user_id, queue_vc, ctx).await {
+                warn!("Failed to move user {} back to queue: {}", user_id, e);
+            }
+        }
+        
+        // Clear the pool and reset to Idle
+        let game = self.sessions
+            .iter_mut()
+            .find(|s| s.status == SessionStatus::Pull)
+            .ok_or(anyhow!("Game state changed unexpectedly"))?;
+        
+        game.pool.clear();
+        game.idle();
+        info!("Match ended, players returned to queue");
+        
+        self.dash_update(ctx).await;
+        Ok(())
+    }
+
     pub async fn generate_teams(&mut self, ctx: &Context) {
         use itertools::Itertools;
         
@@ -314,7 +391,6 @@ impl Group {
         if self.is_quota() {
             self.hot(ctx).await;
         }
-        self.dash_update(ctx).await;
     }
 
     pub async fn add_player(&mut self, session: &mut Session, user_id: UI, ctx: &Context) {
@@ -388,6 +464,14 @@ impl Group {
             ));
         let msg = CM::new().embed(embed);
         queue_chat.send_message(&ctx.http, msg).await;
+    }
+
+    pub async fn move_user(&self, user_id: UI, channel_id: CI, ctx: &Context) -> Result<(), Error> {
+        let guilds   = ctx.cache.guilds();
+        let guild_id = guilds.first().ok_or(anyhow!("No guild found"))?;
+        let member   = guild_id.member(&ctx.http, user_id).await?;
+        member.move_to_voice_channel(&ctx.http, channel_id).await?;
+        Ok(())
     }
 }
 

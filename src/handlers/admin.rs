@@ -65,6 +65,107 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
     Ok(())
 }
 
+/// `/roles`
+///
+/// Manage runner and admin roles for the guild
+/// * `role_type` - The role type to manage ("runner" or "admin")
+/// * `role` - The Discord role mention/ID to assign
+pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> Result<()> {
+    info!("Processing roles command: type={}, role={:?}", role_type, role);
+    
+    // Check admin permissions
+    if !check_role(cc, &Role::Admin).await? {
+        let response = CIR::Message(CIRM::new().content("Only admins can manage roles!").ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+    
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found").get();
+    
+    // If no parameters, show current role configuration
+    if role_type.is_empty() && role.is_none() {
+        let runner_role = cc.db.config.get_config_value("runner_role", guild_id).await?;
+        let admin_role = cc.db.config.get_config_value("admin_role", guild_id).await?;
+        
+        let role_text = format!(
+            "**Current Role Configuration:**\n\
+             Runner Role: {}\n\
+             Admin Role: {}",
+            runner_role.map(|r| format!("<@&{}>", r)).unwrap_or_else(|| "Not set".to_string()),
+            admin_role.map(|r| format!("<@&{}>", r)).unwrap_or_else(|| "Not set".to_string())
+        );
+        
+        let embed = CE::new()
+            .title("Role Configuration")
+            .description(role_text);
+        
+        let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+    
+    // Validate role type
+    let role_key = match role_type.to_lowercase().as_str() {
+        "runner" => "runner_role",
+        "admin" => "admin_role",
+        "" => {
+            let response = CIR::Message(CIRM::new()
+                .content("Please specify role type: `runner` or `admin`")
+                .ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+        _ => {
+            let response = CIR::Message(CIRM::new()
+                .content("Invalid role type. Use `runner` or `admin`")
+                .ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+    
+    // If role is provided, set it
+    if let Some(role_value) = role {
+        // Parse role ID from mention format <@&123456> or raw ID
+        let role_id = if role_value.starts_with("<@&") && role_value.ends_with('>') {
+            role_value[3..role_value.len()-1].to_string()
+        } else {
+            role_value
+        };
+        
+        // Save to database
+        cc.db.config.set_config(role_key, &role_id, guild_id).await?;
+        
+        let embed = CE::new()
+            .title("✅ Role Updated")
+            .description(format!(
+                "Set {} role to <@&{}>",
+                role_type.to_lowercase(),
+                role_id
+            ))
+            .color(0x00ff00);
+        
+        let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+    } else {
+        // Show current value for this role type
+        let current_role = cc.db.config.get_config_value(role_key, guild_id).await?;
+        
+        let embed = CE::new()
+            .title(format!("{} Role", role_type))
+            .description(format!(
+                "Current {} role: {}",
+                role_type.to_lowercase(),
+                current_role.map(|r| format!("<@&{}>", r)).unwrap_or_else(|| "Not set".to_string())
+            ));
+        
+        let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+    }
+    
+    Ok(())
+}
+
 /// `/cmd_init_group`
 pub async fn cmd_init_group(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
     info!("Processing cmd_init_group command");
@@ -128,6 +229,11 @@ async fn start_init_group_flow(cc: &CC<'_>, dashboard_channel: CI) -> Result<()>
         .description(format!(
             "Dashboard message created in <#{}>\n\n\
             Now let's configure the remaining channels for **{}**.\n\n\
+            💡 **Make sure these channels exist:**\n\
+            • Queue text channel (for commands)\n\
+            • Queue voice channel (where players wait)\n\
+            • Red team voice channel\n\
+            • Blue team voice channel\n\n\
             **Step 2/5: Queue Text Channel**\n\
             Select the text channel where players will use queue commands:",
             dashboard_channel.get(), guild.name
@@ -243,6 +349,11 @@ async fn start_setup_flow(ctx: &Context, guild_id: GuildId, user_id: UserId, _db
             "Welcome to the setup wizard for **{}**!\n\n\
             I'll guide you through configuring the bot step by step.\n\
             You'll select channels and roles using dropdown menus.\n\n\
+            💡 **Before continuing**, make sure you have created:\n\
+            • A text channel for the dashboard\n\
+            • A text channel for queue commands\n\
+            • A voice channel for the queue\n\
+            • Voice channels for Red and Blue teams\n\n\
             **Step 1/6: Dashboard Channel**\n\
             Select the channel where the queue dashboard will be displayed:",
             guild.name

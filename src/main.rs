@@ -78,6 +78,8 @@ impl EventHandler for Handler {
             cmd("buffer",    "Buffer a player")               .op("user",  "User to buffer",                  true),
             cmd("config",    "View or set bot configuration") .op("key",   "Configuration key",               false)
                                                               .op("value", "Configuration value",             false),
+            cmd("roles",     "Manage runner and admin roles") .op("type",  "Role type (runner/admin)",       false)
+                                                              .op("role",  "Discord role to assign",          false),
             cmd("dashboard", "Create/update interactive dashboard"),
             cmd("initgroup", "Initialize group"),
             cmd("setup",     "Run guild setup wizard"),
@@ -164,6 +166,12 @@ impl EventHandler for Handler {
                         let key   = cdo.iter().find(|opt| opt.name == "key")  .and_then(|opt| opt.value.as_str()).unwrap_or("").to_string();
                         let value = cdo.iter().find(|opt| opt.name == "value").and_then(|opt| opt.value.as_str()).map(|s| s.to_string());
                         admin::cmd_config(&cmd_ctx, key, value).await
+                    }
+                    "roles" => {
+                        info();
+                        let role_type = cdo.iter().find(|opt| opt.name == "type").and_then(|opt| opt.value.as_str()).unwrap_or("").to_string();
+                        let role      = cdo.iter().find(|opt| opt.name == "role").and_then(|opt| opt.value.as_str()).map(|s| s.to_string());
+                        admin::cmd_roles(&cmd_ctx, role_type, role).await
                     }
                     _ => {
                         // All other commands need a server
