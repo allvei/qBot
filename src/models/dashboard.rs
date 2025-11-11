@@ -50,6 +50,9 @@ pub enum ButtonType {
     DashboardStart,
     DashboardEnd,
     
+    // Permission confirmation button
+    ConfirmPermissions,
+    
     // Unknown button type
     Unknown(String),
 }
@@ -79,6 +82,9 @@ impl ButtonType {
             "shuffle_teams"   => Self::DashboardShuffle,
             "start_match"     => Self::DashboardStart,
             "end_match"       => Self::DashboardEnd,
+            
+            // Permission confirmation
+            "confirm_permissions" => Self::ConfirmPermissions,
             
             // Unknown
             _ => Self::Unknown(custom_id.to_string()),
@@ -191,6 +197,9 @@ impl Group {
         
         let quota = self.quota as usize;
         let games_idle: Vec<&Session> = self.get_sessions_by_status(&SessionStatus::Idle);
+        let games_hot:  Vec<&Session> = self.get_sessions_by_status(&SessionStatus::Hot);
+        let games_live: Vec<&Session> = self.get_sessions_by_status(&SessionStatus::Live);
+        
         if let Some(game_current) = games_idle.first() {
             let queue_players = game_current.pool.len();
             
@@ -219,18 +228,30 @@ impl Group {
                     }
                 }
             }
-        } else {
+        } else if !games_hot.is_empty() {
+            // Show hot game status with players not in VC yet
+            desc.push_str("**🔥 Match Ready to Start!**\n");
+            for game in &games_hot {
+                let players_in_vc = game.pool.iter().filter(|p| p.in_queue_vc).count();
+                let players_not_in_vc: Vec<_> = game.pool.iter()
+                    .filter(|p| !p.in_queue_vc)
+                    .collect();
+                
+                desc.push_str(&format!("• {}/{} players in voice channel\n", players_in_vc, game.pool.len()));
+                
+                if !players_not_in_vc.is_empty() {
+                    desc.push_str("⏳ **Waiting for:**\n");
+                    for player in players_not_in_vc {
+                        desc.push_str(&format!("  • <@{}>\n", player.player.discord_id));
+                    }
+                }
+            }
+            desc.push_str("\n");
+        } else if games_live.is_empty() {
+            // Only show "no active games" if there are no games at all
             desc.push_str("**📋 Queue Status**\n*No active games. Join the queue to get started!*\n\n");
         }
-
-        let games_hot:  Vec<&Session> = self.get_sessions_by_status(&SessionStatus::Hot);
-        let games_live: Vec<&Session> = self.get_sessions_by_status(&SessionStatus::Live);
         
-        // Show hot games status
-        if !games_hot.is_empty() {
-            desc.push_str("\n**🔥 Ready to Start:**\n");
-        }
-
         // Show live matches
         if !games_live.is_empty() {
             desc.push_str("**🎮 Live Matches:**\n");
@@ -245,8 +266,9 @@ impl Group {
         if let Some(game_current) = games_idle.first() {
             let queue_players = game_current.pool.len();
             if queue_players >= quota {
-                let team_red = &game_current.pool[0..4];
-                let team_blu = &game_current.pool[4..8];
+                let team_size = quota / 2;
+                let team_red = &game_current.pool[0..team_size];
+                let team_blu = &game_current.pool[team_size..quota];
                 emb = emb.field("🔴 Red", format_team_field(team_red), true);
                 emb = emb.field("🔵 Blue", format_team_field(team_blu), true);
             }
@@ -254,9 +276,10 @@ impl Group {
         
         // Add team fields for hot games
         for game in games_hot {
-            if game.pool.len() >= 8 {
-                let team_red = &game.pool[0..4];
-                let team_blu = &game.pool[4..8];
+            if game.pool.len() >= quota {
+                let team_size = quota / 2;
+                let team_red = &game.pool[0..team_size];
+                let team_blu = &game.pool[team_size..quota];
                 emb = emb.field("🔴 Red", format_team_field(team_red), true);
                 emb = emb.field("🔵 Blue", format_team_field(team_blu), true);
             }
@@ -308,8 +331,8 @@ impl Group {
             // Check if we have idle sessions
             match self.get_sessions_by_status(&SessionStatus::Idle).len() {
                 0 => {
-                    info!("No idle games found, creating a new game");
-                    self.create_session();
+                    cc.reply("❌ No queue available. A game is currently in progress.").await?;
+                    return Ok(());
                 }
                 1 => info!("Found one existing idle game"),
                 n => return Err(anyhow::anyhow!("Multiple idle games found: {}", n)),
@@ -328,9 +351,10 @@ impl Group {
     /// Handles the shuffle teams button
     async fn dash_shuffle(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
         let mut is_shuffled = false;
+        let quota = self.quota as usize;
 
         // Find the game to shuffle
-        if let Some(game) = self.sessions.iter_mut().find(|s| s.status == SessionStatus::Idle && s.pool.len() >= 8)
+        if let Some(game) = self.sessions.iter_mut().find(|s| s.status == SessionStatus::Idle && s.pool.len() >= quota)
         {
             // Shuffle the players using rand crate
             use rand::seq::SliceRandom;
@@ -343,7 +367,7 @@ impl Group {
             cc.acknowledge().await;
             self.dash_update(cc.ctx).await;
         } else {
-            cc.reply("❌ No game ready for shuffling. Need at least 8 players in queue.").await?;
+            cc.reply(&format!("❌ No game ready for shuffling. Need at least {} players in queue.", quota)).await?;
         }
 
         Ok(())
@@ -351,52 +375,52 @@ impl Group {
 
     /// Handles the start match button
     async fn dash_start(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
-        let mut is_live = false;
-
-        // Find the game to start
-        if let Some(game) = self.sessions.iter_mut()
-            .find(|s| s.status == SessionStatus::Idle && s.pool.len() >= 8)
-        {
-            // Change game status to Hot (ready to start)
-            game.status   = SessionStatus::Hot;
-            is_live = true;
-            info!("Match started for game with {} players",game.pool.len());
+        // Check if there's a hot game to start
+        let has_hot_game = self.sessions.iter().any(|s| s.is_hot());
+        
+        if !has_hot_game {
+            cc.reply("❌ No hot game ready to start.").await?;
+            return Ok(());
         }
 
-        if is_live {
-            cc.acknowledge().await;
-            self.dash_update(cc.ctx).await;
-        } else {
-            cc.reply("❌ No game ready to start. Need at least 8 players and shuffled teams.").await?;
+        // Move players to team channels (Hot → Push → Live)
+        match self.push(cc.ctx).await {
+            Ok(_) => {
+                info!("Players moved to team channels and game is now live");
+                cc.acknowledge().await;
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to start match: {}", e);
+                cc.reply(&format!("❌ Failed to start match: {}", e)).await?;
+                Ok(())
+            }
         }
-
-        Ok(())
     }
 
     /// Handles the end match button
     async fn dash_end(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
-        let mut match_ended = false;
+        // Check if there's an active game to end
+        let has_active_game = self.sessions.iter().any(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live);
+        
+        if !has_active_game {
+            cc.reply("❌ No active match to end.").await?;
+            return Ok(());
+        }
 
-        // Find active games to end
-        for game in &mut self.sessions {
-            if game.status == SessionStatus::Hot || game.status == SessionStatus::Live {
-                // Clear the game and reset to idle
-                game.pool.clear();
-                game.status = SessionStatus::Idle;
-                match_ended = true;
-                info!("Match ended and game reset");
-                break;
+        // Move players back to queue channel (Hot/Live → Pull → Idle)
+        match self.pull(cc.ctx).await {
+            Ok(_) => {
+                info!("Match ended, players moved back to queue");
+                cc.acknowledge().await;
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to end match: {}", e);
+                cc.reply(&format!("❌ Failed to end match: {}", e)).await?;
+                Ok(())
             }
         }
-
-        if match_ended {
-            cc.acknowledge().await;
-            self.dash_update(cc.ctx).await;
-        } else {
-            cc.reply("❌ No active match to end.").await?;
-        }
-
-        Ok(())
     }
 
     /// Handles button interaction events from the dashboard
