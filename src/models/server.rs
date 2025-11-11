@@ -215,11 +215,14 @@ impl Group {
         let red_vc = self.channels.teams[0].red_vc;
         let blu_vc = self.channels.teams[0].blu_vc;
         
-        // Get game and set status to Push
-        let game = self.get_queue().await?;
-        game.push();
+        // Get the hot game (should be the most recent session that's hot)
+        let game = self.sessions
+            .iter_mut()
+            .find(|s| s.status == SessionStatus::Hot)
+            .ok_or(anyhow!("No hot session found for push"))?;
         
-        // Extract player moves
+        // Set status to Push and extract player moves
+        game.push();
         let player_moves: Vec<(UI, CI)> = game.pool
             .iter()
             .filter_map(|player| {
@@ -239,9 +242,16 @@ impl Group {
         }
         
         // Set game status to Live
-        let game = self.get_queue().await?;
+        let game = self.sessions
+            .iter_mut()
+            .find(|s| s.status == SessionStatus::Push)
+            .ok_or(anyhow!("Push session not found"))?;
         game.live();
         info!("Match is now LIVE with {} players", game.pool.len());
+        
+        // Create new idle session for next game now that current session is live
+        info!("Creating new idle session for next game");
+        self.create_session();
         
         self.dash_update(ctx).await;
         Ok(())
@@ -292,14 +302,15 @@ impl Group {
         
         info!("Generating balanced teams using BCH algorithm");
         
+        let quota = self.quota as usize;
+        
         // Get the hot game (session was just set to hot before this is called)
         let game = self.sessions
             .iter_mut()
             .find(|s| s.status == SessionStatus::Hot)
             .expect("No hot session found for team generation");
         
-        // Need at least 8 players for team generation
-        if game.pool.len() < 8 {
+        if game.pool.len() < quota {
             warn!("Not enough players for team generation: {}", game.pool.len());
             return;
         }
@@ -314,8 +325,8 @@ impl Group {
             })
             .collect();
         
-        // We'll balance exactly 8 players (first 8 in queue)
-        let pool_size = 8.min(game.pool.len());
+        // Balance exactly quota players (first N in queue)
+        let pool_size = quota.min(game.pool.len());
         let players_to_balance: Vec<(usize, u32)> = players_with_elo.into_iter().take(pool_size).collect();
         
         // Generate all possible team splits (C(8,4) = 70 combinations)
@@ -450,13 +461,24 @@ impl Group {
     }
 
     /// Notifies the queue chat that quota has been met
+    /// Only pings players who are NOT in the voice channel yet
     pub async fn notify(&self, ctx: &Context) {
         let queue_chat = self.channels.queue_chat;
         let mut player_mentions = Vec::new();
+        
         if let Some(game) = self.sessions.last() {
+            // Only mention players who are NOT in the voice channel
             for player in &game.pool {
-                player_mentions.push(format!("<@{}>", player.player.discord_id));
+                if !player.in_queue_vc {
+                    player_mentions.push(format!("<@{}>", player.player.discord_id));
+                }
             }
+        }
+        
+        // Only send notification if there are players to ping
+        if player_mentions.is_empty() {
+            info!("Quota met but all players already in VC - skipping notification");
+            return;
         }
         
         // Use embed for header and raw pings in message content to properly ping users
