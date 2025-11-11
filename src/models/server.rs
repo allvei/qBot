@@ -483,8 +483,8 @@ impl Group {
         
         // Use embed for header and raw pings in message content to properly ping users
         let embed = CreateEmbed::new()
-            .title("🔥 Quota Met")
-            .description("PUG is ready, please join the queue channel!");
+            .title("PUG Starting")
+            .description("Please join the queue channel!");
         
         let content = player_mentions.join(" ");
         let msg = CM::new().embed(embed).content(content);
