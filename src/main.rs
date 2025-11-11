@@ -249,6 +249,93 @@ impl EventHandler for Handler {
                 let button_type = ButtonType::parse(&itx.data.custom_id);
                 info!("{} clicked button: {:?}", user_name, button_type);
                 
+                // Handle permission confirmation button
+                if matches!(button_type, ButtonType::ConfirmPermissions) {
+                    let guild_id = itx.guild_id.unwrap();
+                    let user_id = itx.user.id;
+                    
+                    // Check if user is an admin
+                    let is_admin = match guild_id.member(&ctx.http, user_id).await {
+                        Ok(member) => {
+                            // Get admin role from database config
+                            match self.database.config.get_config_value("admin_role", guild_id.get()).await {
+                                Ok(Some(admin_role_str)) => {
+                                    if let Ok(admin_role_id) = admin_role_str.parse::<u64>() {
+                                        let admin_role = serenity::all::RoleId::new(admin_role_id);
+                                        member.roles.contains(&admin_role)
+                                    } else {
+                                        false
+                                    }
+                                }
+                                _ => {
+                                    // If no admin role configured, check for server Administrator permission
+                                    if let Some(guild_ref) = guild_id.to_guild_cached(&ctx.cache) {
+                                        let perms = guild_ref.member_permissions(&member);
+                                        perms.contains(serenity::all::Permissions::ADMINISTRATOR)
+                                    } else {
+                                        false
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => false,
+                    };
+                    
+                    if !is_admin {
+                        let error_response = serenity::all::CreateInteractionResponse::Message(
+                            serenity::all::CreateInteractionResponseMessage::new()
+                                .content("❌ Only administrators can confirm bot permissions.")
+                                .ephemeral(true)
+                        );
+                        if let Err(e) = itx.create_response(&ctx.http, error_response).await {
+                            error!("Failed to send error response: {}", e);
+                        }
+                        return;
+                    }
+                    
+                    // Clone the guild data to avoid Send issues
+                    let guild = match guild_id.to_guild_cached(&ctx.cache) {
+                        Some(g) => g.clone(),
+                        None => {
+                            error!("Failed to get guild from cache");
+                            return;
+                        }
+                    };
+                    
+                    // Re-check permissions
+                    let (has_perms, missing_perms) = self.check_bot_permissions(&ctx, &guild).await;
+                    
+                    if !has_perms {
+                        // Still missing permissions
+                        let error_response = serenity::all::CreateInteractionResponse::Message(
+                            serenity::all::CreateInteractionResponseMessage::new()
+                                .content(format!("❌ Still missing permissions: {}", missing_perms))
+                                .ephemeral(true)
+                        );
+                        if let Err(e) = itx.create_response(&ctx.http, error_response).await {
+                            error!("Failed to send error response: {}", e);
+                        }
+                    } else {
+                        // Permissions granted! Delete the warning message and create dashboard
+                        if let Err(e) = itx.message.delete(&ctx.http).await {
+                            error!("Failed to delete permission warning: {}", e);
+                        }
+                        
+                        let success_response = serenity::all::CreateInteractionResponse::Message(
+                            serenity::all::CreateInteractionResponseMessage::new()
+                                .content("✅ Permissions confirmed! Setting up dashboard...")
+                                .ephemeral(true)
+                        );
+                        if let Err(e) = itx.create_response(&ctx.http, success_response).await {
+                            error!("Failed to send success response: {}", e);
+                        }
+                        
+                        // Now create the dashboard
+                        self.create_guild_dashboard(&ctx, &guild).await;
+                    }
+                    return;
+                }
+                
                 // Handle setup/init interactions first (no group needed)
                 if button_type.is_setup_button() {
                     let result = admin::handle_setup_interaction(&ctx, &itx, &self.database).await;
@@ -384,27 +471,36 @@ impl EventHandler for Handler {
             let left_channel_id = old_channel.unwrap().unwrap();
             info!("{} left {} VC", user_name, left_channel_id.name(&ctx.http).await.unwrap());
             
-            // Check if they left a queue voice channel and remove them from the game
+            // Check if they left a queue voice channel
             let mut manager = self.manager.lock().await;
             if let Ok(group) = manager.get_group(server, left_channel_id) {
                 if group.channels.queue_vc == left_channel_id {
-                    info!("{} left queue voice channel, removing from game", user_name);
+                    info!("{} left queue voice channel", user_name);
                     
-                    let mut player_removed = false;
-                    for game in &mut group.sessions {
-                        if game.status == SessionStatus::Idle {
-                            let initial_len = game.pool.len();
-                            game.pool.retain(|p| p.player.discord_id != user_id);
-                            if game.pool.len() < initial_len {
-                                player_removed = true;
-                                info!("Removed {} from game. Pool size: {}", user_name, game.pool.len());
-                                break;
+                    let mut dashboard_needs_update = false;
+                    
+                    // Check if player is in a session
+                    if let Ok(session) = group.get_user_session(user_id).await {
+                        if session.status == SessionStatus::Idle {
+                            // Remove from idle sessions
+                            let initial_len = session.pool.len();
+                            session.pool.retain(|p| p.player.discord_id != user_id);
+                            if session.pool.len() < initial_len {
+                                info!("Removed {} from idle game. Pool size: {}", user_name, session.pool.len());
+                                dashboard_needs_update = true;
+                            }
+                        } else {
+                            // For hot/live sessions, just mark as not in VC
+                            if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
+                                player.in_queue_vc = false;
+                                info!("{} marked as not in queue VC", user_name);
+                                dashboard_needs_update = true;
                             }
                         }
                     }
                     
-                    // Update dashboard after player leaves
-                    if player_removed {
+                    // Update dashboard if anything changed
+                    if dashboard_needs_update {
                         if let Err(e) = group.dash_update(&ctx).await {
                             error!("Failed to update dashboard: {}", e);
                         }
@@ -451,23 +547,40 @@ impl EventHandler for Handler {
                     if group.channels.queue_vc == channel_id {
                         info!("{} joined queue voice channel {}", user_name, channel_id);
                         
-                        // Ensure there's at least one session
-                        if group.sessions.is_empty() { 
-                            group.create_session(); 
-                        }
-                        
-                        // Check if player is already in a session
-                        if group.get_player(user_id).is_ok() {
-                            info!("{} is already in the queue", user_name);
+                        // Check if player is already in any session and mark them as in VC
+                        if let Ok(session) = group.get_user_session(user_id).await {
+                            if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
+                                player.in_queue_vc = true;
+                                info!("{} marked as in queue VC", user_name);
+                                
+                                // Update dashboard to show VC status
+                                if let Err(e) = group.dash_update(&ctx).await {
+                                    error!("Failed to update dashboard: {}", e);
+                                }
+                            }
                         } else {
-                            // Add player to queue
-                            info!("{} joined queue from voice channel", user_name);
-                            group.queue_player(user_id, &ctx).await;
-                        }
-                        
-                        // Update dashboard to reflect the change
-                        if let Err(e) = group.dash_update(&ctx).await {
-                            error!("Failed to update dashboard: {}", e);
+                            // Player not in session yet, try to add them if idle session available
+                            let has_idle_session = !group.get_sessions_by_status(&SessionStatus::Idle).is_empty();
+                            
+                            if !has_idle_session {
+                                info!("No idle session available for {} - game in progress", user_name);
+                            } else {
+                                // Add player to queue and mark as in VC
+                                info!("{} joined queue from voice channel", user_name);
+                                group.queue_player(user_id, &ctx).await;
+                                
+                                // Mark them as in VC
+                                if let Ok(session) = group.get_user_session(user_id).await {
+                                    if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
+                                        player.in_queue_vc = true;
+                                    }
+                                }
+                                
+                                // Update dashboard to reflect the change
+                                if let Err(e) = group.dash_update(&ctx).await {
+                                    error!("Failed to update dashboard: {}", e);
+                                }
+                            }
                         }
                     }
                 },
@@ -480,9 +593,89 @@ impl EventHandler for Handler {
 }
 
 impl Handler {
+    /// Check if bot has necessary permissions in the guild
+    async fn check_bot_permissions(&self, ctx: &Context, guild: &Guild) -> (bool, String) {
+        use serenity::all::Permissions;
+        
+        let mut missing_perms = Vec::new();
+        
+        // Get bot's member object in the guild
+        let bot_user_id = ctx.cache.current_user().id;
+        let bot_member = match guild.id.member(&ctx.http, bot_user_id).await {
+            Ok(member) => member,
+            Err(e) => {
+                error!("Failed to get bot member: {}", e);
+                return (false, "Unable to check bot permissions".to_string());
+            }
+        };
+        
+        // Get bot's guild-level permissions
+        let guild_permissions = guild.member_permissions(&bot_member);
+        
+        // Check required permissions
+        if !guild_permissions.contains(Permissions::MOVE_MEMBERS) {
+            missing_perms.push("Move Members");
+        }
+        if !guild_permissions.contains(Permissions::SEND_MESSAGES) {
+            missing_perms.push("Send Messages");
+        }
+        if !guild_permissions.contains(Permissions::EMBED_LINKS) {
+            missing_perms.push("Embed Links");
+        }
+        if !guild_permissions.contains(Permissions::VIEW_CHANNEL) {
+            missing_perms.push("View Channels");
+        }
+        if !guild_permissions.contains(Permissions::MANAGE_CHANNELS) {
+            missing_perms.push("Manage Channels");
+        }
+        
+        if missing_perms.is_empty() {
+            (true, String::new())
+        } else {
+            (false, missing_perms.join(", "))
+        }
+    }
+    
     /// Creates dashboard for a guild automatically when bot connects
     async fn create_guild_dashboard(&self, ctx: &Context, guild: &Guild) {
         info!("Creating dashboard for guild: {}", guild.name);
+        
+        // FIRST: Check bot permissions
+        let (has_perms, missing_perms) = self.check_bot_permissions(ctx, guild).await;
+        
+        if !has_perms {
+            warn!("Bot is missing permissions in guild {}: {}", guild.name, missing_perms);
+            
+            // Create a warning dashboard in the first available text channel
+            if let Some(channel) = guild.channels.values().find(|c| c.kind == serenity::all::ChannelType::Text) {
+                let warning_embed = serenity::all::CreateEmbed::new()
+                    .title("⚠️ Missing Bot Permissions")
+                    .description(format!(
+                        "The bot is missing required permissions to function properly.\n\n\
+                        **Missing Permissions:**\n{}\n\n\
+                        Please grant these permissions to the bot and click the button below to confirm.",
+                        missing_perms
+                    ))
+                    .color(0xFF0000);
+                
+                let button = serenity::all::CreateButton::new("confirm_permissions")
+                    .label("✅ Confirm Permissions")
+                    .style(serenity::all::ButtonStyle::Success);
+                
+                let action_row = serenity::all::CreateActionRow::Buttons(vec![button]);
+                
+                let msg = serenity::all::CreateMessage::new()
+                    .embed(warning_embed)
+                    .components(vec![action_row]);
+                
+                if let Err(e) = channel.id.send_message(&ctx.http, msg).await {
+                    error!("Failed to send permission warning: {}", e);
+                }
+            }
+            return;
+        }
+        
+        info!("Bot has all required permissions in guild {}", guild.name);
         
         // Get all groups for this guild from database
         let group_repo = GroupRepository::new(self.database.pool().clone());
