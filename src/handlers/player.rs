@@ -164,11 +164,11 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
 
     let group = guild.get_group(channel).unwrap();
     
-    // Check if we have idle sessions
+    // Check if we have an idle session available
     match group.get_sessions_by_status(&SessionStatus::Idle).len() {
         0 => {
-            info!("No idle sessions found, creating a new session");
-            group.create_session();
+            cc.reply("❌ No queue available. A game is currently in progress.").await?;
+            return Ok(());
         },
         1 => {
             info!("Found one existing idle session");
@@ -244,6 +244,7 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
 
     // Get active group with game
     let group = guild.get_group(cc.intax.channel_id).unwrap();
+    let quota = group.quota as usize;
 
     if group.sessions.is_empty() {
         cc.reply("No active games.").await?;
@@ -252,8 +253,8 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
 
     let game = group.sessions.last().unwrap();
 
-    if game.pool.len() < 8 {
-        cc.reply(&format!("Not enough players in game. Need {} more.", 8 - game.pool.len())).await?;
+    if game.pool.len() < quota {
+        cc.reply(&format!("Not enough players in game. Need {} more.", quota - game.pool.len())).await?;
         return Ok(());
     }
 
