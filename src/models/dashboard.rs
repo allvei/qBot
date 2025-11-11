@@ -246,7 +246,7 @@ impl Group {
                     }
                 }
             }
-            desc.push_str("\n");
+            desc.push('\n');
         } else if games_live.is_empty() {
             // Only show "no active games" if there are no games at all
             desc.push_str("**📋 Queue Status**\n*No active games. Join the queue to get started!*\n\n");
