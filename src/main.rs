@@ -83,6 +83,7 @@ impl EventHandler for Handler {
             cmd("dashboard", "Create/update interactive dashboard"),
             cmd("initgroup", "Initialize group"),
             cmd("setup",     "Run guild setup wizard"),
+            cmd("checkranks", "Check and create missing rank roles"),
         ];
 
         if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
@@ -172,6 +173,10 @@ impl EventHandler for Handler {
                         let role_type = cdo.iter().find(|opt| opt.name == "type").and_then(|opt| opt.value.as_str()).unwrap_or("").to_string();
                         let role      = cdo.iter().find(|opt| opt.name == "role").and_then(|opt| opt.value.as_str()).map(|s| s.to_string());
                         admin::cmd_roles(&cmd_ctx, role_type, role).await
+                    }
+                    "checkranks" => {
+                        info();
+                        admin::cmd_check_ranks(&cmd_ctx).await
                     }
                     _ => {
                         // All other commands need a server
@@ -332,6 +337,16 @@ impl EventHandler for Handler {
                         
                         // Now create the dashboard
                         self.create_guild_dashboard(&ctx, &guild).await;
+                    }
+                    return;
+                }
+                
+                // Handle rank role creation buttons
+                if matches!(button_type, ButtonType::CreateRankRolesYes | ButtonType::CreateRankRolesNo) {
+                    let create = matches!(button_type, ButtonType::CreateRankRolesYes);
+                    let result = admin::handle_create_rank_roles(&ctx, &itx, create).await;
+                    if let Err(e) = result {
+                        error!("Error handling rank role creation: {}", e);
                     }
                     return;
                 }
@@ -565,20 +580,26 @@ impl EventHandler for Handler {
                             if !has_idle_session {
                                 info!("No idle session available for {} - game in progress", user_name);
                             } else {
-                                // Add player to queue and mark as in VC
-                                info!("{} joined queue from voice channel", user_name);
-                                group.queue_player(user_id, &ctx).await;
-                                
-                                // Mark them as in VC
-                                if let Ok(session) = group.get_user_session(user_id).await {
-                                    if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
-                                        player.in_queue_vc = true;
+                                // Check if player has a rank before allowing them to join
+                                use pf_pug_bot::handlers::player::get_player_rank;
+                                if let Some(rank) = get_player_rank(&ctx, server, user_id).await {
+                                    // Add player to queue and mark as in VC
+                                    info!("{} joined queue from voice channel with rank {:?}", user_name, rank);
+                                    group.queue_player(user_id, rank, &ctx).await;
+                                    
+                                    // Mark them as in VC
+                                    if let Ok(session) = group.get_user_session(user_id).await {
+                                        if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
+                                            player.in_queue_vc = true;
+                                        }
                                     }
-                                }
-                                
-                                // Update dashboard to reflect the change
-                                if let Err(e) = group.dash_update(&ctx).await {
-                                    error!("Failed to update dashboard: {}", e);
+                                    
+                                    // Update dashboard to reflect the change
+                                    if let Err(e) = group.dash_update(&ctx).await {
+                                        error!("Failed to update dashboard: {}", e);
+                                    }
+                                } else {
+                                    info!("{} tried to join queue but has no rank role", user_name);
                                 }
                             }
                         }

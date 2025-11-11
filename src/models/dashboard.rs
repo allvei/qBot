@@ -53,6 +53,10 @@ pub enum ButtonType {
     // Permission confirmation button
     ConfirmPermissions,
     
+    // Rank role creation buttons
+    CreateRankRolesYes,
+    CreateRankRolesNo,
+    
     // Unknown button type
     Unknown(String),
 }
@@ -85,6 +89,10 @@ impl ButtonType {
             
             // Permission confirmation
             "confirm_permissions" => Self::ConfirmPermissions,
+            
+            // Rank role creation
+            "create_rank_roles_yes" => Self::CreateRankRolesYes,
+            "create_rank_roles_no"  => Self::CreateRankRolesNo,
             
             // Unknown
             _ => Self::Unknown(custom_id.to_string()),
@@ -338,7 +346,19 @@ impl Group {
                 n => return Err(anyhow::anyhow!("Multiple idle games found: {}", n)),
             };
 
-            self.queue_player(user_id, cc.ctx).await;
+            // Get player's rank before adding them to queue
+            use crate::handlers::player::get_player_rank;
+            if let Some(guild_id) = cc.component.guild_id {
+                if let Some(rank) = get_player_rank(cc.ctx, guild_id, user_id).await {
+                    self.queue_player(user_id, rank, cc.ctx).await;
+                } else {
+                    cc.reply("❌ You must have a rank role assigned before joining the queue. Please contact an admin.").await?;
+                    return Ok(());
+                }
+            } else {
+                cc.reply("❌ This command can only be used in a server.").await?;
+                return Ok(());
+            }
         }
 
         // Always acknowledge and update dashboard

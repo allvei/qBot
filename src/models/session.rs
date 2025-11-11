@@ -27,9 +27,9 @@ impl Session {
         }
     }
 
-    /// Add a player to the session
-    pub fn add_player(&mut self, discord_id: UserId) {
-        let player = SessionPlayer::add(discord_id);
+    /// Add a player to the session with their rank
+    pub fn add_player(&mut self, discord_id: UserId, rank: crate::models::Rank) {
+        let player = SessionPlayer::add(discord_id, rank);
         self.pool.push(player);
         self.sort_by_join_time();
     }
@@ -151,8 +151,9 @@ mod systemtime_serde {
 }
 
 impl SessionPlayer {
-    pub fn add(discord_id: UserId) -> Self {
-        let player = Player::add(discord_id, None);
+    pub fn add(discord_id: UserId, rank: crate::models::Rank) -> Self {
+        let mut player = Player::add(discord_id, None);
+        player.set_rank(Some(rank));
         Self {
             player,
             team:         None,

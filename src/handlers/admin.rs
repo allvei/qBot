@@ -10,7 +10,7 @@ use serenity::all::{
 use tracing::{error, info};
 
 use crate::DEFAULT_QUOTA;
-use crate::handlers::player::check_role;
+use crate::handlers::player::{check_role, create_rank_roles, validate_rank_roles};
 use crate::models::{CommandContext as CC, Role, Server, SETUP_STATE};
 
 /// `/config`
@@ -1063,6 +1063,163 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
     );
     
     interaction.create_response(&ctx.http, response).await?;
+    
+    Ok(())
+}
+
+/// `/check_ranks` - Check and offer to create missing rank roles
+pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
+    info!("Processing check_ranks command");
+    
+    // Check admin permissions
+    if !check_role(cc, &Role::Admin).await? {
+        let response = CIR::Message(CIRM::new().content("Only admins can check rank roles!").ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+    
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    
+    // Check for missing rank roles
+    let missing_roles = match validate_rank_roles(cc.ctx, guild_id).await {
+        Ok(roles) => roles,
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("❌ Error")
+                .description(format!("Failed to check rank roles: {}", e))
+                .color(0xff0000);
+            
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+    
+    if missing_roles.is_empty() {
+        // All roles exist
+        let success_embed = CE::new()
+            .title("✅ Rank Roles Configured")
+            .description("All rank roles are properly configured in this server!")
+            .color(0x00ff00);
+        
+        let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+    } else {
+        // Some roles are missing - offer to create them
+        let missing_list = missing_roles.join(", ");
+        let description = format!(
+            "The following rank roles are missing:\n**{}**\n\n\
+            Would you like me to create these roles automatically?\n\n\
+            ⚠️ Note: The roles will be created but you may need to adjust their permissions and position in the role hierarchy.",
+            missing_list
+        );
+        
+        let embed = CE::new()
+            .title("⚠️ Missing Rank Roles")
+            .description(description)
+            .color(0xffaa00);
+        
+        // Add buttons for Yes/No
+        use serenity::all::{CreateButton, ButtonStyle};
+        let yes_button = CreateButton::new("create_rank_roles_yes")
+            .label("Create Roles")
+            .style(ButtonStyle::Success);
+        
+        let no_button = CreateButton::new("create_rank_roles_no")
+            .label("Cancel")
+            .style(ButtonStyle::Secondary);
+        
+        let buttons = CreateActionRow::Buttons(vec![yes_button, no_button]);
+        
+        let response = CIR::Message(
+            CIRM::new()
+                .embed(embed)
+                .components(vec![buttons])
+                .ephemeral(true)
+        );
+        
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+    }
+    
+    Ok(())
+}
+
+/// Handle rank role creation confirmation button
+pub async fn handle_create_rank_roles(ctx: &Context, interaction: &ComponentInteraction, create: bool) -> Result<()> {
+    let guild_id = interaction.guild_id.expect("Guild ID not found");
+    
+    if !create {
+        // User cancelled
+        let cancel_embed = CE::new()
+            .title("❌ Cancelled")
+            .description("Rank role creation was cancelled.")
+            .color(0x999999);
+        
+        let response = CIR::UpdateMessage(
+            CIRM::new()
+                .embed(cancel_embed)
+                .components(vec![])
+        );
+        
+        interaction.create_response(&ctx.http, response).await?;
+        return Ok(());
+    }
+    
+    // Create the missing roles
+    let created_roles = match create_rank_roles(ctx, guild_id).await {
+        Ok(roles) => roles,
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("❌ Error")
+                .description(format!("Failed to create rank roles: {}", e))
+                .color(0xff0000);
+            
+            let response = CIR::UpdateMessage(
+                CIRM::new()
+                    .embed(error_embed)
+                    .components(vec![])
+            );
+            
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+    
+    if created_roles.is_empty() {
+        let embed = CE::new()
+            .title("ℹ️ No Roles Created")
+            .description("All rank roles already exist in this server.")
+            .color(0x00aaff);
+        
+        let response = CIR::UpdateMessage(
+            CIRM::new()
+                .embed(embed)
+                .components(vec![])
+        );
+        
+        interaction.create_response(&ctx.http, response).await?;
+    } else {
+        let created_list = created_roles.join(", ");
+        let success_embed = CE::new()
+            .title("✅ Rank Roles Created")
+            .description(format!(
+                "Successfully created the following rank roles:\n**{}**\n\n\
+                💡 You may want to:\n\
+                • Adjust role positions in Server Settings\n\
+                • Configure role permissions\n\
+                • Assign roles to existing members",
+                created_list
+            ))
+            .color(0x00ff00);
+        
+        let response = CIR::UpdateMessage(
+            CIRM::new()
+                .embed(success_embed)
+                .components(vec![])
+        );
+        
+        interaction.create_response(&ctx.http, response).await?;
+    }
     
     Ok(())
 }

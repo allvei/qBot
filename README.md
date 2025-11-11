@@ -26,8 +26,8 @@ A comprehensive Discord bot for managing 4v4 pickup games (PUGs) for passtime.tf
 ### Runner Commands
 
 - `/shuffle [match_id]`   - Regenerate teams for a match
-- `/accept [match_id]`    - Confirm generated teams and start match
-- `/end [match_id]`       - End a match and return players to queue
+- `/accept  [match_id]`    - Confirm generated teams and start match
+- `/end     [match_id]`       - End a match and return players to queue
 
 ### Admin Commands
 

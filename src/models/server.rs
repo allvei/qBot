@@ -400,15 +400,15 @@ impl Group {
         self.dash_update(ctx).await.ok();
     }
 
-    pub async fn queue_player(&mut self, user_id: UI, ctx: &Context) {
-        self.get_queue().await.unwrap().add_player(user_id);
+    pub async fn queue_player(&mut self, user_id: UI, rank: crate::models::Rank, ctx: &Context) {
+        self.get_queue().await.unwrap().add_player(user_id, rank);
         if self.is_quota() {
             self.hot(ctx).await;
         }
     }
 
-    pub async fn add_player(&mut self, session: &mut Session, user_id: UI, ctx: &Context) {
-        session.add_player(user_id);
+    pub async fn add_player(&mut self, session: &mut Session, user_id: UI, rank: crate::models::Rank, ctx: &Context) {
+        session.add_player(user_id, rank);
         self.dash_update(ctx).await;
     }
 
@@ -628,13 +628,14 @@ mod tests {
         group.create_session();
         
         // Add players one by one - each call borrows and immediately drops
-        group.sessions.last_mut().unwrap().add_player(UI::new(1));
-        group.sessions.last_mut().unwrap().add_player(UI::new(2));
-        group.sessions.last_mut().unwrap().add_player(UI::new(3));
+        use crate::models::Rank;
+        group.sessions.last_mut().unwrap().add_player(UI::new(1), Rank::Novice);
+        group.sessions.last_mut().unwrap().add_player(UI::new(2), Rank::Novice);
+        group.sessions.last_mut().unwrap().add_player(UI::new(3), Rank::Novice);
         
         assert!(!group.is_quota());
         
-        group.sessions.last_mut().unwrap().add_player(UI::new(4));
+        group.sessions.last_mut().unwrap().add_player(UI::new(4), Rank::Novice);
         
         assert!(group.is_quota());
     }

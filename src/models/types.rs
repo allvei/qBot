@@ -150,4 +150,31 @@ impl Rank {
             Rank::Grandmaster => 95,
         }
     }
+
+    /// Convert a Discord RoleId to a Rank enum
+    pub fn from_role_id(role_id: RoleId) -> Option<Rank> {
+        match role_id.get() {
+            EU_BEGINNER_R_ID     => Some(Rank::Beginner),
+            EU_NOVICE_R_ID       => Some(Rank::Novice),
+            EU_APPRENTICE_R_ID   => Some(Rank::Apprentice),
+            EU_JOURNEYMAN_R_ID   => Some(Rank::Journeyman),
+            EU_MASTER_R_ID       => Some(Rank::Master),
+            EU_MASTER_ELITE_R_ID => Some(Rank::MasterElite),
+            EU_GRANDMASTER_R_ID  => Some(Rank::Grandmaster),
+            _                    => None,
+        }
+    }
+
+    /// Get all rank role IDs
+    pub fn all_role_ids() -> Vec<RoleId> {
+        vec![
+            RoleId::new(EU_BEGINNER_R_ID),
+            RoleId::new(EU_NOVICE_R_ID),
+            RoleId::new(EU_APPRENTICE_R_ID),
+            RoleId::new(EU_JOURNEYMAN_R_ID),
+            RoleId::new(EU_MASTER_R_ID),
+            RoleId::new(EU_MASTER_ELITE_R_ID),
+            RoleId::new(EU_GRANDMASTER_R_ID),
+        ]
+    }
 }
