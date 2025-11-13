@@ -139,9 +139,11 @@ impl DatabaseMigrations {
 
     /// Create groups table with proper schema
     async fn create_groups_table(&self) -> Result<()> {
+        use crate::DEFAULT_QUOTA;
+        
         if !self.table_exists("groups").await? {
             info!("Groups table not found, creating...");
-            sqlx::query(
+            sqlx::query(&format!(
                 "CREATE TABLE groups (
                     id                INTEGER PRIMARY KEY,
                     group_id          INTEGER DEFAULT 0,
@@ -153,11 +155,11 @@ impl DatabaseMigrations {
                     dashboard_msg     INTEGER DEFAULT 0,
                     red               INTEGER NOT NULL,
                     blu               INTEGER NOT NULL,
-                    game           INTEGER DEFAULT 0,
-                    game_increment INTEGER DEFAULT 0,
-                    quota     INTEGER DEFAULT 10
-                )"
-            )
+                    game              INTEGER DEFAULT 0,
+                    game_increment    INTEGER DEFAULT 0,
+                    quota             INTEGER DEFAULT {}
+                )", DEFAULT_QUOTA
+            ))
             .execute(&self.pool)
             .await?;
         } else {
@@ -167,7 +169,7 @@ impl DatabaseMigrations {
             if !has_guild_id {
                 info!("Groups table schema is incorrect, recreating...");
                 sqlx::query("DROP TABLE groups").execute(&self.pool).await?;
-                sqlx::query(
+                sqlx::query(&format!(
                     "CREATE TABLE groups (
                         id                INTEGER PRIMARY KEY,
                         group_id          INTEGER DEFAULT 0,
@@ -179,11 +181,11 @@ impl DatabaseMigrations {
                         dashboard_msg     INTEGER DEFAULT 0,
                         red               INTEGER NOT NULL,
                         blu               INTEGER NOT NULL,
-                        game           INTEGER DEFAULT 0,
-                        game_increment INTEGER DEFAULT 0,
-                        quota     INTEGER DEFAULT 10
-                    )"
-                )
+                        game              INTEGER DEFAULT 0,
+                        game_increment    INTEGER DEFAULT 0,
+                        quota             INTEGER DEFAULT {}
+                    )", DEFAULT_QUOTA
+                ))
                 .execute(&self.pool)
                 .await?;
             }
