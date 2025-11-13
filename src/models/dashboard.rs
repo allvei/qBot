@@ -4,14 +4,15 @@ use serenity::all::{
     CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM,
     EditMessage, Message, Reaction,
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::models::{ComponentContext as CC, Group, Session, SessionStatus};
 
 macro_rules! list_players {
     ($desc:ident, $team:ident) => {
         for (i, player) in $team.iter().enumerate() {
-            $desc.push_str(&format!("{}. <@{}>\n", i + 1, player.player.discord_id));
+            let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
+            $desc.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
         }
     };
 }
@@ -20,7 +21,10 @@ macro_rules! list_players {
 fn format_team_field(team: &[crate::models::SessionPlayer]) -> String {
     team.iter()
         .enumerate()
-        .map(|(i, player)| format!("{}. <@{}>", i + 1, player.player.discord_id))
+        .map(|(i, player)| {
+            let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
+            format!("{}. {}<@{}>", i + 1, elo_str, player.player.discord_id)
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -31,6 +35,7 @@ pub enum ButtonType {
     // Setup flow buttons
     SetupDashboard,
     SetupQueue,
+    SetupQueueVc,
     SetupRed,
     SetupBlue,
     SetupRunner,
@@ -68,6 +73,7 @@ impl ButtonType {
             // Setup buttons
             "setup_dashboard" => Self::SetupDashboard,
             "setup_queue"     => Self::SetupQueue,
+            "setup_queuevc"   => Self::SetupQueueVc,
             "setup_red"       => Self::SetupRed,
             "setup_blue"      => Self::SetupBlue,
             "setup_runner"    => Self::SetupRunner,
@@ -105,6 +111,7 @@ impl ButtonType {
             self,
             Self::SetupDashboard |
             Self::SetupQueue     |
+            Self::SetupQueueVc   |
             Self::SetupRed       |
             Self::SetupBlue      |
             Self::SetupRunner    |
@@ -219,7 +226,8 @@ impl Group {
                 match queue_players.cmp(&quota) {
                     std::cmp::Ordering::Less => {
                         for (i, player) in game_current.pool.iter().enumerate() {
-                            desc.push_str(&format!("{}. <@{}>\n", i + 1, player.player.discord_id));
+                            let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
+                            desc.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
                         }
                     }
                     std::cmp::Ordering::Equal => {
@@ -250,7 +258,8 @@ impl Group {
                 if !players_not_in_vc.is_empty() {
                     desc.push_str("⏳ **Waiting for:**\n");
                     for player in players_not_in_vc {
-                        desc.push_str(&format!("  • <@{}>\n", player.player.discord_id));
+                        let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
+                        desc.push_str(&format!("  • {}<@{}>\n", elo_str, player.player.discord_id));
                     }
                 }
             }
@@ -258,14 +267,6 @@ impl Group {
         } else if games_live.is_empty() {
             // Only show "no active games" if there are no games at all
             desc.push_str("**📋 Queue Status**\n*No active games. Join the queue to get started!*\n\n");
-        }
-        
-        // Show live matches
-        if !games_live.is_empty() {
-            desc.push_str("**🎮 Live Matches:**\n");
-            for _game in games_live {
-                desc.push_str("• In Progress\n");
-            }
         }
 
         emb = emb.description(desc);
@@ -275,10 +276,21 @@ impl Group {
             let queue_players = game_current.pool.len();
             if queue_players >= quota {
                 let team_size = quota / 2;
-                let team_red = &game_current.pool[0..team_size];
-                let team_blu = &game_current.pool[team_size..quota];
-                emb = emb.field("🔴 Red", format_team_field(team_red), true);
-                emb = emb.field("🔵 Blue", format_team_field(team_blu), true);
+                // Sort teams by rank descending before display
+                let mut team_red: Vec<_> = game_current.pool[0..team_size].to_vec();
+                let mut team_blu: Vec<_> = game_current.pool[team_size..quota].to_vec();
+                team_red.sort_by(|a, b| {
+                    let elo_a = a.player.rank.map(|r| r.elo()).unwrap_or(0);
+                    let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
+                    elo_b.cmp(&elo_a) // Descending order
+                });
+                team_blu.sort_by(|a, b| {
+                    let elo_a = a.player.rank.map(|r| r.elo()).unwrap_or(0);
+                    let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
+                    elo_b.cmp(&elo_a) // Descending order
+                });
+                emb = emb.field("🔴 Red", format_team_field(&team_red), true);
+                emb = emb.field("🔵 Blue", format_team_field(&team_blu), true);
             }
         }
         
@@ -286,10 +298,21 @@ impl Group {
         for game in games_hot {
             if game.pool.len() >= quota {
                 let team_size = quota / 2;
-                let team_red = &game.pool[0..team_size];
-                let team_blu = &game.pool[team_size..quota];
-                emb = emb.field("🔴 Red", format_team_field(team_red), true);
-                emb = emb.field("🔵 Blue", format_team_field(team_blu), true);
+                // Sort teams by rank descending before display
+                let mut team_red: Vec<_> = game.pool[0..team_size].to_vec();
+                let mut team_blu: Vec<_> = game.pool[team_size..quota].to_vec();
+                team_red.sort_by(|a, b| {
+                    let elo_a = a.player.rank.map(|r| r.elo()).unwrap_or(0);
+                    let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
+                    elo_b.cmp(&elo_a) // Descending order
+                });
+                team_blu.sort_by(|a, b| {
+                    let elo_a = a.player.rank.map(|r| r.elo()).unwrap_or(0);
+                    let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
+                    elo_b.cmp(&elo_a) // Descending order
+                });
+                emb = emb.field("🔴 Red", format_team_field(&team_red), true);
+                emb = emb.field("🔵 Blue", format_team_field(&team_blu), true);
             }
         }
 
@@ -307,7 +330,13 @@ impl Group {
 
     /// Updates a dashboard based on current group state
     pub async fn dash_update(&mut self, ctx: &Context) -> Result<(), Error> {
-        let mut dash = self.dash_get(ctx).await.unwrap();
+        let mut dash = match self.dash_get(ctx).await {
+            Ok(msg) => msg,
+            Err(e) => {
+                warn!("Failed to get dashboard message: {}", e);
+                return Err(e);
+            }
+        };
         let (embed, buttons) = self.build_dashboard_content().await?;
         
         match dash.edit(&ctx.http, EditMessage::new().embed(embed).components(buttons)).await {
@@ -336,24 +365,27 @@ impl Group {
         } else {
             // Player is not in queue, add them
             
-            // Check if we have idle sessions
-            match self.get_sessions_by_status(&SessionStatus::Idle).len() {
-                0 => {
-                    cc.reply("❌ No queue available. A game is currently in progress.").await?;
-                    return Ok(());
-                }
-                1 => info!("Found one existing idle game"),
-                n => return Err(anyhow::anyhow!("Multiple idle games found: {}", n)),
-            };
+            // Ensure we have an idle session (create if needed)
+            let idle_sessions = self.get_sessions_by_status(&SessionStatus::Idle);
+            if idle_sessions.is_empty() {
+                info!("No idle session found, creating one");
+                self.create_session();
+            } else if idle_sessions.len() > 1 {
+                return Err(anyhow::anyhow!("Multiple idle games found: {}", idle_sessions.len()));
+            } else {
+                info!("Found one existing idle game");
+            }
 
-            // Get player's rank before adding them to queue
-            use crate::handlers::player::get_player_rank;
+            // Get or assign player's rank (auto-creates ranks and assigns Apprentice if needed)
+            use crate::handlers::player::get_or_assign_player_rank;
             if let Some(guild_id) = cc.component.guild_id {
-                if let Some(rank) = get_player_rank(cc.ctx, guild_id, user_id).await {
-                    self.queue_player(user_id, rank, cc.ctx).await;
-                } else {
-                    cc.reply("❌ You must have a rank role assigned before joining the queue. Please contact an admin.").await?;
-                    return Ok(());
+                match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user_id).await {
+                    Ok(rank) => {
+                        self.queue_player(user_id, rank, cc.ctx).await;
+                    },
+                    Err(e) => {
+                        return Ok(());
+                    }
                 }
             } else {
                 cc.reply("❌ This command can only be used in a server.").await?;
@@ -363,7 +395,9 @@ impl Group {
 
         // Always acknowledge and update dashboard
         cc.acknowledge().await;
-        self.dash_update(cc.ctx).await;
+        if let Err(e) = self.dash_update(cc.ctx).await {
+            warn!("Failed to update dashboard after toggle_queue: {}", e);
+        }
 
         Ok(())
     }
@@ -385,7 +419,9 @@ impl Group {
 
         if is_shuffled {
             cc.acknowledge().await;
-            self.dash_update(cc.ctx).await;
+            if let Err(e) = self.dash_update(cc.ctx).await {
+                warn!("Failed to update dashboard after shuffle: {}", e);
+            }
         } else {
             cc.reply(&format!("❌ No game ready for shuffling. Need at least {} players in queue.", quota)).await?;
         }
@@ -395,6 +431,25 @@ impl Group {
 
     /// Handles the start match button
     async fn dash_start(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
+        // Check if user has Runner role
+        use crate::handlers::player::check_component_role;
+        use crate::models::Role;
+        
+        match check_component_role(cc, &Role::Runner).await {
+            Ok(true) => {
+                // User has Runner role, proceed
+            },
+            Ok(false) => {
+                cc.reply("❌ Only runners can start matches.").await?;
+                return Ok(());
+            },
+            Err(e) => {
+                warn!("Failed to check runner role: {}", e);
+                cc.reply("❌ Failed to verify permissions.").await?;
+                return Ok(());
+            }
+        }
+        
         // Check if there's a hot game to start
         let has_hot_game = self.sessions.iter().any(|s| s.is_hot());
         
@@ -469,16 +524,28 @@ impl Group {
     }
 
     pub async fn lock_button(&mut self, cc: &CC<'_>) -> Result<()> {
-        let mut dash = self.dash_get(cc.ctx).await.unwrap();
-        let buttons = self.create_dashboard_buttons().await.unwrap();
-        dash.edit(&cc.ctx.http, EditMessage::new().components(buttons)).await;
+        let mut dash = match self.dash_get(cc.ctx).await {
+            Ok(msg) => msg,
+            Err(e) => {
+                warn!("Failed to get dashboard message for lock_button: {}", e);
+                return Err(e);
+            }
+        };
+        let buttons = self.create_dashboard_buttons().await?;
+        dash.edit(&cc.ctx.http, EditMessage::new().components(buttons)).await?;
         Ok(())
     }
 
     pub async fn unlock_button(&mut self, cc: &CC<'_>) -> Result<()> {
-        let mut dash = self.dash_get(cc.ctx).await.unwrap();
-        let buttons = self.create_dashboard_buttons().await.unwrap();
-        dash.edit(&cc.ctx.http, EditMessage::new().components(buttons)).await;
+        let mut dash = match self.dash_get(cc.ctx).await {
+            Ok(msg) => msg,
+            Err(e) => {
+                warn!("Failed to get dashboard message for unlock_button: {}", e);
+                return Err(e);
+            }
+        };
+        let buttons = self.create_dashboard_buttons().await?;
+        dash.edit(&cc.ctx.http, EditMessage::new().components(buttons)).await?;
         Ok(())
     }
 }
