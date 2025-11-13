@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serenity::all::{GuildId, UserId};
 
@@ -15,6 +16,12 @@ pub struct SetupConfig {
     pub blue_channel:      Option<u64>,
     pub runner_role:       Option<u64>,
     pub admin_role:        Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct SetupEntry {
+    config: SetupConfig,
+    created_at: Instant,
 }
 
 impl SetupConfig {
@@ -37,41 +44,44 @@ impl SetupConfig {
         self.queue_channel    .is_some() &&
         self.queue_vc_channel .is_some() &&
         self.red_channel      .is_some() &&
-        self.blue_channel     .is_some() &&
-        self.runner_role      .is_some() &&
-        self.admin_role       .is_some()
+        self.blue_channel     .is_some()
     }
 }
 
-/// Global setup state manager
+/// Manages temporary setup configurations for users
+#[derive(Debug)]
 pub struct SetupStateManager {
-    // Key: (user_id, guild_id), Value: SetupConfig
-    pub states: Arc<Mutex<HashMap<(u64, u64), SetupConfig>>>,
+    states: Mutex<HashMap<(UserId, GuildId), SetupEntry>>,
 }
 
 impl SetupStateManager {
     pub fn new() -> Self {
         Self {
-            states: Arc::new(Mutex::new(HashMap::new())),
+            states: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn start_setup(&self, user_id: UserId, guild_id: GuildId) -> SetupConfig {
-        let key = (user_id.get(), guild_id.get());
+        let key = (user_id, guild_id);
         let config = SetupConfig::new(guild_id.get());
         
         if let Ok(mut states) = self.states.lock() {
-            states.insert(key, config.clone());
+            let entry = SetupEntry {
+                config: config.clone(),
+                created_at: Instant::now(),
+            };
+            states.insert(key, entry);
+            
+            // Cleanup expired entries while we have the lock
+            Self::cleanup_expired_internal(&mut states);
         }
         
         config
     }
 
     pub fn get_setup(&self, user_id: UserId, guild_id: GuildId) -> Option<SetupConfig> {
-        let key = (user_id.get(), guild_id.get());
-        
         if let Ok(states) = self.states.lock() {
-            states.get(&key).cloned()
+            states.get(&(user_id, guild_id)).map(|entry| entry.config.clone())
         } else {
             None
         }
@@ -81,12 +91,12 @@ impl SetupStateManager {
     where
         F: FnOnce(&mut SetupConfig),
     {
-        let key = (user_id.get(), guild_id.get());
+        let key = (user_id, guild_id);
         
         if let Ok(mut states) = self.states.lock() {
-            if let Some(config) = states.get_mut(&key) {
-                updater(config);
-                Some(config.clone())
+            if let Some(entry) = states.get_mut(&key) {
+                updater(&mut entry.config);
+                Some(entry.config.clone())
             } else {
                 None
             }
@@ -96,23 +106,29 @@ impl SetupStateManager {
     }
 
     pub fn complete_setup(&self, user_id: UserId, guild_id: GuildId) -> Option<SetupConfig> {
-        let key = (user_id.get(), guild_id.get());
+        let key = (user_id, guild_id);
         
         if let Ok(mut states) = self.states.lock() {
-            states.remove(&key)
+            states.remove(&key).map(|entry| entry.config)
         } else {
             None
         }
     }
 
+    /// Internal cleanup that assumes lock is already held
+    fn cleanup_expired_internal(states: &mut HashMap<(UserId, GuildId), SetupEntry>) {
+        const EXPIRY_DURATION: Duration = Duration::from_secs(30 * 60); // 30 minutes
+        let now = Instant::now();
+        
+        states.retain(|_, entry| {
+            now.duration_since(entry.created_at) < EXPIRY_DURATION
+        });
+    }
+    
+    /// Public cleanup method that acquires lock
     pub fn cleanup_expired(&self) {
-        // In a production system, you'd want to clean up expired entries
-        // For now, we'll just clear all entries periodically
         if let Ok(mut states) = self.states.lock() {
-            // Only keep the most recent 100 setup states to prevent memory leaks
-            if states.len() > 100 {
-                states.clear();
-            }
+            Self::cleanup_expired_internal(&mut states);
         }
     }
 }
