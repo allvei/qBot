@@ -274,12 +274,15 @@ fn parse_user_mention(mention: &str,) -> Result<u64> {
         mention
             .trim();
     if mention.starts_with("<@!") && mention.ends_with('>') {
-        Ok(mention[3..mention.len() - 1].to_string().parse::<u64>().unwrap())
+        mention[3..mention.len() - 1].to_string().parse::<u64>()
+            .map_err(|_| anyhow!("Invalid user ID in mention"))
     } else if mention.starts_with("<@") && mention.ends_with('>') {
-        Ok(mention[2..mention.len() - 1].to_string().parse::<u64>().unwrap())
+        mention[2..mention.len() - 1].to_string().parse::<u64>()
+            .map_err(|_| anyhow!("Invalid user ID in mention"))
     } else {
         // Assume it's already a raw user ID
-        Ok(mention.parse::<u64>().unwrap())
+        mention.parse::<u64>()
+            .map_err(|_| anyhow!("Invalid user ID format"))
     }
 }
 
@@ -296,7 +299,7 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
     }
     
     let channel = cc.intax.channel_id;
-    let group = guild.get_group(channel).unwrap();
+    let group = guild.get_group(channel)?;
     
     // Create and send dashboard
     group.dash_publish(cc.ctx, channel).await?;
@@ -856,7 +859,8 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                     server.groups.push(new_group);
                     
                     // Get the group we just added and update its dashboard with buttons
-                    let group = server.groups.last_mut().unwrap();
+                    let group = server.groups.last_mut()
+                        .ok_or_else(|| anyhow!("Failed to get newly added group"))?;
                     if let Err(e) = group.dash_update(ctx).await {
                         warn!("Failed to update dashboard with buttons: {}", e);
                     }

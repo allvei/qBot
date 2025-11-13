@@ -541,7 +541,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         }
     };
 
-    let group = guild.get_group(channel).unwrap();
+    let group = guild.get_group(channel)?;
     
     // Ensure we have an idle session (create if needed)
     let idle_sessions = group.get_sessions_by_status(&SessionStatus::Idle);
@@ -578,7 +578,10 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     }
     
     // Always acknowledge (silently if already in queue)
-    let current_queue = group.get_queue().await.unwrap().pool.len();
+    let current_queue = match group.get_queue().await {
+        Ok(session) => session.pool.len(),
+        Err(_) => 0
+    };
     cc.reply(&format!("✅ Joined the queue! ({}/{} players)", current_queue, group.quota)).await?;
 
     // Update dashboard
@@ -594,7 +597,7 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Resul
     let channel = cc.intax.channel_id;
     
     let (queue_count, queue_list, quota) = {
-        let group = guild.get_group(channel).unwrap();
+        let group = guild.get_group(channel)?;
         
         let idle_games = group.get_sessions_by_status(&SessionStatus::Idle);
         
@@ -635,7 +638,7 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
     }
 
     // Get active group with game
-    let group = guild.get_group(cc.intax.channel_id).unwrap();
+    let group = guild.get_group(cc.intax.channel_id)?;
     let quota = group.quota as usize;
 
     if group.sessions.is_empty() {
@@ -643,13 +646,13 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
         return Ok(());
     }
 
-    let game = group.sessions.last().unwrap();
-
+    let game = group.sessions.last().ok_or_else(|| anyhow!("No active game"))?;
+    
     if game.pool.len() < quota {
         cc.reply(&format!("Not enough players in game. Need {} more.", quota - game.pool.len())).await?;
         return Ok(());
     }
-
+    
     // Collect players and split into teams (synchronous shuffle so no !Send types live across await)
     let (mut red_team, mut blu_team) = split_into_teams(&game.pool);
     let mut updated_group = group.clone();
@@ -663,16 +666,21 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
     }
 
     // Update pool with new team assignments
-    updated_group.sessions.last_mut().unwrap().pool.clear();
-    updated_group.sessions.last_mut().unwrap().pool.extend(red_team.into_iter());
-    updated_group.sessions.last_mut().unwrap().pool.extend(blu_team.into_iter());
+    let last_session = updated_group.sessions.last_mut()
+        .ok_or_else(|| anyhow!("No session available for team assignment"))?;
+    last_session.pool.clear();
+    last_session.pool.extend(red_team.into_iter());
+    last_session.pool.extend(blu_team.into_iter());
+    last_session.status = SessionStatus::Hot;
 
-    updated_group.sessions.last_mut().unwrap().status = SessionStatus::Hot;
-    // TODO: Persist updated_group changes to DB if needed (no update_group method exists)
-    // You may need to implement this in your database layer.
-
-    let red_team_names: Vec<String> = updated_group.sessions.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Red)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
-    let blu_team_names: Vec<String> = updated_group.sessions.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Blu)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
+    let red_team_names: Vec<String> = last_session.pool.iter()
+        .filter(|sp| sp.team == Some(Team::Red))
+        .map(|sp| format!("<@{}>", sp.player.discord_id))
+        .collect();
+    let blu_team_names: Vec<String> = last_session.pool.iter()
+        .filter(|sp| sp.team == Some(Team::Blu))
+        .map(|sp| format!("<@{}>", sp.player.discord_id))
+        .collect();
 
     let embed_content = format!(
         "**🎲 Teams Generated!**\n\n**🔴 Red Team:**\n{}\n\n**🔵 Blue Team:**\n{}",
@@ -697,7 +705,7 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
 
     // Get the group for the current channel
     let channel_id = cc.intax.channel_id;
-    let group = guild.get_group(channel_id).unwrap();
+    let group = guild.get_group(channel_id)?;
 
     // Check hot game count first
     let hot_game_count = group.sessions.iter().filter(|g| g.status == SessionStatus::Hot).count();
@@ -718,7 +726,7 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     let hot_game = group.sessions
         .iter_mut()
         .find(|g| g.status == SessionStatus::Hot)
-        .unwrap(); // Safe because we verified count above
+        .ok_or_else(|| anyhow!("Hot game not found after verification"))?;
     
     hot_game.push();
 
@@ -747,7 +755,7 @@ pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
 
     // Get the group for the current channel
     let channel_id = cc.intax.channel_id;
-    let group = guild.get_group(channel_id).unwrap();
+    let group = guild.get_group(channel_id)?;
 
     if let Ok(game) = group.get_user_session(cc.intax.user.id).await {
         game.status = SessionStatus::Pull;
