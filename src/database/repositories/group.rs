@@ -48,7 +48,7 @@ impl GroupRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        Ok(self.build_group_from_row_async(&result).await.unwrap())
+        self.build_group_from_row_async(&result).await
     }
 
     pub async fn update_group(
@@ -79,7 +79,7 @@ impl GroupRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        Ok(self.build_group_from_row_async(&result).await.unwrap())
+        self.build_group_from_row_async(&result).await
     }
 
     async fn build_group_from_row_async(&self, result: &sqlx::sqlite::SqliteRow) -> Result<Group> {
