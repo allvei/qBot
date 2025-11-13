@@ -66,9 +66,13 @@ impl Session {
         matches!(self.status, SessionStatus::Idle)
     }
 
-    /// Set the session to idle
+    /// Set the session to idle and clear team assignments
     pub fn idle(&mut self) {
         self.status = SessionStatus::Idle;
+        // Clear team assignments when going back to idle
+        for player in &mut self.pool {
+            player.team = None;
+        }
     }
 
     /// Set the session to hot
