@@ -5,50 +5,16 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-macro_rules! define_global_ids {
-    (
-        $(
-            $(#[$meta: meta])*
-            $const: ident => $value: expr
-        ),*
-        $(,)?
-    ) => {
-        $(
-            $(#[$meta])*
-            pub const $const: u64 = $value;
-        )*
-    };
-}
+use super::types::Rank;
 
 pub const DEFAULT_QUOTA: u8 = 8;
+pub const DEFAULT_RANK: Rank = Rank::Apprentice;
 
-define_global_ids! {
-  RUNNER_R_ID          => 1386951114225746040,
-  ADMIN_R_ID           => 1386951155052974141,
-
-  EU_BEGINNER_R_ID     => 1386989827307606107,
-  EU_NEWCOMER_R_ID     => 1386951211109974066,
-  EU_NOVICE_R_ID       => 1386951241539784827,
-  EU_APPRENTICE_R_ID   => 1386951264117592097,
-  EU_JOURNEYMAN_R_ID   => 1386951275056201820,
-  EU_MASTER_R_ID       => 1386951316143734814,
-  EU_MASTER_ELITE_R_ID => 1386951327711494204,
-  EU_GRANDMASTER_R_ID  => 1386951360594837544,
-
-  DASHBOARD_TC_ID    => 1385894822992281701,
-  CHAT_TC_ID         => 1388643261543088208,
-  QUEUE_TC_ID        => 1385893666010300436,
-  RED_VC_ID          => 1385464431185494086,
-  BLU_VC_ID          => 1385464563448680578,
-  // ID_NA_BEGINNER     => 0,
-  // ID_NA_NEWCOMER     => 0,
-  // ID_NA_NOVICE       => 0,
-  // ID_NA_APPRENTICE   => 0,
-  // ID_NA_JOURNEYMAN   => 0,
-  // ID_NA_MASTER       => 0,
-  // ID_NA_MASTER_ELITE => 0,
-  // ID_NA_GRANDMASTER  => 0,
-}
+// Note: Runner and Admin role IDs are now configured per guild via database during setup.
+// The hardcoded values below are kept for reference only (passtime.tf server roles).
+// Use the /setup command to configure roles for each guild with dropdown menus.
+// pub const RUNNER_R_ID: u64 = 1386951114225746040;
+// pub const ADMIN_R_ID: u64 = 1386951155052974141;
 
 // ConfigFormat
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
