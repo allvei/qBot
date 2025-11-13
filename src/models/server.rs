@@ -16,8 +16,7 @@ use tracing::{info, warn};
 
 use crate::handlers::player::check_role;
 use crate::models::{
-    CommandContext, ComponentContext, FileManager, SessionPlayer, Session, SessionStatus, TeamChannel,
-    ADMIN_R_ID, BLU_VC_ID, CHAT_TC_ID, DASHBOARD_TC_ID, QUEUE_TC_ID, RED_VC_ID, RUNNER_R_ID,
+    CommandContext, SessionPlayer, Session, SessionStatus, TeamChannel,
 };
 
 /// Helper function to calculate mean, median, and standard deviation for team ELOs
@@ -270,28 +269,37 @@ impl Group {
         
         game.pull();
         
-        // Extract all players to move back to queue
-        let player_ids: Vec<UI> = game.pool
+        // Extract all players with their data to move back to queue
+        let players_to_requeue: Vec<(UI, Option<crate::models::Rank>)> = game.pool
             .iter()
-            .map(|player| player.player.discord_id)
+            .map(|player| (player.player.discord_id, player.player.rank))
             .collect();
         
         // Move all players back to queue voice channel
-        for user_id in player_ids {
-            if let Err(e) = self.move_user(user_id, queue_vc, ctx).await {
+        for (user_id, _) in &players_to_requeue {
+            if let Err(e) = self.move_user(*user_id, queue_vc, ctx).await {
                 warn!("Failed to move user {} back to queue: {}", user_id, e);
             }
         }
         
-        // Clear the pool and reset to Idle
-        let game = self.sessions
+        // Find the idle session (queue) and add all players back to it
+        let idle_session = self.sessions
             .iter_mut()
-            .find(|s| s.status == SessionStatus::Pull)
-            .ok_or(anyhow!("Game state changed unexpectedly"))?;
+            .find(|s| s.status == SessionStatus::Idle)
+            .ok_or(anyhow!("No idle session found for re-queuing players"))?;
         
-        game.pool.clear();
-        game.idle();
-        info!("Match ended, players returned to queue");
+        for (user_id, rank) in players_to_requeue {
+            if let Some(rank) = rank {
+                idle_session.add_player(user_id, rank);
+                info!("Re-added player {} to queue", user_id);
+            }
+        }
+        
+        let queue_count = idle_session.pool.len();
+        
+        // Remove the finished session
+        self.sessions.retain(|s| s.status != SessionStatus::Pull);
+        info!("Match ended, {} players returned to queue", queue_count);
         
         self.dash_update(ctx).await;
         Ok(())
@@ -529,11 +537,22 @@ pub enum Role {
 }
 
 impl Role {
-    pub fn id(&self) -> RI {
+    /// Get config key for this role's Discord role ID
+    pub fn config_key(&self) -> &'static str {
         match self {
-            Role::Runner => RUNNER_R_ID.into(),
-            Role::Admin  => ADMIN_R_ID .into(),
+            Role::Runner => "runner_role",
+            Role::Admin  => "admin_role",
         }
+    }
+    
+    /// Get the Discord role ID from database configuration
+    pub async fn id(&self, db: &crate::Database, guild_id: u64) -> Option<RI> {
+        if let Ok(Some(value)) = db.config.get_config_value(self.config_key(), guild_id).await {
+            if let Ok(role_id) = value.parse::<u64>() {
+                return Some(RI::new(role_id));
+            }
+        }
+        None
     }
 
     pub fn name(&self) -> &'static str {
