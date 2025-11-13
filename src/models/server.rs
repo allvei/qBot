@@ -31,7 +31,7 @@ fn calculate_stats(elos: &[f64]) -> (f64, f64, f64) {
     
     // Calculate median
     let mut sorted = elos.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let median = if sorted.len() % 2 == 0 {
         let mid = sorted.len() / 2;
         (sorted[mid - 1] + sorted[mid]) / 2.0
@@ -79,7 +79,9 @@ impl Server {
         group: Group,
     ) -> Result<()> {
         self.groups.push(group);
-        self.groups.last_mut().unwrap().create_session();
+        if let Some(group) = self.groups.last_mut() {
+            group.create_session();
+        }
         Ok(())
     }
 
@@ -132,11 +134,11 @@ impl Group {
         }
     }
 
-    pub fn create_session(&mut self) -> &mut Session {
+    pub fn create_session(&mut self) -> Result<&mut Session> {
         info!("Creating new game");
         self.sessions
             .push(Session::new(SessionStatus::Idle, Vec::new()));
-        self.sessions.last_mut().unwrap()
+        self.sessions.last_mut().ok_or_else(|| anyhow!("Failed to create session"))
     }
 
     pub fn end_game(&mut self) -> bool {
@@ -234,8 +236,10 @@ impl Group {
             .collect();
         
         // Drop the mutable borrow and move users to team channels
+        let guild_id = ctx.cache.guilds().first().copied()
+            .ok_or_else(|| anyhow!("No guild found in cache"))?;
         for (user_id, channel_id) in player_moves {
-            if let Err(e) = self.move_user(user_id, channel_id, ctx).await {
+            if let Err(e) = self.move_user(guild_id, user_id, channel_id, ctx).await {
                 warn!("Failed to move user {}: {}", user_id, e);
             }
         }
@@ -276,8 +280,10 @@ impl Group {
             .collect();
         
         // Move all players back to queue voice channel
+        let guild_id = ctx.cache.guilds().first().copied()
+            .ok_or_else(|| anyhow!("No guild found in cache"))?;
         for (user_id, _) in &players_to_requeue {
-            if let Err(e) = self.move_user(*user_id, queue_vc, ctx).await {
+            if let Err(e) = self.move_user(guild_id, *user_id, queue_vc, ctx).await {
                 warn!("Failed to move user {} back to queue: {}", user_id, e);
             }
         }
@@ -313,10 +319,15 @@ impl Group {
         let quota = self.quota as usize;
         
         // Get the hot game (session was just set to hot before this is called)
-        let game = self.sessions
+        let game = match self.sessions
             .iter_mut()
-            .find(|s| s.status == SessionStatus::Hot)
-            .expect("No hot session found for team generation");
+            .find(|s| s.status == SessionStatus::Hot) {
+            Some(g) => g,
+            None => {
+                warn!("No hot session found for team generation");
+                return;
+            }
+        };
         
         if game.pool.len() < quota {
             warn!("Not enough players for team generation: {}", game.pool.len());
@@ -405,14 +416,17 @@ impl Group {
         }
         
         // Update dashboard to show the new teams
-        self.dash_update(ctx).await.ok();
+        if let Err(e) = self.dash_update(ctx).await {
+            warn!("Failed to update dashboard after team generation: {}", e);
+        }
     }
 
-    pub async fn queue_player(&mut self, user_id: UI, rank: crate::models::Rank, ctx: &Context) {
-        self.get_queue().await.unwrap().add_player(user_id, rank);
+    pub async fn queue_player(&mut self, user_id: UI, rank: crate::models::Rank, ctx: &Context) -> Result<()> {
+        self.get_queue().await?.add_player(user_id, rank);
         if self.is_quota() {
-            self.hot(ctx).await;
+            self.hot(ctx).await?;
         }
+        Ok(())
     }
 
     pub async fn add_player(&mut self, session: &mut Session, user_id: UI, rank: crate::models::Rank, ctx: &Context) {
@@ -433,34 +447,35 @@ impl Group {
     /// * `user_mention` - The user mention to buffer.
     pub async fn cmd_buffer(cc: &CommandContext<'_>,user_mention: &str,) -> Result<()> {
         info!("Processing buffer command for user mention: {}", user_mention);
-        let user_id = parse_user_mention(user_mention).unwrap();
+        let user_id = parse_user_mention(user_mention)
+            .ok_or_else(|| anyhow!("Invalid user mention format"))?;
         if !check_role(cc, &Role::Admin).await? {
             let response = CIR::Message(CIRM::new().content("Only admins can buffer players!").ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
             return Ok(());
         }
-        let mut manager    = cc.manager.lock().await;
-        let server         = manager.get_server(cc.intax.guild_id.unwrap()).unwrap();
-        let group          = server .get_group(cc.intax.channel_id).unwrap();
-        let game_player    = group  .get_player(user_id).unwrap();
+        let mut manager = cc.manager.lock().await;
+        let server = manager.get_server(cc.intax.guild_id.unwrap())?;
+        let group = server.get_group(cc.intax.channel_id)?;
+        let game_player = group.get_player(user_id)?;
         game_player.buff();
         Ok(())
     }
 
     pub fn is_quota(&self) -> bool {
         let g = self.get_sessions_by_status(&SessionStatus::Idle);
+        if g.is_empty() {
+            warn!("No idle sessions found when checking quota");
+            return false;
+        }
         if g.len() > 1 {
             warn!("Multiple idle games found, faulty");
         }
         let l = g[0].pool.len();
         let q = self.quota as usize;
         match l.cmp(&q) {
-            std::cmp::Ordering::Less => {
-                false
-            },
-            std::cmp::Ordering::Equal => {
-                true
-            },
+            std::cmp::Ordering::Less => false,
+            std::cmp::Ordering::Equal => true,
             std::cmp::Ordering::Greater => {
                 warn!("Quota met late, more players than quota");
                 true
@@ -499,10 +514,8 @@ impl Group {
         queue_chat.send_message(&ctx.http, msg).await;
     }
 
-    pub async fn move_user(&self, user_id: UI, channel_id: CI, ctx: &Context) -> Result<(), Error> {
-        let guilds   = ctx.cache.guilds();
-        let guild_id = guilds.first().ok_or(anyhow!("No guild found"))?;
-        let member   = guild_id.member(&ctx.http, user_id).await?;
+    pub async fn move_user(&self, guild_id: serenity::all::GuildId, user_id: UI, channel_id: CI, ctx: &Context) -> Result<(), Error> {
+        let member = guild_id.member(&ctx.http, user_id).await?;
         member.move_to_voice_channel(&ctx.http, channel_id).await?;
         Ok(())
     }
