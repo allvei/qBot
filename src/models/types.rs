@@ -12,8 +12,6 @@ use tokio::sync::Mutex;
 use crate::database::Database;
 use crate::models::{
     Manager as GameManager, Role,
-    EU_APPRENTICE_R_ID, EU_BEGINNER_R_ID, EU_GRANDMASTER_R_ID, EU_JOURNEYMAN_R_ID,
-    EU_MASTER_ELITE_R_ID, EU_MASTER_R_ID, EU_NOVICE_R_ID,
 };
 
 // ============================================================================
@@ -105,9 +103,11 @@ impl Player {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Rank {
     Beginner,
+    Newcomer,
     Novice,
     Apprentice,
     Journeyman,
+    Expert,
     Master,
     MasterElite,
     Grandmaster,
@@ -115,24 +115,44 @@ pub enum Rank {
 
 #[allow(non_snake_case, unreachable_patterns)]
 impl Rank {
-    pub fn id_hardcoded(&self) -> RoleId {
+    /// Get config key for this rank's role IDs
+    pub fn config_key(&self) -> &'static str {
         match self {
-            Rank::Beginner    => EU_BEGINNER_R_ID    .into(),
-            Rank::Novice      => EU_NOVICE_R_ID      .into(),
-            Rank::Apprentice  => EU_APPRENTICE_R_ID  .into(),
-            Rank::Journeyman  => EU_JOURNEYMAN_R_ID  .into(),
-            Rank::Master      => EU_MASTER_R_ID      .into(),
-            Rank::MasterElite => EU_MASTER_ELITE_R_ID.into(),
-            Rank::Grandmaster => EU_GRANDMASTER_R_ID .into(),
+            Rank::Beginner    => "rank_beginner_roles",
+            Rank::Newcomer    => "rank_newcomer_roles",
+            Rank::Novice      => "rank_novice_roles",
+            Rank::Apprentice  => "rank_apprentice_roles",
+            Rank::Journeyman  => "rank_journeyman_roles",
+            Rank::Expert      => "rank_expert_roles",
+            Rank::Master      => "rank_master_roles",
+            Rank::MasterElite => "rank_master_elite_roles",
+            Rank::Grandmaster => "rank_grandmaster_roles",
+        }
+    }
+    
+    /// Get all Discord role IDs that map to this rank from config
+    /// Format: comma-separated role IDs, e.g., "1234567890,9876543210"
+    /// Returns empty vector if no config is set (roles need to be created)
+    pub async fn role_ids(&self, db: &Database, guild_id: u64) -> Vec<RoleId> {
+        if let Ok(Some(value)) = db.config.get_config_value(self.config_key(), guild_id).await {
+            value.split(',')
+                .filter_map(|s| s.trim().parse::<u64>().ok())
+                .map(RoleId::new)
+                .collect()
+        } else {
+            // No config set - return empty so roles will be created
+            Vec::new()
         }
     }
 
     pub fn name(&self) -> &'static str {
         match self {
             Rank::Beginner    => "Beginner",
+            Rank::Newcomer    => "Newcomer",
             Rank::Novice      => "Novice",
             Rank::Apprentice  => "Apprentice",
             Rank::Journeyman  => "Journeyman",
+            Rank::Expert      => "Expert",
             Rank::Master      => "Master",
             Rank::MasterElite => "Master Elite",
             Rank::Grandmaster => "Grandmaster",
@@ -142,39 +162,55 @@ impl Rank {
     pub fn elo(&self) -> u32 {
         match self {
             Rank::Beginner    => 10,
-            Rank::Novice      => 30,
-            Rank::Apprentice  => 40,
-            Rank::Journeyman  => 50,
-            Rank::Master      => 65,
+            Rank::Newcomer    => 30,
+            Rank::Novice      => 45,
+            Rank::Apprentice  => 50,
+            Rank::Journeyman  => 65,
+            Rank::Expert      => 75,
+            Rank::Master      => 85,
             Rank::MasterElite => 90,
             Rank::Grandmaster => 95,
         }
     }
 
-    /// Convert a Discord RoleId to a Rank enum
-    pub fn from_role_id(role_id: RoleId) -> Option<Rank> {
-        match role_id.get() {
-            EU_BEGINNER_R_ID     => Some(Rank::Beginner),
-            EU_NOVICE_R_ID       => Some(Rank::Novice),
-            EU_APPRENTICE_R_ID   => Some(Rank::Apprentice),
-            EU_JOURNEYMAN_R_ID   => Some(Rank::Journeyman),
-            EU_MASTER_R_ID       => Some(Rank::Master),
-            EU_MASTER_ELITE_R_ID => Some(Rank::MasterElite),
-            EU_GRANDMASTER_R_ID  => Some(Rank::Grandmaster),
-            _                    => None,
+    /// Convert a Discord RoleId to a Rank enum using guild config
+    /// Supports multiple Discord roles mapping to the same rank (EU/NA/Retired variants)
+    pub async fn from_role_id(role_id: RoleId, db: &Database, guild_id: u64) -> Option<Rank> {
+        // Check each rank's role IDs
+        for rank in [
+            Rank::Beginner,
+            Rank::Newcomer,
+            Rank::Novice,
+            Rank::Apprentice,
+            Rank::Journeyman,
+            Rank::Expert,
+            Rank::Master,
+            Rank::MasterElite,
+            Rank::Grandmaster,
+        ] {
+            if rank.role_ids(db, guild_id).await.contains(&role_id) {
+                return Some(rank);
+            }
         }
+        None
     }
 
-    /// Get all rank role IDs
-    pub fn all_role_ids() -> Vec<RoleId> {
-        vec![
-            RoleId::new(EU_BEGINNER_R_ID),
-            RoleId::new(EU_NOVICE_R_ID),
-            RoleId::new(EU_APPRENTICE_R_ID),
-            RoleId::new(EU_JOURNEYMAN_R_ID),
-            RoleId::new(EU_MASTER_R_ID),
-            RoleId::new(EU_MASTER_ELITE_R_ID),
-            RoleId::new(EU_GRANDMASTER_R_ID),
-        ]
+    /// Get all rank role IDs from config (including all regional and retired variants)
+    pub async fn all_role_ids(db: &Database, guild_id: u64) -> Vec<RoleId> {
+        let mut all_ids = Vec::new();
+        for rank in [
+            Rank::Beginner,
+            Rank::Newcomer,
+            Rank::Novice,
+            Rank::Apprentice,
+            Rank::Journeyman,
+            Rank::Expert,
+            Rank::Master,
+            Rank::MasterElite,
+            Rank::Grandmaster,
+        ] {
+            all_ids.extend(rank.role_ids(db, guild_id).await);
+        }
+        all_ids
     }
 }
