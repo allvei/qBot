@@ -84,6 +84,7 @@ impl EventHandler for Handler {
             cmd("initgroup", "Initialize group"),
             cmd("setup",     "Run guild setup wizard"),
             cmd("checkranks", "Check and create missing rank roles"),
+            cmd("setquota",  "Set the queue quota")              .op("quota", "Number of players required (2-100)", true),
         ];
 
         if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
@@ -116,10 +117,13 @@ impl EventHandler for Handler {
                             }
                             manager.servers.push(server);
                             info!("Loaded {} group(s) into memory for guild {}", manager.servers.last().unwrap().groups.len(), guild.name);
+                            
+                            // Check for users already in queue voice channels
+                            self.check_existing_voice_users(&ctx, &guild, &mut manager).await;
+                            
+                            // Create dashboard for the guild automatically
+                            self.create_guild_dashboard_from_manager(&ctx, &guild, &mut manager).await;
                         }
-                        
-                        // Create dashboard for the guild automatically
-                        self.create_guild_dashboard(&ctx, &guild).await;
                     },
                     Ok(_) => {
                         warn!("{} has no group configurations. ID: {}", guild.name, guild_id);
@@ -177,6 +181,11 @@ impl EventHandler for Handler {
                     "checkranks" => {
                         info();
                         admin::cmd_check_ranks(&cmd_ctx).await
+                    }
+                    "setquota" => {
+                        info();
+                        let quota = cdo.iter().find(|opt| opt.name == "quota").and_then(|opt| opt.value.as_i64()).unwrap_or(0);
+                        admin::cmd_set_quota(&cmd_ctx, quota).await
                     }
                     _ => {
                         // All other commands need a server
@@ -336,7 +345,8 @@ impl EventHandler for Handler {
                         }
                         
                         // Now create the dashboard
-                        self.create_guild_dashboard(&ctx, &guild).await;
+                        let mut manager = self.manager.lock().await;
+                        self.create_guild_dashboard_from_manager(&ctx, &guild, &mut manager).await;
                     }
                     return;
                 }
@@ -344,7 +354,7 @@ impl EventHandler for Handler {
                 // Handle rank role creation buttons
                 if matches!(button_type, ButtonType::CreateRankRolesYes | ButtonType::CreateRankRolesNo) {
                     let create = matches!(button_type, ButtonType::CreateRankRolesYes);
-                    let result = admin::handle_create_rank_roles(&ctx, &itx, create).await;
+                    let result = admin::handle_create_rank_roles(&ctx, &self.database, &itx, create).await;
                     if let Err(e) = result {
                         error!("Error handling rank role creation: {}", e);
                     }
@@ -353,7 +363,7 @@ impl EventHandler for Handler {
                 
                 // Handle setup/init interactions first (no group needed)
                 if button_type.is_setup_button() {
-                    let result = admin::handle_setup_interaction(&ctx, &itx, &self.database).await;
+                    let result = admin::handle_setup_interaction(&ctx, &itx, &self.database, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling setup interaction: {}", e);
                     }
@@ -580,26 +590,29 @@ impl EventHandler for Handler {
                             if !has_idle_session {
                                 info!("No idle session available for {} - game in progress", user_name);
                             } else {
-                                // Check if player has a rank before allowing them to join
-                                use pf_pug_bot::handlers::player::get_player_rank;
-                                if let Some(rank) = get_player_rank(&ctx, server, user_id).await {
-                                    // Add player to queue and mark as in VC
-                                    info!("{} joined queue from voice channel with rank {:?}", user_name, rank);
-                                    group.queue_player(user_id, rank, &ctx).await;
-                                    
-                                    // Mark them as in VC
-                                    if let Ok(session) = group.get_user_session(user_id).await {
-                                        if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
-                                            player.in_queue_vc = true;
+                                // Get or assign player rank (auto-creates ranks and assigns Apprentice if needed)
+                                use pf_pug_bot::handlers::player::get_or_assign_player_rank;
+                                match get_or_assign_player_rank(&ctx, &self.database, server, user_id).await {
+                                    Ok(rank) => {
+                                        // Add player to queue and mark as in VC
+                                        info!("{} joined queue from voice channel with rank {:?}", user_name, rank);
+                                        group.queue_player(user_id, rank, &ctx).await;
+                                        
+                                        // Mark them as in VC
+                                        if let Ok(session) = group.get_user_session(user_id).await {
+                                            if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
+                                                player.in_queue_vc = true;
+                                            }
                                         }
+                                        
+                                        // Update dashboard to reflect the change
+                                        if let Err(e) = group.dash_update(&ctx).await {
+                                            error!("Failed to update dashboard: {}", e);
+                                        }
+                                    },
+                                    Err(e) => {
+                                        warn!("{} failed to get or assign rank: {}", user_name, e);
                                     }
-                                    
-                                    // Update dashboard to reflect the change
-                                    if let Err(e) = group.dash_update(&ctx).await {
-                                        error!("Failed to update dashboard: {}", e);
-                                    }
-                                } else {
-                                    info!("{} tried to join queue but has no rank role", user_name);
                                 }
                             }
                         }
@@ -657,8 +670,85 @@ impl Handler {
         }
     }
     
-    /// Creates dashboard for a guild automatically when bot connects
-    async fn create_guild_dashboard(&self, ctx: &Context, guild: &Guild) {
+    /// Check for users already in queue voice channels and add them to the queue
+    async fn check_existing_voice_users(&self, ctx: &Context, guild: &Guild, manager: &mut Manager) {
+        use pf_pug_bot::handlers::player::get_or_assign_player_rank;
+        
+        info!("Checking for existing users in voice channels for guild {}", guild.name);
+        
+        // Get the server from the manager
+        let server = match manager.get_server(guild.id) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Failed to get server from manager: {}", e);
+                return;
+            }
+        };
+        
+        // Iterate through all groups and check their queue voice channels
+        for group in &mut server.groups {
+            let queue_vc_id = group.channels.queue_vc;
+            
+            // Get all members in the voice channel
+            let mut users_added = 0;
+            for (user_id, voice_state) in &guild.voice_states {
+                // Check if user is in this queue voice channel
+                if voice_state.channel_id == Some(queue_vc_id) {
+                    // Check if there's an idle session available
+                    let has_idle_session = !group.get_sessions_by_status(&SessionStatus::Idle).is_empty();
+                    
+                    if !has_idle_session {
+                        info!("No idle session available for existing users in {}", queue_vc_id);
+                        continue;
+                    }
+                    
+                    // Check if user is already in a session
+                    if group.get_user_session(*user_id).await.is_ok() {
+                        info!("User {} already in session, skipping", user_id);
+                        continue;
+                    }
+                    
+                    // Get the user's name for logging
+                    let user_name = match ctx.http.get_user(*user_id).await {
+                        Ok(user) => user.display_name().to_string(),
+                        Err(_) => user_id.to_string(),
+                    };
+                    
+                    // Get or assign player rank
+                    match get_or_assign_player_rank(ctx, &self.database, guild.id, *user_id).await {
+                        Ok(rank) => {
+                            info!("Adding existing user {} to queue with rank {:?}", user_name, rank);
+                            group.queue_player(*user_id, rank, ctx).await;
+                            
+                            // Mark them as in VC
+                            if let Ok(session) = group.get_user_session(*user_id).await {
+                                if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == *user_id) {
+                                    player.in_queue_vc = true;
+                                }
+                            }
+                            
+                            users_added += 1;
+                        },
+                        Err(e) => {
+                            warn!("Failed to get or assign rank for existing user {}: {}", user_name, e);
+                        }
+                    }
+                }
+            }
+            
+            if users_added > 0 {
+                info!("Added {} existing user(s) to queue for group in channel {}", users_added, queue_vc_id);
+                
+                // Update the dashboard to reflect the new users
+                if let Err(e) = group.dash_update(ctx).await {
+                    error!("Failed to update dashboard after adding existing users: {}", e);
+                }
+            }
+        }
+    }
+    
+    /// Creates dashboard for a guild using in-memory groups from manager
+    async fn create_guild_dashboard_from_manager(&self, ctx: &Context, guild: &Guild, manager: &mut Manager) {
         info!("Creating dashboard for guild: {}", guild.name);
         
         // FIRST: Check bot permissions
@@ -698,37 +788,39 @@ impl Handler {
         
         info!("Bot has all required permissions in guild {}", guild.name);
         
-        // Get all groups for this guild from database
-        let group_repo = GroupRepository::new(self.database.pool().clone());
-        match group_repo.get_groups_for_guild(guild.id.get()).await {
-            Ok(groups) => {
-                for mut group in groups {
-                    // Check if group has sessions
-                    if group.sessions.is_empty() {
-                        group.create_session();
-                    }
+        // Get server from manager (already has groups with existing users loaded)
+        let server = match manager.get_server(guild.id) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Failed to get server from manager: {}", e);
+                return;
+            }
+        };
+        
+        for group in &mut server.groups {
+            // Check if group has sessions
+            if group.sessions.is_empty() {
+                group.create_session();
+            }
 
-                    // Check if dashboard already exists
-                    if group.has_dashboard(ctx).await {
-                        group.dash_update(ctx).await;
-                        continue;
-                    }
-                    // Create dashboard for each group's queue channel
-                    let channel_id   = group.channels.queue_chat;
-                    let channel_name = channel_id.name(&ctx.http).await.unwrap();
-                    
-                    // Create dashboard in the queue channel
-                    match group.dash_publish(ctx, channel_id).await {
-                        Ok(_) => {
-                            info!("Dashboard created successfully for channel {}", channel_name);
-                        },
-                        Err(e) => {
-                            error!("Failed to create dashboard for channel {}: {}", channel_name, e);
-                        }
-                    }
+            // Check if dashboard already exists
+            if group.has_dashboard(ctx).await {
+                group.dash_update(ctx).await;
+                continue;
+            }
+            // Create dashboard for each group's queue channel
+            let channel_id   = group.channels.queue_chat;
+            let channel_name = channel_id.name(&ctx.http).await.unwrap();
+            
+            // Create dashboard in the queue channel
+            match group.dash_publish(ctx, channel_id).await {
+                Ok(_) => {
+                    info!("Dashboard created successfully for channel {}", channel_name);
+                },
+                Err(e) => {
+                    error!("Failed to create dashboard for channel {}: {}", channel_name, e);
                 }
-            },
-            Err(e) => error!("Failed to get groups for guild {}: {}", guild.name, e),
+            }
         }
     }
 
