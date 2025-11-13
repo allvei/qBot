@@ -113,10 +113,13 @@ impl EventHandler for Handler {
                             let mut server = Server::new(guild.id, Roles::empty());
                             // Add all groups to the server
                             for group in groups {
-                                server.add_group(group);
+                                if let Err(e) = server.add_group(group) {
+                                    error!("Failed to add group: {}", e);
+                                }
                             }
+                            let groups_len = server.groups.len();
                             manager.servers.push(server);
-                            info!("Loaded {} group(s) into memory for guild {}", manager.servers.last().unwrap().groups.len(), guild.name);
+                            info!("Loaded {} group(s) into memory for guild {}", groups_len, guild.name);
                             
                             // Check for users already in queue voice channels
                             self.check_existing_voice_users(&ctx, &guild, &mut manager).await;
@@ -486,15 +489,34 @@ impl EventHandler for Handler {
     /// When a user joins or leaves a voice channel
     async fn voice_state_update(&self,ctx: Context,old: Option<VoiceState>,new: VoiceState,) {
         let user_id     = new.user_id;
-        let user        = &ctx.http.get_user(user_id).await.unwrap();
-        let user_name   = user.display_name();
+        let user = match ctx.http.get_user(user_id).await {
+            Ok(u) => u,
+            Err(e) => {
+                error!("Failed to get user {}: {}", user_id, e);
+                return;
+            }
+        };
+        let user_name = user.display_name();
         let old_channel = old.map(|s| s.channel_id);
-        let server      = new.guild_id.unwrap();
+        let server = match new.guild_id {
+            Some(s) => s,
+            None => {
+                error!("Voice state update with no guild_id");
+                return;
+            }
+        };
 
         // Handle user leaving a vc
         if new.channel_id.is_none() && old_channel.is_some() {
-            let left_channel_id = old_channel.unwrap().unwrap();
-            info!("{} left {} VC", user_name, left_channel_id.name(&ctx.http).await.unwrap());
+            let left_channel_id = match old_channel.unwrap() {
+                Some(id) => id,
+                None => {
+                    error!("Voice state has None channel_id when it should have Some");
+                    return;
+                }
+            };
+            let channel_name = left_channel_id.name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
+            info!("{} left {} VC", user_name, channel_name);
             
             // Check if they left a queue voice channel
             let mut manager = self.manager.lock().await;
@@ -544,7 +566,8 @@ impl EventHandler for Handler {
             }
         };
         
-        info!("{} joined {}", user_name, channel_id.name(&ctx.http).await.unwrap());
+        let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
+        info!("{} joined {}", user_name, channel_name);
         
         // Get player data
         match self.database.get_user(user_id).await {
@@ -596,9 +619,10 @@ impl EventHandler for Handler {
                                     Ok(rank) => {
                                         // Add player to queue and mark as in VC
                                         info!("{} joined queue from voice channel with rank {:?}", user_name, rank);
-                                        group.queue_player(user_id, rank, &ctx).await;
+                                        if let Err(e) = group.queue_player(user_id, rank, &ctx).await {
+                                            error!("Failed to add player to queue: {}", e);
+                                        }
                                         
-                                        // Mark them as in VC
                                         if let Ok(session) = group.get_user_session(user_id).await {
                                             if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
                                                 player.in_queue_vc = true;
@@ -810,7 +834,7 @@ impl Handler {
             }
             // Create dashboard for each group's queue channel
             let channel_id   = group.channels.queue_chat;
-            let channel_name = channel_id.name(&ctx.http).await.unwrap();
+            let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
             
             // Create dashboard in the queue channel
             match group.dash_publish(ctx, channel_id).await {
