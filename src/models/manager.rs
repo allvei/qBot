@@ -58,12 +58,12 @@ impl Manager {
     }
 
     pub fn get_group(&mut self, guild_id: GuildId, channel_id: ChannelId) -> Result<&mut Group> {
-        let server = self.get_server(guild_id).unwrap();
+        let server = self.get_server(guild_id)?;
         let group = server.groups.iter_mut().find(|g| g.contains_channel(channel_id));
         if let Some(group) = group {
             Ok(group)
         } else {
-            Err(anyhow!("Group not found for channel ID: {}", channel_id.get()))
+            Err(anyhow!("No queue group configured for this channel. Please run /setup first."))
         }
     }
 
