@@ -35,6 +35,7 @@ impl SetupConfig {
     pub fn is_complete(&self) -> bool {
         self.dashboard_channel.is_some() &&
         self.queue_channel    .is_some() &&
+        self.queue_vc_channel .is_some() &&
         self.red_channel      .is_some() &&
         self.blue_channel     .is_some() &&
         self.runner_role      .is_some() &&
@@ -45,7 +46,7 @@ impl SetupConfig {
 /// Global setup state manager
 pub struct SetupStateManager {
     // Key: (user_id, guild_id), Value: SetupConfig
-    states: Arc<Mutex<HashMap<(u64, u64), SetupConfig>>>,
+    pub states: Arc<Mutex<HashMap<(u64, u64), SetupConfig>>>,
 }
 
 impl SetupStateManager {
