@@ -62,7 +62,7 @@ impl SetupStateManager {
     }
 
     pub fn start_setup(&self, user_id: UserId, guild_id: GuildId) -> SetupConfig {
-        let key = (user_id, guild_id);
+        let key    = (user_id, guild_id);
         let config = SetupConfig::new(guild_id.get());
         
         if let Ok(mut states) = self.states.lock() {

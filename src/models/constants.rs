@@ -12,7 +12,7 @@ pub const DEFAULT_QUOTA: u8 = 8;
 pub const DEFAULT_RANK: Rank = Rank::Apprentice;
 
 /// Timeout in seconds for players to join VC after session goes Hot
-pub const HOT_TIMEOUT_SECONDS: u64 = 120;
+pub const DEFAULT_MISSING_TIMEOUT: u64 = 120;
 
 // Note: Runner and Admin role IDs are now configured per guild via database during setup.
 // The hardcoded values below are kept for reference only (passtime.tf server roles).

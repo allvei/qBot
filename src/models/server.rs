@@ -4,7 +4,7 @@
 //! A Server represents a Discord guild with associated groups and games.
 
 use anyhow::{anyhow, Error, Result};
-use crate::models::constants::HOT_TIMEOUT_SECONDS;
+use crate::models::constants::DEFAULT_MISSING_TIMEOUT;
 use serde::{Deserialize, Serialize};
 use serenity::all::{
     parse_user_mention, ButtonStyle, ChannelId as CI, Context, CreateActionRow,
@@ -250,7 +250,7 @@ impl Group {
             .iter()
             .enumerate()
             .filter_map(|(idx, s)| {
-                if s.is_hot_timeout(HOT_TIMEOUT_SECONDS) {
+                if s.is_hot_timeout(DEFAULT_MISSING_TIMEOUT) {
                     Some(idx)
                 } else {
                     None
