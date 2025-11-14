@@ -4,6 +4,7 @@
 //! A Server represents a Discord guild with associated groups and games.
 
 use anyhow::{anyhow, Error, Result};
+use crate::models::constants::HOT_TIMEOUT_SECONDS;
 use serde::{Deserialize, Serialize};
 use serenity::all::{
     parse_user_mention, ButtonStyle, ChannelId as CI, Context, CreateActionRow,
@@ -135,7 +136,13 @@ impl Group {
     }
 
     pub fn create_session(&mut self) -> Result<&mut Session> {
-        info!("Creating new game");
+        info!("Creating new session");
+        
+        // Check if an inactive session already exists
+        if !self.get_inactives().is_empty() {
+            return Err(anyhow!("Cannot create new session: inactive session already exists"));
+        }
+        
         self.sessions
             .push(Session::new(SessionStatus::Idle, Vec::new()));
         self.sessions.last_mut().ok_or_else(|| anyhow!("Failed to create session"))
@@ -158,10 +165,25 @@ impl Group {
     }
 
     pub async fn get_queue(&mut self) -> Result<&mut Session, Error> {
+        // Get either Idle or Hot session (both are joinable)
         self.sessions
             .iter_mut()
-            .find(|s| s.status == SessionStatus::Idle)
-            .ok_or(anyhow!("No idle session found"))
+            .find(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)
+            .ok_or(anyhow!("No joinable session found"))
+    }
+
+    pub fn get_inactives(&self) -> Vec<&Session> {
+        self.sessions
+            .iter()
+            .filter(|s| !s.is_active())
+            .collect()
+    }
+
+    pub fn get_actives(&self) -> Vec<&Session> {
+        self.sessions
+            .iter()
+            .filter(|s| s.is_active())
+            .collect()
     }
 
     pub fn get_sessions_by_status(
@@ -204,11 +226,74 @@ impl Group {
         }
     }
 
-    pub async fn hot(&mut self, ctx: &Context) -> Result<(), Error> {
+    pub async fn hot(&mut self, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>) -> Result<(), Error> {
         self.get_queue().await?.hot();
+        
+        // Refresh player ranks from Discord roles before generating teams
+        if let (Some(gid), Some(database)) = (guild_id, db) {
+            self.refresh_player_ranks(ctx, gid, database).await;
+        }
+        
         self.notify(ctx).await;
         self.generate_teams(ctx).await;
         Ok(())
+    }
+    
+    /// Check hot sessions for timeout and handle accordingly
+    /// Returns true if any changes were made that require dashboard update
+    pub async fn check_hot_timeout(&mut self, ctx: &Context) -> bool {
+        let mut changes_made = false;
+        let quota = self.quota as usize;
+        
+        // Find hot sessions that have timed out
+        let hot_sessions: Vec<usize> = self.sessions
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, s)| {
+                if s.is_hot_timeout(HOT_TIMEOUT_SECONDS) {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        for idx in hot_sessions {
+            let session = &mut self.sessions[idx];
+            
+            // Get players who didn't join VC (timed out)
+            let timed_out_players: Vec<_> = session.pool
+                .iter()
+                .take(quota)
+                .filter(|p| !p.in_queue_vc)
+                .map(|p| p.player.discord_id)
+                .collect();
+            
+            if timed_out_players.is_empty() {
+                // All players joined, no timeout action needed
+                continue;
+            }
+            
+            info!("Hot session timed out - {} players didn't join VC", timed_out_players.len());
+            
+            // Remove timed out players
+            session.pool.retain(|p| !timed_out_players.contains(&p.player.discord_id));
+            
+            // Check if we still have enough players after removals
+            if session.pool.len() >= quota {
+                // We have replacements (overflow players)
+                info!("Replacing timed out players with overflow players");
+                // Players already in pool, just need to ensure they're counted
+                changes_made = true;
+            } else {
+                // Not enough players left, revert to idle
+                info!("Not enough players after timeout, reverting to idle");
+                session.idle();
+                changes_made = true;
+            }
+        }
+        
+        changes_made
     }
 
     pub async fn push(&mut self, ctx: &Context) -> Result<(), Error> {
@@ -244,17 +329,42 @@ impl Group {
             }
         }
         
-        // Set game status to Live
+        // Set game status to Live and extract overflow players
         let game = self.sessions
             .iter_mut()
             .find(|s| s.status == SessionStatus::Push)
             .ok_or(anyhow!("Push session not found"))?;
         game.live();
-        info!("Match is now LIVE with {} players", game.pool.len());
         
-        // Create new idle session for next game now that current session is live
-        info!("Creating new idle session for next game");
-        self.create_session();
+        let quota = self.quota as usize;
+        let game_pool_len = game.pool.len();
+        info!("Match is now LIVE with {} players", game_pool_len);
+        
+        // Extract overflow players (those beyond quota)
+        let overflow_players: Vec<_> = if game_pool_len > quota {
+            game.pool.drain(quota..).collect()
+        } else {
+            Vec::new()
+        };
+        
+        // Create new idle session for next game
+        if !overflow_players.is_empty() {
+            info!("Creating new idle session with {} overflow players", overflow_players.len());
+        } else {
+            info!("Creating new idle session for next game");
+        }
+        
+        self.create_session()?;
+        
+        // Add overflow players to the new idle session
+        if !overflow_players.is_empty() {
+            let idle_session = self.get_queue().await?;
+            for player in overflow_players {
+                idle_session.pool.push(player);
+            }
+            idle_session.sort_by_join_time();
+            info!("Transferred {} overflow players to new idle session", idle_session.pool.len());
+        }
         
         self.dash_update(ctx).await;
         Ok(())
@@ -307,10 +417,33 @@ impl Group {
         self.sessions.retain(|s| s.status != SessionStatus::Pull);
         info!("Match ended, {} players returned to queue", queue_count);
         
+        // Check if the queue now meets quota and transition to Hot if needed
+        if self.is_quota() {
+            info!("Quota met after pull, transitioning idle session to Hot");
+            self.hot(ctx, None, None).await?;
+        }
+        
         self.dash_update(ctx).await;
         Ok(())
     }
 
+    /// Update player ranks from Discord roles for all players in the session
+    /// This ensures ranks are up-to-date even if roles changed while queued
+    pub async fn refresh_player_ranks(&mut self, ctx: &Context, guild_id: serenity::all::GuildId, db: &crate::Database) {
+        use crate::handlers::player::get_player_rank;
+        
+        for session in &mut self.sessions {
+            for player in &mut session.pool {
+                if let Some(updated_rank) = get_player_rank(ctx, db, guild_id, player.player.discord_id).await {
+                    if player.player.rank != Some(updated_rank) {
+                        info!("Updated rank for player {}: {:?} -> {:?}", player.player.discord_id, player.player.rank, updated_rank);
+                        player.player.rank = Some(updated_rank);
+                    }
+                }
+            }
+        }
+    }
+    
     pub async fn generate_teams(&mut self, ctx: &Context) {
         use itertools::Itertools;
         
@@ -421,10 +554,10 @@ impl Group {
         }
     }
 
-    pub async fn queue_player(&mut self, user_id: UI, rank: crate::models::Rank, ctx: &Context) -> Result<()> {
+    pub async fn queue_player(&mut self, user_id: UI, rank: crate::models::Rank, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>) -> Result<()> {
         self.get_queue().await?.add_player(user_id, rank);
         if self.is_quota() {
-            self.hot(ctx).await?;
+            self.hot(ctx, guild_id, db).await?;
         }
         Ok(())
     }
@@ -485,13 +618,16 @@ impl Group {
 
     /// Notifies the queue chat that quota has been met
     /// Only pings players who are NOT in the voice channel yet
+    /// Only pings the first 'quota' players, not extras queued for next match
     pub async fn notify(&self, ctx: &Context) {
         let queue_chat = self.channels.queue_chat;
         let mut player_mentions = Vec::new();
+        let quota = self.quota as usize;
         
         if let Some(game) = self.sessions.last() {
             // Only mention players who are NOT in the voice channel
-            for player in &game.pool {
+            // AND only the first 'quota' players (not extras queued for next match)
+            for player in game.pool.iter().take(quota) {
                 if !player.in_queue_vc {
                     player_mentions.push(format!("<@{}>", player.player.discord_id));
                 }

@@ -3,12 +3,16 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serenity::all::VoiceState;
 use sqlx::FromRow;
 
 use super::types::Rank;
 
 pub const DEFAULT_QUOTA: u8 = 8;
 pub const DEFAULT_RANK: Rank = Rank::Apprentice;
+
+/// Timeout in seconds for players to join VC after session goes Hot
+pub const HOT_TIMEOUT_SECONDS: u64 = 120;
 
 // Note: Runner and Admin role IDs are now configured per guild via database during setup.
 // The hardcoded values below are kept for reference only (passtime.tf server roles).
@@ -57,5 +61,45 @@ impl FileManager {
     /// * `path` - The path to normalize.
     pub fn normalize_path<P: AsRef<Path>>(path: P) -> PathBuf {
         path.as_ref().to_path_buf()
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum VoiceStateUpdate {
+    Connected,
+    Reconnected,
+    Disconnected,
+    Moved,
+}
+
+impl VoiceStateUpdate {
+    pub fn get(old: &Option<VoiceState>, new: &VoiceState) -> VoiceStateUpdate {
+        match old {
+            Some(old_state) => {
+                if old_state.channel_id == new.channel_id {
+                    VoiceStateUpdate::Reconnected
+                } else if old_state.channel_id.is_none() {
+                    VoiceStateUpdate::Connected
+                } else {
+                    VoiceStateUpdate::Moved
+                }
+            },
+            None => {
+                if new.channel_id.is_none() {
+                    VoiceStateUpdate::Disconnected
+                } else {
+                    VoiceStateUpdate::Connected
+                }
+            },
+        }
+    }
+
+    pub fn is(&self, voice_state_update: VoiceStateUpdate) -> bool {
+        match self {
+            VoiceStateUpdate::Connected => voice_state_update == VoiceStateUpdate::Connected,
+            VoiceStateUpdate::Reconnected => voice_state_update == VoiceStateUpdate::Reconnected,
+            VoiceStateUpdate::Disconnected => voice_state_update == VoiceStateUpdate::Disconnected,
+            VoiceStateUpdate::Moved => voice_state_update == VoiceStateUpdate::Moved,
+        }
     }
 }

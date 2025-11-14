@@ -938,11 +938,7 @@ impl ConsoleHandler {
                                 group.quota = quota;
                                 
                                 // Update dashboard to reflect new quota
-                                if let Err(e) = group.dash_update(ctx).await {
-                                    println!("⚠️  Failed to update dashboard: {}", e);
-                                } else {
-                                    println!("✅ Dashboard updated successfully");
-                                }
+                                group.dash_update(ctx).await;
                             }
                         } else {
                             println!("⚠️  Context not available, dashboard not updated");
@@ -963,9 +959,7 @@ impl ConsoleHandler {
                         println!("✅ Updated timeout to {} minutes for guild {} group {}", timeout, guild_id, group_id);
                         
                         // Update dashboard
-                        if let Err(e) = group.dash_update(ctx).await {
-                            println!("⚠️  Failed to update dashboard: {}", e);
-                        }
+                        group.dash_update(ctx).await;
                     }
                 } else {
                     println!("❌ Context not available");
@@ -1178,11 +1172,6 @@ impl ConsoleHandler {
         let mut manager = self.manager.lock().await;
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
         
-        // Ensure there's a session
-        if group.sessions.is_empty() {
-            group.create_session();
-        }
-        
         // Get the idle session
         if let Ok(session) = group.get_queue().await {
             println!("🔄 Adding {} fake player(s) to guild {} group {}...", count, guild_id, group_id);
@@ -1199,9 +1188,7 @@ impl ConsoleHandler {
             
             // Update dashboard if context is available
             if let Some(ctx) = &self.ctx {
-                if let Err(e) = group.dash_update(ctx).await {
-                    println!("⚠️  Failed to update dashboard: {}", e);
-                }
+                group.dash_update(&ctx).await;
             }
         } else {
             println!("❌ Failed to get queue for guild {} group {}", guild_id, group_id);
@@ -1324,9 +1311,7 @@ impl ConsoleHandler {
             
             // Update dashboard if context is available
             if let Some(ctx) = &self.ctx {
-                if let Err(e) = group.dash_update(ctx).await {
-                    println!("⚠️  Failed to update dashboard: {}", e);
-                }
+                group.dash_update(&ctx).await;
             }
         } else {
             println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
@@ -1354,9 +1339,7 @@ impl ConsoleHandler {
                 
                 // Update dashboard if context is available
                 if let Some(ctx) = &self.ctx {
-                    if let Err(e) = group.dash_update(ctx).await {
-                        println!("⚠️  Failed to update dashboard: {}", e);
-                    }
+                    group.dash_update(&ctx).await;
                 }
             }
         } else {
@@ -1377,7 +1360,7 @@ impl ConsoleHandler {
             
             if let Ok(_session) = group.get_queue().await {
                 println!("🔄 Forcing session to Hot status...");
-                group.hot(ctx).await?;
+                group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None).await?;
                 println!("✅ Session is now Hot!");
                 println!("   Teams have been generated and players have been notified.");
             } else {
@@ -1484,7 +1467,7 @@ impl ConsoleHandler {
             {
                 let mut manager = self.manager.lock().await;
                 let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-                group.hot(ctx).await?;
+                group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None).await?;
                 println!("   ✅ Session is Hot, teams generated\n");
             }
             

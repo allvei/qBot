@@ -543,35 +543,37 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
 
     let group = guild.get_group(channel)?;
     
-    // Ensure we have an idle session (create if needed)
+    // Check if we have an idle session
     let idle_sessions = group.get_sessions_by_status(&SessionStatus::Idle);
     if idle_sessions.is_empty() {
-        info!("No idle session found, creating one");
-        // Create session in the in-memory group
-        let mut manager = cc.manager.lock().await;
-        let server = manager.get_server(guild_id)?;
-        let group = server.get_group(channel)?;
-        group.create_session();
+        cc.reply("❌ No queue available. A match is currently in progress.").await?;
+        return Ok(());
     } else if idle_sessions.len() > 1 {
         return Err(anyhow!("Found more than one idle game ({}). This is unexpected.", idle_sessions.len()));
-    } else {
-        info!("Found one existing idle session");
     }
 
     // Check if player is already in game
     if group.get_user_session(user).await.is_ok() {
         info!("Player {} is already in the queue", player.discord_id);
     } else {
-        // Pass the rank to queue_player
         let mut manager = cc.manager.lock().await;
         let server = manager.get_server(guild_id)?;
-        let group = server.get_group(channel)?;
+        let group  = server.get_group(channel)?;
+        
+        // Check if we can add to idle session (not Hot/Live)
+        let idle_sessions = group.get_sessions_by_status(&SessionStatus::Idle);
+        if idle_sessions.is_empty() {
+            // No idle session means match is in progress
+            drop(manager);
+            cc.reply("❌ Cannot join queue while match is in progress. Please wait for current match to end.").await?;
+            return Ok(());
+        }
+        
         let queue = group.get_queue().await?;
         queue.add_player(player.discord_id, rank);
         
-        // Check if we should hot the game
         if group.is_quota() {
-            group.hot(cc.ctx).await;
+            group.hot(cc.ctx, Some(guild_id), Some(&cc.db)).await?;
         }
         
         group.dash_update(cc.ctx).await?;

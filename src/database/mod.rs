@@ -47,7 +47,6 @@ impl Database {
         let groups = GroupRepository ::new(pool.clone());
         let config = ConfigRepository::new(pool.clone());
         
-        info!("Database connection established");
         Ok(Database { pool, users, groups, config })
     }
     

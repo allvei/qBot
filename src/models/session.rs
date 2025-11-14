@@ -15,7 +15,10 @@ use crate::models::Player;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub status: SessionStatus,
-    pub pool: Vec<SessionPlayer>,   
+    pub pool: Vec<SessionPlayer>,
+    /// Timestamp when session transitioned to Hot (None if not hot or never been hot)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ready_at: Option<SystemTime>,
 }
 
 impl Session {
@@ -48,7 +51,11 @@ impl Session {
         status: SessionStatus,
         pool: Vec<SessionPlayer>,
     ) -> Self {
-        Self { status, pool }
+        Self { 
+            status, 
+            pool,
+            ready_at: None,
+        }
     }
 
     /// Check if the session is active
@@ -69,16 +76,18 @@ impl Session {
     /// Set the session to idle and clear team assignments
     pub fn idle(&mut self) {
         self.status = SessionStatus::Idle;
+        self.ready_at = None; // Clear ready timestamp
         // Clear team assignments when going back to idle
         for player in &mut self.pool {
             player.team = None;
         }
     }
 
-    /// Set the session to hot
+    /// Set the session to hot and record the ready timestamp
     pub fn hot(&mut self) -> CE {
         info!("Game is HOT with {} players", self.pool.len());
         self.status = SessionStatus::Hot;
+        self.ready_at = Some(SystemTime::now());
         // Create an embed message for the game ready notification
         
         CE::new().title("GAME READY!")
@@ -106,7 +115,39 @@ impl Session {
         Self {
             status: SessionStatus::Idle,
             pool: Vec::new(),
+            ready_at: None,
         }
+    }
+    
+    /// Check if this Hot session has timed out (players didn't join VC in time)
+    pub fn is_hot_timeout(&self, timeout_seconds: u64) -> bool {
+        if !self.is_hot() {
+            return false;
+        }
+        
+        if let Some(ready_at) = self.ready_at {
+            if let Ok(elapsed) = SystemTime::now().duration_since(ready_at) {
+                return elapsed.as_secs() >= timeout_seconds;
+            }
+        }
+        false
+    }
+    
+    /// Get seconds remaining until timeout (returns 0 if timed out or not hot)
+    pub fn seconds_until_timeout(&self, timeout_seconds: u64) -> u64 {
+        if !self.is_hot() {
+            return 0;
+        }
+        
+        if let Some(ready_at) = self.ready_at {
+            if let Ok(elapsed) = SystemTime::now().duration_since(ready_at) {
+                let elapsed_secs = elapsed.as_secs();
+                if elapsed_secs < timeout_seconds {
+                    return timeout_seconds - elapsed_secs;
+                }
+            }
+        }
+        0
     }
 }
 
@@ -185,6 +226,26 @@ impl SessionPlayer {
 
     pub fn in_queue(&self) -> bool {
         self.in_queue_vc || self.in_queue_cmd
+    }
+}
+
+trait Quota {
+    fn less(&self, quota: usize) -> bool;
+    fn equal(&self, quota: usize) -> bool;
+    fn more(&self, quota: usize) -> bool;
+}
+
+impl Quota for Vec<SessionPlayer> {
+    fn less(&self, quota: usize) -> bool {
+        self.len() < quota
+    }
+
+    fn equal(&self, quota: usize) -> bool {
+        self.len() == quota
+    }
+
+    fn more(&self, quota: usize) -> bool {
+        self.len() > quota
     }
 }
 

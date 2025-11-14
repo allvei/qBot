@@ -16,14 +16,10 @@ impl DatabaseMigrations {
 
     /// Run all migrations in order
     pub async fn run_all(&self) -> Result<()> {
-        info!("Running database migrations");
-        
         self.create_config_table().await?;
         self.create_users_table() .await?;
         self.create_groups_table().await?;
         self.create_teams_table() .await?;
-        
-        info!("All migrations completed successfully");
         Ok(())
     }
 
@@ -230,13 +226,9 @@ impl DatabaseMigrations {
 
     /// Validate database schema integrity
     pub async fn validate_schema(&self) -> Result<()> {
-        info!("Validating database schema integrity");
-        
         self.validate_config_schema().await?;
         self.validate_users_schema() .await?;
         self.validate_groups_schema().await?;
-        
-        info!("Database schema validation completed successfully");
         Ok(())
     }
 

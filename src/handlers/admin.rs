@@ -833,23 +833,15 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
         Ok(_) => {
             info!("Group configuration saved to database");
             
-            // Load the group from database and add to in-memory manager
             match db.groups.get_groups_for_guild(guild_id.get()).await {
                 Ok(groups) if !groups.is_empty() => {
-                    // Find the group we just created by matching dashboard_msg_id
-                    let mut new_group = groups.into_iter()
+                    let new_group = groups.into_iter()
                         .find(|g| g.dashboard_msg.get() == dashboard_msg_id)
                         .ok_or_else(|| anyhow!("Could not find newly created group"))?;
                     
-                    // Create an idle session for the group
-                    new_group.create_session();
-                    info!("Created idle session for new group");
-                    
-                    // Add to manager
                     use crate::models::Server;
                     let mut mgr = manager.lock().await;
                     
-                    // Get or create server in manager
                     if mgr.get_server(guild_id).is_err() {
                         let server = Server::empty(guild_id);
                         mgr.servers.push(server);
@@ -858,12 +850,8 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                     let server = mgr.get_server(guild_id)?;
                     server.groups.push(new_group);
                     
-                    // Get the group we just added and update its dashboard with buttons
-                    let group = server.groups.last_mut()
-                        .ok_or_else(|| anyhow!("Failed to get newly added group"))?;
-                    if let Err(e) = group.dash_update(ctx).await {
-                        warn!("Failed to update dashboard with buttons: {}", e);
-                    }
+                    let group = server.groups.last_mut().ok_or_else(|| anyhow!("Failed to get newly added group"))?;
+                    group.dash_update(ctx).await;
                     
                     info!("Group added to in-memory manager and dashboard updated");
                 },
@@ -875,7 +863,6 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                 }
             }
             
-            // Clean up setup state
             SETUP_STATE.complete_setup(user_id, guild_id);
             
             let success_embed = CE::new()
@@ -899,11 +886,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                 ))
                 .color(0x00ff00);
             
-            let response = CIR::UpdateMessage(
-                CIRM::new()
-                    .embed(success_embed)
-                    .components(vec![])
-            );
+            let response = CIR::UpdateMessage(CIRM::new().embed(success_embed).components(vec![]));
             
             interaction.create_response(&ctx.http, response).await?;
         },
@@ -913,11 +896,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                 .description(format!("Failed to save configuration: {}", e))
                 .color(0xff0000);
             
-            let response = CIR::UpdateMessage(
-                CIRM::new()
-                    .embed(error_embed)
-                    .components(vec![])
-            );
+            let response = CIR::UpdateMessage(CIRM::new().embed(error_embed).components(vec![]));
             
             interaction.create_response(&ctx.http, response).await?;
         }
@@ -961,11 +940,7 @@ async fn handle_init_queue_selection(ctx: &Context, interaction: &ComponentInter
     
     let action_row = CreateActionRow::SelectMenu(select_menu);
     
-    let response = CIR::UpdateMessage(
-        CIRM::new()
-            .embed(embed)
-            .components(vec![action_row])
-    );
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
     
     interaction.create_response(&ctx.http, response).await?;
     Ok(())
@@ -975,7 +950,7 @@ async fn handle_init_queue_selection(ctx: &Context, interaction: &ComponentInter
 async fn handle_init_queue_vc_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
     let guild_id = match interaction.guild_id {
         Some(id) => id,
-        None => return Err(anyhow!("Guild ID not found - setup must be run in a server"))
+        None     => return Err(anyhow!("Guild ID not found - setup must be run in a server"))
     };
     let guild    = guild_id.to_partial_guild(&ctx.http).await?;
     let user_id  = interaction.user.id;
@@ -1004,11 +979,7 @@ async fn handle_init_queue_vc_selection(ctx: &Context, interaction: &ComponentIn
     
     let action_row = CreateActionRow::SelectMenu(select_menu);
     
-    let response = CIR::UpdateMessage(
-        CIRM::new()
-            .embed(embed)
-            .components(vec![action_row])
-    );
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
     
     interaction.create_response(&ctx.http, response).await?;
     Ok(())
@@ -1047,11 +1018,7 @@ async fn handle_init_red_selection(ctx: &Context, interaction: &ComponentInterac
     
     let action_row = CreateActionRow::SelectMenu(select_menu);
     
-    let response = CIR::UpdateMessage(
-        CIRM::new()
-            .embed(embed)
-            .components(vec![action_row])
-    );
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
     
     interaction.create_response(&ctx.http, response).await?;
     Ok(())
@@ -1073,22 +1040,18 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
     // Validate all required fields are present
     let config = match config {
         Some(cfg) if cfg.dashboard_channel.is_some() 
-                  && cfg.dashboard_msg_id.is_some()
-                  && cfg.queue_channel.is_some() 
-                  && cfg.queue_vc_channel.is_some()
-                  && cfg.red_channel.is_some() 
-                  && cfg.blue_channel.is_some() => cfg,
+                  && cfg.dashboard_msg_id .is_some()
+                  && cfg.queue_channel    .is_some() 
+                  && cfg.queue_vc_channel .is_some()
+                  && cfg.red_channel      .is_some() 
+                  && cfg.blue_channel     .is_some() => cfg,
         _ => {
             let error_embed = CE::new()
                 .title("❌ Setup Error")
                 .description("Configuration is incomplete. Please restart the setup process.")
                 .color(0xff0000);
             
-            let response = CIR::UpdateMessage(
-                CIRM::new()
-                    .embed(error_embed)
-                    .components(vec![])
-            );
+            let response = CIR::UpdateMessage(CIRM::new().embed(error_embed).components(vec![]));
             
             interaction.create_response(&ctx.http, response).await?;
             return Ok(());
@@ -1096,10 +1059,10 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
     };
     
     let dashboard_channel = config.dashboard_channel.unwrap();
-    let dashboard_msg_id  = config.dashboard_msg_id.unwrap();
-    let queue_channel     = config.queue_channel.unwrap();
-    let queue_vc_channel  = config.queue_vc_channel.unwrap();
-    let red_channel       = config.red_channel.unwrap();
+    let dashboard_msg_id  = config.dashboard_msg_id .unwrap();
+    let queue_channel     = config.queue_channel    .unwrap();
+    let queue_vc_channel  = config.queue_vc_channel .unwrap();
+    let red_channel       = config.red_channel      .unwrap();
     let blue_channel      = channel_id;
     
     // Create the group configuration in database with actual dashboard message ID
@@ -1133,32 +1096,22 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
             );
             
             // Update the dashboard message to show the proper dashboard UI
-            if let Err(e) = temp_group.dash_update(ctx).await {
-                error!("Failed to update dashboard message: {}", e);
-            }
+            temp_group.dash_update(ctx).await;
         },
         Err(e) => {
-            let error_embed = CE::new()
-                .title("❌ Setup Failed")
-                .description(format!("Failed to create group configuration: {}", e))
-                .color(0xff0000);
+            let error_embed = CE::new().title("❌ Setup Failed").description(format!("Failed to create group configuration: {}", e)).color(0xff0000);
             
-            let response = CIR::UpdateMessage(
-                CIRM::new()
-                    .embed(error_embed)
-                    .components(vec![])
-            );
+            let response = CIR::UpdateMessage(CIRM::new().embed(error_embed).components(vec![]));
             
             interaction.create_response(&ctx.http, response).await?;
             return Ok(());
         }
     }
-    
-    // Clean up setup state
+
     SETUP_STATE.complete_setup(user_id, guild_id);
     
     let success_embed = CE::new()
-        .title("🎉 Group Setup Complete!")
+        .title("Group Setup Complete!")
         .description(format!(
             "Group configuration has been saved successfully!\n\n\
             **Configuration Summary:**\n\
@@ -1382,7 +1335,7 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
 ///
 /// * `quota` - The new quota value (number of players required to start a game)
 pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
-    info!("Processing setquota command with value: {}", quota);
+    info!("Processing /setquota quota: {}", quota);
     
     // Check admin permissions
     if !check_role(cc, &Role::Admin).await? {
@@ -1392,7 +1345,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
     }
     
     // Validate quota range
-    if quota < 2 || quota > 100 {
+    if !(2..=100).contains(&quota) {
         let error_embed = CE::new()
             .title("❌ Invalid Quota")
             .description("Quota must be between 2 and 100 players.")
@@ -1466,9 +1419,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
             cc.intax.create_response(&cc.ctx.http, response).await?;
             
             // Update the dashboard to reflect the new quota
-            if let Err(e) = group.dash_update(cc.ctx).await {
-                warn!("Failed to update dashboard after quota change: {}", e);
-            }
+            group.dash_update(cc.ctx).await;
         },
         Err(e) => {
             let error_embed = CE::new()

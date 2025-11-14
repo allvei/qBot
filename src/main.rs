@@ -23,7 +23,8 @@ use tracing::{error, info, warn};
 use pf_pug_bot::database::migrations::DatabaseMigrations;
 use pf_pug_bot::database::repositories::GroupRepository;
 use pf_pug_bot::handlers::{admin, player};
-use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, Database, Group, Manager, Roles, Server, SessionStatus};
+use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, Database, Group, Manager, Roles, Server, SessionStatus, VoiceStateUpdate};
+use pf_pug_bot::models::constants::VoiceStateUpdate::*;
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
     CC::new(name.into(),).description(desc.into(),)
@@ -51,11 +52,8 @@ struct Handler {
 impl EventHandler for Handler {
     /// When the bot is ready
     async fn ready(&self,ctx: Context,ready: Ready,) {
-        info!("{} online!", ready.user.name);
-
         let guild_count = ctx.cache.guilds().len();
-        info!("Connected guilds: {}", guild_count);
-        
+
         // Spawn console command handler in a separate task
         let console_handler = command::ConsoleHandler::new(
             self.manager.clone(),
@@ -96,22 +94,14 @@ impl EventHandler for Handler {
     async fn guild_create(&self,ctx: Context, guild: Guild, _is_new: Option<bool>,) {
         let guild_id = guild.id.get();
         match self.database.get_config(guild_id).await {
-            Ok(_config) => {
-                info!("{} connected successfully!", guild.name);
-                
+            Ok(_config) => {                
                 // Load groups from database into manager
                 let group_repo = GroupRepository::new(self.database.pool().clone());
                 match group_repo.get_groups_for_guild(guild_id).await {
-                    Ok(groups) if !groups.is_empty() => {
-                        info!("Guild {} has {} group configuration(s)", guild.name, groups.len());
-                        
-                        // Add server to manager if it doesn't exist
+                    Ok(groups) if !groups.is_empty() => {             
                         let mut manager = self.manager.lock().await;
-                        
-                        // Check if server already exists, if not create it
                         if manager.get_server(guild.id).is_err() {
                             let mut server = Server::new(guild.id, Roles::empty());
-                            // Add all groups to the server
                             for group in groups {
                                 if let Err(e) = server.add_group(group) {
                                     error!("Failed to add group: {}", e);
@@ -119,19 +109,13 @@ impl EventHandler for Handler {
                             }
                             let groups_len = server.groups.len();
                             manager.servers.push(server);
-                            info!("Loaded {} group(s) into memory for guild {}", groups_len, guild.name);
                             
-                            // Check for users already in queue voice channels
                             self.check_existing_voice_users(&ctx, &guild, &mut manager).await;
-                            
-                            // Create dashboard for the guild automatically
                             self.create_guild_dashboard_from_manager(&ctx, &guild, &mut manager).await;
                         }
                     },
                     Ok(_) => {
-                        warn!("{} has no group configurations. ID: {}", guild.name, guild_id);
-            
-                        // Add server to manager
+                        warn!("{} has no group configurations. ID: {}", guild.name, guild_id);            
                         let mut manager = self.manager.lock().await;
                         if manager.get_server(guild.id).is_err() {
                             let server = Server::empty(guild.id);
@@ -187,7 +171,11 @@ impl EventHandler for Handler {
                     }
                     "setquota" => {
                         info();
-                        let quota = cdo.iter().find(|opt| opt.name == "quota").and_then(|opt| opt.value.as_i64()).unwrap_or(0);
+                        let quota = cdo.iter()
+                            .find(|opt| opt.name == "quota")
+                            .and_then(|opt| opt.value.as_str())
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .unwrap_or(0);
                         admin::cmd_set_quota(&cmd_ctx, quota).await
                     }
                     _ => {
@@ -488,96 +476,69 @@ impl EventHandler for Handler {
 
     /// When a user joins or leaves a voice channel
     async fn voice_state_update(&self,ctx: Context,old: Option<VoiceState>,new: VoiceState,) {
-        let user_id     = new.user_id;
-        let user = match ctx.http.get_user(user_id).await {
+        let state   = VoiceStateUpdate::get(&old, &new);
+        let user_id = new.user_id;
+        let user    = match ctx.http.get_user(user_id).await {
             Ok(u) => u,
             Err(e) => {
                 error!("Failed to get user {}: {}", user_id, e);
                 return;
             }
         };
-        let user_name = user.display_name();
-        let old_channel = old.map(|s| s.channel_id);
-        let server = match new.guild_id {
+        let user_name   = user.display_name();
+        let old_channel = old.map(|s| s.channel_id).unwrap().unwrap();
+        let server      = match new.guild_id {
             Some(s) => s,
             None => {
                 error!("Voice state update with no guild_id");
                 return;
             }
         };
+        let mut manager = self.manager.lock().await;
+        let group       = manager.get_group(server, new.channel_id.unwrap()).unwrap();
 
-        // Handle user leaving a vc
-        if new.channel_id.is_none() && old_channel.is_some() {
-            let left_channel_id = match old_channel.unwrap() {
-                Some(id) => id,
-                None => {
-                    error!("Voice state has None channel_id when it should have Some");
-                    return;
-                }
-            };
-            let channel_name = left_channel_id.name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
-            info!("{} left {} VC", user_name, channel_name);
-            
-            // Check if they left a queue voice channel
-            let mut manager = self.manager.lock().await;
-            if let Ok(group) = manager.get_group(server, left_channel_id) {
-                if group.channels.queue_vc == left_channel_id {
-                    info!("{} left queue voice channel", user_name);
+        match state {
+            VoiceStateUpdate::Disconnected => {
+                if group.channels.queue_vc == old_channel {
+                    info!("{} left the queue", user_name);
                     
-                    let mut dashboard_needs_update = false;
-                    
-                    // Check if player is in a session
-                    if let Ok(session) = group.get_user_session(user_id).await {
-                        if session.status == SessionStatus::Idle {
-                            // Remove from idle sessions
-                            let initial_len = session.pool.len();
-                            session.pool.retain(|p| p.player.discord_id != user_id);
-                            if session.pool.len() < initial_len {
-                                info!("Removed {} from idle game. Pool size: {}", user_name, session.pool.len());
-                                dashboard_needs_update = true;
-                            }
-                        } else {
-                            // For hot/live sessions, just mark as not in VC
-                            if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
-                                player.in_queue_vc = false;
-                                info!("{} marked as not in queue VC", user_name);
-                                dashboard_needs_update = true;
-                            }
-                        }
-                    }
-                    
-                    // Update dashboard if anything changed
-                    if dashboard_needs_update {
-                        if let Err(e) = group.dash_update(&ctx).await {
-                            error!("Failed to update dashboard: {}", e);
-                        }
+                    let sesh = group.get_user_session(user_id).await.unwrap();
+                    if !sesh.is_active() {
+                        sesh.remove_player(user_id);
+                        group.dash_update(&ctx).await;
                     }
                 }
-            }
-            return;
-        }
-        
-        // Handle user joining a vc
-        let channel_id = match new.channel_id {
-            Some(id) => id,
-            None => {
-                error!("Voice state update with no channel_id for joining case");
+            },
+            VoiceStateUpdate::Connected => {
+                if group.get_inactives().is_empty() {
+                    group.create_session();
+                    group.dash_update(&ctx).await;
+                }
+            },
+            VoiceStateUpdate::Moved => {
+                if group.channels.queue_vc == old_channel {
+                    info!("{} left the queue", user_name);
+                    
+                    let sesh = group.get_user_session(user_id).await.unwrap();
+                    if !sesh.is_active() {
+                        sesh.remove_player(user_id);
+                        group.dash_update(&ctx).await;
+                    }
+                }
+            },
+            VoiceStateUpdate::Reconnected => {
                 return;
             }
-        };
+        }
         
-        let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
+        let channel_name = new.channel_id.unwrap().name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
         info!("{} joined {}", user_name, channel_name);
         
         // Get player data
         match self.database.get_user(user_id).await {
-            Ok(user) => {
-                    user
-            },
+            Ok(user) => user,
             Err(_) => match self.database.new_user(user_id).await {
-                    Ok(new_user) => {
-                        new_user
-                    },
+                    Ok(new_user) => new_user,
                     Err(e) => {
                         error!("Failed to create new user: {}", e);
                         return;
@@ -590,36 +551,25 @@ impl EventHandler for Handler {
             let mut manager = self.manager.lock().await;
             
             // Find the guild by ID and check if the new channel is a queue voice channel in any group
-            match manager.get_group(server, channel_id) {
+            match manager.get_group(server, new.channel_id.unwrap()) {
                 Ok(group) => {
-                    if group.channels.queue_vc == channel_id {
-                        info!("{} joined queue voice channel {}", user_name, channel_id);
-                        
+                    if group.channels.queue_vc == new.channel_id.unwrap() {                        
                         // Check if player is already in any session and mark them as in VC
                         if let Ok(session) = group.get_user_session(user_id).await {
                             if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
                                 player.in_queue_vc = true;
-                                info!("{} marked as in queue VC", user_name);
-                                
-                                // Update dashboard to show VC status
-                                if let Err(e) = group.dash_update(&ctx).await {
-                                    error!("Failed to update dashboard: {}", e);
-                                }
+                                group.dash_update(&ctx).await;
                             }
                         } else {
                             // Player not in session yet, try to add them if idle session available
-                            let has_idle_session = !group.get_sessions_by_status(&SessionStatus::Idle).is_empty();
-                            
-                            if !has_idle_session {
-                                info!("No idle session available for {} - game in progress", user_name);
+                            if !group.get_inactives().is_empty() {
+                                error!("No idle sessions present.");
                             } else {
                                 // Get or assign player rank (auto-creates ranks and assigns Apprentice if needed)
                                 use pf_pug_bot::handlers::player::get_or_assign_player_rank;
                                 match get_or_assign_player_rank(&ctx, &self.database, server, user_id).await {
                                     Ok(rank) => {
-                                        // Add player to queue and mark as in VC
-                                        info!("{} joined queue from voice channel with rank {:?}", user_name, rank);
-                                        if let Err(e) = group.queue_player(user_id, rank, &ctx).await {
+                                        if let Err(e) = group.queue_player(user_id, rank, &ctx, Some(server), Some(&self.database)).await {
                                             error!("Failed to add player to queue: {}", e);
                                         }
                                         
@@ -629,16 +579,18 @@ impl EventHandler for Handler {
                                             }
                                         }
                                         
-                                        // Update dashboard to reflect the change
-                                        if let Err(e) = group.dash_update(&ctx).await {
-                                            error!("Failed to update dashboard: {}", e);
-                                        }
+                                        group.dash_update(&ctx).await;
                                     },
                                     Err(e) => {
                                         warn!("{} failed to get or assign rank: {}", user_name, e);
                                     }
                                 }
                             }
+                        }
+                        
+                        if group.check_hot_timeout(&ctx).await {
+                            info!("Hot session timeout detected, updating dashboard");
+                            group.dash_update(&ctx).await;
                         }
                     }
                 },
@@ -698,8 +650,6 @@ impl Handler {
     async fn check_existing_voice_users(&self, ctx: &Context, guild: &Guild, manager: &mut Manager) {
         use pf_pug_bot::handlers::player::get_or_assign_player_rank;
         
-        info!("Checking for existing users in voice channels for guild {}", guild.name);
-        
         // Get the server from the manager
         let server = match manager.get_server(guild.id) {
             Ok(s) => s,
@@ -726,23 +676,22 @@ impl Handler {
                         continue;
                     }
                     
-                    // Check if user is already in a session
                     if group.get_user_session(*user_id).await.is_ok() {
                         info!("User {} already in session, skipping", user_id);
                         continue;
                     }
                     
-                    // Get the user's name for logging
                     let user_name = match ctx.http.get_user(*user_id).await {
                         Ok(user) => user.display_name().to_string(),
-                        Err(_) => user_id.to_string(),
+                        Err(_)   => user_id.to_string(),
                     };
                     
-                    // Get or assign player rank
                     match get_or_assign_player_rank(ctx, &self.database, guild.id, *user_id).await {
                         Ok(rank) => {
-                            info!("Adding existing user {} to queue with rank {:?}", user_name, rank);
-                            group.queue_player(*user_id, rank, ctx).await;
+                            info!("Added {} ({:?})", user_name, rank);
+                            if let Err(e) = group.queue_player(*user_id, rank, ctx, Some(guild.id), Some(&self.database)).await {
+                                error!("Failed to queue player {}: {}", user_name, e);
+                            }
                             
                             // Mark them as in VC
                             if let Ok(session) = group.get_user_session(*user_id).await {
@@ -761,12 +710,10 @@ impl Handler {
             }
             
             if users_added > 0 {
-                info!("Added {} existing user(s) to queue for group in channel {}", users_added, queue_vc_id);
+                info!("Added {} user(s) to queue for group in channel {}", users_added, queue_vc_id);
                 
                 // Update the dashboard to reflect the new users
-                if let Err(e) = group.dash_update(ctx).await {
-                    error!("Failed to update dashboard after adding existing users: {}", e);
-                }
+                group.dash_update(ctx).await;
             }
         }
     }
@@ -810,8 +757,6 @@ impl Handler {
             return;
         }
         
-        info!("Bot has all required permissions in guild {}", guild.name);
-        
         // Get server from manager (already has groups with existing users loaded)
         let server = match manager.get_server(guild.id) {
             Ok(s) => s,
@@ -822,11 +767,6 @@ impl Handler {
         };
         
         for group in &mut server.groups {
-            // Check if group has sessions
-            if group.sessions.is_empty() {
-                group.create_session();
-            }
-
             // Check if dashboard already exists
             if group.has_dashboard(ctx).await {
                 group.dash_update(ctx).await;

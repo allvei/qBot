@@ -1,4 +1,7 @@
 use anyhow::{anyhow, Error, Result};
+use std::time::SystemTime;
+use std::cmp::Ordering::*;
+use crate::models::constants::HOT_TIMEOUT_SECONDS;
 use serenity::all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
     CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM,
@@ -168,7 +171,7 @@ impl Group {
         let quota = self.quota as usize;
         
         // Check if any session is hot AND still has enough players
-        let is_hot  = self.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= quota);
+        let is_hot  = self.sessions.iter().any(|s| s.is_hot());
         let is_live = self.sessions.iter().any(|s| s.is_active());
 
         let bs = BS::Secondary;
@@ -207,78 +210,85 @@ impl Group {
 
     /// Builds dashboard embed and components based on current group state
     async fn build_dashboard_content(&mut self) -> Result<(CE, Vec<CAR>)> {
-        let mut emb  = CE::new().title("PUG Dashboard");
-        let mut desc = String::new();
+        let mut embed       = CE::new().title("PUG Dashboard");
+        let mut description = String::new();
         
-        let quota = self.quota as usize;
-        let games_idle: Vec<&Session> = self.get_sessions_by_status(&SessionStatus::Idle);
-        let games_hot:  Vec<&Session> = self.get_sessions_by_status(&SessionStatus::Hot);
-        let games_live: Vec<&Session> = self.get_sessions_by_status(&SessionStatus::Live);
+        let quota     = self.quota as usize;
+        let inactives = self.get_inactives();
+        let actives   = self.get_actives();
         
-        if let Some(game_current) = games_idle.first() {
-            let queue_players = game_current.pool.len();
+        if let Some(current_session) = inactives.first() {
+            let queue_players = current_session.pool.len();
             
-            desc.push_str(&format!("**Current Queue ({}/{}):**\n",queue_players, quota));
+            description.push_str(&format!("**Current queue ({}/{}):**\n",queue_players, quota));
             
-            if game_current.pool.is_empty() {
-                desc.push_str("*None*\n");
-            } else {
+            if !current_session.pool.is_empty() {
                 match queue_players.cmp(&quota) {
-                    std::cmp::Ordering::Less => {
-                        for (i, player) in game_current.pool.iter().enumerate() {
-                            let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
-                            desc.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
+                    Less => {
+                        for (i, player) in current_session.pool.iter().enumerate() {
+                            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
+                            description.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
                         }
                     }
-                    std::cmp::Ordering::Equal => {
-                        desc.push_str("**🔥 READY TO START! 🔥**\n");
+                    Equal => {
+                        description.push_str("**Match ready!**\n");
                     }
-                    std::cmp::Ordering::Greater => {
-                        desc.push_str("**🔥 MATCH READY! 🔥**\n");
+                    Greater => {
+                        description.push_str("**Match ready!**\n");
 
-                        let extra_players = &game_current.pool[quota..];
+                        let extra_players = &current_session.pool[quota..];
                         if !extra_players.is_empty() {
-                            desc.push_str(&format!("\n**⏳ Queued for Next ({}):**\n",extra_players.len()));
-                            list_players!(desc, extra_players);
+                            description.push_str(&format!("\n**Queued for next ({}):**\n",extra_players.len()));
+                            list_players!(description, extra_players);
                         }
                     }
                 }
             }
-        } else if !games_hot.is_empty() {
-            // Show hot game status with players not in VC yet
-            desc.push_str("**🔥 Match Ready to Start!**\n");
-            for game in &games_hot {
-                let players_in_vc = game.pool.iter().filter(|p| p.in_queue_vc).count();
-                let players_not_in_vc: Vec<_> = game.pool.iter()
+        } else if !actives.is_empty() {
+            // Show hot game status with players not in VC yet and countdown
+            description.push_str("**Match ready!**\n");
+            for session in &actives {
+                // Display countdown timer
+                if let Some(ready_at) = session.ready_at {
+                    if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
+                        let ready_timestamp = duration_since_epoch.as_secs();
+                        let deadline_timestamp = ready_timestamp + HOT_TIMEOUT_SECONDS;
+                        description.push_str(&format!("⏰ Join deadline: <t:{}:R>\n\n", deadline_timestamp));
+                    }
+                }
+                
+                let players_in_vc = session.pool.iter().take(quota).filter(|p| p.in_queue_vc).count();
+                let players_not_in_vc: Vec<_> = session.pool.iter()
+                    .take(quota)
                     .filter(|p| !p.in_queue_vc)
                     .collect();
                 
-                desc.push_str(&format!("• {}/{} players in voice channel\n", players_in_vc, game.pool.len()));
+                description.push_str(&format!("• {}/{} players in vc\n", players_in_vc, quota));
                 
                 if !players_not_in_vc.is_empty() {
-                    desc.push_str("⏳ **Waiting for:**\n");
+                    description.push_str("**Missing players:**\n");
                     for player in players_not_in_vc {
                         let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
-                        desc.push_str(&format!("  • {}<@{}>\n", elo_str, player.player.discord_id));
+                        description.push_str(&format!("  • {}<@{}>\n", elo_str, player.player.discord_id));
                     }
                 }
             }
-            desc.push('\n');
-        } else if games_live.is_empty() {
+            description.push('\n');
+        } else if actives.is_empty() {
             // Only show "no active games" if there are no games at all
-            desc.push_str("**📋 Queue Status**\n*No active games. Join the queue to get started!*\n\n");
+            description.push_str("**Queue status**\n*No active games. Join the queue to get started!*\n\n");
         }
 
-        emb = emb.description(desc);
+        embed = embed.description(description);
         
         // Add team fields for idle games with enough players
-        if let Some(game_current) = games_idle.first() {
-            let queue_players = game_current.pool.len();
+        if let Some(current_session) = inactives.first() {
+            let queue_players = current_session.pool.len();
             if queue_players >= quota {
                 let team_size = quota / 2;
                 // Sort teams by rank descending before display
-                let mut team_red: Vec<_> = game_current.pool[0..team_size].to_vec();
-                let mut team_blu: Vec<_> = game_current.pool[team_size..quota].to_vec();
+                let mut team_red: Vec<_> = current_session.pool[0..team_size].to_vec();
+                let mut team_blu: Vec<_> = current_session.pool[team_size..quota].to_vec();
                 team_red.sort_by(|a, b| {
                     let elo_a = a.player.rank.map(|r| r.elo()).unwrap_or(0);
                     let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
@@ -289,18 +299,17 @@ impl Group {
                     let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
                     elo_b.cmp(&elo_a) // Descending order
                 });
-                emb = emb.field("🔴 Red", format_team_field(&team_red), true);
-                emb = emb.field("🔵 Blue", format_team_field(&team_blu), true);
+                embed = embed.field("🔴 Red", format_team_field(&team_red), true);
+                embed = embed.field("🔵 Blue", format_team_field(&team_blu), true);
             }
         }
-        
-        // Add team fields for hot games
-        for game in games_hot {
-            if game.pool.len() >= quota {
+
+        for session in actives {
+            if session.pool.len() >= quota {
                 let team_size = quota / 2;
                 // Sort teams by rank descending before display
-                let mut team_red: Vec<_> = game.pool[0..team_size].to_vec();
-                let mut team_blu: Vec<_> = game.pool[team_size..quota].to_vec();
+                let mut team_red: Vec<_> = session.pool[0..team_size].to_vec();
+                let mut team_blu: Vec<_> = session.pool[team_size..quota].to_vec();
                 team_red.sort_by(|a, b| {
                     let elo_a = a.player.rank.map(|r| r.elo()).unwrap_or(0);
                     let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
@@ -311,14 +320,14 @@ impl Group {
                     let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
                     elo_b.cmp(&elo_a) // Descending order
                 });
-                emb = emb.field("🔴 Red", format_team_field(&team_red), true);
-                emb = emb.field("🔵 Blue", format_team_field(&team_blu), true);
+                embed = embed.field("🔴 Red", format_team_field(&team_red), true);
+                embed = embed.field("🔵 Blue", format_team_field(&team_blu), true);
             }
         }
 
         let buttons = self.create_dashboard_buttons().await.unwrap();
 
-        Ok((emb, buttons))
+        Ok((embed, buttons))
     }
 
     /// Initializes a dashboard based on current group state
@@ -341,7 +350,10 @@ impl Group {
         
         match dash.edit(&ctx.http, EditMessage::new().embed(embed).components(buttons)).await {
             Ok(_) => {Ok(())},
-            Err(e) => {Err(e.into())}
+            Err(e) => {
+                error!("Failed to update dashboard: {}", e);
+                Err(e.into())
+            }
         }
     }
 
@@ -365,15 +377,14 @@ impl Group {
         } else {
             // Player is not in queue, add them
             
-            // Ensure we have an idle session (create if needed)
-            let idle_sessions = self.get_sessions_by_status(&SessionStatus::Idle);
-            if idle_sessions.is_empty() {
-                info!("No idle session found, creating one");
-                self.create_session();
-            } else if idle_sessions.len() > 1 {
-                return Err(anyhow::anyhow!("Multiple idle games found: {}", idle_sessions.len()));
-            } else {
-                info!("Found one existing idle game");
+            // Check if we have an idle or hot session to join
+            let has_joinable_session = self.sessions.iter().any(|s| 
+                s.status == SessionStatus::Idle || s.status == SessionStatus::Hot
+            );
+            
+            if !has_joinable_session {
+                cc.reply("❌ Cannot join - match is in progress. Please wait.").await?;
+                return Ok(());
             }
 
             // Get or assign player's rank (auto-creates ranks and assigns Apprentice if needed)
@@ -381,9 +392,12 @@ impl Group {
             if let Some(guild_id) = cc.component.guild_id {
                 match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user_id).await {
                     Ok(rank) => {
-                        self.queue_player(user_id, rank, cc.ctx).await;
+                        if let Err(e) = self.queue_player(user_id, rank, cc.ctx, Some(guild_id), Some(&cc.db)).await {
+                            warn!("Failed to queue player: {}", e);
+                        }
                     },
                     Err(e) => {
+                        warn!("Failed to get/assign rank: {}", e);
                         return Ok(());
                     }
                 }
@@ -407,14 +421,24 @@ impl Group {
         let mut is_shuffled = false;
         let quota = self.quota as usize;
 
-        // Find the game to shuffle
-        if let Some(game) = self.sessions.iter_mut().find(|s| s.status == SessionStatus::Idle && s.pool.len() >= quota)
+        // Find the game to shuffle - can be Idle (if quota met) or Hot
+        if let Some(game) = self.sessions.iter_mut().find(|s| 
+            (s.status == SessionStatus::Idle || s.status == SessionStatus::Hot) && s.pool.len() >= quota
+        )
         {
-            // Shuffle the players using rand crate
+            // Shuffle only the first 'quota' players (not overflow)
             use rand::seq::SliceRandom;
-            game.pool.shuffle(&mut rand::rng());
+            let mut players_to_shuffle: Vec<_> = game.pool.iter().take(quota).cloned().collect();
+            players_to_shuffle.shuffle(&mut rand::rng());
+            
+            // Replace first quota players with shuffled, keep overflow players
+            let overflow: Vec<_> = game.pool.iter().skip(quota).cloned().collect();
+            game.pool.clear();
+            game.pool.extend(players_to_shuffle);
+            game.pool.extend(overflow);
+            
             is_shuffled = true;
-            info!("Teams shuffled for game with {} players",game.pool.len());
+            info!("Teams shuffled for game with {} players (quota: {})", game.pool.len(), quota);
         }
 
         if is_shuffled {
