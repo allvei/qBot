@@ -428,7 +428,6 @@ impl Group {
     }
 
     /// Update player ranks from Discord roles for all players in the session
-    /// This ensures ranks are up-to-date even if roles changed while queued
     pub async fn refresh_player_ranks(&mut self, ctx: &Context, guild_id: serenity::all::GuildId, db: &crate::Database) {
         use crate::handlers::player::get_player_rank;
         
@@ -549,9 +548,7 @@ impl Group {
         }
         
         // Update dashboard to show the new teams
-        if let Err(e) = self.dash_update(ctx).await {
-            warn!("Failed to update dashboard after team generation: {}", e);
-        }
+        self.dash_update(ctx).await;
     }
 
     pub async fn queue_player(&mut self, user_id: UI, rank: crate::models::Rank, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>) -> Result<()> {

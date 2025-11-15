@@ -347,7 +347,6 @@ impl Group {
             }
         };
         let (embed, buttons) = self.build_dashboard_content().await?;
-        
         match dash.edit(&ctx.http, EditMessage::new().embed(embed).components(buttons)).await {
             Ok(_) => {Ok(())},
             Err(e) => {
@@ -409,9 +408,7 @@ impl Group {
 
         // Always acknowledge and update dashboard
         cc.acknowledge().await;
-        if let Err(e) = self.dash_update(cc.ctx).await {
-            warn!("Failed to update dashboard after toggle_queue: {}", e);
-        }
+        self.dash_update(cc.ctx).await;
 
         Ok(())
     }
@@ -443,9 +440,7 @@ impl Group {
 
         if is_shuffled {
             cc.acknowledge().await;
-            if let Err(e) = self.dash_update(cc.ctx).await {
-                warn!("Failed to update dashboard after shuffle: {}", e);
-            }
+            self.dash_update(cc.ctx).await;
         } else {
             cc.reply(&format!("❌ No game ready for shuffling. Need at least {} players in queue.", quota)).await?;
         }
