@@ -1,4 +1,3 @@
-// CHECK ME
 #![allow(clippy::missing_docs_in_private_items)]
 
 // Library crate for modules

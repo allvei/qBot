@@ -1,4 +1,3 @@
-// CHECK ME
 mod command;
 
 use std::env;
@@ -930,8 +929,8 @@ impl Handler {
         let embed = CE::new()
             .title("GAME READY!")
             .description(format!(
-                // TODO: format according to group quota
-                "**8 players in queue channel!**\n\n{}\n\nUse `/shuffle` to generate teams.",
+                "**{} players in queue channel!**\n\n{}\n\nUse `/shuffle` to generate teams.",
+                group.quota,
                 player_mentions.join(" ")
             ))
             .footer(CEF::new("Awaiting team generation..."));
