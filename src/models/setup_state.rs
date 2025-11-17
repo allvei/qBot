@@ -64,18 +64,18 @@ impl SetupStateManager {
     pub fn start_setup(&self, user_id: UserId, guild_id: GuildId) -> SetupConfig {
         let key    = (user_id, guild_id);
         let config = SetupConfig::new(guild_id.get());
-        
+
         if let Ok(mut states) = self.states.lock() {
             let entry = SetupEntry {
                 config: config.clone(),
                 created_at: Instant::now(),
             };
             states.insert(key, entry);
-            
+
             // Cleanup expired entries while we have the lock
             Self::cleanup_expired_internal(&mut states);
         }
-        
+
         config
     }
 
@@ -92,7 +92,7 @@ impl SetupStateManager {
         F: FnOnce(&mut SetupConfig),
     {
         let key = (user_id, guild_id);
-        
+
         if let Ok(mut states) = self.states.lock() {
             if let Some(entry) = states.get_mut(&key) {
                 updater(&mut entry.config);
@@ -107,7 +107,7 @@ impl SetupStateManager {
 
     pub fn complete_setup(&self, user_id: UserId, guild_id: GuildId) -> Option<SetupConfig> {
         let key = (user_id, guild_id);
-        
+
         if let Ok(mut states) = self.states.lock() {
             states.remove(&key).map(|entry| entry.config)
         } else {
@@ -119,12 +119,12 @@ impl SetupStateManager {
     fn cleanup_expired_internal(states: &mut HashMap<(UserId, GuildId), SetupEntry>) {
         const EXPIRY_DURATION: Duration = Duration::from_secs(30 * 60); // 30 minutes
         let now = Instant::now();
-        
+
         states.retain(|_, entry| {
             now.duration_since(entry.created_at) < EXPIRY_DURATION
         });
     }
-    
+
     /// Public cleanup method that acquires lock
     pub fn cleanup_expired(&self) {
         if let Ok(mut states) = self.states.lock() {

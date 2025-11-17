@@ -40,7 +40,7 @@ impl Session {
     pub fn remove_player(&mut self, discord_id: UserId) {
         self.pool.retain(|p| p.player.discord_id != discord_id);
     }
-    
+
     /// Sort players by join time (first-come-first-serve)
     pub fn sort_by_join_time(&mut self) {
         self.pool.sort_by_key(|p| p.joined_at);
@@ -51,8 +51,8 @@ impl Session {
         status: SessionStatus,
         pool: Vec<SessionPlayer>,
     ) -> Self {
-        Self { 
-            status, 
+        Self {
+            status,
             pool,
             ready_at: None,
         }
@@ -85,14 +85,18 @@ impl Session {
 
     /// Set the session to hot and record the ready timestamp
     pub fn hot(&mut self) -> CE {
-        info!("Game is HOT with {} players", self.pool.len());
         self.status = SessionStatus::Hot;
         self.ready_at = Some(SystemTime::now());
         // Create an embed message for the game ready notification
-        
+
         CE::new().title("GAME READY!")
                  .description(format!("A match is ready to start with {} players!", self.pool.len()))
                  .footer(CEF::new("Awaiting team generation..."))
+    }
+
+    /// Log hot status with session ID for debugging
+    pub fn log_hot(&self, session_id: usize) {
+        info!("[Session {}] Game is HOT with {} players", session_id, self.pool.len());
     }
 
     /// Set the session to push
@@ -109,7 +113,7 @@ impl Session {
     pub fn pull(&mut self) {
         self.status = SessionStatus::Pull;
     }
-    
+
     /// Create an empty session
     pub fn empty() -> Self {
         Self {
@@ -118,13 +122,13 @@ impl Session {
             ready_at: None,
         }
     }
-    
+
     /// Check if this Hot session has timed out (players didn't join VC in time)
     pub fn is_hot_timeout(&self, timeout_seconds: u64) -> bool {
         if !self.is_hot() {
             return false;
         }
-        
+
         if let Some(ready_at) = self.ready_at {
             if let Ok(elapsed) = SystemTime::now().duration_since(ready_at) {
                 return elapsed.as_secs() >= timeout_seconds;
@@ -132,13 +136,13 @@ impl Session {
         }
         false
     }
-    
+
     /// Get seconds remaining until timeout (returns 0 if timed out or not hot)
     pub fn seconds_until_timeout(&self, timeout_seconds: u64) -> u64 {
         if !self.is_hot() {
             return 0;
         }
-        
+
         if let Some(ready_at) = self.ready_at {
             if let Ok(elapsed) = SystemTime::now().duration_since(ready_at) {
                 let elapsed_secs = elapsed.as_secs();

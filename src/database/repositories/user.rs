@@ -24,13 +24,13 @@ impl UserRepository {
         .bind(discord_id.get() as i64)
         .fetch_one(&self.pool)
         .await?;
-        
+
         Ok(Self::get_player(result))
     }
 
     pub async fn create_or_update(&self, discord_id: UserId, steam_id: Option<u64>) -> Result<Player> {
         info!("Creating or updating user with discord_id: {}", discord_id);
-        
+
         let result = sqlx::query(
             "INSERT INTO users (discord_id, steam_id)
              VALUES (?, ?)
@@ -41,7 +41,7 @@ impl UserRepository {
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
         .fetch_one(&self.pool)
         .await?;
-        
+
         Ok(Self::get_player(result))
     }
 
@@ -53,7 +53,7 @@ impl UserRepository {
 
     pub async fn update_steam_id(&self, discord_id: UserId, steam_id: Option<u64>) -> Result<Player> {
         info!("Updating user steam_id for discord_id: {}", discord_id);
-        
+
         sqlx::query("UPDATE users SET steam_id = ? WHERE discord_id = ?")
             .bind(steam_id.map(|id| id as i64))
             .bind(discord_id.get() as i64)

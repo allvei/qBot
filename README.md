@@ -36,3 +36,4 @@ A comprehensive Discord bot for managing PUGs for passtime.tf, built in Rust usi
 - Schedule based player queueing.
 - Captain mode for manual team creation.
 - Show the queue status in the voice channels name.
+- Send non-generated players automatically to spectator.

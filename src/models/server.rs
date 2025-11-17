@@ -25,11 +25,11 @@ fn calculate_stats(elos: &[f64]) -> (f64, f64, f64) {
     if elos.is_empty() {
         return (0.0, 0.0, 0.0);
     }
-    
+
     // Calculate mean
     let sum: f64 = elos.iter().sum();
     let mean = sum / elos.len() as f64;
-    
+
     // Calculate median
     let mut sorted = elos.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -39,11 +39,11 @@ fn calculate_stats(elos: &[f64]) -> (f64, f64, f64) {
     } else {
         sorted[sorted.len() / 2]
     };
-    
+
     // Calculate standard deviation
     let variance: f64 = elos.iter().map(|&elo| (elo - mean).powi(2)).sum::<f64>() / elos.len() as f64;
     let std_dev = variance.sqrt();
-    
+
     (mean, median, std_dev)
 }
 
@@ -136,15 +136,15 @@ impl Group {
     }
 
     pub fn create_session(&mut self) -> Result<&mut Session> {
-        info!("Creating new session");
-        
         // Check if an inactive session already exists
         if !self.get_inactives().is_empty() {
             return Err(anyhow!("Cannot create new session: inactive session already exists"));
         }
-        
+
         self.sessions
             .push(Session::new(SessionStatus::Idle, Vec::new()));
+        let session_id = self.sessions.len() - 1;
+        info!("[Session {}] Creating new session", session_id);
         self.sessions.last_mut().ok_or_else(|| anyhow!("Failed to create session"))
     }
 
@@ -196,6 +196,12 @@ impl Group {
             .collect()
     }
 
+    /// Get session index (position in Vec) for logging purposes
+    /// Returns None if session is not found in the group
+    pub fn get_session_index(&self, session: &Session) -> Option<usize> {
+        self.sessions.iter().position(|s| std::ptr::eq(s, session))
+    }
+
     pub fn get_games_by_status_mut(
         &mut self,
         status: &SessionStatus,
@@ -227,24 +233,35 @@ impl Group {
     }
 
     pub async fn hot(&mut self, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>) -> Result<(), Error> {
+        // Get session index before calling hot()
+        let session_idx = self.sessions
+            .iter()
+            .position(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)
+            .unwrap_or(0);
+
         self.get_queue().await?.hot();
-        
+
+        // Log the hot status with session ID
+        if let Ok(session) = self.get_queue().await {
+            session.log_hot(session_idx);
+        }
+
         // Refresh player ranks from Discord roles before generating teams
         if let (Some(gid), Some(database)) = (guild_id, db) {
             self.refresh_player_ranks(ctx, gid, database).await;
         }
-        
+
         self.notify(ctx).await;
         self.generate_teams(ctx).await;
         Ok(())
     }
-    
+
     /// Check hot sessions for timeout and handle accordingly
     /// Returns true if any changes were made that require dashboard update
     pub async fn check_hot_timeout(&mut self, ctx: &Context) -> bool {
         let mut changes_made = false;
         let quota = self.quota as usize;
-        
+
         // Find hot sessions that have timed out
         let hot_sessions: Vec<usize> = self.sessions
             .iter()
@@ -257,10 +274,10 @@ impl Group {
                 }
             })
             .collect();
-        
+
         for idx in hot_sessions {
             let session = &mut self.sessions[idx];
-            
+
             // Get players who didn't join VC (timed out)
             let timed_out_players: Vec<_> = session.pool
                 .iter()
@@ -268,21 +285,21 @@ impl Group {
                 .filter(|p| !p.in_queue_vc)
                 .map(|p| p.player.discord_id)
                 .collect();
-            
+
             if timed_out_players.is_empty() {
                 // All players joined, no timeout action needed
                 continue;
             }
-            
-            info!("Hot session timed out - {} players didn't join VC", timed_out_players.len());
-            
+
+            info!("[Session {}] Hot session timed out - {} players didn't join VC", idx, timed_out_players.len());
+
             // Remove timed out players
             session.pool.retain(|p| !timed_out_players.contains(&p.player.discord_id));
-            
+
             // Check if we still have enough players after removals
             if session.pool.len() >= quota {
                 // We have replacements (overflow players)
-                info!("Replacing timed out players with overflow players");
+                info!("[Session {}] Replacing timed out players with overflow players", idx);
                 // Players already in pool, just need to ensure they're counted
                 changes_made = true;
             } else {
@@ -292,7 +309,7 @@ impl Group {
                 changes_made = true;
             }
         }
-        
+
         changes_made
     }
 
@@ -300,13 +317,13 @@ impl Group {
         // Extract channel IDs first to avoid borrowing conflicts
         let red_vc = self.channels.teams[0].red_vc;
         let blu_vc = self.channels.teams[0].blu_vc;
-        
+
         // Get the hot game (should be the most recent session that's hot)
         let game = self.sessions
             .iter_mut()
             .find(|s| s.status == SessionStatus::Hot)
             .ok_or(anyhow!("No hot session found for push"))?;
-        
+
         // Set status to Push and extract player moves
         game.push();
         let player_moves: Vec<(UI, CI)> = game.pool
@@ -319,7 +336,7 @@ impl Group {
                 }
             })
             .collect();
-        
+
         // Drop the mutable borrow and move users to team channels
         let guild_id = ctx.cache.guilds().first().copied()
             .ok_or_else(|| anyhow!("No guild found in cache"))?;
@@ -328,34 +345,36 @@ impl Group {
                 warn!("Failed to move user {}: {}", user_id, e);
             }
         }
-        
+
         // Set game status to Live and extract overflow players
-        let game = self.sessions
-            .iter_mut()
-            .find(|s| s.status == SessionStatus::Push)
+        let session_idx = self.sessions
+            .iter()
+            .position(|s| s.status == SessionStatus::Push)
             .ok_or(anyhow!("Push session not found"))?;
+        let game = &mut self.sessions[session_idx];
         game.live();
-        
+
         let quota = self.quota as usize;
         let game_pool_len = game.pool.len();
-        info!("Match is now LIVE with {} players", game_pool_len);
-        
+        info!("[Session {}] Match is now LIVE with {} players", session_idx, game_pool_len);
+
         // Extract overflow players (those beyond quota)
         let overflow_players: Vec<_> = if game_pool_len > quota {
             game.pool.drain(quota..).collect()
         } else {
             Vec::new()
         };
-        
+
         // Create new idle session for next game
+        let new_session_id = self.sessions.len();
         if !overflow_players.is_empty() {
-            info!("Creating new idle session with {} overflow players", overflow_players.len());
+            info!("[Session {}] Creating new idle session with {} overflow players", new_session_id, overflow_players.len());
         } else {
-            info!("Creating new idle session for next game");
+            info!("[Session {}] Creating new idle session for next game", new_session_id);
         }
-        
+
         self.create_session()?;
-        
+
         // Add overflow players to the new idle session
         if !overflow_players.is_empty() {
             let idle_session = self.get_queue().await?;
@@ -363,9 +382,10 @@ impl Group {
                 idle_session.pool.push(player);
             }
             idle_session.sort_by_join_time();
-            info!("Transferred {} overflow players to new idle session", idle_session.pool.len());
+            // Use the new_session_id we calculated earlier (sessions.len() before create_session)
+            info!("[Session {}] Transferred {} overflow players to new idle session", new_session_id, idle_session.pool.len());
         }
-        
+
         self.dash_update(ctx).await;
         Ok(())
 
@@ -374,21 +394,22 @@ impl Group {
     pub async fn pull(&mut self, ctx: &Context) -> Result<(), Error> {
         // Extract queue vc channel ID
         let queue_vc = self.channels.queue_vc;
-        
+
         // Find the active game (Hot or Live status)
-        let game = self.sessions
-            .iter_mut()
-            .find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live)
+        let active_session_idx = self.sessions
+            .iter()
+            .position(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live)
             .ok_or(anyhow!("No active game to pull"))?;
-        
+        let game = &mut self.sessions[active_session_idx];
+
         game.pull();
-        
+
         // Extract all players with their data to move back to queue
         let players_to_requeue: Vec<(UI, Option<crate::models::Rank>)> = game.pool
             .iter()
             .map(|player| (player.player.discord_id, player.player.rank))
             .collect();
-        
+
         // Move all players back to queue voice channel
         let guild_id = ctx.cache.guilds().first().copied()
             .ok_or_else(|| anyhow!("No guild found in cache"))?;
@@ -397,32 +418,33 @@ impl Group {
                 warn!("Failed to move user {} back to queue: {}", user_id, e);
             }
         }
-        
+
         // Find the idle session (queue) and add all players back to it
-        let idle_session = self.sessions
-            .iter_mut()
-            .find(|s| s.status == SessionStatus::Idle)
+        let idle_session_idx = self.sessions
+            .iter()
+            .position(|s| s.status == SessionStatus::Idle)
             .ok_or(anyhow!("No idle session found for re-queuing players"))?;
-        
+        let idle_session = &mut self.sessions[idle_session_idx];
+
         for (user_id, rank) in players_to_requeue {
             if let Some(rank) = rank {
                 idle_session.add_player(user_id, rank);
-                info!("Re-added player {} to queue", user_id);
+                info!("[Session {}] Re-added player {} to queue", idle_session_idx, user_id);
             }
         }
-        
+
         let queue_count = idle_session.pool.len();
-        
+
         // Remove the finished session
         self.sessions.retain(|s| s.status != SessionStatus::Pull);
-        info!("Match ended, {} players returned to queue", queue_count);
-        
+        info!("[Session {}] Match ended, {} players returned to queue", active_session_idx, queue_count);
+
         // Check if the queue now meets quota and transition to Hot if needed
         if self.is_quota() {
-            info!("Quota met after pull, transitioning idle session to Hot");
+            info!("[Session {}] Quota met after pull, transitioning idle session to Hot", idle_session_idx);
             self.hot(ctx, None, None).await?;
         }
-        
+
         self.dash_update(ctx).await;
         Ok(())
     }
@@ -430,7 +452,7 @@ impl Group {
     /// Update player ranks from Discord roles for all players in the session
     pub async fn refresh_player_ranks(&mut self, ctx: &Context, guild_id: serenity::all::GuildId, db: &crate::Database) {
         use crate::handlers::player::get_player_rank;
-        
+
         for session in &mut self.sessions {
             for player in &mut session.pool {
                 if let Some(updated_rank) = get_player_rank(ctx, db, guild_id, player.player.discord_id).await {
@@ -442,30 +464,31 @@ impl Group {
             }
         }
     }
-    
+
     pub async fn generate_teams(&mut self, ctx: &Context) {
         use itertools::Itertools;
-        
-        info!("Generating balanced teams using BCH algorithm");
-        
+
         let quota = self.quota as usize;
-        
+
         // Get the hot game (session was just set to hot before this is called)
-        let game = match self.sessions
-            .iter_mut()
-            .find(|s| s.status == SessionStatus::Hot) {
-            Some(g) => g,
+        let session_idx = match self.sessions
+            .iter()
+            .position(|s| s.status == SessionStatus::Hot) {
+            Some(idx) => idx,
             None => {
                 warn!("No hot session found for team generation");
                 return;
             }
         };
-        
+
+        info!("[Session {}] Generating balanced teams using BCH algorithm", session_idx);
+        let game = &mut self.sessions[session_idx];
+
         if game.pool.len() < quota {
             warn!("Not enough players for team generation: {}", game.pool.len());
             return;
         }
-        
+
         // Extract player ELOs (use default ELO if rank is None)
         let players_with_elo: Vec<(usize, u32)> = game.pool
             .iter()
@@ -475,84 +498,97 @@ impl Group {
                 (idx, elo)
             })
             .collect();
-        
+
         // Balance exactly quota players (first N in queue)
         let pool_size = quota.min(game.pool.len());
         let players_to_balance: Vec<(usize, u32)> = players_with_elo.into_iter().take(pool_size).collect();
-        
+
         // Generate all possible team splits (C(8,4) = 70 combinations)
         let team_size = pool_size / 2;
         let mut best_split: Option<(Vec<usize>, Vec<usize>)> = None;
         let mut best_score = f64::INFINITY;
-        
+
         for team_a_indices in (0..pool_size).combinations(team_size) {
             let team_b_indices: Vec<usize> = (0..pool_size)
                 .filter(|i| !team_a_indices.contains(i))
                 .collect();
-            
+
             // Get ELOs for each team
             let team_a_elos: Vec<f64> = team_a_indices
                 .iter()
                 .map(|&i| players_to_balance[i].1 as f64)
                 .collect();
-            
+
             let team_b_elos: Vec<f64> = team_b_indices
                 .iter()
                 .map(|&i| players_to_balance[i].1 as f64)
                 .collect();
-            
+
             // Calculate statistics for both teams
             let (avg_a, med_a, std_a) = calculate_stats(&team_a_elos);
             let (avg_b, med_b, std_b) = calculate_stats(&team_b_elos);
-            
+
             // BCH score: sum of absolute differences
             let score = (avg_a - avg_b).abs() + (med_a - med_b).abs() + (std_a - std_b).abs();
-            
+
             if score < best_score {
                 best_score = score;
                 best_split = Some((team_a_indices, team_b_indices));
             }
         }
-        
+
         if let Some((red_indices, blu_indices)) = best_split {
-            info!("Best team balance found with score: {:.2}", best_score);
-            
+            info!("[Session {}] Best team balance found with score: {:.2}", session_idx, best_score);
+
             // Assign teams based on the best split
             let mut new_pool = Vec::new();
-            
+
             // First add red team players
             for &idx in &red_indices {
                 let mut player = game.pool[players_to_balance[idx].0];
                 player.team(crate::models::Team::Red);
                 new_pool.push(player);
             }
-            
+
             // Then add blue team players
             for &idx in &blu_indices {
                 let mut player = game.pool[players_to_balance[idx].0];
                 player.team(crate::models::Team::Blu);
                 new_pool.push(player);
             }
-            
+
             // Add remaining players (if more than 8)
             for i in pool_size..game.pool.len() {
                 new_pool.push(game.pool[i]);
             }
-            
+
             // Update the pool with balanced teams
             game.pool = new_pool;
-            
-            info!("Teams generated and assigned successfully");
+
+            info!("[Session {}] Teams generated and assigned successfully", session_idx);
         } else {
             warn!("Failed to generate balanced teams");
         }
-        
+
         // Update dashboard to show the new teams
         self.dash_update(ctx).await;
     }
 
     pub async fn queue_player(&mut self, user_id: UI, rank: crate::models::Rank, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>) -> Result<()> {
-        self.get_queue().await?.add_player(user_id, rank);
+        self.queue_player_with_vc_status(user_id, rank, ctx, guild_id, db, false).await
+    }
+
+    pub async fn queue_player_with_vc_status(&mut self, user_id: UI, rank: crate::models::Rank, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>, in_vc: bool) -> Result<()> {
+        let session = self.get_queue().await?;
+        session.add_player(user_id, rank);
+
+        // Set in_queue_vc flag BEFORE checking quota to avoid unnecessary pings
+        if in_vc {
+            if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
+                player.in_queue_vc = true;
+            }
+        }
+
         if self.is_quota() {
             self.hot(ctx, guild_id, db).await?;
         }
@@ -620,7 +656,7 @@ impl Group {
         let queue_chat = self.channels.queue_chat;
         let mut player_mentions = Vec::new();
         let quota = self.quota as usize;
-        
+
         if let Some(game) = self.sessions.last() {
             // Only mention players who are NOT in the voice channel
             // AND only the first 'quota' players (not extras queued for next match)
@@ -630,18 +666,18 @@ impl Group {
                 }
             }
         }
-        
+
         // Only send notification if there are players to ping
         if player_mentions.is_empty() {
             info!("Quota met but all players already in VC - skipping notification");
             return;
         }
-        
+
         // Use embed for header and raw pings in message content to properly ping users
         let embed = CreateEmbed::new()
             .title("PUG Starting")
             .description("Please join the queue channel!");
-        
+
         let content = player_mentions.join(" ");
         let msg = CM::new().embed(embed).content(content);
         queue_chat.send_message(&ctx.http, msg).await;
@@ -690,7 +726,7 @@ impl Role {
             Role::Admin  => "admin_role",
         }
     }
-    
+
     /// Get the Discord role ID from database configuration
     pub async fn id(&self, db: &crate::Database, guild_id: u64) -> Option<RI> {
         if let Ok(Some(value)) = db.config.get_config_value(self.config_key(), guild_id).await {
@@ -789,19 +825,19 @@ mod tests {
             ),
             Vec::new(),
         );
-        
+
         group.create_session();
-        
+
         // Add players one by one - each call borrows and immediately drops
         use crate::models::Rank;
         group.sessions.last_mut().unwrap().add_player(UI::new(1), Rank::Novice);
         group.sessions.last_mut().unwrap().add_player(UI::new(2), Rank::Novice);
         group.sessions.last_mut().unwrap().add_player(UI::new(3), Rank::Novice);
-        
+
         assert!(!group.is_quota());
-        
+
         group.sessions.last_mut().unwrap().add_player(UI::new(4), Rank::Novice);
-        
+
         assert!(group.is_quota());
     }
 }

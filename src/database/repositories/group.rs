@@ -31,7 +31,7 @@ impl GroupRepository {
         quota:        u8,
     ) -> Result<Group> {
         info!("Creating new group with queue: {}", queue_vc_id);
-        
+
         let result = sqlx::query(
             "INSERT INTO groups (guild_id, dashboard, chat, queue, dashboard_msg, red, blu, quota)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -62,7 +62,7 @@ impl GroupRepository {
         quota:        u8,
     ) -> Result<Group> {
         info!("Updating group with queue_id: {}", queue_vc_id);
-        
+
         let result = sqlx::query(
             "UPDATE groups
              SET guild_id = ?, dashboard = ?, chat = ?, red = ?, blu = ?, quota = ?
@@ -90,7 +90,7 @@ impl GroupRepository {
         let blu_id       = result.get::<i64, _>("blu")   as u64;
         let dashboard_id = result.get::<i64, _>("dashboard") as u64;
         let dashboard_msg_id = result.get::<i64, _>("dashboard_msg") as u64;
-        
+
         // Reject groups with invalid (0) IDs - no undefined data allowed
         let invalid_ids = [
             (chat_id          == 0, "chat"),
@@ -103,13 +103,13 @@ impl GroupRepository {
         if let Some((true, id)) = invalid_ids.iter().find(|(is_zero, _)| *is_zero) {
             return Err(anyhow!("Group has invalid {} configuration (0 ID not allowed)", id));
         }
-        
+
         let chat      = ChannelId::new(chat_id);
         let queue     = ChannelId::new(queue_id);
         let red       = ChannelId::new(red_id);
         let blu       = ChannelId::new(blu_id);
         let dashboard = ChannelId::new(dashboard_id);
-        
+
         let guild_id = result.get::<i64, _>("guild_id") as u64;
         let group_id = result.try_get::<i64, _>("group_id").unwrap_or(0) as u8;
 
@@ -168,15 +168,15 @@ impl GroupRepository {
         if group.channels.dashboard.get() == 1 || group.dashboard_msg.get() == 1 {
             warn!("Group {} has placeholder dashboard configuration", group.group_id);
         }
-        
+
         if group.channels.queue_chat.get() == 1 || group.channels.queue_vc.get() == 1 {
             warn!("Group {} has placeholder channel configuration", group.group_id);
         }
-        
+
         if group.channels.teams.iter().any(|t| t.red_vc.get() == 1 || t.blu_vc.get() == 1) {
             warn!("Group {} has placeholder team channel configuration", group.group_id);
         }
-        
+
         Ok(())
     }
 
@@ -184,7 +184,7 @@ impl GroupRepository {
     async fn log_available_groups(&self) {
         match sqlx::query("SELECT group_id, guild_id, chat, queue FROM groups")
             .fetch_all(&self.pool)
-            .await 
+            .await
         {
             Ok(rows) => {
                 for row in rows {
@@ -192,7 +192,7 @@ impl GroupRepository {
                     let guild_id: i64 = row.get("guild_id");
                     let chat: i64 = row.get("chat");
                     let queue: i64 = row.get("queue");
-                    info!("Available group: id={}, guild={}, chat={}, queue={}", 
+                    info!("Available group: id={}, guild={}, chat={}, queue={}",
                           group_id, guild_id, chat, queue);
                 }
             },
@@ -208,7 +208,7 @@ impl GroupRepository {
         .bind(guild_id as i64)
         .fetch_one(&self.pool)
         .await?;
-        
+
         Ok(count > 0)
     }
 
@@ -226,14 +226,14 @@ impl GroupRepository {
         for row in rows {
             groups.push(self.build_group_from_row_async(&row).await?);
         }
-        
+
         Ok(groups)
     }
 
     /// Update dashboard message ID for a group by its dashboard channel ID
     pub async fn update_dashboard_msg(&self, guild_id: u64, dashboard_channel_id: u64, dashboard_msg_id: u64) -> Result<()> {
         info!("Updating dashboard message ID for guild {} dashboard channel {}", guild_id, dashboard_channel_id);
-        
+
         sqlx::query(
             "UPDATE groups
              SET dashboard_msg = ?
@@ -244,7 +244,7 @@ impl GroupRepository {
         .bind(dashboard_channel_id as i64)
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
 }

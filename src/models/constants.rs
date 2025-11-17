@@ -33,7 +33,7 @@ pub struct FileManager;
 
 impl FileManager {
     /// Checks if a file exists at the given path.
-    /// 
+    ///
     /// Returns `true` if the file exists, `false` otherwise.
     ///
     /// * `path` - The path to check.
@@ -42,7 +42,7 @@ impl FileManager {
     }
 
     /// Creates a new file at the given path.
-    /// 
+    ///
     /// Returns a `Result` containing `()` or an `anyhow::Error` if creation fails.
     ///
     /// * `path` - The path where the file should be created.
@@ -55,7 +55,7 @@ impl FileManager {
     }
 
     /// Normalizes a path for the current platform.
-    /// 
+    ///
     /// Returns a `PathBuf` with the normalized path.
     ///
     /// * `path` - The path to normalize.

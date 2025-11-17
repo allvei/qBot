@@ -42,7 +42,7 @@ impl Manager {
         });
         Self { servers }
     }
-    
+
     /// Find a server by its guild ID
     ///
     /// ### Arguments
@@ -83,7 +83,7 @@ impl Manager {
     /// ### Arguments
     /// * `channel_id` - The channel ID of the group
     /// * `updated_group` - The updated group state
-    pub fn update_group(&mut self, server: &mut Server, channel_id: ChannelId, updated_group: Group) {        
+    pub fn update_group(&mut self, server: &mut Server, channel_id: ChannelId, updated_group: Group) {
         if let Some(group) = server.groups.iter_mut().find(|g| g.contains_channel(channel_id)) {
             *group = updated_group;
         }

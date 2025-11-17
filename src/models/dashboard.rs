@@ -43,7 +43,7 @@ pub enum ButtonType {
     SetupBlue,
     SetupRunner,
     SetupAdmin,
-    
+
     // Init group flow buttons
     InitDashboard,
     InitQueue,
@@ -51,20 +51,20 @@ pub enum ButtonType {
     InitRed,
     InitBlue,
     InitQuota,
-    
+
     // Dashboard action buttons
     DashboardToggleQueue,
     DashboardShuffle,
     DashboardStart,
     DashboardEnd,
-    
+
     // Permission confirmation button
     ConfirmPermissions,
-    
+
     // Rank role creation buttons
     CreateRankRolesYes,
     CreateRankRolesNo,
-    
+
     // Unknown button type
     Unknown(String),
 }
@@ -81,7 +81,7 @@ impl ButtonType {
             "setup_blue"      => Self::SetupBlue,
             "setup_runner"    => Self::SetupRunner,
             "setup_admin"     => Self::SetupAdmin,
-            
+
             // Init buttons
             "init_dashboard"  => Self::InitDashboard,
             "init_queue"      => Self::InitQueue,
@@ -89,25 +89,25 @@ impl ButtonType {
             "init_red"        => Self::InitRed,
             "init_blue"       => Self::InitBlue,
             "init_quota"      => Self::InitQuota,
-            
+
             // Dashboard buttons
             "toggle_queue"    => Self::DashboardToggleQueue,
             "shuffle_teams"   => Self::DashboardShuffle,
             "start_match"     => Self::DashboardStart,
             "end_match"       => Self::DashboardEnd,
-            
+
             // Permission confirmation
             "confirm_permissions" => Self::ConfirmPermissions,
-            
+
             // Rank role creation
             "create_rank_roles_yes" => Self::CreateRankRolesYes,
             "create_rank_roles_no"  => Self::CreateRankRolesNo,
-            
+
             // Unknown
             _ => Self::Unknown(custom_id.to_string()),
         }
     }
-    
+
     /// Check if this button type requires setup handling
     pub fn is_setup_button(&self) -> bool {
         matches!(
@@ -127,7 +127,7 @@ impl ButtonType {
             Self::InitQuota
         )
     }
-    
+
     /// Check if this button type is a dashboard action
     pub fn is_dashboard_action(&self) -> bool {
         matches!(
@@ -138,7 +138,7 @@ impl ButtonType {
             Self::DashboardEnd
         )
     }
-    
+
     /// Get the setup step name (for setup/init buttons)
     pub fn setup_step(&self) -> Option<&str> {
         match self {
@@ -169,7 +169,7 @@ impl Group {
     /// Creates buttons for the dashboard
     pub async fn create_dashboard_buttons(&mut self) -> Result<Vec<CAR>> {
         let quota = self.quota as usize;
-        
+
         // Check if any session is hot AND still has enough players
         let is_hot  = self.sessions.iter().any(|s| s.is_hot());
         let is_live = self.sessions.iter().any(|s| s.is_active());
@@ -184,7 +184,7 @@ impl Group {
 
         Ok(vec![CAR::Buttons(Self::gen_buttons(buttons))])
     }
-    
+
     fn gen_buttons(button_configs: Vec<(&'static str, &'static str, BS, bool)>) -> Vec<CB> {
         button_configs.into_iter().map(|(action, label, style, enabled)| {
             CB::new(action).label(label).style(style).disabled(!enabled)
@@ -212,41 +212,14 @@ impl Group {
     async fn build_dashboard_content(&mut self) -> Result<(CE, Vec<CAR>)> {
         let mut embed       = CE::new().title("PUG Dashboard");
         let mut description = String::new();
-        
+
         let quota     = self.quota as usize;
         let inactives = self.get_inactives();
         let actives   = self.get_actives();
-        
-        if let Some(current_session) = inactives.first() {
-            let queue_players = current_session.pool.len();
-            
-            description.push_str(&format!("**Current queue ({}/{}):**\n",queue_players, quota));
-            
-            if !current_session.pool.is_empty() {
-                match queue_players.cmp(&quota) {
-                    Less => {
-                        for (i, player) in current_session.pool.iter().enumerate() {
-                            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
-                            description.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
-                        }
-                    }
-                    Equal => {
-                        description.push_str("**Match ready!**\n");
-                    }
-                    Greater => {
-                        description.push_str("**Match ready!**\n");
 
-                        let extra_players = &current_session.pool[quota..];
-                        if !extra_players.is_empty() {
-                            description.push_str(&format!("\n**Queued for next ({}):**\n",extra_players.len()));
-                            list_players!(description, extra_players);
-                        }
-                    }
-                }
-            }
-        } else if !actives.is_empty() {
-            // Show hot game status with players not in VC yet and countdown
-            description.push_str("**Match ready!**\n");
+        // Show active games first (Hot/Push/Live/Pull)
+        if !actives.is_empty() {
+            description.push_str("**Current Match:**\n");
             for session in &actives {
                 // Display countdown timer
                 if let Some(ready_at) = session.ready_at {
@@ -256,15 +229,15 @@ impl Group {
                         description.push_str(&format!("⏰ Join deadline: <t:{}:R>\n\n", deadline_timestamp));
                     }
                 }
-                
+
                 let players_in_vc = session.pool.iter().take(quota).filter(|p| p.in_queue_vc).count();
                 let players_not_in_vc: Vec<_> = session.pool.iter()
                     .take(quota)
                     .filter(|p| !p.in_queue_vc)
                     .collect();
-                
+
                 description.push_str(&format!("• {}/{} players in vc\n", players_in_vc, quota));
-                
+
                 if !players_not_in_vc.is_empty() {
                     description.push_str("**Missing players:**\n");
                     for player in players_not_in_vc {
@@ -274,13 +247,57 @@ impl Group {
                 }
             }
             description.push('\n');
-        } else if actives.is_empty() {
-            // Only show "no active games" if there are no games at all
-            description.push_str("**Queue status**\n*No active games. Join the queue to get started!*\n\n");
+
+            // Show next queue if there's an idle session with overflow players
+            if let Some(next_session) = inactives.first() {
+                if !next_session.pool.is_empty() {
+                    description.push_str(&format!("**Next Queue ({}/{}):**\n", next_session.pool.len(), quota));
+                    for (i, player) in next_session.pool.iter().enumerate() {
+                        let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
+                        description.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
+                    }
+                    description.push('\n');
+                }
+            }
+        } else {
+            // No active games - show queue status or hot game info
+            if let Some(current_session) = inactives.first() {
+                // If session is Hot, don't show queue list (teams will be shown below)
+                // Just show overflow players waiting for next match
+                if current_session.is_hot() {
+                    let queue_players = current_session.pool.len();
+                    // Show overflow players (beyond quota) as "next queue"
+                    if queue_players > quota {
+                        let overflow_count = queue_players - quota;
+                        description.push_str(&format!("**Next Queue ({}/{}):**\n", overflow_count, quota));
+                        for (i, player) in current_session.pool.iter().skip(quota).enumerate() {
+                            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
+                            description.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
+                        }
+                        description.push('\n');
+                    }
+                } else {
+                    // Session is Idle - show normal queue
+                    let queue_players = current_session.pool.len();
+                    description.push_str(&format!("**Queue ({}/{}):**\n", queue_players, quota));
+
+                    if queue_players > 0 {
+                        for (i, player) in current_session.pool.iter().enumerate() {
+                            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
+                            description.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
+                        }
+                    } else {
+                        description.push_str("*No players in queue. Join to get started!*\n");
+                    }
+                    description.push('\n');
+                }
+            } else {
+                description.push_str("**Queue status**\n*No active games. Join the queue to get started!*\n\n");
+            }
         }
 
         embed = embed.description(description);
-        
+
         // Add team fields for idle games with enough players
         if let Some(current_session) = inactives.first() {
             let queue_players = current_session.pool.len();
@@ -361,26 +378,76 @@ impl Group {
         let user_id = cc.component.user.id;
         let quota = self.quota as usize;
 
+        // Get session index before mutable borrow
+        let session_idx = self.sessions.iter()
+            .position(|s| s.pool.iter().any(|p| p.player.discord_id == user_id));
+
         // Check if player is already in a game
-        if let Ok(session) = self.get_user_session(user_id).await {
-            // Player is in queue, remove them
+        let should_regenerate_teams = if let Ok(session) = self.get_user_session(user_id).await {
+            // Check if player is physically in the queue VC
+            let player_in_vc = if let Some(player) = session.pool.iter().find(|p| p.player.discord_id == user_id) {
+                player.in_queue_vc
+            } else {
+                false
+            };
+
+            // If player is in VC, don't actually remove them - just acknowledge
+            if player_in_vc {
+                info!("Player {} clicked leave but is in queue VC - ignoring", user_id);
+                cc.acknowledge().await;
+                return Ok(());
+            }
+
+            // Player is in queue but not in VC, remove them
+            let was_hot = session.is_hot();
             session.remove_player(user_id);
             let pool_len = session.pool.len();
-            info!("Removed player from game. Queue now has {} players", pool_len);
-            
-            // If session was hot but now below quota, transition back to idle
-            if session.is_hot() && pool_len < quota {
-                info!("Session dropped below quota, transitioning from Hot to Idle");
-                session.idle();
+            if let Some(idx) = session_idx {
+                info!("[Session {}] Removed player from game. Queue now has {} players", idx, pool_len);
+            } else {
+                info!("Removed player from game. Queue now has {} players", pool_len);
+            }
+
+            // If session was hot, check what to do next
+            if was_hot {
+                if pool_len < quota {
+                    // Dropped below quota, transition back to idle
+                    if let Some(idx) = session_idx {
+                        info!("[Session {}] Dropped below quota, transitioning from Hot to Idle", idx);
+                    } else {
+                        info!("Session dropped below quota, transitioning from Hot to Idle");
+                    }
+                    session.idle();
+                    false
+                } else {
+                    // Still at or above quota, need to regenerate teams
+                    if let Some(idx) = session_idx {
+                        info!("[Session {}] Still meets quota after player left, will regenerate teams", idx);
+                    } else {
+                        info!("Session still meets quota after player left, will regenerate teams");
+                    }
+                    true
+                }
+            } else {
+                false
             }
         } else {
+            false
+        };
+
+        // Regenerate teams if needed (outside the session borrow scope)
+        if should_regenerate_teams {
+            self.generate_teams(cc.ctx).await;
+        }
+
+        if !should_regenerate_teams && self.get_user_session(user_id).await.is_err() {
             // Player is not in queue, add them
-            
+
             // Check if we have an idle or hot session to join
-            let has_joinable_session = self.sessions.iter().any(|s| 
+            let has_joinable_session = self.sessions.iter().any(|s|
                 s.status == SessionStatus::Idle || s.status == SessionStatus::Hot
             );
-            
+
             if !has_joinable_session {
                 cc.reply("❌ Cannot join - match is in progress. Please wait.").await?;
                 return Ok(());
@@ -419,7 +486,7 @@ impl Group {
         let quota = self.quota as usize;
 
         // Find the game to shuffle - can be Idle (if quota met) or Hot
-        if let Some(game) = self.sessions.iter_mut().find(|s| 
+        if let Some(game) = self.sessions.iter_mut().find(|s|
             (s.status == SessionStatus::Idle || s.status == SessionStatus::Hot) && s.pool.len() >= quota
         )
         {
@@ -427,13 +494,13 @@ impl Group {
             use rand::seq::SliceRandom;
             let mut players_to_shuffle: Vec<_> = game.pool.iter().take(quota).cloned().collect();
             players_to_shuffle.shuffle(&mut rand::rng());
-            
+
             // Replace first quota players with shuffled, keep overflow players
             let overflow: Vec<_> = game.pool.iter().skip(quota).cloned().collect();
             game.pool.clear();
             game.pool.extend(players_to_shuffle);
             game.pool.extend(overflow);
-            
+
             is_shuffled = true;
             info!("Teams shuffled for game with {} players (quota: {})", game.pool.len(), quota);
         }
@@ -453,7 +520,7 @@ impl Group {
         // Check if user has Runner role
         use crate::handlers::player::check_component_role;
         use crate::models::Role;
-        
+
         match check_component_role(cc, &Role::Runner).await {
             Ok(true) => {
                 // User has Runner role, proceed
@@ -468,10 +535,10 @@ impl Group {
                 return Ok(());
             }
         }
-        
+
         // Check if there's a hot game to start
         let has_hot_game = self.sessions.iter().any(|s| s.is_hot());
-        
+
         if !has_hot_game {
             cc.reply("❌ No hot game ready to start.").await?;
             return Ok(());
@@ -496,7 +563,7 @@ impl Group {
     async fn dash_end(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
         // Check if there's an active game to end
         let has_active_game = self.sessions.iter().any(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live);
-        
+
         if !has_active_game {
             cc.reply("❌ No active match to end.").await?;
             return Ok(());

@@ -52,7 +52,7 @@ struct CommandRegistry {
 impl CommandRegistry {
     fn new() -> Self {
         let mut commands = HashMap::new();
-        
+
         // Core commands
         commands.insert("status", Command {
             name: "status",
@@ -61,7 +61,7 @@ impl CommandRegistry {
             examples: vec!["status"],
             category: CommandCategory::Core,
         });
-        
+
         commands.insert("guilds", Command {
             name: "guilds",
             description: "List all connected guilds and their configurations",
@@ -69,7 +69,7 @@ impl CommandRegistry {
             examples: vec!["guilds"],
             category: CommandCategory::Core,
         });
-        
+
         commands.insert("games", Command {
             name: "games",
             description: "List all active games and players",
@@ -77,7 +77,7 @@ impl CommandRegistry {
             examples: vec!["games"],
             category: CommandCategory::Core,
         });
-        
+
         // Config commands
         commands.insert("config", Command {
             name: "config",
@@ -93,7 +93,7 @@ impl CommandRegistry {
             ],
             category: CommandCategory::Config,
         });
-        
+
         commands.insert("create", Command {
             name: "create",
             description: "Create a new group configuration",
@@ -103,7 +103,7 @@ impl CommandRegistry {
             ],
             category: CommandCategory::Config,
         });
-        
+
         commands.insert("query", Command {
             name: "query",
             description: "Execute a query on the database",
@@ -114,7 +114,7 @@ impl CommandRegistry {
             ],
             category: CommandCategory::Config,
         });
-        
+
         // Testing commands
         commands.insert("forcegen", Command {
             name: "forcegen",
@@ -126,7 +126,7 @@ impl CommandRegistry {
             ],
             category: CommandCategory::Testing,
         });
-        
+
         commands.insert("fakeplayer", Command {
             name: "fakeplayer",
             description: "Add fake players to a queue for testing",
@@ -140,7 +140,7 @@ impl CommandRegistry {
             ],
             category: CommandCategory::Testing,
         });
-        
+
         commands.insert("testnotify", Command {
             name: "testnotify",
             description: "Test the notify method (sends notification to queue chat)",
@@ -148,7 +148,7 @@ impl CommandRegistry {
             examples: vec!["testnotify TS1 0"],
             category: CommandCategory::Testing,
         });
-        
+
         commands.insert("showqueue", Command {
             name: "showqueue",
             description: "Display queue with player details and timestamps",
@@ -156,7 +156,7 @@ impl CommandRegistry {
             examples: vec!["showqueue TS1 0"],
             category: CommandCategory::Testing,
         });
-        
+
         commands.insert("showteams", Command {
             name: "showteams",
             description: "Display team compositions with stats (if generated)",
@@ -164,7 +164,7 @@ impl CommandRegistry {
             examples: vec!["showteams TS1 0"],
             category: CommandCategory::Testing,
         });
-        
+
         commands.insert("clearqueue", Command {
             name: "clearqueue",
             description: "Remove all players from the queue",
@@ -172,7 +172,7 @@ impl CommandRegistry {
             examples: vec!["clearqueue TS1 0"],
             category: CommandCategory::Testing,
         });
-        
+
         commands.insert("removeplayer", Command {
             name: "removeplayer",
             description: "Remove a player from the queue by index (0-based)",
@@ -180,7 +180,7 @@ impl CommandRegistry {
             examples: vec!["removeplayer TS1 0 2  # Remove player at index 2"],
             category: CommandCategory::Testing,
         });
-        
+
         commands.insert("forcehot", Command {
             name: "forcehot",
             description: "Force session to Hot status (bypass quota check)",
@@ -188,7 +188,7 @@ impl CommandRegistry {
             examples: vec!["forcehot TS1 0"],
             category: CommandCategory::Testing,
         });
-        
+
         commands.insert("forcepush", Command {
             name: "forcepush",
             description: "Force push players to team channels and set Live",
@@ -196,7 +196,7 @@ impl CommandRegistry {
             examples: vec!["forcepush TS1 0"],
             category: CommandCategory::Testing,
         });
-        
+
         commands.insert("forcepull", Command {
             name: "forcepull",
             description: "Force pull players back to queue and reset to Idle",
@@ -204,7 +204,7 @@ impl CommandRegistry {
             examples: vec!["forcepull TS1 0"],
             category: CommandCategory::Testing,
         });
-        
+
         commands.insert("simulate", Command {
             name: "simulate",
             description: "Simulate complete game cycle (fill → hot → push → live → pull → idle)",
@@ -212,7 +212,7 @@ impl CommandRegistry {
             examples: vec!["simulate TS1 0"],
             category: CommandCategory::Testing,
         });
-        
+
         // System commands
         commands.insert("help", Command {
             name: "help",
@@ -221,7 +221,7 @@ impl CommandRegistry {
             examples: vec!["help", "help -v  # Show verbose output with usage and examples"],
             category: CommandCategory::System,
         });
-        
+
         commands.insert("quit", Command {
             name: "quit",
             description: "Shutdown the console (bot continues running)",
@@ -229,7 +229,7 @@ impl CommandRegistry {
             examples: vec!["quit"],
             category: CommandCategory::System,
         });
-        
+
         commands.insert("exit", Command {
             name: "exit",
             description: "Shutdown the console (bot continues running)",
@@ -237,36 +237,36 @@ impl CommandRegistry {
             examples: vec!["exit"],
             category: CommandCategory::System,
         });
-        
+
         Self { commands }
     }
-    
+
     fn get_command_names(&self) -> Vec<String> {
         self.commands.keys().map(|&s| s.to_string()).collect()
     }
-    
+
     fn print_help(&self, verbose: bool) {
         if verbose {
             // Verbose output with full details
             println!("=== Console Command Reference ===");
             println!();
-            
+
             let categories = vec![
                 CommandCategory::Core,
                 CommandCategory::Config,
                 CommandCategory::Testing,
                 CommandCategory::System,
             ];
-            
+
             for category in categories {
                 println!("## {}", category.name());
                 println!();
-                
+
                 let mut category_commands: Vec<_> = self.commands.values()
                     .filter(|cmd| cmd.category == category)
                     .collect();
                 category_commands.sort_by_key(|cmd| cmd.name);
-                
+
                 for cmd in category_commands {
                     println!("### {}", cmd.name);
                     println!("    {}", cmd.description);
@@ -285,34 +285,34 @@ impl CommandRegistry {
                     println!();
                 }
             }
-            
+
             println!("Available config keys: quota, timeout, dashboard, red, blue");
         } else {
             // Compact output - just command names and descriptions
             println!("=== Available Commands ===");
             println!();
-            
+
             let categories = vec![
                 CommandCategory::Core,
                 CommandCategory::Config,
                 CommandCategory::Testing,
                 CommandCategory::System,
             ];
-            
+
             for category in categories {
                 println!("{}:", category.name());
-                
+
                 let mut category_commands: Vec<_> = self.commands.values()
                     .filter(|cmd| cmd.category == category)
                     .collect();
                 category_commands.sort_by_key(|cmd| cmd.name);
-                
+
                 for cmd in category_commands {
                     println!("  {} - {}", cmd.name, cmd.description);
                 }
                 println!();
             }
-            
+
             println!("Use 'help -v' for detailed usage and examples");
         }
     }
@@ -429,7 +429,7 @@ impl ConsoleHandler {
         let command_names: Vec<_> = self.registry.get_command_names();
         info!("Console commands available: {}", command_names.join(", "));
         info!("Use Tab for autocompletion, Up/Down arrows for command history");
-        
+
         let config = Config::builder()
             .completion_type(CompletionType::List)
             .auto_add_history(true)
@@ -443,10 +443,10 @@ impl ConsoleHandler {
 
         let mut rl = Editor::with_config(config).unwrap();
         rl.set_helper(Some(helper));
-        
+
         // Load history if it exists
         let _ = rl.load_history(".pf_pug_bot_history");
-        
+
         loop {
             let readline = rl.readline("pf_pug_bot> ");
             match readline {
@@ -455,7 +455,7 @@ impl ConsoleHandler {
                     if input.is_empty() {
                         continue;
                     }
-                    
+
                     match self.handle_command(input).await {
                         Ok(should_quit) => {
                             if should_quit {
@@ -481,7 +481,7 @@ impl ConsoleHandler {
                 }
             }
         }
-        
+
         // Save history
         let _ = rl.save_history(".pf_pug_bot_history");
     }
@@ -757,7 +757,7 @@ impl ConsoleHandler {
         println!("Total Games: {}", total_games);
         println!("Active Games: {}", active_games);
         println!("Total Players in Queue: {}", total_players);
-        
+
         if let Some(ctx) = &self.ctx {
             println!("Bot User: {}", ctx.cache.current_user().name);
         } else {
@@ -769,7 +769,7 @@ impl ConsoleHandler {
 
     async fn cmd_list_guilds(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("=== Connected Guilds ===");
-        
+
         // List guilds from database (more reliable and Send-safe)
         let group_repo = GroupRepository::new(self.database.clone());
         match sqlx::query("SELECT DISTINCT guild_id FROM groups").fetch_all(&self.database).await {
@@ -777,7 +777,7 @@ impl ConsoleHandler {
                 for row in rows {
                     if let Ok(guild_id) = row.try_get::<i64, _>("guild_id") {
                         println!("Guild ID: {}", guild_id);
-                        
+
                         match group_repo.get_groups_for_guild(guild_id as u64).await {
                             Ok(groups) => {
                                 println!("  ✅ {} group(s) configured", groups.len());
@@ -803,15 +803,15 @@ impl ConsoleHandler {
     async fn cmd_list_games(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let manager = self.manager.lock().await;
         println!("=== Active Games ===");
-        
+
         let mut game_count = 0;
         for server in &manager.servers {
             for group in &server.groups {
                 for game in group.sessions.iter() {
                     game_count += 1;
-                    println!("Game {}: Guild {} - Group ID {} - {} players - Status: {:?}", 
+                    println!("Game {}: Guild {} - Group ID {} - {} players - Status: {:?}",
                         game_count, server.guild_id.get(), group.group_id, game.pool.len(), game.status);
-                    
+
                     if !game.pool.is_empty() {
                         print!("  Players: ");
                         for (j, player) in game.pool.iter().enumerate() {
@@ -823,7 +823,7 @@ impl ConsoleHandler {
                 }
             }
         }
-        
+
         if game_count == 0 {
             println!("No active games found.");
         }
@@ -860,7 +860,7 @@ impl ConsoleHandler {
 
     async fn cmd_print_config(&self, guild_identifier: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
-        
+
         let group_repo = GroupRepository::new(self.database.clone());
         match group_repo.get_groups_for_guild(guild_id).await {
             Ok(groups) => {
@@ -899,25 +899,25 @@ impl ConsoleHandler {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
         let group_id: u8 = group_id_str.parse()
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
-        
+
         let group_repo = GroupRepository::new(self.database.clone());
         let groups = group_repo.get_groups_for_guild(guild_id).await?;
-        
+
         let group = groups.iter().find(|g| g.group_id == group_id)
             .ok_or(format!("Group {} not found for guild {}", group_id, guild_id))?;
-        
+
         let queue_id = group.channels.queue_chat.get();
 
         match key.to_lowercase().as_str() {
             "quota" | "game_quota" => {
                 let quota: u8 = value.parse()
                     .map_err(|_| format!("Invalid quota value: {}", value))?;
-                
+
                 if quota == 0 || quota > 20 {
                     println!("❌ Quota must be between 1 and 20");
                     return Ok(());
                 }
-                
+
                 // Update database
                 match group_repo.update_group(
                     queue_id,
@@ -930,13 +930,13 @@ impl ConsoleHandler {
                 ).await {
                     Ok(_) => {
                         println!("✅ Updated quota to {} for guild {} group {}", quota, guild_id, group_id);
-                        
+
                         // Update in-memory manager and dashboard
                         if let Some(ctx) = &self.ctx {
                             let mut manager = self.manager.lock().await;
                             if let Ok(group) = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id) {
                                 group.quota = quota;
-                                
+
                                 // Update dashboard to reflect new quota
                                 group.dash_update(ctx).await;
                             }
@@ -950,14 +950,14 @@ impl ConsoleHandler {
             "timeout" => {
                 let timeout: u16 = value.parse()
                     .map_err(|_| format!("Invalid timeout value: {}", value))?;
-                
+
                 // Update in-memory manager
                 if let Some(ctx) = &self.ctx {
                     let mut manager = self.manager.lock().await;
                     if let Ok(group) = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id) {
                         group.timeout = timeout;
                         println!("✅ Updated timeout to {} minutes for guild {} group {}", timeout, guild_id, group_id);
-                        
+
                         // Update dashboard
                         group.dash_update(ctx).await;
                     }
@@ -968,7 +968,7 @@ impl ConsoleHandler {
             "dashboard" => {
                 let dashboard_id: u64 = value.parse()
                     .map_err(|_| format!("Invalid dashboard channel ID: {}", value))?;
-                
+
                 match group_repo.update_group(
                     queue_id,
                     guild_id,
@@ -985,7 +985,7 @@ impl ConsoleHandler {
             "red" | "red_team" => {
                 let red_id: u64 = value.parse()
                     .map_err(|_| format!("Invalid red team channel ID: {}", value))?;
-                
+
                 match group_repo.update_group(
                     queue_id,
                     guild_id,
@@ -1002,7 +1002,7 @@ impl ConsoleHandler {
             "blue" | "blu" | "blue_team" => {
                 let blue_id: u64 = value.parse()
                     .map_err(|_| format!("Invalid blue team channel ID: {}", value))?;
-                
+
                 match group_repo.update_group(
                     queue_id,
                     guild_id,
@@ -1045,7 +1045,7 @@ impl ConsoleHandler {
         }
 
         let group_repo = GroupRepository::new(self.database.clone());
-        
+
         // Check if group already exists
         match group_repo.get_groups_for_guild(guild_id).await {
             Ok(groups) => {
@@ -1116,17 +1116,17 @@ impl ConsoleHandler {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
         let group_id: u8 = group_id_str.parse()
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
-        
+
         if let Some(ctx) = &self.ctx {
             let mut manager = self.manager.lock().await;
             let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-            
+
             // Check if there's a session with enough players
-            if let Ok(session) = group.get_queue().await {                
+            if let Ok(session) = group.get_queue().await {
                 println!("🔄 Forcing team generation for guild {} group {} with {} players...", guild_id, group_id, session.pool.len());
                 group.generate_teams(ctx).await;
                 println!("✅ Teams generated successfully!");
-                
+
                 // Show the teams
                 if let Ok(session) = group.get_queue().await {
                     println!("\n=== Generated Teams ===");
@@ -1136,12 +1136,12 @@ impl ConsoleHandler {
                     let blu_players: Vec<_> = session.pool.iter()
                         .filter(|p| p.team == Some(Team::Blu))
                         .collect();
-                    
+
                     println!("Red Team ({} players):", red_players.len());
                     for p in red_players {
                         println!("  - {}", p.player.discord_id);
                     }
-                    
+
                     println!("\nBlue Team ({} players):", blu_players.len());
                     for p in blu_players {
                         println!("  - {}", p.player.discord_id);
@@ -1153,7 +1153,7 @@ impl ConsoleHandler {
         } else {
             println!("❌ Context not available. Cannot generate teams without Discord context.");
         }
-        
+
         Ok(())
     }
 
@@ -1163,19 +1163,19 @@ impl ConsoleHandler {
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
         let count: usize = count_str.parse()
             .map_err(|_| format!("Invalid player count: {}", count_str))?;
-        
+
         if count == 0 || count > 20 {
             println!("❌ Player count must be between 1 and 20");
             return Ok(());
         }
-        
+
         let mut manager = self.manager.lock().await;
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-        
+
         // Get the idle session
         if let Ok(session) = group.get_queue().await {
             println!("🔄 Adding {} fake player(s) to guild {} group {}...", count, guild_id, group_id);
-            
+
             // Generate fake player IDs starting from a high number to avoid conflicts
             let base_id = 9000000000000000000_u64;
             for i in 0..count {
@@ -1183,9 +1183,9 @@ impl ConsoleHandler {
                 // Use Novice rank as default for test players
                 session.add_player(fake_id, pf_pug_bot::Rank::Novice);
             }
-            
+
             println!("✅ Added {} fake player(s). Total players in queue: {}", count, session.pool.len());
-            
+
             // Update dashboard if context is available
             if let Some(ctx) = &self.ctx {
                 group.dash_update(&ctx).await;
@@ -1193,7 +1193,7 @@ impl ConsoleHandler {
         } else {
             println!("❌ Failed to get queue for guild {} group {}", guild_id, group_id);
         }
-        
+
         Ok(())
     }
 
@@ -1201,15 +1201,15 @@ impl ConsoleHandler {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
         let group_id: u8 = group_id_str.parse()
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
-        
+
         if let Some(ctx) = &self.ctx {
             let manager = self.manager.lock().await;
             let server = manager.servers.iter().find(|s| s.guild_id.get() == guild_id)
                 .ok_or(format!("Server not found for guild ID: {}", guild_id))?;
-            
+
             let group = server.groups.iter().find(|g| g.group_id == group_id)
                 .ok_or(format!("Group {} not found for guild {}", group_id, guild_id))?;
-            
+
             println!("🔄 Testing notify method for guild {} group {}...", guild_id, group_id);
             group.notify(ctx).await;
             println!("✅ Notify method called successfully!");
@@ -1217,7 +1217,7 @@ impl ConsoleHandler {
         } else {
             println!("❌ Context not available. Cannot test notify without Discord context.");
         }
-        
+
         Ok(())
     }
 
@@ -1225,16 +1225,16 @@ impl ConsoleHandler {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
         let group_id: u8 = group_id_str.parse()
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
-        
+
         let mut manager = self.manager.lock().await;
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
         let quota = group.quota;
-        
+
         if let Ok(session) = group.get_queue().await {
             println!("\n=== Queue for Guild {} Group {} ===", guild_id, group_id);
             println!("Status: {:?}", session.status);
             println!("Players in queue: {}/{}", session.pool.len(), quota);
-            
+
             if session.pool.is_empty() {
                 println!("  (No players in queue)");
             } else {
@@ -1251,7 +1251,7 @@ impl ConsoleHandler {
         } else {
             println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
         }
-        
+
         Ok(())
     }
 
@@ -1259,10 +1259,10 @@ impl ConsoleHandler {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
         let group_id: u8 = group_id_str.parse()
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
-        
+
         let mut manager = self.manager.lock().await;
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-        
+
         if let Ok(session) = group.get_queue().await {
             let red_players: Vec<_> = session.pool.iter()
                 .filter(|p| p.team == Some(Team::Red))
@@ -1270,19 +1270,19 @@ impl ConsoleHandler {
             let blu_players: Vec<_> = session.pool.iter()
                 .filter(|p| p.team == Some(Team::Blu))
                 .collect();
-            
+
             if red_players.is_empty() && blu_players.is_empty() {
                 println!("❌ No teams have been generated yet.");
                 println!("   Use 'forcegen' to generate teams.");
             } else {
                 println!("\n=== Teams for Guild {} Group {} ===", guild_id, group_id);
-                
+
                 println!("\n🔴 Red Team ({} players):", red_players.len());
                 for p in red_players {
                     let elo = p.player.rank.map(|r| r.elo()).unwrap_or(30);
                     println!("  - {} (ELO: {})", p.player.discord_id, elo);
                 }
-                
+
                 println!("\n🔵 Blue Team ({} players):", blu_players.len());
                 for p in blu_players {
                     let elo = p.player.rank.map(|r| r.elo()).unwrap_or(30);
@@ -1292,7 +1292,7 @@ impl ConsoleHandler {
         } else {
             println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
         }
-        
+
         Ok(())
     }
 
@@ -1300,15 +1300,15 @@ impl ConsoleHandler {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
         let group_id: u8 = group_id_str.parse()
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
-        
+
         let mut manager = self.manager.lock().await;
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-        
+
         if let Ok(session) = group.get_queue().await {
             let player_count = session.pool.len();
             session.pool.clear();
             println!("✅ Cleared {} player(s) from the queue", player_count);
-            
+
             // Update dashboard if context is available
             if let Some(ctx) = &self.ctx {
                 group.dash_update(&ctx).await;
@@ -1316,7 +1316,7 @@ impl ConsoleHandler {
         } else {
             println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
         }
-        
+
         Ok(())
     }
 
@@ -1326,17 +1326,17 @@ impl ConsoleHandler {
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
         let index: usize = index_str.parse()
             .map_err(|_| format!("Invalid index: {}", index_str))?;
-        
+
         let mut manager = self.manager.lock().await;
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-        
+
         if let Ok(session) = group.get_queue().await {
             if index >= session.pool.len() {
                 println!("❌ Index {} is out of bounds. Queue has {} player(s)", index, session.pool.len());
             } else {
                 let removed_player = session.pool.remove(index);
                 println!("✅ Removed player {} from position {}", removed_player.player.discord_id, index);
-                
+
                 // Update dashboard if context is available
                 if let Some(ctx) = &self.ctx {
                     group.dash_update(&ctx).await;
@@ -1345,7 +1345,7 @@ impl ConsoleHandler {
         } else {
             println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
         }
-        
+
         Ok(())
     }
 
@@ -1353,11 +1353,11 @@ impl ConsoleHandler {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
         let group_id: u8 = group_id_str.parse()
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
-        
+
         if let Some(ctx) = &self.ctx {
             let mut manager = self.manager.lock().await;
             let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-            
+
             if let Ok(_session) = group.get_queue().await {
                 println!("🔄 Forcing session to Hot status...");
                 group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None).await?;
@@ -1369,7 +1369,7 @@ impl ConsoleHandler {
         } else {
             println!("❌ Context not available. Cannot force hot without Discord context.");
         }
-        
+
         Ok(())
     }
 
@@ -1377,11 +1377,11 @@ impl ConsoleHandler {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
         let group_id: u8 = group_id_str.parse()
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
-        
+
         if let Some(ctx) = &self.ctx {
             let mut manager = self.manager.lock().await;
             let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-            
+
             println!("🔄 Forcing push to team channels...");
             match group.push(ctx).await {
                 Ok(_) => {
@@ -1395,7 +1395,7 @@ impl ConsoleHandler {
         } else {
             println!("❌ Context not available. Cannot force push without Discord context.");
         }
-        
+
         Ok(())
     }
 
@@ -1403,11 +1403,11 @@ impl ConsoleHandler {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
         let group_id: u8 = group_id_str.parse()
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
-        
+
         if let Some(ctx) = &self.ctx {
             let mut manager = self.manager.lock().await;
             let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-            
+
             println!("🔄 Forcing pull back to queue...");
             match group.pull(ctx).await {
                 Ok(_) => {
@@ -1421,7 +1421,7 @@ impl ConsoleHandler {
         } else {
             println!("❌ Context not available. Cannot force pull without Discord context.");
         }
-        
+
         Ok(())
     }
 
@@ -1429,26 +1429,26 @@ impl ConsoleHandler {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
         let group_id: u8 = group_id_str.parse()
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
-        
+
         if let Some(ctx) = &self.ctx {
             println!("\n🎮 Starting complete game cycle simulation...\n");
-            
+
             // Step 1: Add fake players to fill quota
             {
                 let mut manager = self.manager.lock().await;
                 let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
                 let quota = group.quota as usize;
-                
+
                 if group.sessions.is_empty() {
                     group.create_session();
                 }
-                
+
                 if let Ok(session) = group.get_queue().await {
                     let current_count = session.pool.len();
                     if current_count < quota {
                         let needed = quota - current_count;
                         println!("1️⃣  Adding {} fake player(s) to reach quota ({})...", needed, quota);
-                        
+
                         let base_id = 9000000000000000000_u64;
                         for i in 0..needed {
                             let fake_id = UserId::new(base_id + i as u64);
@@ -1461,7 +1461,7 @@ impl ConsoleHandler {
                     }
                 }
             }
-            
+
             // Step 2: Force Hot
             println!("2️⃣  Setting session to Hot...");
             {
@@ -1470,9 +1470,9 @@ impl ConsoleHandler {
                 group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None).await?;
                 println!("   ✅ Session is Hot, teams generated\n");
             }
-            
+
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            
+
             // Step 3: Push to team channels
             println!("3️⃣  Pushing players to team channels...");
             {
@@ -1483,9 +1483,9 @@ impl ConsoleHandler {
                     Err(e) => println!("   ⚠️  Push failed: {}\n", e),
                 }
             }
-            
+
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            
+
             // Step 4: Pull back to queue
             println!("4️⃣  Pulling players back to queue...");
             {
@@ -1496,12 +1496,12 @@ impl ConsoleHandler {
                     Err(e) => println!("   ⚠️  Pull failed: {}\n", e),
                 }
             }
-            
+
             println!("🏁 Complete game cycle simulation finished!\n");
         } else {
             println!("❌ Context not available. Cannot simulate cycle without Discord context.");
         }
-        
+
         Ok(())
     }
 

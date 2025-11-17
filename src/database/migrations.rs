@@ -31,7 +31,7 @@ impl DatabaseMigrations {
         .bind(table_name)
         .fetch_all(&self.pool)
         .await?;
-        
+
         Ok(!result.is_empty())
     }
 
@@ -43,7 +43,7 @@ impl DatabaseMigrations {
             .into_iter()
             .filter_map(|row| row.try_get::<String, _>("name").ok())
             .collect();
-        
+
         Ok(existing_cols.contains(&column_name.to_string()))
     }
 
@@ -90,10 +90,10 @@ impl DatabaseMigrations {
             let has_unique_constraint = self.check_unique_constraint("users", "discord_id").await?;
             let has_discord_id        = self.column_exists(          "users", "discord_id").await?;
             let has_steam_id          = self.column_exists(          "users", "steam_id").await?;
-            
+
             if !has_discord_id || !has_steam_id || !has_unique_constraint {
                 info!("Users table schema is incomplete, recreating with proper schema...");
-                
+
                 // Backup existing data if any
                 let backup_data = if has_discord_id {
                     sqlx::query("SELECT discord_id, steam_id FROM users")
@@ -103,7 +103,7 @@ impl DatabaseMigrations {
                 } else {
                     Vec::new()
                 };
-                
+
                 // Drop and recreate table
                 sqlx::query("DROP TABLE users").execute(&self.pool).await?;
                 sqlx::query(
@@ -115,7 +115,7 @@ impl DatabaseMigrations {
                 )
                 .execute(&self.pool)
                 .await?;
-                
+
                 // Restore data if we had any
                 for row in backup_data {
                     let discord_id: i64 = row.get("discord_id");
@@ -136,7 +136,7 @@ impl DatabaseMigrations {
     /// Create groups table with proper schema
     async fn create_groups_table(&self) -> Result<()> {
         use crate::DEFAULT_QUOTA;
-        
+
         if !self.table_exists("groups").await? {
             info!("Groups table not found, creating...");
             sqlx::query(&format!(
@@ -161,7 +161,7 @@ impl DatabaseMigrations {
         } else {
             // Check if essential columns exist
             let has_guild_id = self.column_exists("groups", "guild_id").await?;
-            
+
             if !has_guild_id {
                 info!("Groups table schema is incorrect, recreating...");
                 sqlx::query("DROP TABLE groups").execute(&self.pool).await?;
@@ -212,7 +212,7 @@ impl DatabaseMigrations {
         let index_info = sqlx::query(&format!("PRAGMA index_list({})", table))
             .fetch_all(&self.pool)
             .await?;
-        
+
         let has_unique = index_info.iter().any(|row| {
             if let Ok(unique) = row.try_get::<i64, _>("unique") {
                 unique == 1
@@ -220,7 +220,7 @@ impl DatabaseMigrations {
                 false
             }
         });
-        
+
         Ok(has_unique)
     }
 
@@ -249,8 +249,8 @@ impl DatabaseMigrations {
     /// Validate groups table schema
     async fn validate_groups_schema(&self) -> Result<()> {
         let required_columns = vec![
-            "id", "group_id", "timeout", "guild_id", "dashboard", 
-            "chat", "queue", "dashboard_msg", "red", "blu", 
+            "id", "group_id", "timeout", "guild_id", "dashboard",
+            "chat", "queue", "dashboard_msg", "red", "blu",
             "game", "game_increment", "quota"
         ];
         self.validate_table_columns("groups", &required_columns).await?;
@@ -265,12 +265,12 @@ impl DatabaseMigrations {
             .into_iter()
             .filter_map(|row| row.try_get::<String, _>("name").ok())
             .collect();
-        
+
         for required_col in required_columns {
             if !existing_cols.contains(&required_col.to_string()) {
                 return Err(anyhow::anyhow!(
-                    "Missing required column '{}' in table '{}'", 
-                    required_col, 
+                    "Missing required column '{}' in table '{}'",
+                    required_col,
                     table_name
                 ));
             }
@@ -281,7 +281,7 @@ impl DatabaseMigrations {
     /// Validate that essential group records exist
     pub async fn validate_group_entries(&self, required_guild_ids: &[u64]) -> Result<()> {
         info!("Validating group entries for {} guilds", required_guild_ids.len());
-        
+
         for guild_id in required_guild_ids {
             let count: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*)
@@ -291,17 +291,17 @@ impl DatabaseMigrations {
             .bind(*guild_id as i64)
             .fetch_one(&self.pool)
             .await?;
-            
+
             if count == 0 {
                 return Err(anyhow::anyhow!(
-                    "No group configuration found for guild_id: {}. Please create a group record.", 
+                    "No group configuration found for guild_id: {}. Please create a group record.",
                     guild_id
                 ));
             }
-            
+
             info!("Guild {} has {} group(s) configured", guild_id, count);
         }
-        
+
         Ok(())
     }
 
@@ -315,7 +315,7 @@ impl DatabaseMigrations {
         .bind(guild_id as i64)
         .fetch_one(&self.pool)
         .await?;
-        
+
         if count == 0 {
             info!("Creating default group for guild_id: {}", guild_id);
             sqlx::query("INSERT INTO groups (
@@ -332,10 +332,10 @@ impl DatabaseMigrations {
             .bind(guild_id as i64)
             .execute(&self.pool)
             .await?;
-            
+
             info!("Default group created for guild_id: {} (requires manual configuration)", guild_id);
         }
-        
+
         Ok(())
     }
 }

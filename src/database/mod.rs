@@ -25,7 +25,7 @@ impl Database {
     pub async fn new(database_url: &str) -> Result<Self> {
         // Get the database path
         let db_path_str = database_url.strip_prefix("sqlite:").unwrap_or(database_url);
-        
+
         // Check if the database file exists, create it if it doesn't
         if !db_path_str.is_empty() && !db_path_str.contains(":memory:") {
             let db_path = FileManager::normalize_path(db_path_str);
@@ -34,29 +34,29 @@ impl Database {
                 FileManager::create_file(&db_path)?;
             }
         }
-        
+
         // Initialize the database connection pool
         let pool = SqlitePool::connect(database_url).await?;
-        
+
         // Run migrations
         let migrations = DatabaseMigrations::new(&pool);
         migrations.run_all().await?;
-        
+
         // Initialize repositories
         let users  = UserRepository  ::new(pool.clone());
         let groups = GroupRepository ::new(pool.clone());
         let config = ConfigRepository::new(pool.clone());
-        
+
         Ok(Database { pool, users, groups, config })
     }
-    
+
     /// Get the underlying connection pool for advanced operations
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }
 
     // Backward compatibility methods - delegate to repositories
-    
+
     /// Creates a new user in the database
     pub async fn new_user(&self, discord_id: UserId) -> Result<Player> {
         self.users.create_or_update(discord_id, Some(0)).await

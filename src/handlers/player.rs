@@ -42,25 +42,25 @@ pub async fn get_or_assign_player_rank(
     if let Some(rank) = get_player_rank(ctx, db, guild_id, user_id).await {
         return Ok(rank);
     }
-    
+
     // Player has no rank - check if rank roles exist
     let missing_roles = validate_rank_roles(ctx, db, guild_id).await?;
-    
+
     // If ranks are missing, create them
     if !missing_roles.is_empty() {
         info!("Rank roles missing, creating them automatically for guild {}", guild_id);
         create_rank_roles(ctx, db, guild_id).await?;
     }
-    
+
     // Get the default rank role ID from config
     let default_role_ids = DEFAULT_RANK.role_ids(db, guild_id.get()).await;
-    
+
     if default_role_ids.is_empty() {
         return Err(anyhow!("Failed to find {} role after creation", DEFAULT_RANK.name()));
     }
-    
+
     let default_role_id = default_role_ids[0];
-    
+
     // Assign default rank role to the player
     match guild_id.member(&ctx.http, user_id).await {
         Ok(member) => {
@@ -89,7 +89,7 @@ pub async fn validate_rank_roles(
     guild_id: GuildId,
 ) -> Result<Vec<String>> {
     let mut missing_roles = Vec::new();
-    
+
     // Get all guild roles
     let guild_roles = match ctx.http.get_guild_roles(guild_id).await {
         Ok(roles) => roles,
@@ -98,9 +98,9 @@ pub async fn validate_rank_roles(
             return Err(anyhow!("Failed to fetch guild roles"));
         }
     };
-    
+
     let guild_role_ids: Vec<_> = guild_roles.iter().map(|r| r.id).collect();
-    
+
     // Check each rank to see if it has any roles configured or existing
     for rank in [
         Rank::Beginner,
@@ -114,19 +114,19 @@ pub async fn validate_rank_roles(
         Rank::Grandmaster,
     ] {
         let configured_ids = rank.role_ids(db, guild_id.get()).await;
-        
+
         // Check if this rank has any roles that exist in the guild by ID
         let has_role_by_id = configured_ids.iter().any(|id| guild_role_ids.contains(id));
-        
+
         if !has_role_by_id {
             // Fallback: search for role by name (case-insensitive)
             let rank_name = rank.name().to_lowercase();
             let found_role = guild_roles.iter().find(|r| r.name.to_lowercase() == rank_name);
-            
+
             if let Some(role) = found_role {
                 // Found a role with matching name! Auto-save it to config
                 info!("Found existing role '{}' (ID: {}) by name, saving to config", role.name, role.id);
-                
+
                 // Save this role ID to the database config
                 let role_id_str = role.id.get().to_string();
                 if let Err(e) = db.config.set_config(rank.config_key(), &role_id_str, guild_id.get()).await {
@@ -140,7 +140,7 @@ pub async fn validate_rank_roles(
             }
         }
     }
-    
+
     Ok(missing_roles)
 }
 
@@ -153,14 +153,14 @@ pub async fn create_rank_roles(
     use serenity::all::Colour;
     use serenity::builder::EditRole;
     use std::collections::HashMap;
-    
+
     let mut created_roles = Vec::new();
     let mut rank_id_map: HashMap<&str, Vec<u64>> = HashMap::new();
-    
+
     // Get all guild roles to check which are missing
     let guild_roles = ctx.http.get_guild_roles(guild_id).await?;
     let guild_role_ids: Vec<_> = guild_roles.iter().map(|r| r.id).collect();
-    
+
     // Check each rank and create missing roles (in reverse order so GM is at top)
     for rank in [
         Rank::Grandmaster,
@@ -175,15 +175,15 @@ pub async fn create_rank_roles(
     ] {
         let existing_ids = rank.role_ids(db, guild_id.get()).await;
         let mut role_ids_for_rank = Vec::new();
-        
+
         // Check if this rank has any roles in the guild by ID
         let has_role_by_id = existing_ids.iter().any(|id| guild_role_ids.contains(id));
-        
+
         if !has_role_by_id {
             // Check if a role with this name exists (case-insensitive)
             let rank_name = rank.name().to_lowercase();
             let found_role = guild_roles.iter().find(|r| r.name.to_lowercase() == rank_name);
-            
+
             if let Some(role) = found_role {
                 // Found existing role by name, use it instead of creating
                 info!("Found existing role '{}' (ID: {}) by name during creation", role.name, role.id);
@@ -201,13 +201,13 @@ pub async fn create_rank_roles(
                 Rank::MasterElite => Colour::from_rgb(233, 30, 99),   // Pink
                 Rank::Grandmaster => Colour::from_rgb(255, 215, 0),   // Gold
             };
-            
+
             let role_builder = EditRole::new()
                 .name(rank.name())
                 .colour(color)
                 .hoist(true)  // Display role members separately in the member list
                 .mentionable(false);  // Prevent @mentions to avoid spam
-            
+
             match guild_id.create_role(&ctx.http, role_builder).await {
                 Ok(created_role) => {
                     info!("Created rank role: {} (ID: {})", rank.name(), created_role.id);
@@ -223,27 +223,27 @@ pub async fn create_rank_roles(
             // Keep existing role IDs
             role_ids_for_rank = existing_ids.iter().map(|id| id.get()).collect();
         }
-        
+
         // Store role IDs for this rank if any exist
         if !role_ids_for_rank.is_empty() {
             rank_id_map.insert(rank.config_key(), role_ids_for_rank);
         }
     }
-    
+
     // Save all rank role IDs to database config
     for (config_key, role_ids) in rank_id_map {
         let role_ids_str = role_ids.iter()
             .map(|id| id.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        
+
         if let Err(e) = db.config.set_config(config_key, &role_ids_str, guild_id.get()).await {
             warn!("Failed to save rank config {}: {}", config_key, e);
         } else {
             info!("Saved rank config {}: {}", config_key, role_ids_str);
         }
     }
-    
+
     Ok(created_roles)
 }
 
@@ -254,7 +254,7 @@ pub async fn validate_system_roles(
     guild_id: GuildId,
 ) -> Result<Vec<String>> {
     let mut missing_roles = Vec::new();
-    
+
     // Get all guild roles
     let guild_roles = match ctx.http.get_guild_roles(guild_id).await {
         Ok(roles) => roles,
@@ -263,30 +263,30 @@ pub async fn validate_system_roles(
             return Err(anyhow!("Failed to fetch guild roles"));
         }
     };
-    
+
     // Check runner and admin roles
     for role in [Role::Runner, Role::Admin] {
         let role_key = role.config_key();
-        
+
         // Check if role is configured
         let configured_role_id = role.id(db, guild_id.get()).await;
-        
+
         let has_role = if let Some(role_id) = configured_role_id {
             // Check if the configured role still exists in the guild
             guild_roles.iter().any(|r| r.id == role_id)
         } else {
             false
         };
-        
+
         if !has_role {
             // Fallback: search for role by name (case-insensitive)
             let role_name = role.name().to_lowercase();
             let found_role = guild_roles.iter().find(|r| r.name.to_lowercase() == role_name);
-            
+
             if let Some(found) = found_role {
                 // Found a role with matching name! Auto-save it to config
                 info!("Found existing role '{}' (ID: {}) by name, saving to config", found.name, found.id);
-                
+
                 // Save this role ID to the database config
                 let role_id_str = found.id.get().to_string();
                 if let Err(e) = db.config.set_config(role_key, &role_id_str, guild_id.get()).await {
@@ -300,7 +300,7 @@ pub async fn validate_system_roles(
             }
         }
     }
-    
+
     Ok(missing_roles)
 }
 
@@ -314,7 +314,7 @@ pub async fn check_role(
     role: &Role,
 ) -> Result<bool> {
     use serenity::all::Permissions;
-    
+
     if let Some(guild_id) = cc.intax.guild_id {
         // Get the member
         let member = match guild_id.member(&cc.ctx.http, cc.intax.user.id).await {
@@ -324,7 +324,7 @@ pub async fn check_role(
                 return Ok(false);
             }
         };
-        
+
         // For Admin role: Check Discord permissions first (Administrator or Manage Server)
         if matches!(role, Role::Admin) {
             if let Some(guild_ref) = guild_id.to_guild_cached(&cc.ctx.cache) {
@@ -335,7 +335,7 @@ pub async fn check_role(
                 }
             }
         }
-        
+
         // Check configured role
         if let Some(role_id) = role.id(&cc.db, guild_id.get()).await {
             info!("Checking if user has {} role with ID: {}", role.name(), role_id);
@@ -357,7 +357,7 @@ pub async fn check_component_role(
     role: &Role,
 ) -> Result<bool> {
     use serenity::all::Permissions;
-    
+
     if let Some(guild_id) = cc.component.guild_id {
         // Get the member
         let member = match guild_id.member(&cc.ctx.http, cc.component.user.id).await {
@@ -367,7 +367,7 @@ pub async fn check_component_role(
                 return Ok(false);
             }
         };
-        
+
         // For Admin role: Check Discord permissions first (Administrator or Manage Server)
         if matches!(role, Role::Admin) {
             if let Some(guild_ref) = guild_id.to_guild_cached(&cc.ctx.cache) {
@@ -378,7 +378,7 @@ pub async fn check_component_role(
                 }
             }
         }
-        
+
         // Check configured role
         if let Some(role_id) = role.id(&cc.db, guild_id.get()).await {
             info!("Checking if user {} has {} role with ID: {}", cc.component.user.name, role.name(), role_id);
@@ -476,14 +476,14 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     let user         = cc.intax.user.id;
     let channel      = cc.intax.channel_id;
     let command_name = &cc.intax.data.name;
-    
+
     // Handle leave command
     if command_name == "leave" {
         let mut found = false;
         let mut queue_count = 0;
-        
+
         let group = guild.get_group(channel)?;
-        
+
         // Find and remove player from any game
         for game in &mut group.sessions {
             if game.status == SessionStatus::Idle {
@@ -497,16 +497,16 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
                 }
             }
         }
-        
+
         if found {
             cc.reply(&format!("❌ Left the queue! ({}/{} players)", queue_count, group.quota)).await?;
         }
-        
+
         group.dash_update(cc.ctx).await?;
-        
+
         return Ok(());
     }
-    
+
     // Handle join command
     // Validate player has a rank
     let guild_id = match cc.intax.guild_id {
@@ -516,7 +516,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
             return Ok(());
         }
     };
-    
+
     // Get or assign player rank (auto-creates ranks and assigns Apprentice if needed)
     let rank = match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user).await {
         Ok(rank) => {
@@ -542,7 +542,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     };
 
     let group = guild.get_group(channel)?;
-    
+
     // Check if we have an idle session
     let idle_sessions = group.get_sessions_by_status(&SessionStatus::Idle);
     if idle_sessions.is_empty() {
@@ -559,7 +559,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         let mut manager = cc.manager.lock().await;
         let server = manager.get_server(guild_id)?;
         let group  = server.get_group(channel)?;
-        
+
         // Check if we can add to idle session (not Hot/Live)
         let idle_sessions = group.get_sessions_by_status(&SessionStatus::Idle);
         if idle_sessions.is_empty() {
@@ -568,17 +568,17 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
             cc.reply("❌ Cannot join queue while match is in progress. Please wait for current match to end.").await?;
             return Ok(());
         }
-        
+
         let queue = group.get_queue().await?;
         queue.add_player(player.discord_id, rank);
-        
+
         if group.is_quota() {
             group.hot(cc.ctx, Some(guild_id), Some(&cc.db)).await?;
         }
-        
+
         group.dash_update(cc.ctx).await?;
     }
-    
+
     // Always acknowledge (silently if already in queue)
     let current_queue = match group.get_queue().await {
         Ok(session) => session.pool.len(),
@@ -588,7 +588,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
 
     // Update dashboard
     group.dash_update(cc.ctx).await?;
-    
+
     info!("Command processed successfully, sending response");
     Ok(())
 }
@@ -597,12 +597,12 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
 pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result<()> {
     info!("Processing queue status command");
     let channel = cc.intax.channel_id;
-    
+
     let (queue_count, queue_list, quota) = {
         let group = guild.get_group(channel)?;
-        
+
         let idle_games = group.get_sessions_by_status(&SessionStatus::Idle);
-        
+
         if idle_games.is_empty() {
             (0, "No active queue found.".to_string(), group.quota)
         } else {
@@ -620,13 +620,13 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Resul
             (count, list, group.quota)
         }
     }; // Manager lock is dropped here
-    
+
     if queue_count == 0 && queue_list == "No active queue found." {
         cc.reply("No active queue found.").await?;
     } else {
         cc.reply(&format!("**Queue Status ({}/{} players)**\n{}", queue_count, quota, queue_list)).await?;
     }
-    
+
     Ok(())
 }
 
@@ -649,12 +649,12 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
     }
 
     let game = group.sessions.last().ok_or_else(|| anyhow!("No active game"))?;
-    
+
     if game.pool.len() < quota {
         cc.reply(&format!("Not enough players in game. Need {} more.", quota - game.pool.len())).await?;
         return Ok(());
     }
-    
+
     // Collect players and split into teams (synchronous shuffle so no !Send types live across await)
     let (mut red_team, mut blu_team) = split_into_teams(&game.pool);
     let mut updated_group = group.clone();
@@ -692,7 +692,7 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
 
     // Update dashboard
     group.dash_update(cc.ctx).await?;
-    
+
     cc.reply(&embed_content).await?;
     Ok(())
 }
@@ -723,13 +723,13 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
             return Err(anyhow!("Found more than one hot game ({}). This is unexpected.", n));
         },
     }
-    
+
     // Now get mutable access to the hot game
     let hot_game = group.sessions
         .iter_mut()
         .find(|g| g.status == SessionStatus::Hot)
         .ok_or_else(|| anyhow!("Hot game not found after verification"))?;
-    
+
     hot_game.push();
 
 
@@ -774,7 +774,7 @@ pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
                 cc.ctx
             ).await?;
         }
-        
+
         cc.reply("Game has been ended. Players will be moved back to queue.").await?;
     } else {
         cc.reply("No active game found to end.").await?;

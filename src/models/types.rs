@@ -129,7 +129,7 @@ impl Rank {
             Rank::Grandmaster => "rank_grandmaster_roles",
         }
     }
-    
+
     /// Get all Discord role IDs that map to this rank from config
     /// Format: comma-separated role IDs, e.g., "1234567890,9876543210"
     /// Returns empty vector if no config is set (roles need to be created)
