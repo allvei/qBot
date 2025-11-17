@@ -44,7 +44,7 @@ impl GroupRepository {
         .bind(dashboard_msg        as i64)
         .bind(red_vc_id            as i64)
         .bind(blu_vc_id            as i64)
-        .bind(quota           as i64)
+        .bind(quota                as i64)
         .fetch_one(&self.pool)
         .await?;
 
@@ -216,7 +216,8 @@ impl GroupRepository {
     pub async fn get_groups_for_guild(&self, guild_id: u64) -> Result<Vec<Group>> {
         let rows = sqlx::query(
             "SELECT id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota
-             FROM groups WHERE guild_id = ?"
+             FROM groups
+             WHERE guild_id = ?"
         )
         .bind(guild_id as i64)
         .fetch_all(&self.pool)
@@ -286,7 +287,9 @@ impl Repository<Group, u8> for GroupRepository {
     }
 
     async fn delete(&self, group_id: u8) -> Result<()> {
-        sqlx::query("DELETE FROM groups WHERE group_id = ?")
+        sqlx::query("DELETE 
+                     FROM groups 
+                     WHERE group_id = ?")
             .bind(group_id as i64)
             .execute(&self.pool)
             .await?;

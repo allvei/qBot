@@ -73,8 +73,8 @@ impl Player {
         Player {
             discord_id,
             steam_id,
-            rank:     None,
-            role:     None,
+            rank: None,
+            role: None,
         }
     }
 
@@ -140,7 +140,6 @@ impl Rank {
                 .map(RoleId::new)
                 .collect()
         } else {
-            // No config set - return empty so roles will be created
             Vec::new()
         }
     }

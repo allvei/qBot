@@ -51,7 +51,7 @@ fn calculate_stats(elos: &[f64]) -> (f64, f64, f64) {
 /// Represents a game server with IP and name
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameServer {
-    pub ip: String,
+    pub ip:   String,
     pub name: String,
 }
 
@@ -693,9 +693,9 @@ impl Group {
 
 // Roles
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Roles {
+                pub struct Roles {
     pub runner: RI,
-    pub admin: RI,
+    pub admin:  RI,
 }
 
 impl Roles {
@@ -756,10 +756,10 @@ pub enum Divisons {
 // Channels
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channels {
-    pub queue_chat:     CI,
-    pub queue_vc:  CI,
-    pub teams:     Vec<TeamChannel>,
-    pub dashboard: CI,
+    pub queue_chat: CI,
+    pub queue_vc:   CI,
+    pub teams:      Vec<TeamChannel>,
+    pub dashboard:  CI,
 }
 
 impl Channels {

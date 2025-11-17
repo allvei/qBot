@@ -7,7 +7,7 @@ use super::repositories::GroupRepository;
 
 /// Database validation and repair utility
 pub struct DatabaseValidator {
-    pool: SqlitePool,
+    pool:       SqlitePool,
     migrations: DatabaseMigrations,
     group_repo: GroupRepository,
 }
@@ -15,7 +15,7 @@ pub struct DatabaseValidator {
 impl DatabaseValidator {
     pub fn new(pool: &SqlitePool) -> Self {
         Self {
-            pool: pool.clone(),
+            pool:       pool.clone(),
             migrations: DatabaseMigrations::new(pool),
             group_repo: GroupRepository::new(pool.clone()),
         }
@@ -23,7 +23,7 @@ impl DatabaseValidator {
 
     /// Run comprehensive database validation
     pub async fn validate_all(&self) -> Result<ValidationReport> {
-        info!("Starting comprehensive database validation");
+        info!("Starting database validation");
 
         let mut report = ValidationReport::new();
 
@@ -31,12 +31,12 @@ impl DatabaseValidator {
         match self.migrations.validate_schema().await {
             Ok(_) => {
                 report.schema_valid = true;
-                info!("✓ Schema validation passed");
+                info!("Schema validation passed");
             },
             Err(e) => {
                 report.schema_valid = false;
                 report.errors.push(format!("Schema validation failed: {}", e));
-                error!("✗ Schema validation failed: {}", e);
+                error!("Schema validation failed: {}", e);
             }
         }
 
@@ -53,14 +53,8 @@ impl DatabaseValidator {
     /// Validate data integrity
     async fn validate_data_integrity(&self, report: &mut ValidationReport) -> Result<()> {
         info!("Validating data integrity");
-
-        // Check for orphaned records
         self.check_orphaned_records(report).await?;
-
-        // Check for invalid Discord IDs
         self.check_invalid_discord_ids(report).await?;
-
-        // Check for duplicate records
         self.check_duplicate_records(report).await?;
 
         Ok(())
@@ -209,8 +203,8 @@ impl DatabaseValidator {
 #[derive(Debug)]
 pub struct ValidationReport {
     pub schema_valid: bool,
-    pub errors: Vec<String>,
-    pub warnings: Vec<String>,
+    pub errors:       Vec<String>,
+    pub warnings:     Vec<String>,
     pub guild_groups: std::collections::HashMap<u64, usize>,
 }
 
@@ -218,8 +212,8 @@ impl ValidationReport {
     fn new() -> Self {
         Self {
             schema_valid: false,
-            errors: Vec::new(),
-            warnings: Vec::new(),
+            errors:       Vec::new(),
+            warnings:     Vec::new(),
             guild_groups: std::collections::HashMap::new(),
         }
     }
@@ -230,9 +224,9 @@ impl ValidationReport {
 
     pub fn print_summary(&self) {
         info!("=== Database Validation Report ===");
-        info!("Schema Valid: {}", self.schema_valid);
-        info!("Errors: {}", self.errors.len());
-        info!("Warnings: {}", self.warnings.len());
+        info!("Schema Valid: {}",       self.schema_valid);
+        info!("Errors: {}",             self.errors.len());
+        info!("Warnings: {}",           self.warnings.len());
         info!("Guilds with Groups: {}", self.guild_groups.len());
 
         if !self.errors.is_empty() {
@@ -259,7 +253,7 @@ impl ValidationReport {
 /// Database repair report
 #[derive(Debug)]
 pub struct RepairReport {
-    pub actions: Vec<String>,
+    pub actions:        Vec<String>,
     pub manual_actions: Vec<String>,
 }
 

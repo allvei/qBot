@@ -400,9 +400,9 @@ impl Completer for CommandCompleter {
 }
 
 pub struct ConsoleHandler {
-    manager: Arc<Mutex<Manager>>,
+    manager:  Arc<Mutex<Manager>>,
     database: SqlitePool,
-    ctx: Option<Arc<Context>>,
+    ctx:      Option<Arc<Context>>,
     registry: CommandRegistry,
 }
 
@@ -923,7 +923,7 @@ impl ConsoleHandler {
                     queue_id,
                     guild_id,
                     group.channels.dashboard.get(),
-                    0, // chat (not used)
+                    0,
                     group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
                     group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
                     quota,
@@ -973,7 +973,7 @@ impl ConsoleHandler {
                     queue_id,
                     guild_id,
                     dashboard_id,
-                    0, // chat (not used)
+                    0,
                     group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
                     group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
                     group.quota as u8,
@@ -990,7 +990,7 @@ impl ConsoleHandler {
                     queue_id,
                     guild_id,
                     group.channels.dashboard.into(),
-                    0, // chat (not used)
+                    0,
                     red_id,
                     group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
                     group.quota as u8,
@@ -1007,7 +1007,7 @@ impl ConsoleHandler {
                     queue_id,
                     guild_id,
                     group.channels.dashboard.into(),
-                    0, // chat (not used)
+                    0,
                     group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
                     blue_id,
                     group.quota as u8,
@@ -1065,7 +1065,7 @@ impl ConsoleHandler {
             queue_id,
             guild_id,
             dashboard_id,
-            0, // chat (not used)
+            0,
             red_id,
             blue_id,
             quota,

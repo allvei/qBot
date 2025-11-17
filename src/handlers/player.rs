@@ -194,11 +194,11 @@ pub async fn create_rank_roles(
                 Rank::Beginner    => Colour::from_rgb(150, 150, 150), // Gray
                 Rank::Newcomer    => Colour::from_rgb(205, 220, 57),  // Yellow-Green
                 Rank::Novice      => Colour::from_rgb(139, 195, 74),  // Light Green
-                Rank::Apprentice  => Colour::from_rgb(76, 175, 80),   // Green
-                Rank::Journeyman  => Colour::from_rgb(33, 150, 243),  // Blue
-                Rank::Expert      => Colour::from_rgb(103, 58, 183),  // Deep Purple
-                Rank::Master      => Colour::from_rgb(156, 39, 176),  // Purple
-                Rank::MasterElite => Colour::from_rgb(233, 30, 99),   // Pink
+                Rank::Apprentice  => Colour::from_rgb(76 , 175, 80),  // Green
+                Rank::Journeyman  => Colour::from_rgb(33 , 150, 243), // Blue
+                Rank::Expert      => Colour::from_rgb(103, 58,  183), // Deep Purple
+                Rank::Master      => Colour::from_rgb(156, 39,  176), // Purple
+                Rank::MasterElite => Colour::from_rgb(233, 30,  99),  // Pink
                 Rank::Grandmaster => Colour::from_rgb(255, 215, 0),   // Gold
             };
 
@@ -206,7 +206,7 @@ pub async fn create_rank_roles(
                 .name(rank.name())
                 .colour(color)
                 .hoist(true)  // Display role members separately in the member list
-                .mentionable(false);  // Prevent @mentions to avoid spam
+                .mentionable(false);
 
             match guild_id.create_role(&ctx.http, role_builder).await {
                 Ok(created_role) => {

@@ -14,7 +14,7 @@ use repositories::{ConfigRepository, GroupRepository, UserRepository};
 /// Main database interface that orchestrates all repositories
 #[derive(Clone)]
 pub struct Database {
-    pool: SqlitePool,
+    pool:       SqlitePool,
     pub users:  UserRepository,
     pub groups: GroupRepository,
     pub config: ConfigRepository,
@@ -82,7 +82,7 @@ impl Database {
         dashboard_msg: u64,
         red:           u64,
         blu:           u64,
-        quota:    u8,
+        quota:         u8,
     ) -> Result<Group> {
         self.groups.create_group(guild_id, dashboard, chat, queue, dashboard_msg, red, blu, quota).await
     }
@@ -96,7 +96,7 @@ impl Database {
         chat:          u64,
         red:           u64,
         blu:           u64,
-        quota: u8,
+        quota:         u8,
     ) -> Result<Group> {
         self.groups.update_group(guild_id, queue_id, dashboard, chat, red, blu, quota).await
     }

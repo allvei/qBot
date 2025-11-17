@@ -13,7 +13,7 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait Repository<T, ID> {
     async fn create(&self, entity: &T) -> Result<T>;
-    async fn get_by_id(&self, id: ID) -> Result<T>;
+    async fn get_by_id(&self, id: ID)  -> Result<T>;
     async fn update(&self, entity: &T) -> Result<T>;
-    async fn delete(&self, id: ID) -> Result<()>;
+    async fn delete(&self, id: ID)     -> Result<()>;
 }

@@ -318,15 +318,7 @@ impl DatabaseMigrations {
 
         if count == 0 {
             info!("Creating default group for guild_id: {}", guild_id);
-            sqlx::query("INSERT INTO groups (
-                            group_id,
-                            guild_id,
-                            dashboard,
-                            chat,
-                            queue,
-                            red,
-                            blu
-                        )
+            sqlx::query("INSERT INTO groups (group_id, guild_id, dashboard, chat, queue, red, blu)
                         VALUES (1, ?, 1, 1, 1, 1, 1)"
             )
             .bind(guild_id as i64)

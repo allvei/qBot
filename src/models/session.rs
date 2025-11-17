@@ -14,9 +14,8 @@ use crate::models::Player;
 // Game
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
-    pub status: SessionStatus,
-    pub pool: Vec<SessionPlayer>,
-    /// Timestamp when session transitioned to Hot (None if not hot or never been hot)
+    pub status:   SessionStatus,
+    pub pool:     Vec<SessionPlayer>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ready_at: Option<SystemTime>,
 }
