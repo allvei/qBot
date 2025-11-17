@@ -221,29 +221,42 @@ impl Group {
         if !actives.is_empty() {
             description.push_str("**Current Match:**\n");
             for session in &actives {
-                // Display countdown timer
-                if let Some(ready_at) = session.ready_at {
-                    if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
-                        let ready_timestamp = duration_since_epoch.as_secs();
-                        let deadline_timestamp = ready_timestamp + DEFAULT_MISSING_TIMEOUT;
-                        description.push_str(&format!("⏰ Join deadline: <t:{}:R>\n\n", deadline_timestamp));
+                // Only show missing players check for Hot sessions
+                // For Push/Live/Pull, players are in team channels, not queue VC
+                if session.is_hot() {
+                    // Display countdown timer
+                    if let Some(ready_at) = session.ready_at {
+                        if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
+                            let ready_timestamp = duration_since_epoch.as_secs();
+                            let deadline_timestamp = ready_timestamp + DEFAULT_MISSING_TIMEOUT;
+                            description.push_str(&format!("⏰ Join deadline: <t:{}:R>\n\n", deadline_timestamp));
+                        }
                     }
-                }
 
-                let players_in_vc = session.pool.iter().take(quota).filter(|p| p.in_queue_vc).count();
-                let players_not_in_vc: Vec<_> = session.pool.iter()
-                    .take(quota)
-                    .filter(|p| !p.in_queue_vc)
-                    .collect();
+                    let players_in_vc = session.pool.iter().take(quota).filter(|p| p.in_queue_vc).count();
+                    let players_not_in_vc: Vec<_> = session.pool.iter()
+                        .take(quota)
+                        .filter(|p| !p.in_queue_vc)
+                        .collect();
 
-                description.push_str(&format!("• {}/{} players in vc\n", players_in_vc, quota));
+                    description.push_str(&format!("• {}/{} players in vc\n", players_in_vc, quota));
 
-                if !players_not_in_vc.is_empty() {
-                    description.push_str("**Missing players:**\n");
-                    for player in players_not_in_vc {
-                        let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
-                        description.push_str(&format!("  • {}<@{}>\n", elo_str, player.player.discord_id));
+                    if !players_not_in_vc.is_empty() {
+                        description.push_str("**Missing players:**\n");
+                        for player in players_not_in_vc {
+                            let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
+                            description.push_str(&format!("  • {}<@{}>\n", elo_str, player.player.discord_id));
+                        }
                     }
+                } else {
+                    // For Push/Live/Pull sessions, just show status
+                    let status_text = match session.status {
+                        SessionStatus::Push => "Moving players to team channels...",
+                        SessionStatus::Live => "Match in progress",
+                        SessionStatus::Pull => "Moving players back to queue...",
+                        _ => "Match active"
+                    };
+                    description.push_str(&format!("• {} ({} players)\n", status_text, session.pool.len()));
                 }
             }
             description.push('\n');

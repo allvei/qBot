@@ -428,7 +428,8 @@ impl Group {
 
         for (user_id, rank) in players_to_requeue {
             if let Some(rank) = rank {
-                idle_session.add_player(user_id, rank);
+                // Use add_player_in_vc since we just moved them to the queue channel
+                idle_session.add_player_in_vc(user_id, rank);
                 info!("[Session {}] Re-added player {} to queue", idle_session_idx, user_id);
             }
         }

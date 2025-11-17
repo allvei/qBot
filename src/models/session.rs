@@ -37,6 +37,15 @@ impl Session {
         self.sort_by_join_time();
     }
 
+    /// Add a player to the session with their rank, marking them as already in queue VC
+    /// Use this when re-adding players who were just moved to the queue channel
+    pub fn add_player_in_vc(&mut self, discord_id: UserId, rank: crate::models::Rank) {
+        let mut player = SessionPlayer::add(discord_id, rank);
+        player.in_queue_vc = true;
+        self.pool.push(player);
+        self.sort_by_join_time();
+    }
+
     pub fn remove_player(&mut self, discord_id: UserId) {
         self.pool.retain(|p| p.player.discord_id != discord_id);
     }
