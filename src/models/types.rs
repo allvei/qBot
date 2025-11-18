@@ -59,19 +59,21 @@ impl ComponentContext<'_> {
 // ============================================================================
 
 /// User data structure representing a player in the system
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[allow(clippy::missing_docs_in_private_items)]
 pub struct Player {
-    pub discord_id: UserId,
-    pub steam_id:   Option<u64>,
-    pub rank:       Option<Rank>,
-    pub role:       Option<Role>,
+    pub discord_id:  UserId,
+    pub discord_tag: Option<String>,
+    pub steam_id:    Option<u64>,
+    pub rank:        Option<Rank>,
+    pub role:        Option<Role>,
 }
 
 impl Player {
-    pub fn add(discord_id: UserId, steam_id: Option<u64>) -> Player {
+    pub fn add(discord_id: UserId, discord_tag: Option<String>, steam_id: Option<u64>) -> Player {
         Player {
             discord_id,
+            discord_tag,
             steam_id,
             rank: None,
             role: None,

@@ -2,35 +2,7 @@
 
 ## Testing
 
-- Moving players
-  - Move to team channels
-  - Move to queue channel
-- Shuffle
-- Start match
-- End match
-
 ## Priority
-
-1. ✅ Measure quota each time a player is added to the pool. If quota met:
-    - ✅ Notify players in the queue
-    - ✅ Generate teams
-    - ✅ Activate the start match button
-2. ✅ Start button pressed
-    - ✅ Move generated teams to their channels
-
-- ✅ Reply if conf not generated.
-- ✅ Functional dashboard
-  - Buttons:
-    - ✅ Shuffle players
-    - ✅ Start match
-    - ✅ End match
-  - ✅ Automatically update to list current players in the queue, if quota met, generate teams and show gen result
-  - ✅ If over quota, list other players as queued for next game
-  - ✅ List current matches and their status
-- ✅ First come first serve system, person with the longest time spent in queue has position.
-- ✅ New team generation algorithm (BCH - Balanced Composite Heuristic)
-- ✅ Command to handle roles (`/roles` command implemented)
-- ✅ During setup or group creation, offer to create the group channels (guidance added to setup wizard)
 
 ## Secondary
 
@@ -43,8 +15,6 @@
     - bot sends a ping to request a sub
 - Scheduled add up with options for length and delay.
 - 4 team gen
-- Different elo for different classes
-- Map pool look trends
 - Add terminal commands:
   - Status
   - List guilds
@@ -53,9 +23,9 @@
   - Print config for a guild
 - Make server config keys into config command arguments rather than values part of the key argument allowing to autocomplete the command.
 - Autopings is 50/50, people want personalisation, but at the same time I can see areas where this would benefit, so yes
-- Map pool and trends
-- Map pool voting in dashboard
 - Game server integration
+  - Map pool voting in dashboard
+  - Map pool and trends
   - Assign players to their teams
     - Display game info in the dashboard
     - Track game statistics
@@ -63,13 +33,6 @@
   - New elo system
   - Command to list stats
   - Captain team generation
-- Dashboard
-  - on guild_create
-  - for every group in guild
-  - check if dashboard exists
-    - how?
-    - search for message id
-- Setup command that uses dropdowns etc to pick the channels and roles for a group
 - Burger!
   [11:39]Kafri: can you make it so if a burger adds up the bot 🍔 reacts their add
   [11:39]Kafri: or pings them with "BURGER!!!"

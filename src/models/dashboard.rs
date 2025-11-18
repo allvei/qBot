@@ -224,29 +224,29 @@ impl Group {
                 // Only show missing players check for Hot sessions
                 // For Push/Live/Pull, players are in team channels, not queue VC
                 if session.is_hot() {
-                    // Display countdown timer
-                    if let Some(ready_at) = session.ready_at {
-                        if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
-                            let ready_timestamp = duration_since_epoch.as_secs();
-                            let deadline_timestamp = ready_timestamp + DEFAULT_MISSING_TIMEOUT;
-                            description.push_str(&format!("⏰ Join deadline: <t:{}:R>\n\n", deadline_timestamp));
-                        }
-                    }
-
-                    let players_in_vc = session.pool.iter().take(quota).filter(|p| p.in_queue_vc).count();
-                    let players_not_in_vc: Vec<_> = session.pool.iter()
+                    // Check for players who have NEVER joined the VC (not just currently not in VC)
+                    let players_never_joined: Vec<_> = session.pool.iter()
                         .take(quota)
-                        .filter(|p| !p.in_queue_vc)
+                        .filter(|p| !p.has_joined_vc_once)
                         .collect();
 
-                    description.push_str(&format!("• {}/{} players in vc\n", players_in_vc, quota));
+                    // Only show countdown and missing players if there are players who have never joined
+                    if !players_never_joined.is_empty() {
+                        // Display countdown timer
+                        if let Some(ready_at) = session.ready_at {
+                            if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
+                                let ready_timestamp = duration_since_epoch.as_secs();
+                                let deadline_timestamp = ready_timestamp + DEFAULT_MISSING_TIMEOUT;
+                                description.push_str(&format!("⏰ Join deadline: <t:{}:R>\n\n", deadline_timestamp));
+                            }
+                        }
 
-                    if !players_not_in_vc.is_empty() {
                         description.push_str("**Missing players:**\n");
-                        for player in players_not_in_vc {
+                        for player in players_never_joined {
                             let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
                             description.push_str(&format!("  • {}<@{}>\n", elo_str, player.player.discord_id));
                         }
+                        description.push_str("\n");
                     }
                 } else {
                     // For Push/Live/Pull sessions, just show status
@@ -275,20 +275,33 @@ impl Group {
         } else {
             // No active games - show queue status or hot game info
             if let Some(current_session) = inactives.first() {
-                // If session is Hot, don't show queue list (teams will be shown below)
-                // Just show overflow players waiting for next match
+                // If session is Hot, show missing players info
                 if current_session.is_hot() {
-                    let queue_players = current_session.pool.len();
-                    // Show overflow players (beyond quota) as "next queue"
-                    if queue_players > quota {
-                        let overflow_count = queue_players - quota;
-                        description.push_str(&format!("**Next Queue ({}/{}):**\n", overflow_count, quota));
-                        for (i, player) in current_session.pool.iter().skip(quota).enumerate() {
-                            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
-                            description.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
+                    // Check for players who have NEVER joined the VC (not just currently not in VC)
+                    let players_never_joined: Vec<_> = current_session.pool.iter()
+                        .take(quota)
+                        .filter(|p| !p.has_joined_vc_once)
+                        .collect();
+
+                    // Only show countdown and missing players if there are players who have never joined
+                    if !players_never_joined.is_empty() {
+                        // Display countdown timer
+                        if let Some(ready_at) = current_session.ready_at {
+                            if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
+                                let ready_timestamp = duration_since_epoch.as_secs();
+                                let deadline_timestamp = ready_timestamp + DEFAULT_MISSING_TIMEOUT;
+                                description.push_str(&format!("⏰ Join deadline: <t:{}:R>\n\n", deadline_timestamp));
+                            }
                         }
-                        description.push('\n');
+
+                        description.push_str("**Missing players:**\n");
+                        for player in players_never_joined {
+                            let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
+                            description.push_str(&format!("  • {}<@{}>\n", elo_str, player.player.discord_id));
+                        }
+                        description.push_str("\n");
                     }
+                    // Note: Next Queue for overflow will be shown after teams
                 } else {
                     // Session is Idle - show normal queue
                     let queue_players = current_session.pool.len();
@@ -311,7 +324,7 @@ impl Group {
 
         embed = embed.description(description);
 
-        // Add team fields for idle games with enough players
+        // Add team fields for inactive sessions with enough players
         if let Some(current_session) = inactives.first() {
             let queue_players = current_session.pool.len();
             if queue_players >= quota {
@@ -331,10 +344,22 @@ impl Group {
                 });
                 embed = embed.field("🔴 Red", format_team_field(&team_red), true);
                 embed = embed.field("🔵 Blue", format_team_field(&team_blu), true);
+
+                // Show next queue AFTER teams if there are overflow players
+                if current_session.is_hot() && queue_players > quota {
+                    let overflow_count = queue_players - quota;
+                    let mut next_queue = format!("**Next Queue ({}/{}):**\n", overflow_count, quota);
+                    for (i, player) in current_session.pool.iter().skip(quota).enumerate() {
+                        let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
+                        next_queue.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
+                    }
+                    embed = embed.field("\u{200B}", next_queue, false); // Full-width field
+                }
             }
         }
 
-        for session in actives {
+        // Add team fields for active sessions
+        for session in &actives {
             if session.pool.len() >= quota {
                 let team_size = quota / 2;
                 // Sort teams by rank descending before display
@@ -352,6 +377,20 @@ impl Group {
                 });
                 embed = embed.field("🔴 Red", format_team_field(&team_red), true);
                 embed = embed.field("🔵 Blue", format_team_field(&team_blu), true);
+            }
+        }
+
+        // Show next queue for idle session with players (when there's an active game)
+        if !actives.is_empty() {
+            if let Some(next_session) = inactives.first() {
+                if !next_session.pool.is_empty() {
+                    let mut next_queue = format!("**Next Queue ({}/{}):**\n", next_session.pool.len(), quota);
+                    for (i, player) in next_session.pool.iter().enumerate() {
+                        let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
+                        next_queue.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
+                    }
+                    embed = embed.field("\u{200B}", next_queue, false); // Full-width field
+                }
             }
         }
 
@@ -495,36 +534,23 @@ impl Group {
 
     /// Handles the shuffle teams button
     async fn dash_shuffle(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
-        let mut is_shuffled = false;
         let quota = self.quota as usize;
 
         // Find the game to shuffle - can be Idle (if quota met) or Hot
-        if let Some(game) = self.sessions.iter_mut().find(|s|
+        let session = self.sessions.iter_mut().find(|s|
             (s.status == SessionStatus::Idle || s.status == SessionStatus::Hot) && s.pool.len() >= quota
-        )
-        {
-            // Shuffle only the first 'quota' players (not overflow)
-            use rand::seq::SliceRandom;
-            let mut players_to_shuffle: Vec<_> = game.pool.iter().take(quota).cloned().collect();
-            players_to_shuffle.shuffle(&mut rand::rng());
+        );
 
-            // Replace first quota players with shuffled, keep overflow players
-            let overflow: Vec<_> = game.pool.iter().skip(quota).cloned().collect();
-            game.pool.clear();
-            game.pool.extend(players_to_shuffle);
-            game.pool.extend(overflow);
-
-            is_shuffled = true;
-            info!("Teams shuffled for game with {} players (quota: {})", game.pool.len(), quota);
-        }
-
-        if is_shuffled {
-            cc.acknowledge().await;
-            self.dash_update(cc.ctx).await;
-        } else {
+        if session.is_none() {
             cc.reply(&format!("❌ No game ready for shuffling. Need at least {} players in queue.", quota)).await?;
+            return Ok(());
         }
 
+        // Call the same team generation logic used by generate_teams
+        // This ensures balanced teams using the BCH algorithm
+        self.generate_teams(cc.ctx).await;
+
+        cc.acknowledge().await;
         Ok(())
     }
 
@@ -557,16 +583,17 @@ impl Group {
             return Ok(());
         }
 
+        // Acknowledge immediately to prevent Discord timeout
+        cc.acknowledge().await;
+
         // Move players to team channels (Hot → Push → Live)
         match self.push(cc.ctx).await {
             Ok(_) => {
                 info!("Players moved to team channels and game is now live");
-                cc.acknowledge().await;
                 Ok(())
             }
             Err(e) => {
                 error!("Failed to start match: {}", e);
-                cc.reply(&format!("❌ Failed to start match: {}", e)).await?;
                 Ok(())
             }
         }
@@ -582,16 +609,17 @@ impl Group {
             return Ok(());
         }
 
+        // Acknowledge immediately to prevent Discord timeout
+        cc.acknowledge().await;
+
         // Move players back to queue channel (Hot/Live → Pull → Idle)
         match self.pull(cc.ctx).await {
             Ok(_) => {
                 info!("Match ended, players moved back to queue");
-                cc.acknowledge().await;
                 Ok(())
             }
             Err(e) => {
                 error!("Failed to end match: {}", e);
-                cc.reply(&format!("❌ Failed to end match: {}", e)).await?;
                 Ok(())
             }
         }

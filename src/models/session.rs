@@ -24,7 +24,7 @@ impl Session {
     /// Get a player by their Discord ID
     pub fn get_user(&self, discord_id: UserId) -> Result<Player> {
         match self.pool.iter().find(|p| p.player.discord_id == discord_id) {
-            Some(player) => Ok(player.player),
+            Some(player) => Ok(player.player.clone()),
             None => Err(anyhow::anyhow!("User not found")),
         }
     }
@@ -32,8 +32,10 @@ impl Session {
     /// Add a player to the session with their rank
     pub fn add_player(&mut self, discord_id: UserId, rank: crate::models::Rank) {
         let player = SessionPlayer::add(discord_id, rank);
+        let tag = player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string());
         self.pool.push(player);
         self.sort_by_join_time();
+        info!("Added {} to session", tag);
     }
 
     /// Add a player to the session with their rank, marking them as already in queue VC
@@ -41,12 +43,20 @@ impl Session {
     pub fn add_player_in_vc(&mut self, discord_id: UserId, rank: crate::models::Rank) {
         let mut player = SessionPlayer::add(discord_id, rank);
         player.in_queue_vc = true;
+        player.has_joined_vc_once = true;
+        let tag = player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string());
         self.pool.push(player);
         self.sort_by_join_time();
+        info!("Added {} to session after moving to queue VC", tag);
     }
 
     pub fn remove_player(&mut self, discord_id: UserId) {
+        let tag = self.pool.iter()
+            .find(|p| p.player.discord_id == discord_id)
+            .and_then(|p| p.player.discord_tag.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
         self.pool.retain(|p| p.player.discord_id != discord_id);
+        info!("Removed {} from session", tag);
     }
 
     /// Sort players by join time (first-come-first-serve)
@@ -85,9 +95,10 @@ impl Session {
     pub fn idle(&mut self) {
         self.status = SessionStatus::Idle;
         self.ready_at = None; // Clear ready timestamp
-        // Clear team assignments when going back to idle
+        // Clear team assignments and VC join tracking when going back to idle
         for player in &mut self.pool {
             player.team = None;
+            player.has_joined_vc_once = false;
         }
     }
 
@@ -174,15 +185,16 @@ pub enum SessionStatus {
 }
 
 // SessionPlayer
-#[derive(Debug, Clone, Copy, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct SessionPlayer {
-    pub player:       Player,
-    pub team:         Option<Team>,
-    pub is_buffered:  bool,
-    pub in_queue_vc:  bool,
-    pub in_queue_cmd: bool,
+    pub player:              Player,
+    pub team:                Option<Team>,
+    pub is_buffered:         bool,
+    pub in_queue_vc:         bool,
+    pub has_joined_vc_once:  bool,
+    pub in_queue_cmd:        bool,
     #[serde(with = "systemtime_serde")]
-    pub joined_at:    SystemTime,
+    pub joined_at:           SystemTime,
 }
 
 // Serde serialization for SystemTime
@@ -209,15 +221,16 @@ mod systemtime_serde {
 
 impl SessionPlayer {
     pub fn add(discord_id: UserId, rank: crate::models::Rank) -> Self {
-        let mut player = Player::add(discord_id, None);
+        let mut player = Player::add(discord_id, None, None);
         player.set_rank(Some(rank));
         Self {
             player,
-            team:         None,
-            is_buffered:  false,
-            in_queue_vc:  false,
-            in_queue_cmd: false,
-            joined_at:    SystemTime::now(),
+            team:                None,
+            is_buffered:         false,
+            in_queue_vc:         false,
+            has_joined_vc_once:  false,
+            in_queue_cmd:        false,
+            joined_at:           SystemTime::now(),
         }
     }
 

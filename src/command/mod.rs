@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::highlight::{Highlighter, MatchingBracketHighlighter};
+use rustyline::highlight::{CmdKind, Highlighter, MatchingBracketHighlighter};
 use rustyline::hint::HistoryHinter;
 use rustyline::validate::Validator;
 use rustyline::{CompletionType, Config, Editor};
@@ -344,7 +344,7 @@ impl Highlighter for CommandHelper {
         self.highlighter.highlight(line, pos)
     }
 
-    fn highlight_char(&self, line: &str, pos: usize, forced: bool) -> bool {
+    fn highlight_char(&self, line: &str, pos: usize, forced: CmdKind) -> bool {
         self.highlighter.highlight_char(line, pos, forced)
     }
 }

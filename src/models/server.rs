@@ -278,11 +278,11 @@ impl Group {
         for idx in hot_sessions {
             let session = &mut self.sessions[idx];
 
-            // Get players who didn't join VC (timed out)
+            // Get players who have never joined VC (timed out)
             let timed_out_players: Vec<_> = session.pool
                 .iter()
                 .take(quota)
-                .filter(|p| !p.in_queue_vc)
+                .filter(|p| !p.has_joined_vc_once)
                 .map(|p| p.player.discord_id)
                 .collect();
 
@@ -326,12 +326,20 @@ impl Group {
 
         // Set status to Push and extract player moves
         game.push();
-        let player_moves: Vec<(UI, CI)> = game.pool
+        let player_moves: Vec<(UI, CI, String)> = game.pool
             .iter()
             .filter_map(|player| {
                 match player.team {
-                    Some(crate::models::Team::Red) => Some((player.player.discord_id, red_vc)),
-                    Some(crate::models::Team::Blu) => Some((player.player.discord_id, blu_vc)),
+                    Some(crate::models::Team::Red) => Some((
+                        player.player.discord_id,
+                        red_vc,
+                        player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string())
+                    )),
+                    Some(crate::models::Team::Blu) => Some((
+                        player.player.discord_id,
+                        blu_vc,
+                        player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string())
+                    )),
                     _ => None,
                 }
             })
@@ -340,9 +348,9 @@ impl Group {
         // Drop the mutable borrow and move users to team channels
         let guild_id = ctx.cache.guilds().first().copied()
             .ok_or_else(|| anyhow!("No guild found in cache"))?;
-        for (user_id, channel_id) in player_moves {
+        for (user_id, channel_id, tag) in player_moves {
             if let Err(e) = self.move_user(guild_id, user_id, channel_id, ctx).await {
-                warn!("Failed to move user {}: {}", user_id, e);
+                warn!("Failed to move user {}: {}", tag, e);
             }
         }
 
@@ -405,17 +413,21 @@ impl Group {
         game.pull();
 
         // Extract all players with their data to move back to queue
-        let players_to_requeue: Vec<(UI, Option<crate::models::Rank>)> = game.pool
+        let players_to_requeue: Vec<(UI, Option<crate::models::Rank>, String)> = game.pool
             .iter()
-            .map(|player| (player.player.discord_id, player.player.rank))
+            .map(|player| (
+                player.player.discord_id,
+                player.player.rank,
+                player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string())
+            ))
             .collect();
 
         // Move all players back to queue voice channel
         let guild_id = ctx.cache.guilds().first().copied()
             .ok_or_else(|| anyhow!("No guild found in cache"))?;
-        for (user_id, _) in &players_to_requeue {
+        for (user_id, _, tag) in &players_to_requeue {
             if let Err(e) = self.move_user(guild_id, *user_id, queue_vc, ctx).await {
-                warn!("Failed to move user {} back to queue: {}", user_id, e);
+                warn!("Failed to move user {} back to queue: {}", tag, e);
             }
         }
 
@@ -426,11 +438,11 @@ impl Group {
             .ok_or(anyhow!("No idle session found for re-queuing players"))?;
         let idle_session = &mut self.sessions[idle_session_idx];
 
-        for (user_id, rank) in players_to_requeue {
+        for (user_id, rank, tag) in players_to_requeue {
             if let Some(rank) = rank {
                 // Use add_player_in_vc since we just moved them to the queue channel
                 idle_session.add_player_in_vc(user_id, rank);
-                info!("[Session {}] Re-added player {} to queue", idle_session_idx, user_id);
+                info!("[Session {}] Re-added player {} to queue", idle_session_idx, tag);
             }
         }
 
@@ -458,7 +470,8 @@ impl Group {
             for player in &mut session.pool {
                 if let Some(updated_rank) = get_player_rank(ctx, db, guild_id, player.player.discord_id).await {
                     if player.player.rank != Some(updated_rank) {
-                        info!("Updated rank for player {}: {:?} -> {:?}", player.player.discord_id, player.player.rank, updated_rank);
+                        let tag = player.player.discord_tag.as_deref().unwrap_or("Unknown");
+                        info!("Updated rank for player {}: {:?} -> {:?}", tag, player.player.rank, updated_rank);
                         player.player.rank = Some(updated_rank);
                     }
                 }
@@ -546,21 +559,21 @@ impl Group {
 
             // First add red team players
             for &idx in &red_indices {
-                let mut player = game.pool[players_to_balance[idx].0];
+                let mut player = game.pool[players_to_balance[idx].0].clone();
                 player.team(crate::models::Team::Red);
                 new_pool.push(player);
             }
 
             // Then add blue team players
             for &idx in &blu_indices {
-                let mut player = game.pool[players_to_balance[idx].0];
+                let mut player = game.pool[players_to_balance[idx].0].clone();
                 player.team(crate::models::Team::Blu);
                 new_pool.push(player);
             }
 
             // Add remaining players (if more than 8)
             for i in pool_size..game.pool.len() {
-                new_pool.push(game.pool[i]);
+                new_pool.push(game.pool[i].clone());
             }
 
             // Update the pool with balanced teams
@@ -587,6 +600,7 @@ impl Group {
         if in_vc {
             if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
                 player.in_queue_vc = true;
+                player.has_joined_vc_once = true;
             }
         }
 

@@ -132,7 +132,10 @@ impl EventHandler for Handler {
     async fn interaction_create(&self,ctx: Context,pl: Interaction,) {
         match pl {
             Interaction::Command(itx) => {
-                let user_name   = &itx.user.name;
+                let discord_tag = match self.database.get_user(itx.user.id).await {
+                    Ok(player) => player.discord_tag.unwrap_or_else(|| itx.user.name.clone()),
+                    Err(_) => itx.user.name.clone(),
+                };
                 let cmd_ctx     = CommandContext {
                     ctx:     &ctx,
                     intax:   &itx,
@@ -143,7 +146,7 @@ impl EventHandler for Handler {
                 let cdo         = &cd.options;
 
                 let info = || {
-                    info!("{}: /{}", user_name, itx.data.name);
+                    info!("{}: /{}", discord_tag, itx.data.name);
                 };
 
                 // Handle commands that don't need a server/group first
@@ -249,9 +252,12 @@ impl EventHandler for Handler {
             },
             Interaction::Component(itx) => {
                 // Handle button interactions
-                let user_name   = &itx.user.name;
+                let discord_tag = match self.database.get_user(itx.user.id).await {
+                    Ok(player) => player.discord_tag.unwrap_or_else(|| itx.user.name.clone()),
+                    Err(_) => itx.user.name.clone(),
+                };
                 let button_type = ButtonType::parse(&itx.data.custom_id);
-                info!("{} clicked button: {:?}", user_name, button_type);
+                info!("{} clicked button: {:?}", discord_tag, button_type);
 
                 // Handle permission confirmation button
                 if matches!(button_type, ButtonType::ConfirmPermissions) {
@@ -484,7 +490,13 @@ impl EventHandler for Handler {
                 return;
             }
         };
-        let user_name   = user.display_name();
+        
+        // Get player discord_tag from database
+        let discord_tag = match self.database.get_user(user_id).await {
+            Ok(player) => player.discord_tag.unwrap_or_else(|| user.display_name().to_string()),
+            Err(_) => user.display_name().to_string(),
+        };
+        
         let server      = match new.guild_id {
             Some(s) => s,
             None => {return;}
@@ -524,7 +536,7 @@ impl EventHandler for Handler {
         match state {
             VoiceStateUpdate::Disconnected => {
                 if group.channels.queue_vc == lookup_channel {
-                    info!("{} left the queue", user_name);
+                    info!("- {}", discord_tag);
 
                     let quota = group.quota as usize;
                     // Get session index before mutable borrow
@@ -534,30 +546,18 @@ impl EventHandler for Handler {
                     let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
                         if !sesh.is_active() {
                             let was_hot = sesh.is_hot();
-                            sesh.remove_player(user_id);
-                            let pool_len = sesh.pool.len();
-
-                            // If session was hot, check what to do next
+                            
+                            // For Hot sessions, just mark as not in VC instead of removing
+                            // This preserves has_joined_vc_once flag so they're not shown as "missing"
                             if was_hot {
-                                if pool_len < quota {
-                                    // Dropped below quota, transition back to idle
-                                    if let Some(idx) = session_idx {
-                                        info!("[Session {}] Dropped below quota, transitioning from Hot to Idle", idx);
-                                    } else {
-                                        info!("Session dropped below quota, transitioning from Hot to Idle");
-                                    }
-                                    sesh.idle();
-                                    false
-                                } else {
-                                    // Still at or above quota, regenerate teams
-                                    if let Some(idx) = session_idx {
-                                        info!("[Session {}] Still meets quota after player left, regenerating teams", idx);
-                                    } else {
-                                        info!("Session still meets quota after player left, regenerating teams");
-                                    }
-                                    true
+                                if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
+                                    player.in_queue_vc = false;
+                                    // has_joined_vc_once is preserved
                                 }
+                                false // No regeneration needed
                             } else {
+                                // For Idle sessions, remove player completely
+                                sesh.remove_player(user_id);
                                 false
                             }
                         } else {
@@ -583,7 +583,7 @@ impl EventHandler for Handler {
             },
             VoiceStateUpdate::Moved => {
                 if group.channels.queue_vc == lookup_channel {
-                    info!("{} left the queue", user_name);
+                    info!("{} left the queue", discord_tag);
 
                     let quota = group.quota as usize;
                     // Get session index before mutable borrow
@@ -593,30 +593,18 @@ impl EventHandler for Handler {
                     let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
                         if !sesh.is_active() {
                             let was_hot = sesh.is_hot();
-                            sesh.remove_player(user_id);
-                            let pool_len = sesh.pool.len();
-
-                            // If session was hot, check what to do next
+                            
+                            // For Hot sessions, just mark as not in VC instead of removing
+                            // This preserves has_joined_vc_once flag so they're not shown as "missing"
                             if was_hot {
-                                if pool_len < quota {
-                                    // Dropped below quota, transition back to idle
-                                    if let Some(idx) = session_idx {
-                                        info!("[Session {}] Dropped below quota, transitioning from Hot to Idle", idx);
-                                    } else {
-                                        info!("Session dropped below quota, transitioning from Hot to Idle");
-                                    }
-                                    sesh.idle();
-                                    false
-                                } else {
-                                    // Still at or above quota, regenerate teams
-                                    if let Some(idx) = session_idx {
-                                        info!("[Session {}] Still meets quota after player left, regenerating teams", idx);
-                                    } else {
-                                        info!("Session still meets quota after player left, regenerating teams");
-                                    }
-                                    true
+                                if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
+                                    player.in_queue_vc = false;
+                                    // has_joined_vc_once is preserved
                                 }
+                                false // No regeneration needed
                             } else {
+                                // For Idle sessions, remove player completely
+                                sesh.remove_player(user_id);
                                 false
                             }
                         } else {
@@ -644,7 +632,7 @@ impl EventHandler for Handler {
         }
 
         let channel_name = new.channel_id.unwrap().name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
-        info!("{} joined {}", user_name, channel_name);
+        info!("{} joined {}", discord_tag, channel_name);
 
         // Get player data
         match self.database.get_user(user_id).await {
@@ -674,7 +662,9 @@ impl EventHandler for Handler {
                         if let Ok(session) = group.get_user_session(user_id).await {
                             if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
                                 player.in_queue_vc = true;
-                                group.dash_update(&ctx).await;
+                                player.has_joined_vc_once = true;
+                                // Don't update dashboard here - pull() will handle it
+                                // This avoids multiple rapid updates when players rejoin after match end
                             }
                         } else {
                             // Player not in session yet, try to add them if idle session available
@@ -693,7 +683,7 @@ impl EventHandler for Handler {
                                         group.dash_update(&ctx).await;
                                     },
                                     Err(e) => {
-                                        warn!("{} failed to get or assign rank: {}", user_name, e);
+                                        warn!("{} failed to get or assign rank: {}", discord_tag, e);
                                     }
                                 }
                             }
@@ -793,17 +783,28 @@ impl Handler {
                         continue;
                     }
 
-                    let user_name = match ctx.http.get_user(*user_id).await {
-                        Ok(user) => user.display_name().to_string(),
-                        Err(_)   => user_id.to_string(),
+                    let discord_tag = if let Ok(player) = self.database.get_user(*user_id).await {
+                        if let Some(tag) = player.discord_tag {
+                            tag
+                        } else {
+                            match ctx.http.get_user(*user_id).await {
+                                Ok(user) => user.display_name().to_string(),
+                                Err(_) => user_id.to_string(),
+                            }
+                        }
+                    } else {
+                        match ctx.http.get_user(*user_id).await {
+                            Ok(user) => user.display_name().to_string(),
+                            Err(_) => user_id.to_string(),
+                        }
                     };
 
                     match get_or_assign_player_rank(ctx, &self.database, guild.id, *user_id).await {
                         Ok(rank) => {
-                            players_to_add.push((*user_id, rank, user_name));
+                            players_to_add.push((*user_id, rank, discord_tag));
                         },
                         Err(e) => {
-                            warn!("Failed to get or assign rank for existing user {}: {}", user_name, e);
+                            warn!("Failed to get or assign rank for existing user {}: {}", discord_tag, e);
                         }
                     }
                 }
@@ -811,13 +812,13 @@ impl Handler {
 
             // Add all players to the session WITHOUT quota check
             if let Ok(session) = group.get_queue().await {
-                for (user_id, rank, user_name) in &players_to_add {
+                for (user_id, rank, discord_tag) in &players_to_add {
                     session.add_player(*user_id, *rank);
                     // Mark them as in VC
                     if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == *user_id) {
                         player.in_queue_vc = true;
                     }
-                    info!("Added {} ({:?})", user_name, rank);
+                    info!("Added {} ({:?})", discord_tag, rank);
                 }
             }
 

@@ -554,7 +554,8 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
 
     // Check if player is already in game
     if group.get_user_session(user).await.is_ok() {
-        info!("Player {} is already in the queue", player.discord_id);
+        let tag = player.discord_tag.as_deref().unwrap_or("Unknown");
+        info!("Player {} is already in the queue", tag);
     } else {
         let mut manager = cc.manager.lock().await;
         let server = manager.get_server(guild_id)?;

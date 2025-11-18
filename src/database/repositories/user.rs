@@ -47,6 +47,7 @@ impl UserRepository {
 
     fn get_player(result: sqlx::sqlite::SqliteRow) -> Player {
         Player::add(result.get::<u64, _>        ("discord_id").into(),
+                    None,
                     result.get::<Option<i64>, _>("steam_id")  .map(|id| id as u64)
                    )
     }
@@ -60,7 +61,7 @@ impl UserRepository {
             .execute(&self.pool)
             .await?;
 
-        Ok(Player::add(discord_id, steam_id))
+        Ok(Player::add(discord_id, None, steam_id))
     }
 }
 
