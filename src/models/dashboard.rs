@@ -9,7 +9,7 @@ use serenity::all::{
 };
 use tracing::{error, info, warn};
 
-use crate::models::{ComponentContext as CC, Group, Session, SessionStatus};
+use crate::models::{ComponentContext as CC, DashboardQueueKey, Group, Session, SessionStatus};
 
 macro_rules! list_players {
     ($desc:ident, $team:ident) => {
@@ -167,7 +167,7 @@ impl Group {
     }
 
     /// Creates buttons for the dashboard
-    pub async fn create_dashboard_buttons(&mut self) -> Result<Vec<CAR>> {
+    pub async fn create_dashboard_buttons(&self) -> Result<Vec<CAR>> {
         let quota = self.quota as usize;
 
         // Check if any session is hot AND still has enough players
@@ -193,14 +193,29 @@ impl Group {
 
     pub async fn has_dashboard(&self, ctx: &Context) -> bool {
         let ch = CI::new(self.channels.dashboard.into());
+        info!("Checking if dashboard message {} exists in channel {}", self.dashboard_msg, ch);
         let msg = ch.message(&ctx.http, self.dashboard_msg).await;
-        msg.is_ok()
+        let exists = msg.is_ok();
+        if !exists {
+            info!("Dashboard message {} not found: {:?}", self.dashboard_msg, msg.err());
+        } else {
+            info!("Dashboard message {} exists", self.dashboard_msg);
+        }
+        exists
     }
 
     pub async fn dash_publish(&mut self, ctx: &Context, channel: CI) -> Result<(), Error>{
+        // Check if dashboard already exists and is accessible
+        if self.has_dashboard(ctx).await {
+            info!("Dashboard already exists, updating instead of creating new one");
+            return self.dash_update(ctx).await;
+        }
+        
+        // Create new dashboard message
         let msg = channel.send_message(&ctx.http, self.dash_init().await.unwrap()).await;
         if let Ok(msg) = msg {
             self.dashboard_msg = msg.id;
+            info!("Created new dashboard message {}", msg.id);
             Ok(())
         } else {
             error!("Failed to send game ready notification");
@@ -209,7 +224,7 @@ impl Group {
     }
 
     /// Builds dashboard embed and components based on current group state
-    async fn build_dashboard_content(&mut self) -> Result<(CE, Vec<CAR>)> {
+    pub async fn build_dashboard_content(&self) -> Result<(CE, Vec<CAR>)> {
         let mut embed       = CE::new().title("PUG Dashboard");
         let mut description = String::new();
 
@@ -407,7 +422,7 @@ impl Group {
     }
 
     /// Updates a dashboard based on current group state
-    pub async fn dash_update(&mut self, ctx: &Context) -> Result<(), Error> {
+    pub async fn dash_update(&self, ctx: &Context) -> Result<(), Error> {
         let mut dash = match self.dash_get(ctx).await {
             Ok(msg) => msg,
             Err(e) => {
@@ -421,6 +436,23 @@ impl Group {
             Err(e) => {
                 error!("Failed to update dashboard: {}", e);
                 Err(e.into())
+            }
+        }
+    }
+    
+    /// Queue a dashboard update (non-blocking, batched)
+    /// Requires guild_id to be passed since Group doesn't store it
+    pub async fn queue_dash_update(&self, ctx: &Context, guild_id: u64) {
+        // Try to get queue from context data using the key from models module
+        let data = ctx.data.read().await;
+        if let Some(queue) = data.get::<DashboardQueueKey>() {
+            queue.request_update(guild_id, self.group_id as u64);
+        } else {
+            warn!("Dashboard queue not initialized in Context - falling back to blocking update");
+            drop(data); // Release the read lock before calling dash_update
+            // Fallback: call blocking update directly (happens during startup race condition)
+            if let Err(e) = self.dash_update(ctx).await {
+                warn!("Failed to update dashboard in fallback: {}", e);
             }
         }
     }
@@ -495,7 +527,7 @@ impl Group {
 
         // Regenerate teams if needed (outside the session borrow scope)
         if should_regenerate_teams {
-            self.generate_teams(cc.ctx).await;
+            self.generate_teams(cc.ctx, cc.component.guild_id.unwrap()).await;
         }
 
         // Only add player if they were NOT originally in the queue
@@ -548,7 +580,7 @@ impl Group {
         }
 
         // Update dashboard to reflect changes
-        self.dash_update(cc.ctx).await;
+        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
 
         Ok(())
     }
@@ -572,7 +604,7 @@ impl Group {
 
         // Call the same team generation logic used by generate_teams
         // This ensures balanced teams using the BCH algorithm
-        self.generate_teams(cc.ctx).await;
+        self.generate_teams(cc.ctx, cc.component.guild_id.unwrap()).await;
 
         Ok(())
     }
@@ -613,6 +645,8 @@ impl Group {
         match self.push(cc.ctx).await {
             Ok(_) => {
                 info!("Players moved to team channels and game is now live");
+                // Update dashboard to reflect Live status
+                self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
                 Ok(())
             }
             Err(e) => {

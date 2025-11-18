@@ -22,7 +22,7 @@ use tracing::{error, info, warn};
 use pf_pug_bot::database::migrations::DatabaseMigrations;
 use pf_pug_bot::database::repositories::GroupRepository;
 use pf_pug_bot::handlers::{admin, player};
-use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, Database, Group, Manager, Roles, Server, SessionStatus, VoiceStateUpdate};
+use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database, Group, Manager, Roles, Server, SessionStatus, VoiceStateUpdate};
 use pf_pug_bot::models::constants::VoiceStateUpdate::*;
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
@@ -44,6 +44,7 @@ impl CmdOp for CC {
 struct Handler {
     database: Arc<Database>,
     manager:  Arc<Mutex<Manager>>,
+    dashboard_queue: Arc<tokio::sync::Mutex<Option<DashboardUpdateQueue>>>,
 }
 
 /// Handler for Discord events
@@ -52,6 +53,20 @@ impl EventHandler for Handler {
     /// When the bot is ready
     async fn ready(&self,ctx: Context,ready: Ready,) {
         let guild_count = ctx.cache.guilds().len();
+
+        // Initialize dashboard update queue (done once on ready)
+        {
+            let mut queue_lock = self.dashboard_queue.lock().await;
+            if queue_lock.is_none() {
+                let queue = DashboardUpdateQueue::new(ctx.clone(), self.manager.clone(), self.database.clone());
+                let queue_arc = Arc::new(queue.clone());
+                *queue_lock = Some(queue);
+                
+                // Store in Context data for global access
+                ctx.data.write().await.insert::<DashboardQueueKey>(queue_arc);
+                info!("Dashboard update queue initialized and stored in Context");
+            }
+        }
 
         // Spawn console command handler in a separate task
         let console_handler = command::ConsoleHandler::new(
@@ -581,9 +596,9 @@ impl EventHandler for Handler {
                     };
 
                     if should_regenerate {
-                        group.generate_teams(&ctx).await;
+                        group.generate_teams(&ctx, server).await;
                     }
-                    group.dash_update(&ctx).await;
+                    group.queue_dash_update(&ctx, server.get()).await;
                 }
             },
             VoiceStateUpdate::Connected => {
@@ -628,9 +643,9 @@ impl EventHandler for Handler {
                     };
 
                     if should_regenerate {
-                        group.generate_teams(&ctx).await;
+                        group.generate_teams(&ctx, server).await;
                     }
-                    group.dash_update(&ctx).await;
+                    group.queue_dash_update(&ctx, server.get()).await;
                 }
             },
             VoiceStateUpdate::Reconnected => {
@@ -704,7 +719,7 @@ impl EventHandler for Handler {
                                             error!("Failed to add player to queue: {}", e);
                                         }
 
-                                        group.dash_update(&ctx).await;
+                                        group.queue_dash_update(&ctx, server.get()).await;
                                     },
                                     Err(e) => {
                                         warn!("{} failed to get or assign rank: {}", discord_tag, e);
@@ -715,7 +730,7 @@ impl EventHandler for Handler {
 
                         if group.check_hot_timeout(&ctx).await {
                             info!("Hot session timeout detected, updating dashboard");
-                            group.dash_update(&ctx).await;
+                            group.queue_dash_update(&ctx, server.get()).await;
                         }
                     }
                 },
@@ -848,11 +863,7 @@ impl Handler {
                             }
                         }
                     };
-                    session.add_player(player, *rank);
-                    // Mark them as in VC
-                    if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == *user_id) {
-                        player.in_queue_vc = true;
-                    }
+                    session.add_player_in_vc(player, *rank);
                     info!("Added {} ({:?})", discord_tag, rank);
                 }
             }
@@ -869,7 +880,7 @@ impl Handler {
                 }
 
                 // Update the dashboard to reflect the new users
-                group.dash_update(ctx).await;
+                group.queue_dash_update(ctx, guild.id.get()).await;
             }
         }
     }
@@ -925,17 +936,29 @@ impl Handler {
         for group in &mut server.groups {
             // Check if dashboard already exists
             if group.has_dashboard(ctx).await {
-                group.dash_update(ctx).await;
+                group.queue_dash_update(ctx, guild.id.get()).await;
                 continue;
             }
-            // Create dashboard for each group's queue channel
-            let channel_id   = group.channels.queue_chat;
+            // Create dashboard for each group's dashboard channel
+            let channel_id   = group.channels.dashboard;
             let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
 
-            // Create dashboard in the queue channel
+            // Create dashboard in the dashboard channel
             match group.dash_publish(ctx, channel_id).await {
                 Ok(_) => {
                     info!("Dashboard created successfully for channel {}", channel_name);
+                    
+                    // Persist the dashboard message ID to database
+                    let dashboard_msg_id = group.dashboard_msg.get();
+                    if let Err(e) = self.database.groups.update_dashboard_msg(
+                        guild.id.get(),
+                        channel_id.get(),
+                        dashboard_msg_id
+                    ).await {
+                        warn!("Failed to persist dashboard message ID to database: {}", e);
+                    } else {
+                        info!("Persisted dashboard message ID {} to database", dashboard_msg_id);
+                    }
                 },
                 Err(e) => {
                     error!("Failed to create dashboard for channel {}: {}", channel_name, e);
@@ -1008,13 +1031,12 @@ async fn main(
     // Configure the client with the framework and intents
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILD_VOICE_STATES | GatewayIntents::GUILDS;
 
-    // Define TypeMapKey for Guild
+    // Define TypeMapKey for Manager
     struct GuildKey;
     impl TypeMapKey
         for GuildKey {
         type Value = Arc<Mutex<Manager>>;
     }
-
 
     // Init manager
     let manager = Arc::new(Mutex::new(Manager::default()));
@@ -1024,6 +1046,7 @@ async fn main(
         .event_handler(Handler {
             database: db.clone(),
             manager: manager.clone(),
+            dashboard_queue: Arc::new(tokio::sync::Mutex::new(None)),
         })
         .await
         .expect("Failed to create client");
