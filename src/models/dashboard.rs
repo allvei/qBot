@@ -508,9 +508,21 @@ impl Group {
             // Get or assign player's rank (auto-creates ranks and assigns Apprentice if needed)
             use crate::handlers::player::get_or_assign_player_rank;
             if let Some(guild_id) = cc.component.guild_id {
+                // Get player object from database
+                let player = match cc.db.get_user(user_id).await {
+                    Ok(p) => p,
+                    Err(_) => match cc.db.new_user(user_id).await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!("Failed to get or create player: {}", e);
+                            return Ok(());
+                        }
+                    }
+                };
+                
                 match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user_id).await {
                     Ok(rank) => {
-                        if let Err(e) = self.queue_player(user_id, rank, cc.ctx, Some(guild_id), Some(&cc.db)).await {
+                        if let Err(e) = self.queue_player(player, rank, cc.ctx, Some(guild_id), Some(&cc.db)).await {
                             warn!("Failed to queue player: {}", e);
                         }
                     },

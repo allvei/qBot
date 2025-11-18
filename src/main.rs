@@ -635,7 +635,7 @@ impl EventHandler for Handler {
         info!("{} joined {}", discord_tag, channel_name);
 
         // Get player data
-        match self.database.get_user(user_id).await {
+        let player = match self.database.get_user(user_id).await {
             Ok(user) => user,
             Err(_) => match self.database.new_user(user_id).await {
                     Ok(new_user) => new_user,
@@ -676,7 +676,7 @@ impl EventHandler for Handler {
                                 match get_or_assign_player_rank(&ctx, &self.database, server, user_id).await {
                                     Ok(rank) => {
                                         // Use queue_player_with_vc_status to set in_queue_vc BEFORE quota check/notification
-                                        if let Err(e) = group.queue_player_with_vc_status(user_id, rank, &ctx, Some(server), Some(&self.database), true).await {
+                                        if let Err(e) = group.queue_player_with_vc_status(player.clone(), rank, &ctx, Some(server), Some(&self.database), true).await {
                                             error!("Failed to add player to queue: {}", e);
                                         }
 
@@ -813,7 +813,18 @@ impl Handler {
             // Add all players to the session WITHOUT quota check
             if let Ok(session) = group.get_queue().await {
                 for (user_id, rank, discord_tag) in &players_to_add {
-                    session.add_player(*user_id, *rank);
+                    // Fetch player from database to preserve discord_tag
+                    let player = match self.database.get_user(*user_id).await {
+                        Ok(p) => p,
+                        Err(_) => match self.database.new_user(*user_id).await {
+                            Ok(p) => p,
+                            Err(e) => {
+                                warn!("Failed to get or create player {}: {}", discord_tag, e);
+                                continue;
+                            }
+                        }
+                    };
+                    session.add_player(player, *rank);
                     // Mark them as in VC
                     if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == *user_id) {
                         player.in_queue_vc = true;

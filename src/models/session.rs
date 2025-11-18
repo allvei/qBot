@@ -22,7 +22,7 @@ pub struct Session {
 
 impl Session {
     /// Get a player by their Discord ID
-    pub fn get_user(&self, discord_id: UserId) -> Result<Player> {
+    pub fn get_player(&self, discord_id: UserId) -> Result<Player> {
         match self.pool.iter().find(|p| p.player.discord_id == discord_id) {
             Some(player) => Ok(player.player.clone()),
             None => Err(anyhow::anyhow!("User not found")),
@@ -30,22 +30,22 @@ impl Session {
     }
 
     /// Add a player to the session with their rank
-    pub fn add_player(&mut self, discord_id: UserId, rank: crate::models::Rank) {
-        let player = SessionPlayer::add(discord_id, rank);
-        let tag = player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string());
-        self.pool.push(player);
+    pub fn add_player(&mut self, player: Player, rank: crate::models::Rank) {
+        let session_player = SessionPlayer::add(player, rank);
+        let tag = session_player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string());
+        self.pool.push(session_player);
         self.sort_by_join_time();
         info!("Added {} to session", tag);
     }
 
     /// Add a player to the session with their rank, marking them as already in queue VC
     /// Use this when re-adding players who were just moved to the queue channel
-    pub fn add_player_in_vc(&mut self, discord_id: UserId, rank: crate::models::Rank) {
-        let mut player = SessionPlayer::add(discord_id, rank);
-        player.in_queue_vc = true;
-        player.has_joined_vc_once = true;
-        let tag = player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string());
-        self.pool.push(player);
+    pub fn add_player_in_vc(&mut self, player: Player, rank: crate::models::Rank) {
+        let mut session_player = SessionPlayer::add(player, rank);
+        session_player.in_queue_vc = true;
+        session_player.has_joined_vc_once = true;
+        let tag = session_player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string());
+        self.pool.push(session_player);
         self.sort_by_join_time();
         info!("Added {} to session after moving to queue VC", tag);
     }
@@ -220,8 +220,7 @@ mod systemtime_serde {
 }
 
 impl SessionPlayer {
-    pub fn add(discord_id: UserId, rank: crate::models::Rank) -> Self {
-        let mut player = Player::add(discord_id, None, None);
+    pub fn add(mut player: Player, rank: crate::models::Rank) -> Self {
         player.set_rank(Some(rank));
         Self {
             player,

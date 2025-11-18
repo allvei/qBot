@@ -17,7 +17,7 @@ use tracing::{info, warn};
 
 use crate::handlers::player::check_role;
 use crate::models::{
-    CommandContext, SessionPlayer, Session, SessionStatus, TeamChannel,
+    CommandContext, Player, SessionPlayer, Session, SessionStatus, TeamChannel,
 };
 
 /// Helper function to calculate mean, median, and standard deviation for team ELOs
@@ -412,21 +412,18 @@ impl Group {
 
         game.pull();
 
-        // Extract all players with their data to move back to queue
-        let players_to_requeue: Vec<(UI, Option<crate::models::Rank>, String)> = game.pool
+        // Extract all players to move back to queue
+        let players_to_requeue: Vec<Player> = game.pool
             .iter()
-            .map(|player| (
-                player.player.discord_id,
-                player.player.rank,
-                player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string())
-            ))
+            .map(|p| p.player.clone())
             .collect();
 
         // Move all players back to queue voice channel
         let guild_id = ctx.cache.guilds().first().copied()
             .ok_or_else(|| anyhow!("No guild found in cache"))?;
-        for (user_id, _, tag) in &players_to_requeue {
-            if let Err(e) = self.move_user(guild_id, *user_id, queue_vc, ctx).await {
+        for player in &players_to_requeue {
+            let tag = player.discord_tag.as_deref().unwrap_or("Unknown");
+            if let Err(e) = self.move_user(guild_id, player.discord_id, queue_vc, ctx).await {
                 warn!("Failed to move user {} back to queue: {}", tag, e);
             }
         }
@@ -438,10 +435,11 @@ impl Group {
             .ok_or(anyhow!("No idle session found for re-queuing players"))?;
         let idle_session = &mut self.sessions[idle_session_idx];
 
-        for (user_id, rank, tag) in players_to_requeue {
-            if let Some(rank) = rank {
+        for player in players_to_requeue {
+            if let Some(rank) = player.rank {
+                let tag = player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string());
                 // Use add_player_in_vc since we just moved them to the queue channel
-                idle_session.add_player_in_vc(user_id, rank);
+                idle_session.add_player_in_vc(player, rank);
                 info!("[Session {}] Re-added player {} to queue", idle_session_idx, tag);
             }
         }
@@ -588,20 +586,18 @@ impl Group {
         self.dash_update(ctx).await;
     }
 
-    pub async fn queue_player(&mut self, user_id: UI, rank: crate::models::Rank, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>) -> Result<()> {
-        self.queue_player_with_vc_status(user_id, rank, ctx, guild_id, db, false).await
+    pub async fn queue_player(&mut self, player: Player, rank: crate::models::Rank, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>) -> Result<()> {
+        self.queue_player_with_vc_status(player, rank, ctx, guild_id, db, false).await
     }
 
-    pub async fn queue_player_with_vc_status(&mut self, user_id: UI, rank: crate::models::Rank, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>, in_vc: bool) -> Result<()> {
+    pub async fn queue_player_with_vc_status(&mut self, player: Player, rank: crate::models::Rank, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>, in_vc: bool) -> Result<()> {
         let session = self.get_queue().await?;
-        session.add_player(user_id, rank);
-
-        // Set in_queue_vc flag BEFORE checking quota to avoid unnecessary pings
+        let user_id = player.discord_id;
+        
         if in_vc {
-            if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
-                player.in_queue_vc = true;
-                player.has_joined_vc_once = true;
-            }
+            session.add_player_in_vc(player, rank);
+        } else {
+            session.add_player(player, rank);
         }
 
         if self.is_quota() {
@@ -610,8 +606,8 @@ impl Group {
         Ok(())
     }
 
-    pub async fn add_player(&mut self, session: &mut Session, user_id: UI, rank: crate::models::Rank, ctx: &Context) {
-        session.add_player(user_id, rank);
+    pub async fn add_player(&mut self, session: &mut Session, player: Player, rank: crate::models::Rank, ctx: &Context) {
+        session.add_player(player, rank);
         self.dash_update(ctx).await;
     }
 
@@ -844,14 +840,14 @@ mod tests {
         group.create_session();
 
         // Add players one by one - each call borrows and immediately drops
-        use crate::models::Rank;
-        group.sessions.last_mut().unwrap().add_player(UI::new(1), Rank::Novice);
-        group.sessions.last_mut().unwrap().add_player(UI::new(2), Rank::Novice);
-        group.sessions.last_mut().unwrap().add_player(UI::new(3), Rank::Novice);
+        use crate::models::{Rank, Player};
+        group.sessions.last_mut().unwrap().add_player(Player::add(UI::new(1), None, None), Rank::Novice);
+        group.sessions.last_mut().unwrap().add_player(Player::add(UI::new(2), None, None), Rank::Novice);
+        group.sessions.last_mut().unwrap().add_player(Player::add(UI::new(3), None, None), Rank::Novice);
 
         assert!(!group.is_quota());
 
-        group.sessions.last_mut().unwrap().add_player(UI::new(4), Rank::Novice);
+        group.sessions.last_mut().unwrap().add_player(Player::add(UI::new(4), None, None), Rank::Novice);
 
         assert!(group.is_quota());
     }

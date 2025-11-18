@@ -1181,7 +1181,8 @@ impl ConsoleHandler {
             for i in 0..count {
                 let fake_id = UserId::new(base_id + i as u64);
                 // Use Novice rank as default for test players
-                session.add_player(fake_id, pf_pug_bot::Rank::Novice);
+                let fake_player = pf_pug_bot::Player::add(fake_id, Some(format!("FakePlayer{}", i)), None);
+                session.add_player(fake_player, pf_pug_bot::Rank::Novice);
             }
 
             println!("✅ Added {} fake player(s). Total players in queue: {}", count, session.pool.len());
@@ -1453,7 +1454,8 @@ impl ConsoleHandler {
                         for i in 0..needed {
                             let fake_id = UserId::new(base_id + i as u64);
                             // Use Novice rank as default for test players
-                            session.add_player(fake_id, pf_pug_bot::Rank::Novice);
+                            let fake_player = pf_pug_bot::Player::add(fake_id, Some(format!("FakePlayer{}", i)), None);
+                            session.add_player(fake_player, pf_pug_bot::Rank::Novice);
                         }
                         println!("   ✅ Queue now has {} players\n", session.pool.len());
                     } else {

@@ -571,7 +571,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         }
 
         let queue = group.get_queue().await?;
-        queue.add_player(player.discord_id, rank);
+        queue.add_player(player, rank);
 
         if group.is_quota() {
             group.hot(cc.ctx, Some(guild_id), Some(&cc.db)).await?;
