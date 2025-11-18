@@ -427,6 +427,9 @@ impl Group {
 
     /// Handles the toggle queue button (combines join/leave)
     async fn dash_toggle_queue(&mut self, cc: &CC<'_>) -> Result<()> {
+        // Acknowledge immediately for instant button feedback
+        cc.acknowledge().await;
+        
         let user_id = cc.component.user.id;
         let quota = self.quota as usize;
 
@@ -512,8 +515,8 @@ impl Group {
             // Get or assign player's rank (auto-creates ranks and assigns Apprentice if needed)
             use crate::handlers::player::get_or_assign_player_rank;
             if let Some(guild_id) = cc.component.guild_id {
-                // Get player object from database
-                let player = match cc.db.get_user(user_id).await {
+                // Get player object from database (without fetching discord tag for performance)
+                let mut player = match cc.db.get_user(user_id).await {
                     Ok(p) => p,
                     Err(_) => match cc.db.new_user(user_id).await {
                         Ok(p) => p,
@@ -523,6 +526,9 @@ impl Group {
                         }
                     }
                 };
+                
+                // Fetch discord tag from component user for performance (avoid extra API call)
+                player.discord_tag = Some(cc.component.user.tag());
                 
                 match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user_id).await {
                     Ok(rank) => {
@@ -541,8 +547,7 @@ impl Group {
             }
         }
 
-        // Always acknowledge and update dashboard
-        cc.acknowledge().await;
+        // Update dashboard to reflect changes
         self.dash_update(cc.ctx).await;
 
         Ok(())
@@ -550,6 +555,9 @@ impl Group {
 
     /// Handles the shuffle teams button
     async fn dash_shuffle(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
+        // Acknowledge immediately for instant button feedback
+        cc.acknowledge().await;
+        
         let quota = self.quota as usize;
 
         // Find the game to shuffle - can be Idle (if quota met) or Hot
@@ -566,7 +574,6 @@ impl Group {
         // This ensures balanced teams using the BCH algorithm
         self.generate_teams(cc.ctx).await;
 
-        cc.acknowledge().await;
         Ok(())
     }
 
