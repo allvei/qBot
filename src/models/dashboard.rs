@@ -434,6 +434,9 @@ impl Group {
         let session_idx = self.sessions.iter()
             .position(|s| s.pool.iter().any(|p| p.player.discord_id == user_id));
 
+        // Check if player is already in a game (this is the initial state check)
+        let player_was_in_queue = self.get_user_session(user_id).await.is_ok();
+        
         // Check if player is already in a game
         let should_regenerate_teams = if let Ok(session) = self.get_user_session(user_id).await {
             // Check if player is physically in the queue VC
@@ -492,7 +495,8 @@ impl Group {
             self.generate_teams(cc.ctx).await;
         }
 
-        if !should_regenerate_teams && self.get_user_session(user_id).await.is_err() {
+        // Only add player if they were NOT originally in the queue
+        if !player_was_in_queue {
             // Player is not in queue, add them
 
             // Check if we have an idle or hot session to join
