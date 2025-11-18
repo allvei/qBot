@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use serenity::all::UserId;
+use serenity::all::{Context, UserId};
 use sqlx::{Row, SqlitePool};
 use tracing::info;
 
@@ -28,6 +28,24 @@ impl UserRepository {
         Ok(Self::get_player(result))
     }
 
+    pub async fn get_by_discord_id_with_tag(&self, discord_id: UserId, ctx: &Context) -> Result<Player> {
+        let result = sqlx::query(
+            "SELECT id, discord_id, steam_id FROM users WHERE discord_id = ?"
+        )
+        .bind(discord_id.get() as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let mut player = Self::get_player(result);
+        
+        // Fetch discord tag from Discord API
+        if let Ok(user) = ctx.http.get_user(discord_id).await {
+            player.discord_tag = Some(user.tag());
+        }
+        
+        Ok(player)
+    }
+
     pub async fn create_or_update(&self, discord_id: UserId, steam_id: Option<u64>) -> Result<Player> {
         info!("Creating or updating user with discord_id: {}", discord_id);
 
@@ -43,6 +61,30 @@ impl UserRepository {
         .await?;
 
         Ok(Self::get_player(result))
+    }
+
+    pub async fn create_or_update_with_tag(&self, discord_id: UserId, steam_id: Option<u64>, ctx: &Context) -> Result<Player> {
+        info!("Creating or updating user with discord_id: {}", discord_id);
+
+        let result = sqlx::query(
+            "INSERT INTO users (discord_id, steam_id)
+             VALUES (?, ?)
+             ON CONFLICT(discord_id) DO UPDATE SET steam_id=excluded.steam_id
+             RETURNING id, discord_id, steam_id"
+        )
+        .bind(discord_id.get() as i64)
+        .bind(steam_id.map(|id| id as i64).unwrap_or(0))
+        .fetch_one(&self.pool)
+        .await?;
+
+        let mut player = Self::get_player(result);
+        
+        // Fetch discord tag from Discord API
+        if let Ok(user) = ctx.http.get_user(discord_id).await {
+            player.discord_tag = Some(user.tag());
+        }
+        
+        Ok(player)
     }
 
     fn get_player(result: sqlx::sqlite::SqliteRow) -> Player {

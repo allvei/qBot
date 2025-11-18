@@ -3,7 +3,7 @@ pub mod repositories;
 pub mod validator;
 
 use anyhow::Result;
-use serenity::all::UserId;
+use serenity::all::{Context, UserId};
 use sqlx::SqlitePool;
 use tracing::info;
 
@@ -62,9 +62,19 @@ impl Database {
         self.users.create_or_update(discord_id, Some(0)).await
     }
 
+    /// Creates a new user in the database with discord tag fetched from API
+    pub async fn new_user_with_tag(&self, discord_id: UserId, ctx: &Context) -> Result<Player> {
+        self.users.create_or_update_with_tag(discord_id, Some(0), ctx).await
+    }
+
     /// Gets a user by Discord ID
     pub async fn get_user(&self, discord_id: UserId) -> Result<Player> {
         self.users.get_by_discord_id(discord_id).await
+    }
+
+    /// Gets a user by Discord ID with discord tag fetched from API
+    pub async fn get_user_with_tag(&self, discord_id: UserId, ctx: &Context) -> Result<Player> {
+        self.users.get_by_discord_id_with_tag(discord_id, ctx).await
     }
 
     /// Updates a user's Steam ID
