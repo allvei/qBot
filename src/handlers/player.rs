@@ -20,12 +20,26 @@ pub async fn get_player_rank(
     guild_id: GuildId,
     user_id: serenity::all::UserId,
 ) -> Option<Rank> {
-    if let Ok(member) = guild_id.member(&ctx.http, user_id).await {
-        // Check all member roles and find the first matching rank
-        for role_id in &member.roles {
-            if let Some(rank) = Rank::from_role_id(*role_id, db, guild_id.get()).await {
-                return Some(rank);
-            }
+    // Try cache first (fast path, no API call)
+    let member = if let Some(guild) = ctx.cache.guild(guild_id) {
+        guild.members.get(&user_id).cloned()
+    } else {
+        None
+    };
+    
+    // Fallback to HTTP if not in cache
+    let member = match member {
+        Some(m) => m,
+        None => match guild_id.member(&ctx.http, user_id).await {
+            Ok(m) => m,
+            Err(_) => return None,
+        }
+    };
+    
+    // Check all member roles and find the first matching rank
+    for role_id in &member.roles {
+        if let Some(rank) = Rank::from_role_id(*role_id, db, guild_id.get()).await {
+            return Some(rank);
         }
     }
     None
@@ -316,12 +330,22 @@ pub async fn check_role(
     use serenity::all::Permissions;
 
     if let Some(guild_id) = cc.intax.guild_id {
-        // Get the member
-        let member = match guild_id.member(&cc.ctx.http, cc.intax.user.id).await {
-            Ok(m) => m,
-            Err(e) => {
-                warn!("Failed to fetch member for user {} in guild {}: {:?}", cc.intax.user.id, guild_id, e);
-                return Ok(false);
+        // Try cache first (fast path)
+        let member = if let Some(guild) = cc.ctx.cache.guild(guild_id) {
+            guild.members.get(&cc.intax.user.id).cloned()
+        } else {
+            None
+        };
+        
+        // Fallback to HTTP if not in cache
+        let member = match member {
+            Some(m) => m,
+            None => match guild_id.member(&cc.ctx.http, cc.intax.user.id).await {
+                Ok(m) => m,
+                Err(e) => {
+                    warn!("Failed to fetch member for user {} in guild {}: {:?}", cc.intax.user.id, guild_id, e);
+                    return Ok(false);
+                }
             }
         };
 
@@ -359,12 +383,22 @@ pub async fn check_component_role(
     use serenity::all::Permissions;
 
     if let Some(guild_id) = cc.component.guild_id {
-        // Get the member
-        let member = match guild_id.member(&cc.ctx.http, cc.component.user.id).await {
-            Ok(m) => m,
-            Err(e) => {
-                warn!("Failed to fetch member for user {} in guild {}: {:?}", cc.component.user.id, guild_id, e);
-                return Ok(false);
+        // Try cache first (fast path)
+        let member = if let Some(guild) = cc.ctx.cache.guild(guild_id) {
+            guild.members.get(&cc.component.user.id).cloned()
+        } else {
+            None
+        };
+        
+        // Fallback to HTTP if not in cache
+        let member = match member {
+            Some(m) => m,
+            None => match guild_id.member(&cc.ctx.http, cc.component.user.id).await {
+                Ok(m) => m,
+                Err(e) => {
+                    warn!("Failed to fetch member for user {} in guild {}: {:?}", cc.component.user.id, guild_id, e);
+                    return Ok(false);
+                }
             }
         };
 
@@ -529,8 +563,8 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         }
     };
 
-    // Get player info or create a new one
-    let player = match cc.db.get_user(user).await {
+    // Get player info or create a new one (use fast path without extra API call)
+    let mut player = match cc.db.get_user(user).await {
         Ok(player) => {
             info!("Found user in db!");
             player
@@ -540,6 +574,9 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
             cc.db.new_user(user).await?
         }
     };
+    
+    // Set discord tag from interaction user data (already available, no API call needed)
+    player.discord_tag = Some(cc.intax.user.tag());
 
     let group = guild.get_group(channel)?;
 

@@ -265,8 +265,21 @@ impl EventHandler for Handler {
                     let user_id = itx.user.id;
 
                     // Check if user is an admin
-                    let is_admin = match guild_id.member(&ctx.http, user_id).await {
-                        Ok(member) => {
+                    // Try cache first (fast path)
+                    let member_opt = if let Some(guild) = ctx.cache.guild(guild_id) {
+                        guild.members.get(&user_id).cloned()
+                    } else {
+                        None
+                    };
+                    
+                    // Fallback to HTTP if not in cache
+                    let member = match member_opt {
+                        Some(m) => Some(m),
+                        None => guild_id.member(&ctx.http, user_id).await.ok()
+                    };
+                    
+                    let is_admin = match member {
+                        Some(member) => {
                             // Get admin role from database config
                             match self.database.config.get_config_value("admin_role", guild_id.get()).await {
                                 Ok(Some(admin_role_str)) => {
@@ -288,7 +301,7 @@ impl EventHandler for Handler {
                                 }
                             }
                         }
-                        Err(_) => false,
+                        None => false,
                     };
 
                     if !is_admin {
@@ -631,13 +644,24 @@ impl EventHandler for Handler {
             return;
         }
 
-        let channel_name = new.channel_id.unwrap().name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
+        // Try to get channel name from cache first (fast path)
+        // Clone immediately to avoid holding CacheRef across await
+        let channel_name = ctx.cache.channel(new.channel_id.unwrap())
+            .map(|ch| ch.name.clone());
+        
+        let channel_name = match channel_name {
+            Some(name) => name,
+            None => {
+                // Fallback to HTTP if not in cache
+                new.channel_id.unwrap().name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string())
+            }
+        };
         info!("{} joined {}", discord_tag, channel_name);
 
         // Get player data
-        let player = match self.database.get_user(user_id).await {
+        let player = match self.database.get_user_with_tag(user_id, &ctx).await {
             Ok(user) => user,
-            Err(_) => match self.database.new_user(user_id).await {
+            Err(_) => match self.database.new_user_with_tag(user_id, &ctx).await {
                     Ok(new_user) => new_user,
                     Err(e) => {
                         error!("Failed to create new user: {}", e);
@@ -814,9 +838,9 @@ impl Handler {
             if let Ok(session) = group.get_queue().await {
                 for (user_id, rank, discord_tag) in &players_to_add {
                     // Fetch player from database to preserve discord_tag
-                    let player = match self.database.get_user(*user_id).await {
+                    let player = match self.database.get_user_with_tag(*user_id, ctx).await {
                         Ok(p) => p,
-                        Err(_) => match self.database.new_user(*user_id).await {
+                        Err(_) => match self.database.new_user_with_tag(*user_id, ctx).await {
                             Ok(p) => p,
                             Err(e) => {
                                 warn!("Failed to get or create player {}: {}", discord_tag, e);
