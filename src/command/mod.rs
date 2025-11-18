@@ -810,7 +810,7 @@ impl ConsoleHandler {
                 for game in group.sessions.iter() {
                     game_count += 1;
                     println!("Game {}: Guild {} - Group ID {} - {} players - Status: {:?}",
-                        game_count, server.guild_id.get(), group.group_id, game.pool.len(), game.status);
+                        game_count, server.guild_id, group.group_id, game.pool.len(), game.status);
 
                     if !game.pool.is_empty() {
                         print!("  Players: ");
@@ -938,7 +938,7 @@ impl ConsoleHandler {
                                 group.quota = quota;
 
                                 // Update dashboard to reflect new quota
-                                group.dash_update(ctx).await;
+                                group.queue_dash_update(ctx, guild_id).await;
                             }
                         } else {
                             println!("⚠️  Context not available, dashboard not updated");
@@ -959,7 +959,7 @@ impl ConsoleHandler {
                         println!("✅ Updated timeout to {} minutes for guild {} group {}", timeout, guild_id, group_id);
 
                         // Update dashboard
-                        group.dash_update(ctx).await;
+                        group.queue_dash_update(ctx, guild_id).await;
                     }
                 } else {
                     println!("❌ Context not available");
@@ -1124,7 +1124,7 @@ impl ConsoleHandler {
             // Check if there's a session with enough players
             if let Ok(session) = group.get_queue().await {
                 println!("🔄 Forcing team generation for guild {} group {} with {} players...", guild_id, group_id, session.pool.len());
-                group.generate_teams(ctx).await;
+                group.generate_teams(ctx, serenity::model::id::GuildId::new(guild_id)).await;
                 println!("✅ Teams generated successfully!");
 
                 // Show the teams
@@ -1189,7 +1189,7 @@ impl ConsoleHandler {
 
             // Update dashboard if context is available
             if let Some(ctx) = &self.ctx {
-                group.dash_update(&ctx).await;
+                group.queue_dash_update(&ctx, guild_id).await;
             }
         } else {
             println!("❌ Failed to get queue for guild {} group {}", guild_id, group_id);
@@ -1205,7 +1205,7 @@ impl ConsoleHandler {
 
         if let Some(ctx) = &self.ctx {
             let manager = self.manager.lock().await;
-            let server = manager.servers.iter().find(|s| s.guild_id.get() == guild_id)
+            let server = manager.servers.iter().find(|s| s.guild_id == guild_id)
                 .ok_or(format!("Server not found for guild ID: {}", guild_id))?;
 
             let group = server.groups.iter().find(|g| g.group_id == group_id)
@@ -1312,7 +1312,7 @@ impl ConsoleHandler {
 
             // Update dashboard if context is available
             if let Some(ctx) = &self.ctx {
-                group.dash_update(&ctx).await;
+                group.queue_dash_update(&ctx, guild_id).await;
             }
         } else {
             println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
@@ -1340,7 +1340,7 @@ impl ConsoleHandler {
 
                 // Update dashboard if context is available
                 if let Some(ctx) = &self.ctx {
-                    group.dash_update(&ctx).await;
+                    group.queue_dash_update(&ctx, guild_id).await;
                 }
             }
         } else {

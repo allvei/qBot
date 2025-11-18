@@ -252,7 +252,14 @@ impl Group {
         }
 
         self.notify(ctx).await;
-        self.generate_teams(ctx).await;
+        
+        // Generate teams - guild_id is required for dashboard updates
+        if let Some(gid) = guild_id {
+            self.generate_teams(ctx, gid).await;
+        } else {
+            warn!("Cannot generate teams: guild_id not provided");
+        }
+        
         Ok(())
     }
 
@@ -394,7 +401,7 @@ impl Group {
             info!("[Session {}] Transferred {} overflow players to new idle session", new_session_id, idle_session.pool.len());
         }
 
-        self.dash_update(ctx).await;
+        self.queue_dash_update(ctx, guild_id.get()).await;
         Ok(())
 
     }
@@ -456,7 +463,7 @@ impl Group {
             self.hot(ctx, None, None).await?;
         }
 
-        self.dash_update(ctx).await;
+        self.queue_dash_update(ctx, guild_id.get()).await;
         Ok(())
     }
 
@@ -477,7 +484,7 @@ impl Group {
         }
     }
 
-    pub async fn generate_teams(&mut self, ctx: &Context) {
+    pub async fn generate_teams(&mut self, ctx: &Context, guild_id: serenity::all::GuildId) {
         use itertools::Itertools;
 
         let quota = self.quota as usize;
@@ -552,30 +559,27 @@ impl Group {
         if let Some((red_indices, blu_indices)) = best_split {
             info!("[Session {}] Best team balance found with score: {:.2}", session_idx, best_score);
 
-            // Assign teams based on the best split
-            let mut new_pool = Vec::new();
-
-            // First add red team players
+            // Assign teams in-place to preserve in_queue_vc and has_joined_vc_once flags
+            // First assign red team
             for &idx in &red_indices {
-                let mut player = game.pool[players_to_balance[idx].0].clone();
-                player.team(crate::models::Team::Red);
-                new_pool.push(player);
+                let pool_idx = players_to_balance[idx].0;
+                game.pool[pool_idx].team(crate::models::Team::Red);
             }
 
-            // Then add blue team players
+            // Then assign blue team
             for &idx in &blu_indices {
-                let mut player = game.pool[players_to_balance[idx].0].clone();
-                player.team(crate::models::Team::Blu);
-                new_pool.push(player);
+                let pool_idx = players_to_balance[idx].0;
+                game.pool[pool_idx].team(crate::models::Team::Blu);
             }
-
-            // Add remaining players (if more than 8)
-            for i in pool_size..game.pool.len() {
-                new_pool.push(game.pool[i].clone());
-            }
-
-            // Update the pool with balanced teams
-            game.pool = new_pool;
+            
+            // Sort pool: red team first, then blue team, then remaining players
+            // This maintains team order while preserving all player flags
+            let quota_idx = pool_size;
+            game.pool[..quota_idx].sort_by_key(|p| match p.team {
+                Some(crate::models::Team::Red) => 0,
+                Some(crate::models::Team::Blu) => 1,
+                _ => 2,
+            });
 
             info!("[Session {}] Teams generated and assigned successfully", session_idx);
         } else {
@@ -583,7 +587,7 @@ impl Group {
         }
 
         // Update dashboard to show the new teams
-        self.dash_update(ctx).await;
+        self.queue_dash_update(ctx, guild_id.get()).await;
     }
 
     pub async fn queue_player(&mut self, player: Player, rank: crate::models::Rank, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>) -> Result<()> {
@@ -606,9 +610,9 @@ impl Group {
         Ok(())
     }
 
-    pub async fn add_player(&mut self, session: &mut Session, player: Player, rank: crate::models::Rank, ctx: &Context) {
+    pub async fn add_player(&mut self, session: &mut Session, player: Player, rank: crate::models::Rank, ctx: &Context, guild_id: serenity::all::GuildId) {
         session.add_player(player, rank);
-        self.dash_update(ctx).await;
+        self.queue_dash_update(ctx, guild_id.get()).await;
     }
 
     /// Checks if this group contains the given channel_id in any of its channels

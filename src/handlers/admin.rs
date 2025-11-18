@@ -850,7 +850,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                     server.groups.push(new_group);
 
                     let group = server.groups.last_mut().ok_or_else(|| anyhow!("Failed to get newly added group"))?;
-                    group.dash_update(ctx).await;
+                    group.queue_dash_update(ctx, guild_id.get()).await;
 
                     info!("Group added to in-memory manager and dashboard updated");
                 },
@@ -1095,7 +1095,7 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
             );
 
             // Update the dashboard message to show the proper dashboard UI
-            temp_group.dash_update(ctx).await;
+            temp_group.queue_dash_update(ctx, guild_id.get()).await;
         },
         Err(e) => {
             let error_embed = CE::new().title("❌ Setup Failed").description(format!("Failed to create group configuration: {}", e)).color(0xff0000);
@@ -1418,7 +1418,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
             cc.intax.create_response(&cc.ctx.http, response).await?;
 
             // Update the dashboard to reflect the new quota
-            group.dash_update(cc.ctx).await;
+            group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
         },
         Err(e) => {
             let error_embed = CE::new()

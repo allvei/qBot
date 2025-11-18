@@ -536,7 +536,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
             cc.reply(&format!("❌ Left the queue! ({}/{} players)", queue_count, group.quota)).await?;
         }
 
-        group.dash_update(cc.ctx).await?;
+        group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
 
         return Ok(());
     }
@@ -614,7 +614,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
             group.hot(cc.ctx, Some(guild_id), Some(&cc.db)).await?;
         }
 
-        group.dash_update(cc.ctx).await?;
+        group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
     }
 
     // Always acknowledge (silently if already in queue)
@@ -625,7 +625,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     cc.reply(&format!("✅ Joined the queue! ({}/{} players)", current_queue, group.quota)).await?;
 
     // Update dashboard
-    group.dash_update(cc.ctx).await?;
+    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
 
     info!("Command processed successfully, sending response");
     Ok(())
@@ -729,7 +729,7 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
     );
 
     // Update dashboard
-    group.dash_update(cc.ctx).await?;
+    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
 
     cc.reply(&embed_content).await?;
     Ok(())
@@ -772,7 +772,7 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
 
 
     // Update dashboard
-    group.dash_update(cc.ctx).await?;
+    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
 
     cc.reply("Game accepted! Players moved to team channels.").await?;
 
@@ -819,7 +819,7 @@ pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     }
 
     // Update dashboard
-    group.dash_update(cc.ctx).await?;
+    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
 
     Ok(())
 }
