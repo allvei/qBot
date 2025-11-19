@@ -15,6 +15,9 @@ use crate::DEFAULT_QUOTA;
 use crate::handlers::player::{check_role, create_rank_roles, validate_rank_roles, validate_system_roles};
 use crate::models::{CommandContext as CC, Role, Server, SETUP_STATE};
 
+// Re-export group_remove command
+pub use super::group_remove::cmd_group_remove;
+
 /// `/config`
 ///
 /// * `key`   - The key to modify.
@@ -180,14 +183,13 @@ pub async fn cmd_group_link(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
         config.dashboard_channel = Some(dashboard_channel.get());
     });
 
-    // Start ephemeral setup flow
     start_init_group_flow(cc, dashboard_channel).await?;
 
     Ok(())
 }
 
-/// `/groupinit` - Creates a new category with all necessary channels
-pub async fn cmd_group_init(cc: &CC<'_>, _guild: &mut Server) -> Result<()> {
+/// `/groupadd` - Creates a new category with all necessary channels
+pub async fn cmd_group_add(cc: &CC<'_>, _guild: &mut Server) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can create group channels!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1036,40 +1038,12 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
         Ok(_) => {
             info!("[{}] Group configuration saved to database", guild_name);
 
-            match db.groups.get_groups_for_guild(guild_id.get()).await {
-                Ok(groups) if !groups.is_empty() => {
-                    let new_group = groups.into_iter()
-                        .find(|g| g.dashboard_msg.get() == dashboard_msg_id)
-                        .ok_or_else(|| anyhow!("Could not find newly created group"))?;
-
-                    use crate::models::Server;
-                    let mut mgr = manager.lock().await;
-
-                    if mgr.get_server(guild_id).is_err() {
-                        let guild_name = ctx.cache.guild(guild_id)
-                            .map(|g| g.name.clone())
-                            .unwrap_or_else(|| "Unknown".to_string());
-                        let server = Server::empty(guild_id, guild_name);
-                        mgr.servers.push(server);
-                    }
-
-                    let server = mgr.get_server(guild_id)?;
-                    server.groups.push(new_group);
-
-                    let group = server.groups.last_mut().ok_or_else(|| anyhow!("Failed to get newly added group"))?;
-                    group.queue_dash_update(ctx, guild_id.get()).await;
-
-                    info!("[{}] Group added to in-memory manager and dashboard updated", guild_name);
-                },
-                Ok(_) => {
-                    warn!("[{}] No groups found after creation", guild_name);
-                },
-                Err(e) => {
-                    warn!("[{}] Failed to load groups from database: {}", guild_name, e);
-                }
+            // Load group into manager and immediately update dashboard
+            if let Err(e) = finalize_group_setup(ctx, db, manager, guild_id, dashboard_msg_id).await {
+                warn!("[{}] Failed to finalize group setup: {}", guild_name, e);
+            } else {
+                SETUP_STATE.complete_setup(user_id, guild_id);
             }
-
-            SETUP_STATE.complete_setup(user_id, guild_id);
 
             let success_embed = CE::new()
                 .title("Setup Complete!")
@@ -1382,35 +1356,11 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &ComponentInter
         Ok(_) => {
             info!("[{}] Group configuration saved to database", guild_name);
 
-            // Load the group back and add to manager
-            match db.groups.get_groups_for_guild(guild_id.get()).await {
-                Ok(groups) if !groups.is_empty() => {
-                    let new_group = groups.into_iter()
-                        .find(|g| g.dashboard_msg.get() == dashboard_msg_id)
-                        .ok_or_else(|| anyhow!("Could not find newly created group"))?;
-
-                    use crate::models::Server;
-                    let mut mgr = manager.lock().await;
-
-                    if mgr.get_server(guild_id).is_err() {
-                        let server = Server::empty(guild_id, guild_name.clone());
-                        mgr.servers.push(server);
-                    }
-
-                    let server = mgr.get_server(guild_id)?;
-                    server.groups.push(new_group);
-
-                    let group = server.groups.last_mut().ok_or_else(|| anyhow!("Failed to get newly added group"))?;
-                    group.queue_dash_update(ctx, guild_id.get()).await;
-
-                    info!("[{}] Group added to in-memory manager and dashboard updated", guild_name);
-                },
-                Ok(_) => {
-                    warn!("[{}] No groups found after creation", guild_name);
-                },
-                Err(e) => {
-                    warn!("[{}] Failed to load groups from database: {}", guild_name, e);
-                }
+            // Load group into manager and immediately update dashboard
+            if let Err(e) = finalize_group_setup(ctx, db, manager, guild_id, dashboard_msg_id).await {
+                warn!("[{}] Failed to finalize group setup: {}", guild_name, e);
+            } else {
+                info!("[{}] Group setup finalized successfully", guild_name);
             }
         },
         Err(e) => {
@@ -1752,4 +1702,57 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Helper function to finalize group setup by loading it into manager and immediately updating dashboard
+async fn finalize_group_setup(
+    ctx: &Context,
+    db: &std::sync::Arc<crate::Database>,
+    manager: &Arc<Mutex<crate::models::Manager>>,
+    guild_id: serenity::all::GuildId,
+    dashboard_msg_id: u64,
+) -> Result<()> {
+    let guild_name = ctx.cache.guild(guild_id)
+        .map(|g| g.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    // Load the group from database
+    match db.groups.get_groups_for_guild(guild_id.get()).await {
+        Ok(groups) if !groups.is_empty() => {
+            let new_group = groups.into_iter()
+                .find(|g| g.dashboard_msg.get() == dashboard_msg_id)
+                .ok_or_else(|| anyhow!("Could not find newly created group"))?;
+
+            use crate::models::Server;
+            let mut mgr = manager.lock().await;
+
+            // Ensure server exists in manager
+            if mgr.get_server(guild_id).is_err() {
+                let server = Server::empty(guild_id, guild_name.clone());
+                mgr.servers.push(server);
+            }
+
+            let server = mgr.get_server(guild_id)?;
+            server.groups.push(new_group);
+
+            // Get the newly added group and immediately update its dashboard
+            let group = server.groups.last_mut()
+                .ok_or_else(|| anyhow!("Failed to get newly added group"))?;
+
+            // Use dash_update for immediate synchronous update instead of queued async update
+            if let Err(e) = group.dash_update(ctx).await {
+                warn!("[{}] Failed to update dashboard: {}", guild_name, e);
+            } else {
+                info!("[{}] Group added to manager and dashboard updated successfully", guild_name);
+            }
+
+            Ok(())
+        },
+        Ok(_) => {
+            Err(anyhow!("[{}] No groups found after creation", guild_name))
+        },
+        Err(e) => {
+            Err(anyhow!("[{}] Failed to load groups from database: {}", guild_name, e))
+        }
+    }
 }

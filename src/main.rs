@@ -92,7 +92,8 @@ impl EventHandler for Handler {
                                                               .op("role",  "Discord role to assign",          false),
             cmd("dashboard", "Create/update interactive dashboard"),
             cmd("grouplink", "Link channels to a group"),
-            cmd("groupinit", "Create a new category with all group channels"),
+            cmd("groupadd", "Create a new category with all group channels"),
+            cmd("groupremove", "Remove a group")                .op("group_id", "Group ID to remove", true),
             cmd("setup",     "Run guild setup wizard"),
             cmd("checkranks", "Check and create missing rank roles"),
             cmd("setquota",  "Set the queue quota")              .op("quota", "Number of players required (2-100)", true),
@@ -237,9 +238,18 @@ impl EventHandler for Handler {
                                 info();
                                 admin::cmd_group_link(&cmd_ctx, server).await
                             }
-                            "groupinit" => {
+                            "groupadd" => {
                                 info();
-                                admin::cmd_group_init(&cmd_ctx, server).await
+                                admin::cmd_group_add(&cmd_ctx, server).await
+                            }
+                            "groupremove" => {
+                                info();
+                                let group_id = cdo.iter()
+                                    .find(|opt| opt.name == "group_id")
+                                    .and_then(|opt| opt.value.as_str())
+                                    .and_then(|s| s.parse::<u8>().ok())
+                                    .unwrap_or(0);
+                                admin::cmd_group_remove(&cmd_ctx, server, group_id).await
                             }
                             "dashboard" => {
                                 info();

@@ -11,3 +11,4 @@
 
 pub mod admin;
 pub mod player;
+pub mod group_remove;
