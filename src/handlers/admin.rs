@@ -835,7 +835,10 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                     let mut mgr = manager.lock().await;
 
                     if mgr.get_server(guild_id).is_err() {
-                        let server = Server::empty(guild_id);
+                        let guild_name = ctx.cache.guild(guild_id)
+                            .map(|g| g.name.clone())
+                            .unwrap_or_else(|| "Unknown".to_string());
+                        let server = Server::empty(guild_id, guild_name);
                         mgr.servers.push(server);
                     }
 

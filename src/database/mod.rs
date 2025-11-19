@@ -125,6 +125,6 @@ impl Database {
     pub async fn get_config(&self, guild_id: u64) -> Result<Server> {
         // For now, return a simple Guild with the guild_id
         // The actual configuration is handled through get_config_map
-        Ok(Server::empty(serenity::all::GuildId::new(guild_id)))
+        Ok(Server::empty(serenity::all::GuildId::new(guild_id), "Unknown".to_string()))
     }
 }

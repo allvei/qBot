@@ -58,18 +58,21 @@ pub struct GameServer {
 // Server
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Server {
-    pub guild_id: GI,
-    pub roles:    Roles,
-    pub groups:   Vec<Group>,
+    pub guild_id:   GI,
+    pub guild_name: String,
+    pub roles:      Roles,
+    pub groups:     Vec<Group>,
 }
 
 impl Server {
     pub fn new(
         guild_id: GI,
+        guild_name: String,
         roles: Roles,
     ) -> Self {
         Self {
             guild_id,
+            guild_name,
             roles,
             groups: Vec::new(),
         }
@@ -86,9 +89,10 @@ impl Server {
         Ok(())
     }
 
-    pub fn empty(guild_id: GI) -> Self {
+    pub fn empty(guild_id: GI, guild_name: String) -> Self {
         Self {
             guild_id,
+            guild_name,
             roles: Roles::empty(),
             groups: Vec::new(),
         }

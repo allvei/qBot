@@ -115,7 +115,7 @@ impl EventHandler for Handler {
                     Ok(groups) if !groups.is_empty() => {
                         let mut manager = self.manager.lock().await;
                         if manager.get_server(guild.id).is_err() {
-                            let mut server = Server::new(guild.id, Roles::empty());
+                            let mut server = Server::new(guild.id, guild.name.clone(), Roles::empty());
                             for group in groups {
                                 if let Err(e) = server.add_group(group) {
                                     error!("Failed to add group: {}", e);
@@ -132,7 +132,7 @@ impl EventHandler for Handler {
                         warn!("{} has no group configurations. ID: {}", guild.name, guild_id);
                         let mut manager = self.manager.lock().await;
                         if manager.get_server(guild.id).is_err() {
-                            let server = Server::empty(guild.id);
+                            let server = Server::empty(guild.id, guild.name.clone());
                             manager.servers.push(server);
                         }
                     },

@@ -22,7 +22,7 @@ impl Manager {
     /// ### Returns
     /// * A new Manager instance
     pub fn new(guild_id: GuildId) -> Self {
-        Self { servers: vec![Server::new(guild_id, Roles::empty())] }
+        Self { servers: vec![Server::new(guild_id, "Unknown".to_string(), Roles::empty())] }
     }
 
     /// Pull server list from Discord cache
@@ -38,7 +38,10 @@ impl Manager {
     ) -> Self {
         let mut servers = Vec::new();
         cache.guilds().iter().for_each(|g| {
-            servers.push(Server::new(*g, Roles::empty()));
+            let guild_name = cache.guild(*g)
+                .map(|guild| guild.name.clone())
+                .unwrap_or_else(|| "Unknown".to_string());
+            servers.push(Server::new(*g, guild_name, Roles::empty()));
         });
         Self { servers }
     }
