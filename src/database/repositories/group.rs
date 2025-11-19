@@ -210,7 +210,15 @@ impl GroupRepository {
 
         let mut groups = Vec::new();
         for row in rows {
-            groups.push(self.build_group_from_row_async(&row).await?);
+            match self.build_group_from_row_async(&row).await {
+                Ok(group) => groups.push(group),
+                Err(e) => {
+                    let group_id: i64 = row.try_get("group_id").unwrap_or(0);
+                    let queue_id: i64 = row.try_get("queue").unwrap_or(0);
+                    warn!("Skipping invalid group {} (queue {}) for guild {}: {}", 
+                        group_id, queue_id, guild_id, e);
+                }
+            }
         }
 
         Ok(groups)

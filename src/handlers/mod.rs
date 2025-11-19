@@ -12,3 +12,5 @@
 pub mod admin;
 pub mod player;
 pub mod group_remove;
+pub mod role_commands;
+pub mod setup_commands;
