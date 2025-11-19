@@ -182,22 +182,7 @@ impl GroupRepository {
 
     /// Log available groups for debugging
     async fn log_available_groups(&self) {
-        match sqlx::query("SELECT group_id, guild_id, chat, queue FROM groups")
-            .fetch_all(&self.pool)
-            .await
-        {
-            Ok(rows) => {
-                for row in rows {
-                    let group_id: i64 = row.get("group_id");
-                    let guild_id: i64 = row.get("guild_id");
-                    let chat: i64 = row.get("chat");
-                    let queue: i64 = row.get("queue");
-                    info!("Available group: id={}, guild={}, chat={}, queue={}",
-                          group_id, guild_id, chat, queue);
-                }
-            },
-            Err(e) => error!("Failed to fetch available groups: {}", e)
-        }
+        // Verbose logging removed - use database queries for debugging
     }
 
     /// Check if a group exists for a guild

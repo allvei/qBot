@@ -506,7 +506,6 @@ async fn move_players_to_team_channels(
 
 /// `/join` and `/leave`
 pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result<()> {
-    info!("Processing queue command from user {}", cc.intax.user.id);
     let user         = cc.intax.user.id;
     let channel      = cc.intax.channel_id;
     let command_name = &cc.intax.data.name;
@@ -526,7 +525,6 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
                 if game.pool.len() < initial_len {
                     found = true;
                     queue_count = game.pool.len();
-                    info!("Removed player from game. Queue now has {} players", queue_count);
                     break;
                 }
             }
@@ -553,10 +551,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
 
     // Get or assign player rank (auto-creates ranks and assigns Apprentice if needed)
     let rank = match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user).await {
-        Ok(rank) => {
-            info!("Player {} has rank: {:?}", user, rank);
-            rank
-        },
+        Ok(rank) => rank,
         Err(e) => {
             cc.reply(&format!("❌ Failed to get or assign rank: {}. Please contact an admin.", e)).await?;
             return Ok(());
@@ -565,14 +560,8 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
 
     // Get player info or create a new one (use fast path without extra API call)
     let mut player = match cc.db.get_user(user).await {
-        Ok(player) => {
-            info!("Found user in db!");
-            player
-        }
-        Err(_) => {
-            info!("Creating new user in db!");
-            cc.db.new_user(user).await?
-        }
+        Ok(player) => player,
+        Err(_) => cc.db.new_user(user).await?,
     };
     
     // Set discord tag from interaction user data (already available, no API call needed)
@@ -590,10 +579,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     }
 
     // Check if player is already in game
-    if group.get_user_session(user).await.is_ok() {
-        let tag = player.discord_tag.as_deref().unwrap_or("Unknown");
-        info!("Player {} is already in the queue", tag);
-    } else {
+    if group.get_user_session(user).await.is_err() {
         let mut manager = cc.manager.lock().await;
         let server = manager.get_server(guild_id)?;
         let group  = server.get_group(channel)?;
@@ -622,18 +608,16 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         Ok(session) => session.pool.len(),
         Err(_) => 0
     };
-    cc.reply(&format!("✅ Joined the queue! ({}/{} players)", current_queue, group.quota)).await?;
+    cc.reply(&format!("Joined the queue! ({}/{} players)", current_queue, group.quota)).await?;
 
     // Update dashboard
     group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
 
-    info!("Command processed successfully, sending response");
     Ok(())
 }
 
 /// `/status`
 pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result<()> {
-    info!("Processing queue status command");
     let channel = cc.intax.channel_id;
 
     let (queue_count, queue_list, quota) = {
@@ -670,7 +654,6 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Resul
 
 /// `/shuffle`
 pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
-    info!("Processing shuffle command");
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
         cc.reply("Only runners can shuffle teams!").await?;

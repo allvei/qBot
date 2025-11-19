@@ -20,17 +20,13 @@ use crate::models::{CommandContext as CC, Role, Server, SETUP_STATE};
 /// * `key`   - The key to modify.
 /// * `value` - The value to set for the key.
 pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Result<()> {
-    info!("Processing config: key={}, value={:?}", key, value);
     if !check_role(cc, &Role::Admin).await? {
-        info!("User is not an admin");
         let response = CIR::Message(CIRM::new().content("Only game admins can modify the config!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
     if let Some(val,) = value {
-        info!("Setting config {} = {}", key, val);
-
         cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found").get()).await?;
 
         let embed = CE::new().title("Config Updated").description(format!("Set `{}` = `{}`", key, val));
@@ -73,8 +69,6 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
 /// * `role_type` - The role type to manage ("runner" or "admin")
 /// * `role` - The Discord role mention/ID to assign
 pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> Result<()> {
-    info!("Processing roles command: type={}, role={:?}", role_type, role);
-
     // Check admin permissions
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can manage roles!").ephemeral(true));
@@ -139,7 +133,7 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
         cc.db.config.set_config(role_key, &role_id, guild_id).await?;
 
         let embed = CE::new()
-            .title("✅ Role Updated")
+            .title("Role Updated")
             .description(format!(
                 "Set {} role to <@&{}>",
                 role_type.to_lowercase(),
@@ -170,7 +164,6 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
 
 /// `/cmd_init_group`
 pub async fn cmd_init_group(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
-    info!("Processing cmd_init_group command");
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can set up the dashboard!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -227,7 +220,7 @@ async fn start_init_group_flow(cc: &CC<'_>, dashboard_channel: CI) -> Result<()>
 
     // Send welcome message with next step
     let welcome_embed = CE::new()
-        .title("✅ Dashboard Created")
+        .title("Dashboard Created")
         .description(format!(
             "Dashboard message created in <#{}>\n\n\
             Now let's configure the remaining channels for **{}**.\n\n\
@@ -303,7 +296,7 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
     // Create and send dashboard
     group.dash_publish(cc.ctx, channel).await?;
 
-    cc.reply("✅ Dashboard created/updated successfully!").await?;
+    cc.reply("Dashboard created/updated successfully!").await?;
 
     Ok(())
 }
@@ -511,7 +504,7 @@ async fn handle_dashboard_selection(ctx: &Context, interaction: &ComponentIntera
     });
 
     let embed = CE::new()
-        .title("✅ Dashboard Channel Selected")
+        .title("Dashboard Channel Selected")
         .description(format!(
             "Dashboard channel: <#{}>\n\n\
             **Step 2/7: Queue Text Channel**\n\
@@ -551,7 +544,7 @@ async fn handle_queue_selection(ctx: &Context, interaction: &ComponentInteractio
     });
 
     let embed = CE::new()
-        .title("✅ Queue Text Channel Selected")
+        .title("Queue Text Channel Selected")
         .description(format!(
             "Queue text channel: <#{}>\n\n\
             **Step 3/7: Queue Voice Channel**\n\
@@ -591,7 +584,7 @@ async fn handle_queue_vc_selection(ctx: &Context, interaction: &ComponentInterac
     });
 
     let embed = CE::new()
-        .title("✅ Queue Voice Channel Selected")
+        .title("Queue Voice Channel Selected")
         .description(format!(
             "Queue voice channel: <#{}>\n\n\
             **Step 4/7: Red Team Voice Channel**\n\
@@ -631,7 +624,7 @@ async fn handle_red_selection(ctx: &Context, interaction: &ComponentInteraction,
     });
 
     let embed = CE::new()
-        .title("✅ Red Team Channel Selected")
+        .title("Red Team Channel Selected")
         .description(format!(
             "Red team channel: <#{}>\n\n\
             **Step 5/7: Blue Team Voice Channel**\n\
@@ -671,7 +664,7 @@ async fn handle_blue_selection(ctx: &Context, interaction: &ComponentInteraction
     });
 
     let embed = CE::new()
-        .title("✅ Blue Team Channel Selected")
+        .title("Blue Team Channel Selected")
         .description(format!(
             "Blue team channel: <#{}>\n\n\
             **Step 6/7: Runner Role**\n\
@@ -711,7 +704,7 @@ async fn handle_runner_selection(ctx: &Context, interaction: &ComponentInteracti
     });
 
     let embed = CE::new()
-        .title("✅ Runner Role Selected")
+        .title("Runner Role Selected")
         .description(format!(
             "Runner role: <@&{}>\n\n\
             **Step 7/7: Admin Role**\n\
@@ -876,7 +869,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                     • Blue Team: <#{}>\n\
                     • Runner Role: <@&{}>\n\
                     • Admin Role: <@&{}>\n\
-                    • Rank Roles: ✅ Created\n\n\
+                    • Rank Roles: Created\n\n\
                     **The dashboard is ready!** Players can now:\n\
                     • Click \"Join/Leave\" to queue up\n\
                     • Join the queue voice channel to auto-queue\n\n\
@@ -921,7 +914,7 @@ async fn handle_init_queue_selection(ctx: &Context, interaction: &ComponentInter
     });
 
     let embed = CE::new()
-        .title("✅ Queue Text Channel Selected")
+        .title("Queue Text Channel Selected")
         .description(format!(
             "Queue text channel: <#{}>\n\n\
             **Step 3/5: Queue Voice Channel**\n\
@@ -960,7 +953,7 @@ async fn handle_init_queue_vc_selection(ctx: &Context, interaction: &ComponentIn
     });
 
     let embed = CE::new()
-        .title("✅ Queue Voice Channel Selected")
+        .title("Queue Voice Channel Selected")
         .description(format!(
             "Queue voice channel: <#{}>\n\n\
             **Step 4/5: Red Team Voice Channel**\n\
@@ -999,7 +992,7 @@ async fn handle_init_red_selection(ctx: &Context, interaction: &ComponentInterac
     });
 
     let embed = CE::new()
-        .title("✅ Red Team Channel Selected")
+        .title("Red Team Channel Selected")
         .description(format!(
             "Red team channel: <#{}>\n\n\
             **Step 5/5: Blue Team Voice Channel**\n\
@@ -1182,7 +1175,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
     if missing_system_roles.is_empty() && missing_rank_roles.is_empty() {
         // All roles exist
         let success_embed = CE::new()
-            .title("✅ All Roles Configured")
+            .title("All Roles Configured")
             .description("All system roles (Runner, Admin) and rank roles are properly configured in this server!")
             .color(0x00ff00);
 
@@ -1307,7 +1300,7 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
     } else {
         let created_list = created_roles.join(", ");
         let success_embed = CE::new()
-            .title("✅ Rank Roles Created")
+            .title("Rank Roles Created")
             .description(format!(
                 "Successfully created the following rank roles:\n**{}**\n\n\
                 💡 You may want to:\n\
@@ -1406,7 +1399,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
             info!("Updated quota from {} to {} for guild {}", old_quota, quota, guild_id);
 
             let success_embed = CE::new()
-                .title("✅ Quota Updated")
+                .title("Quota Updated")
                 .description(format!(
                     "Queue quota has been changed from **{}** to **{}** players.\n\n\
                     The queue will now require {} players before a game can start.",

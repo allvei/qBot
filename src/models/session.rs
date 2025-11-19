@@ -32,10 +32,8 @@ impl Session {
     /// Add a player to the session with their rank
     pub fn add_player(&mut self, player: Player, rank: crate::models::Rank) {
         let session_player = SessionPlayer::add(player, rank);
-        let tag = session_player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string());
         self.pool.push(session_player);
         self.sort_by_join_time();
-        info!("Added {} to session", tag);
     }
 
     /// Add a player to the session with their rank, marking them as already in queue VC
@@ -44,19 +42,12 @@ impl Session {
         let mut session_player = SessionPlayer::add(player, rank);
         session_player.in_queue_vc = true;
         session_player.has_joined_vc_once = true;
-        let tag = session_player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string());
         self.pool.push(session_player);
         self.sort_by_join_time();
-        info!("Added {} to session after moving to queue VC", tag);
     }
 
     pub fn remove_player(&mut self, discord_id: UserId) {
-        let tag = self.pool.iter()
-            .find(|p| p.player.discord_id == discord_id)
-            .and_then(|p| p.player.discord_tag.clone())
-            .unwrap_or_else(|| "Unknown".to_string());
         self.pool.retain(|p| p.player.discord_id != discord_id);
-        info!("Removed {} from session", tag);
     }
 
     /// Sort players by join time (first-come-first-serve)
@@ -114,8 +105,8 @@ impl Session {
     }
 
     /// Log hot status with session ID for debugging
-    pub fn log_hot(&self, session_id: usize) {
-        info!("[Session {}] Game is HOT with {} players", session_id, self.pool.len());
+    pub fn log_hot(&self, _session_id: usize) {
+        // Minimal logging - hot status change is visible via dashboard
     }
 
     /// Set the session to push

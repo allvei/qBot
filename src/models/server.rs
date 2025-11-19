@@ -143,23 +143,18 @@ impl Group {
 
         self.sessions
             .push(Session::new(SessionStatus::Idle, Vec::new()));
-        let session_id = self.sessions.len() - 1;
-        info!("[Session {}] Creating new session", session_id);
         self.sessions.last_mut().ok_or_else(|| anyhow!("Failed to create session"))
     }
 
     pub fn end_game(&mut self) -> bool {
-        info!("Attempting to end game");
         if let Some(pos) = self
             .sessions
             .iter()
             .position(|s| s.status == SessionStatus::Idle)
         {
             self.sessions.remove(pos);
-            info!("Game successfully ended and removed");
             true
         } else {
-            info!("Failed to end game: Game not found");
             false
         }
     }
@@ -298,20 +293,15 @@ impl Group {
                 continue;
             }
 
-            info!("[Session {}] Hot session timed out - {} players didn't join VC", idx, timed_out_players.len());
-
             // Remove timed out players
             session.pool.retain(|p| !timed_out_players.contains(&p.player.discord_id));
 
             // Check if we still have enough players after removals
             if session.pool.len() >= quota {
                 // We have replacements (overflow players)
-                info!("[Session {}] Replacing timed out players with overflow players", idx);
-                // Players already in pool, just need to ensure they're counted
                 changes_made = true;
             } else {
                 // Not enough players left, revert to idle
-                info!("Not enough players after timeout, reverting to idle");
                 session.idle();
                 changes_made = true;
             }
@@ -371,7 +361,6 @@ impl Group {
 
         let quota = self.quota as usize;
         let game_pool_len = game.pool.len();
-        info!("[Session {}] Match is now LIVE with {} players", session_idx, game_pool_len);
 
         // Extract overflow players (those beyond quota)
         let overflow_players: Vec<_> = if game_pool_len > quota {
@@ -381,13 +370,6 @@ impl Group {
         };
 
         // Create new idle session for next game
-        let new_session_id = self.sessions.len();
-        if !overflow_players.is_empty() {
-            info!("[Session {}] Creating new idle session with {} overflow players", new_session_id, overflow_players.len());
-        } else {
-            info!("[Session {}] Creating new idle session for next game", new_session_id);
-        }
-
         self.create_session()?;
 
         // Add overflow players to the new idle session
@@ -397,8 +379,6 @@ impl Group {
                 idle_session.pool.push(player);
             }
             idle_session.sort_by_join_time();
-            // Use the new_session_id we calculated earlier (sessions.len() before create_session)
-            info!("[Session {}] Transferred {} overflow players to new idle session", new_session_id, idle_session.pool.len());
         }
 
         self.queue_dash_update(ctx, guild_id.get()).await;
@@ -444,22 +424,16 @@ impl Group {
 
         for player in players_to_requeue {
             if let Some(rank) = player.rank {
-                let tag = player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string());
                 // Use add_player_in_vc since we just moved them to the queue channel
                 idle_session.add_player_in_vc(player, rank);
-                info!("[Session {}] Re-added player {} to queue", idle_session_idx, tag);
             }
         }
 
-        let queue_count = idle_session.pool.len();
-
         // Remove the finished session
         self.sessions.retain(|s| s.status != SessionStatus::Pull);
-        info!("[Session {}] Match ended, {} players returned to queue", active_session_idx, queue_count);
 
         // Check if the queue now meets quota and transition to Hot if needed
         if self.is_quota() {
-            info!("[Session {}] Quota met after pull, transitioning idle session to Hot", idle_session_idx);
             self.hot(ctx, None, None).await?;
         }
 
@@ -474,11 +448,7 @@ impl Group {
         for session in &mut self.sessions {
             for player in &mut session.pool {
                 if let Some(updated_rank) = get_player_rank(ctx, db, guild_id, player.player.discord_id).await {
-                    if player.player.rank != Some(updated_rank) {
-                        let tag = player.player.discord_tag.as_deref().unwrap_or("Unknown");
-                        info!("Updated rank for player {}: {:?} -> {:?}", tag, player.player.rank, updated_rank);
-                        player.player.rank = Some(updated_rank);
-                    }
+                    player.player.rank = Some(updated_rank);
                 }
             }
         }
@@ -500,7 +470,6 @@ impl Group {
             }
         };
 
-        info!("[Session {}] Generating balanced teams using BCH algorithm", session_idx);
         let game = &mut self.sessions[session_idx];
 
         if game.pool.len() < quota {

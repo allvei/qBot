@@ -427,8 +427,7 @@ impl ConsoleHandler {
 
     pub async fn start_console_loop(&self) {
         let command_names: Vec<_> = self.registry.get_command_names();
-        info!("Console commands available: {}", command_names.join(", "));
-        info!("Use Tab for autocompletion, Up/Down arrows for command history");
+        println!("Console ready. Commands: {}", command_names.join(", "));
 
         let config = Config::builder()
             .completion_type(CompletionType::List)
@@ -468,11 +467,9 @@ impl ConsoleHandler {
                     }
                 },
                 Err(ReadlineError::Interrupted) => {
-                    info!("CTRL-C");
                     continue;
                 },
                 Err(ReadlineError::Eof) => {
-                    info!("CTRL-D");
                     break;
                 },
                 Err(err) => {
@@ -780,7 +777,7 @@ impl ConsoleHandler {
 
                         match group_repo.get_groups_for_guild(guild_id as u64).await {
                             Ok(groups) => {
-                                println!("  ✅ {} group(s) configured", groups.len());
+                                println!("  {} group(s) configured", groups.len());
                                 for group in groups {
                                     println!("    - Group {}: Queue Channel {}", group.group_id, group.channels.queue_chat);
                                 }
@@ -929,7 +926,7 @@ impl ConsoleHandler {
                     quota,
                 ).await {
                     Ok(_) => {
-                        println!("✅ Updated quota to {} for guild {} group {}", quota, guild_id, group_id);
+                        println!("Updated quota to {} for guild {} group {}", quota, guild_id, group_id);
 
                         // Update in-memory manager and dashboard
                         if let Some(ctx) = &self.ctx {
@@ -956,7 +953,7 @@ impl ConsoleHandler {
                     let mut manager = self.manager.lock().await;
                     if let Ok(group) = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id) {
                         group.timeout = timeout;
-                        println!("✅ Updated timeout to {} minutes for guild {} group {}", timeout, guild_id, group_id);
+                        println!("Updated timeout to {} minutes for guild {} group {}", timeout, guild_id, group_id);
 
                         // Update dashboard
                         group.queue_dash_update(ctx, guild_id).await;
@@ -978,7 +975,7 @@ impl ConsoleHandler {
                     group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
                     group.quota as u8,
                 ).await {
-                    Ok(_) => println!("✅ Updated dashboard channel to {} for guild {}", dashboard_id, guild_id),
+                    Ok(_) => println!("Updated dashboard channel to {} for guild {}", dashboard_id, guild_id),
                     Err(e) => println!("❌ Failed to update dashboard: {}", e),
                 }
             },
@@ -995,7 +992,7 @@ impl ConsoleHandler {
                     group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
                     group.quota as u8,
                 ).await {
-                    Ok(_)  => println!("✅ Updated red team channel to {} for guild {}", red_id, guild_id),
+                    Ok(_)  => println!("Updated red team channel to {} for guild {}", red_id, guild_id),
                     Err(e) => println!("❌ Failed to update red team channel: {}", e),
                 }
             },
@@ -1012,7 +1009,7 @@ impl ConsoleHandler {
                     blue_id,
                     group.quota as u8,
                 ).await {
-                    Ok(_) => println!("✅ Updated blue team channel to {} for guild {}", blue_id, guild_id),
+                    Ok(_) => println!("Updated blue team channel to {} for guild {}", blue_id, guild_id),
                     Err(e) => println!("❌ Failed to update blue team channel: {}", e),
                 }
             },
@@ -1071,7 +1068,7 @@ impl ConsoleHandler {
             quota,
         ).await {
             Ok(_) => {
-                println!("✅ Created new group configuration for guild {}", guild_id);
+                println!("Created new group configuration for guild {}", guild_id);
                 println!("   Queue Channel: {}", queue_id);
                 println!("   Dashboard Channel: {}", dashboard_id);
                 println!("   Red Team Channel: {}", red_id);
@@ -1125,7 +1122,7 @@ impl ConsoleHandler {
             if let Ok(session) = group.get_queue().await {
                 println!("🔄 Forcing team generation for guild {} group {} with {} players...", guild_id, group_id, session.pool.len());
                 group.generate_teams(ctx, serenity::model::id::GuildId::new(guild_id)).await;
-                println!("✅ Teams generated successfully!");
+                println!("Teams generated successfully!");
 
                 // Show the teams
                 if let Ok(session) = group.get_queue().await {
@@ -1185,7 +1182,7 @@ impl ConsoleHandler {
                 session.add_player(fake_player, pf_pug_bot::Rank::Novice);
             }
 
-            println!("✅ Added {} fake player(s). Total players in queue: {}", count, session.pool.len());
+            println!("Added {} fake player(s). Total players in queue: {}", count, session.pool.len());
 
             // Update dashboard if context is available
             if let Some(ctx) = &self.ctx {
@@ -1213,7 +1210,7 @@ impl ConsoleHandler {
 
             println!("🔄 Testing notify method for guild {} group {}...", guild_id, group_id);
             group.notify(ctx).await;
-            println!("✅ Notify method called successfully!");
+            println!("Notify method called successfully!");
             println!("   Check the queue chat channel for the notification message.");
         } else {
             println!("❌ Context not available. Cannot test notify without Discord context.");
@@ -1308,7 +1305,7 @@ impl ConsoleHandler {
         if let Ok(session) = group.get_queue().await {
             let player_count = session.pool.len();
             session.pool.clear();
-            println!("✅ Cleared {} player(s) from the queue", player_count);
+            println!("Cleared {} player(s) from the queue", player_count);
 
             // Update dashboard if context is available
             if let Some(ctx) = &self.ctx {
@@ -1336,7 +1333,7 @@ impl ConsoleHandler {
                 println!("❌ Index {} is out of bounds. Queue has {} player(s)", index, session.pool.len());
             } else {
                 let removed_player = session.pool.remove(index);
-                println!("✅ Removed player {} from position {}", removed_player.player.discord_id, index);
+                println!("Removed player {} from position {}", removed_player.player.discord_id, index);
 
                 // Update dashboard if context is available
                 if let Some(ctx) = &self.ctx {
@@ -1362,7 +1359,7 @@ impl ConsoleHandler {
             if let Ok(_session) = group.get_queue().await {
                 println!("🔄 Forcing session to Hot status...");
                 group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None).await?;
-                println!("✅ Session is now Hot!");
+                println!("Session is now Hot!");
                 println!("   Teams have been generated and players have been notified.");
             } else {
                 println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
@@ -1386,7 +1383,7 @@ impl ConsoleHandler {
             println!("🔄 Forcing push to team channels...");
             match group.push(ctx).await {
                 Ok(_) => {
-                    println!("✅ Players pushed to team channels!");
+                    println!("Players pushed to team channels!");
                     println!("   Session is now Live.");
                 },
                 Err(e) => {
@@ -1412,7 +1409,7 @@ impl ConsoleHandler {
             println!("🔄 Forcing pull back to queue...");
             match group.pull(ctx).await {
                 Ok(_) => {
-                    println!("✅ Players pulled back to queue!");
+                    println!("Players pulled back to queue!");
                     println!("   Session reset to Idle.");
                 },
                 Err(e) => {
@@ -1457,7 +1454,7 @@ impl ConsoleHandler {
                             let fake_player = pf_pug_bot::Player::add(fake_id, Some(format!("FakePlayer{}", i)), None);
                             session.add_player(fake_player, pf_pug_bot::Rank::Novice);
                         }
-                        println!("   ✅ Queue now has {} players\n", session.pool.len());
+                        println!("   Queue now has {} players\n", session.pool.len());
                     } else {
                         println!("1️⃣  Queue already has {} players (quota: {})\n", current_count, quota);
                     }
@@ -1470,7 +1467,7 @@ impl ConsoleHandler {
                 let mut manager = self.manager.lock().await;
                 let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
                 group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None).await?;
-                println!("   ✅ Session is Hot, teams generated\n");
+                println!("   Session is Hot, teams generated\n");
             }
 
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -1481,7 +1478,7 @@ impl ConsoleHandler {
                 let mut manager = self.manager.lock().await;
                 let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
                 match group.push(ctx).await {
-                    Ok(_) => println!("   ✅ Players pushed, session is Live\n"),
+                    Ok(_) => println!("   Players pushed, session is Live\n"),
                     Err(e) => println!("   ⚠️  Push failed: {}\n", e),
                 }
             }
@@ -1494,7 +1491,7 @@ impl ConsoleHandler {
                 let mut manager = self.manager.lock().await;
                 let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
                 match group.pull(ctx).await {
-                    Ok(_) => println!("   ✅ Players pulled back, session reset to Idle\n"),
+                    Ok(_) => println!("   Players pulled back, session reset to Idle\n"),
                     Err(e) => println!("   ⚠️  Pull failed: {}\n", e),
                 }
             }

@@ -50,7 +50,6 @@ impl DatabaseMigrations {
     /// Create config table with proper schema
     async fn create_config_table(&self) -> Result<()> {
         if !self.table_exists("config").await? {
-            info!("Config table not found, creating...");
             sqlx::query(
                 "CREATE TABLE config (
                     guild       INTEGER NOT NULL,
@@ -63,7 +62,6 @@ impl DatabaseMigrations {
             .execute(&self.pool)
             .await?;
         } else if !self.column_exists("config", "guild").await? {
-            info!("Adding missing guild column to config table");
             sqlx::query("ALTER TABLE config
                          ADD COLUMN guild INTEGER NOT NULL DEFAULT 0")
                 .execute(&self.pool)
@@ -75,7 +73,6 @@ impl DatabaseMigrations {
     /// Create users table with proper schema and constraints
     async fn create_users_table(&self) -> Result<()> {
         if !self.table_exists("users").await? {
-            info!("Users table not found, creating...");
             sqlx::query(
                 "CREATE TABLE users (
                     id         INTEGER PRIMARY KEY,
@@ -92,7 +89,6 @@ impl DatabaseMigrations {
             let has_steam_id          = self.column_exists(          "users", "steam_id").await?;
 
             if !has_discord_id || !has_steam_id || !has_unique_constraint {
-                info!("Users table schema is incomplete, recreating with proper schema...");
 
                 // Backup existing data if any
                 let backup_data = if has_discord_id {
@@ -138,7 +134,6 @@ impl DatabaseMigrations {
         use crate::DEFAULT_QUOTA;
 
         if !self.table_exists("groups").await? {
-            info!("Groups table not found, creating...");
             sqlx::query(&format!(
                 "CREATE TABLE groups (
                     id                INTEGER PRIMARY KEY,
@@ -163,7 +158,6 @@ impl DatabaseMigrations {
             let has_guild_id = self.column_exists("groups", "guild_id").await?;
 
             if !has_guild_id {
-                info!("Groups table schema is incorrect, recreating...");
                 sqlx::query("DROP TABLE groups").execute(&self.pool).await?;
                 sqlx::query(&format!(
                     "CREATE TABLE groups (
@@ -191,7 +185,6 @@ impl DatabaseMigrations {
 
     async fn create_teams_table(&self) -> Result<()> {
         if !self.table_exists("teams").await? {
-            info!("Teams table not found, creating...");
             sqlx::query(
                 "CREATE TABLE teams (
                     id       INTEGER PRIMARY KEY,
@@ -280,8 +273,6 @@ impl DatabaseMigrations {
 
     /// Validate that essential group records exist
     pub async fn validate_group_entries(&self, required_guild_ids: &[u64]) -> Result<()> {
-        info!("Validating group entries for {} guilds", required_guild_ids.len());
-
         for guild_id in required_guild_ids {
             let count: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*)
@@ -298,8 +289,6 @@ impl DatabaseMigrations {
                     guild_id
                 ));
             }
-
-            info!("Guild {} has {} group(s) configured", guild_id, count);
         }
 
         Ok(())
@@ -317,15 +306,12 @@ impl DatabaseMigrations {
         .await?;
 
         if count == 0 {
-            info!("Creating default group for guild_id: {}", guild_id);
             sqlx::query("INSERT INTO groups (group_id, guild_id, dashboard, chat, queue, red, blu)
                         VALUES (1, ?, 1, 1, 1, 1, 1)"
             )
             .bind(guild_id as i64)
             .execute(&self.pool)
             .await?;
-
-            info!("Default group created for guild_id: {} (requires manual configuration)", guild_id);
         }
 
         Ok(())
