@@ -32,6 +32,25 @@ fn format_team_field(team: &[crate::models::SessionPlayer]) -> String {
         .join("\n")
 }
 
+/// Helper function to split pool into teams and sort by ELO descending
+fn get_sorted_teams(pool: &[crate::models::SessionPlayer], quota: usize) -> (Vec<crate::models::SessionPlayer>, Vec<crate::models::SessionPlayer>) {
+    let team_size = quota / 2;
+    let mut team_red: Vec<_> = pool[0..team_size].to_vec();
+    let mut team_blu: Vec<_> = pool[team_size..quota].to_vec();
+    
+    // Sort both teams by ELO descending
+    let sort_by_elo = |a: &crate::models::SessionPlayer, b: &crate::models::SessionPlayer| {
+        let elo_a = a.player.rank.map(|r| r.elo()).unwrap_or(0);
+        let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
+        elo_b.cmp(&elo_a)
+    };
+    
+    team_red.sort_by(sort_by_elo);
+    team_blu.sort_by(sort_by_elo);
+    
+    (team_red, team_blu)
+}
+
 /// Represents different types of button interactions in the Discord bot
 #[derive(Debug, Clone, PartialEq)]
 pub enum ButtonType {
@@ -352,20 +371,7 @@ impl Group {
         if let Some(current_session) = inactives.first() {
             let queue_players = current_session.pool.len();
             if queue_players >= quota {
-                let team_size = quota / 2;
-                // Sort teams by rank descending before display
-                let mut team_red: Vec<_> = current_session.pool[0..team_size].to_vec();
-                let mut team_blu: Vec<_> = current_session.pool[team_size..quota].to_vec();
-                team_red.sort_by(|a, b| {
-                    let elo_a = a.player.rank.map(|r| r.elo()).unwrap_or(0);
-                    let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
-                    elo_b.cmp(&elo_a) // Descending order
-                });
-                team_blu.sort_by(|a, b| {
-                    let elo_a = a.player.rank.map(|r| r.elo()).unwrap_or(0);
-                    let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
-                    elo_b.cmp(&elo_a) // Descending order
-                });
+                let (team_red, team_blu) = get_sorted_teams(&current_session.pool, quota);
                 embed = embed.field("🔴 RED",  format_team_field(&team_red), true);
                 embed = embed.field("🔵 BLUE", format_team_field(&team_blu), true);
 
@@ -385,20 +391,7 @@ impl Group {
         // Add team fields for active sessions
         for session in &actives {
             if session.pool.len() >= quota {
-                let team_size = quota / 2;
-                // Sort teams by rank descending before display
-                let mut team_red: Vec<_> = session.pool[0..team_size].to_vec();
-                let mut team_blu: Vec<_> = session.pool[team_size..quota].to_vec();
-                team_red.sort_by(|a, b| {
-                    let elo_a = a.player.rank.map(|r| r.elo()).unwrap_or(0);
-                    let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
-                    elo_b.cmp(&elo_a) // Descending order
-                });
-                team_blu.sort_by(|a, b| {
-                    let elo_a = a.player.rank.map(|r| r.elo()).unwrap_or(0);
-                    let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
-                    elo_b.cmp(&elo_a) // Descending order
-                });
+                let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
                 embed = embed.field("🔴 RED",  format_team_field(&team_red), true);
                 embed = embed.field("🔵 BLUE", format_team_field(&team_blu), true);
             }
