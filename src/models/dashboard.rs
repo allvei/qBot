@@ -78,6 +78,7 @@ pub enum ButtonType {
     DashboardShuffle,
     DashboardStart,
     DashboardEnd,
+    DashboardEndConfirm,
 
     // Permission confirmation button
     ConfirmPermissions,
@@ -118,6 +119,7 @@ impl ButtonType {
             "shuffle_teams"   => Self::DashboardShuffle,
             "start_match"     => Self::DashboardStart,
             "end_match"       => Self::DashboardEnd,
+            "end_match_confirm" => Self::DashboardEndConfirm,
 
             // Permission confirmation
             "confirm_permissions" => Self::ConfirmPermissions,
@@ -160,7 +162,8 @@ impl ButtonType {
             Self::DashboardToggleQueue |
             Self::DashboardShuffle     |
             Self::DashboardStart       |
-            Self::DashboardEnd
+            Self::DashboardEnd         |
+            Self::DashboardEndConfirm
         )
     }
 
@@ -199,12 +202,11 @@ impl Group {
         let is_hot  = self.sessions.iter().any(|s| s.is_hot());
         let is_live = self.sessions.iter().any(|s| s.is_active());
 
-        let bs = BS::Secondary;
         let buttons = vec![
-            ("toggle_queue", "Join/Leave", bs, true),
-            ("shuffle_teams", "Shuffle", bs, is_hot),
-            ("start_match",   "Start",   bs, is_hot),
-            ("end_match",     "End",     bs, is_live),
+            ("toggle_queue", "Join/Leave", BS::Primary, true),
+            ("shuffle_teams", "Shuffle", BS::Secondary, is_hot),
+            ("start_match",   "Start",   BS::Success, is_hot),
+            ("end_match",     "End",     BS::Danger, is_live),
         ];
 
         Ok(vec![CAR::Buttons(Self::gen_buttons(buttons))])
@@ -253,12 +255,37 @@ impl Group {
 
     /// Builds dashboard embed and components based on current group state
     pub async fn build_dashboard_content(&self) -> Result<(CE, Vec<CAR>)> {
-        let mut embed       = CE::new().title("PUG Dashboard");
-        let mut description = String::new();
-
         let quota     = self.quota as usize;
         let inactives = self.get_inactives();
         let actives   = self.get_actives();
+        
+        // Determine phase indicator based on session status
+        let phase_indicator = if !actives.is_empty() {
+            // Active session exists
+            let session = actives.first().unwrap();
+            match session.status {
+                SessionStatus::Hot => "[READY] ",
+                SessionStatus::Push => "[STARTING] ",
+                SessionStatus::Live => "[IN PROGRESS] ",
+                SessionStatus::Pull => "[ENDING] ",
+                _ => ""
+            }
+        } else if let Some(session) = inactives.first() {
+            // No active sessions
+            if session.is_hot() {
+                "[READY] "
+            } else if session.pool.len() >= quota {
+                "[READY] "
+            } else {
+                "[QUEUE OPEN] "
+            }
+        } else {
+            "[QUEUE OPEN] "
+        };
+        
+        let title = format!("{}PUG Dashboard", phase_indicator);
+        let mut embed       = CE::new().title(title);
+        let mut description = String::new();
 
         // Show active games first (Hot/Push/Live/Pull)
         if !actives.is_empty() {
@@ -280,7 +307,8 @@ impl Group {
                             if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
                                 let ready_timestamp = duration_since_epoch.as_secs();
                                 let deadline_timestamp = ready_timestamp + DEFAULT_MISSING_TIMEOUT;
-                                description.push_str(&format!("Join deadline: <t:{}:R>\n\n", deadline_timestamp));
+                                description.push_str(&format!("Join deadline: <t:{}:R>\n", deadline_timestamp));
+                                description.push_str("Missing players will be removed. Overflow players will take their spots.\n\n");
                             }
                         }
 
@@ -333,7 +361,8 @@ impl Group {
                             if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
                                 let ready_timestamp = duration_since_epoch.as_secs();
                                 let deadline_timestamp = ready_timestamp + DEFAULT_MISSING_TIMEOUT;
-                                description.push_str(&format!("Join deadline: <t:{}:R>\n\n", deadline_timestamp));
+                                description.push_str(&format!("Join deadline: <t:{}:R>\n", deadline_timestamp));
+                                description.push_str("Missing players will be removed. Overflow players will take their spots.\n\n");
                             }
                         }
 
@@ -483,11 +512,23 @@ impl Group {
                 false
             };
 
-            // If player is in VC, don't actually remove them - just acknowledge
+            // If player is in VC, disconnect them from voice channel
             if player_in_vc {
                 let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
-                info!("Player {} clicked leave but is in queue VC - ignoring", username);
-                cc.acknowledge().await;
+                info!("Player {} clicked leave while in queue VC - disconnecting", username);
+                
+                // Disconnect player from voice channel
+                if let Some(guild_id) = cc.component.guild_id {
+                    use serenity::all::EditMember;
+                    let _ = cc.ctx.http.edit_member(
+                        guild_id,
+                        user_id,
+                        &EditMember::new().disconnect_member(),
+                        Some("Player left queue via dashboard button")
+                    ).await;
+                }
+                
+                // The voice_state_update handler will handle removing them from the queue
                 return Ok(());
             }
 
@@ -660,7 +701,7 @@ impl Group {
         }
     }
 
-    /// Handles the end match button
+    /// Handles the end match button - shows confirmation
     async fn dash_end(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
         // Check if there's an active game to end
         let has_active_game = self.sessions.iter().any(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live);
@@ -670,6 +711,29 @@ impl Group {
             return Ok(());
         }
 
+        // Show confirmation message with button
+        use serenity::all::{CreateButton, ButtonStyle, CreateActionRow};
+        let confirm_button = CreateButton::new("end_match_confirm")
+            .label("Confirm End Match")
+            .style(ButtonStyle::Danger);
+        
+        let action_row = CreateActionRow::Buttons(vec![confirm_button]);
+        
+        cc.component.create_response(
+            &cc.ctx.http,
+            serenity::all::CreateInteractionResponse::Message(
+                serenity::all::CreateInteractionResponseMessage::new()
+                    .content("Are you sure you want to end this match? Players will be moved back to queue.")
+                    .components(vec![action_row])
+                    .ephemeral(true)
+            )
+        ).await?;
+
+        Ok(())
+    }
+
+    /// Handles the end match confirmation button - actually ends the match
+    async fn dash_end_confirm(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
         // Acknowledge immediately to prevent Discord timeout
         cc.acknowledge().await;
 
@@ -699,10 +763,11 @@ impl Group {
         let game_id = parts.get(1).map(|s| s.to_string());
 
         match action {
-            "toggle_queue" => self.dash_toggle_queue(cc).await,
-            "shuffle_teams" => self.dash_shuffle(cc, game_id).await,
-            "start_match"   => self.dash_start(cc,   game_id).await,
-            "end_match"     => self.dash_end(cc,     game_id).await,
+            "toggle_queue"      => self.dash_toggle_queue(cc).await,
+            "shuffle_teams"     => self.dash_shuffle(cc, game_id).await,
+            "start_match"       => self.dash_start(cc,   game_id).await,
+            "end_match"         => self.dash_end(cc,     game_id).await,
+            "end_match_confirm" => self.dash_end_confirm(cc, game_id).await,
             _ => {
                 cc.reply(&format!("Unknown button action: {}", action))
                     .await?;

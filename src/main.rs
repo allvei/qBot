@@ -81,8 +81,6 @@ impl EventHandler for Handler {
 
         // Register slash commands globally or for specific guild
         let cmds = vec![
-            cmd("join",      "Join the queue"),
-            cmd("leave",     "Leave the queue"),
             cmd("status",    "Check queue status"),
             cmd("shuffle",   "Generate teams from queue"),
             cmd("accept",    "Accept/confirm generated teams").op("id",    "Game ID to accept (optional)", false),
@@ -210,10 +208,6 @@ impl EventHandler for Handler {
                         };
 
                         match cd.name.as_str() {
-                            "join" | "leave" => {
-                                info();
-                                player::queue(&cmd_ctx, server).await
-                            }
                             "status" => {
                                 info();
                                 player::status(&cmd_ctx, server).await
