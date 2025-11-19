@@ -361,7 +361,7 @@ impl EventHandler for Handler {
 
                         let success_response = serenity::all::CreateInteractionResponse::Message(
                             serenity::all::CreateInteractionResponseMessage::new()
-                                .content("✅ Permissions confirmed! Setting up dashboard...")
+                                .content("Permissions confirmed! Setting up dashboard...")
                                 .ephemeral(true)
                         );
                         if let Err(e) = itx.create_response(&ctx.http, success_response).await {
@@ -908,7 +908,7 @@ impl Handler {
                     .color(0xFF0000);
 
                 let button = serenity::all::CreateButton::new("confirm_permissions")
-                    .label("✅ Confirm Permissions")
+                    .label("Confirm Permissions")
                     .style(serenity::all::ButtonStyle::Success);
 
                 let action_row = serenity::all::CreateActionRow::Buttons(vec![button]);

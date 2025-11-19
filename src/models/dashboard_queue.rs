@@ -165,7 +165,7 @@ impl DashboardUpdateQueue {
                 use serenity::all::EditMessage;
                 match channel_id.edit_message(&ctx.http, message_id, EditMessage::new().embed(embed.clone()).components(buttons.clone())).await {
                     Ok(_) => {
-                        info!("✅ Updated dashboard for guild {} group {}", guild_id, group_id);
+                        info!("Updated dashboard for guild {} group {}", guild_id, group_id);
                     }
                     Err(e) => {
                         // Check if message was deleted (404 error)
@@ -176,7 +176,7 @@ impl DashboardUpdateQueue {
                             use serenity::all::CreateMessage;
                             match channel_id.send_message(&ctx.http, CreateMessage::new().embed(embed).components(buttons)).await {
                                 Ok(new_msg) => {
-                                    info!("✅ Recreated dashboard message {} for guild {} group {}", new_msg.id, guild_id, group_id);
+                                    info!("Recreated dashboard message {} for guild {} group {}", new_msg.id, guild_id, group_id);
                                     
                                     // Update the stored message ID in memory
                                     let mut manager_lock = manager.lock().await;
