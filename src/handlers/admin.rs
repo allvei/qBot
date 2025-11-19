@@ -316,7 +316,7 @@ async fn create_group_channels(
     // Create red team voice channel
     info!("[{}] Creating red team voice channel", guild_name);
     let red_channel = guild_id.create_channel(&ctx.http,
-        CreateChannel::new("🔴 Red Team")
+        CreateChannel::new("🔴 RED")
             .kind(ChannelType::Voice)
             .category(category_id)
     ).await?;
@@ -324,7 +324,7 @@ async fn create_group_channels(
     // Create blue team voice channel
     info!("[{}] Creating blue team voice channel", guild_name);
     let blue_channel = guild_id.create_channel(&ctx.http,
-        CreateChannel::new("🔵 Blue Team")
+        CreateChannel::new("🔵 BLUE")
             .kind(ChannelType::Voice)
             .category(category_id)
     ).await?;

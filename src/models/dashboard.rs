@@ -366,8 +366,8 @@ impl Group {
                     let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
                     elo_b.cmp(&elo_a) // Descending order
                 });
-                embed = embed.field("🔴 Red",  format_team_field(&team_red), true);
-                embed = embed.field("🔵 Blue", format_team_field(&team_blu), true);
+                embed = embed.field("🔴 RED",  format_team_field(&team_red), true);
+                embed = embed.field("🔵 BLUE", format_team_field(&team_blu), true);
 
                 // Show next queue AFTER teams if there are overflow players
                 if current_session.is_hot() && queue_players > quota {
@@ -399,8 +399,8 @@ impl Group {
                     let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
                     elo_b.cmp(&elo_a) // Descending order
                 });
-                embed = embed.field("🔴 Red",  format_team_field(&team_red), true);
-                embed = embed.field("🔵 Blue", format_team_field(&team_blu), true);
+                embed = embed.field("🔴 RED",  format_team_field(&team_red), true);
+                embed = embed.field("🔵 BLUE", format_team_field(&team_blu), true);
             }
         }
 
