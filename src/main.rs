@@ -1009,8 +1009,16 @@ impl Handler {
 #[tokio::main]
 async fn main(
 ) -> Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
+    // Initialize tracing with minimal, colored format
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .with_file(false)
+        .with_line_number(false)
+        .with_level(true)
+        .compact()
+        .init();
 
     // Load environment variables
     dotenvy::dotenv().ok();
