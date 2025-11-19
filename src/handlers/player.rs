@@ -133,23 +133,37 @@ pub async fn validate_rank_roles(
         let has_role_by_id = configured_ids.iter().any(|id| guild_role_ids.contains(id));
 
         if !has_role_by_id {
-            // Fallback: search for role by name (case-insensitive)
+            // Fallback: search for ALL roles that contain the rank name (case-insensitive)
+            // This handles variants like "Journeyman", "Journeyman EU", "Journeyman NA", "Retired Journeyman"
             let rank_name = rank.name().to_lowercase();
-            let found_role = guild_roles.iter().find(|r| r.name.to_lowercase() == rank_name);
+            let matching_roles: Vec<_> = guild_roles.iter()
+                .filter(|r| {
+                    let role_name_lower = r.name.to_lowercase();
+                    // Match if role name contains rank name as a word
+                    // This catches: "Journeyman", "Journeyman EU", "Retired Journeyman", etc.
+                    role_name_lower.contains(&rank_name)
+                })
+                .collect();
 
-            if let Some(role) = found_role {
-                // Found a role with matching name! Auto-save it to config
-                info!("Found existing role '{}' (ID: {}) by name, saving to config", role.name, role.id);
+            if !matching_roles.is_empty() {
+                // Found one or more roles matching this rank! Auto-save all of them to config
+                let role_ids: Vec<String> = matching_roles.iter()
+                    .map(|r| {
+                        info!("Found existing role '{}' (ID: {}) matching {}, saving to config", 
+                            r.name, r.id, rank.name());
+                        r.id.get().to_string()
+                    })
+                    .collect();
 
-                // Save this role ID to the database config
-                let role_id_str = role.id.get().to_string();
-                if let Err(e) = db.config.set_config(rank.config_key(), &role_id_str, guild_id.get()).await {
-                    warn!("Failed to save found role {} to config: {}", rank.name(), e);
+                // Save all role IDs as comma-separated list to the database config
+                let role_ids_str = role_ids.join(",");
+                if let Err(e) = db.config.set_config(rank.config_key(), &role_ids_str, guild_id.get()).await {
+                    warn!("Failed to save found roles for {} to config: {}", rank.name(), e);
                 } else {
-                    info!("Saved {} role ID to config: {}", rank.name(), role_id_str);
+                    info!("Saved {} role IDs to config ({}): {}", rank.name(), matching_roles.len(), role_ids_str);
                 }
             } else {
-                // Role doesn't exist by ID or name
+                // No roles exist by ID or name match
                 missing_roles.push(rank.name().to_string());
             }
         }
@@ -194,14 +208,19 @@ pub async fn create_rank_roles(
         let has_role_by_id = existing_ids.iter().any(|id| guild_role_ids.contains(id));
 
         if !has_role_by_id {
-            // Check if a role with this name exists (case-insensitive)
+            // Check if ANY roles contain this rank name (case-insensitive)
+            // This handles variants like "Journeyman", "Journeyman EU", "Journeyman NA", "Retired Journeyman"
             let rank_name = rank.name().to_lowercase();
-            let found_role = guild_roles.iter().find(|r| r.name.to_lowercase() == rank_name);
+            let matching_roles: Vec<_> = guild_roles.iter()
+                .filter(|r| r.name.to_lowercase().contains(&rank_name))
+                .collect();
 
-            if let Some(role) = found_role {
-                // Found existing role by name, use it instead of creating
-                info!("Found existing role '{}' (ID: {}) by name during creation", role.name, role.id);
-                role_ids_for_rank.push(role.id.get());
+            if !matching_roles.is_empty() {
+                // Found existing role(s) matching this rank, use them instead of creating
+                for role in matching_roles {
+                    info!("Found existing role '{}' (ID: {}) matching {} during creation", role.name, role.id, rank.name());
+                    role_ids_for_rank.push(role.id.get());
+                }
             } else {
                 // No role exists for this rank by ID or name, create one
             let color = match rank {
