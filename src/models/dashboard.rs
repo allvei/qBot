@@ -332,7 +332,7 @@ impl Group {
             // Show next queue if there's an idle session with overflow players
             if let Some(next_session) = inactives.first() {
                 if !next_session.pool.is_empty() {
-                    description.push_str(&format!("**Next Queue ({}/{}):**\n", next_session.pool.len(), quota));
+                    description.push_str(&format!("**Bench ({}/{}):**\n", next_session.pool.len(), quota));
                     for (i, player) in next_session.pool.iter().enumerate() {
                         let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
                         description.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
@@ -404,7 +404,7 @@ impl Group {
                 // Show next queue AFTER teams if there are overflow players
                 if current_session.is_hot() && queue_players > quota {
                     let overflow_count = queue_players - quota;
-                    let mut next_queue = format!("**Next Queue ({}/{}):**\n", overflow_count, quota);
+                    let mut next_queue = format!("**Bench ({}/{}):**\n", overflow_count, quota);
                     for (i, player) in current_session.pool.iter().skip(quota).enumerate() {
                         let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
                         next_queue.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
@@ -427,7 +427,7 @@ impl Group {
         if !actives.is_empty() {
             if let Some(next_session) = inactives.first() {
                 if !next_session.pool.is_empty() {
-                    let mut next_queue = format!("**Next Queue ({}/{}):**\n", next_session.pool.len(), quota);
+                    let mut next_queue = format!("**Bench ({}/{}):**\n", next_session.pool.len(), quota);
                     for (i, player) in next_session.pool.iter().enumerate() {
                         let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
                         next_queue.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
