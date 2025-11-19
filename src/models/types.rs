@@ -43,12 +43,17 @@ impl CommandContext<'_> {
 
 impl ComponentContext<'_> {
     pub async fn reply(&self, message: &str) -> Result<(), anyhow::Error> {
-        let response = CIR::Message(CIRM::new().content(message));
+        let response = CIR::Message(CIRM::new().content(message).ephemeral(true));
         self.component.create_response(&self.ctx.http, response).await?;
         Ok(())
     }
     pub async fn acknowledge(&self) -> Result<(), anyhow::Error> {
         let response = CIR::Acknowledge;
+        self.component.create_response(&self.ctx.http, response).await?;
+        Ok(())
+    }
+    pub async fn defer_update(&self) -> Result<(), anyhow::Error> {
+        let response = CIR::UpdateMessage(CIRM::new());
         self.component.create_response(&self.ctx.http, response).await?;
         Ok(())
     }
