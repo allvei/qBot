@@ -163,7 +163,7 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
 }
 
 /// `/cmd_init_group`
-pub async fn cmd_init_group(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
+pub async fn cmd_group_link(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can set up the dashboard!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;

@@ -93,7 +93,7 @@ impl EventHandler for Handler {
             cmd("roles",     "Manage runner and admin roles") .op("type",  "Role type (runner/admin)",       false)
                                                               .op("role",  "Discord role to assign",          false),
             cmd("dashboard", "Create/update interactive dashboard"),
-            cmd("initgroup", "Initialize group"),
+            cmd("grouplink", "Link channels to a group"),
             cmd("setup",     "Run guild setup wizard"),
             cmd("checkranks", "Check and create missing rank roles"),
             cmd("setquota",  "Set the queue quota")              .op("quota", "Number of players required (2-100)", true),
@@ -238,9 +238,9 @@ impl EventHandler for Handler {
                                 }
                                 Ok(())
                             }
-                            "initgroup" => {
+                            "grouplink" => {
                                 info();
-                                admin::cmd_init_group(&cmd_ctx, server).await
+                                admin::cmd_group_link(&cmd_ctx, server).await
                             }
                             "dashboard" => {
                                 info();
