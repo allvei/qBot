@@ -78,7 +78,6 @@ pub enum ButtonType {
     DashboardShuffle,
     DashboardStart,
     DashboardEnd,
-    DashboardEndConfirm,
 
     // Permission confirmation button
     ConfirmPermissions,
@@ -119,7 +118,6 @@ impl ButtonType {
             "shuffle_teams"   => Self::DashboardShuffle,
             "start_match"     => Self::DashboardStart,
             "end_match"       => Self::DashboardEnd,
-            "end_match_confirm" => Self::DashboardEndConfirm,
 
             // Permission confirmation
             "confirm_permissions" => Self::ConfirmPermissions,
@@ -162,8 +160,7 @@ impl ButtonType {
             Self::DashboardToggleQueue |
             Self::DashboardShuffle     |
             Self::DashboardStart       |
-            Self::DashboardEnd         |
-            Self::DashboardEndConfirm
+            Self::DashboardEnd
         )
     }
 
@@ -701,7 +698,7 @@ impl Group {
         }
     }
 
-    /// Handles the end match button - shows confirmation
+    /// Handles the end match button - directly ends the match
     async fn dash_end(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
         // Check if there's an active game to end
         let has_active_game = self.sessions.iter().any(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live);
@@ -711,29 +708,6 @@ impl Group {
             return Ok(());
         }
 
-        // Show confirmation message with button
-        use serenity::all::{CreateButton, ButtonStyle, CreateActionRow};
-        let confirm_button = CreateButton::new("end_match_confirm")
-            .label("Confirm End Match")
-            .style(ButtonStyle::Danger);
-        
-        let action_row = CreateActionRow::Buttons(vec![confirm_button]);
-        
-        cc.component.create_response(
-            &cc.ctx.http,
-            serenity::all::CreateInteractionResponse::Message(
-                serenity::all::CreateInteractionResponseMessage::new()
-                    .content("Are you sure you want to end this match? Players will be moved back to queue.")
-                    .components(vec![action_row])
-                    .ephemeral(true)
-            )
-        ).await?;
-
-        Ok(())
-    }
-
-    /// Handles the end match confirmation button - actually ends the match
-    async fn dash_end_confirm(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
         // Acknowledge immediately to prevent Discord timeout
         cc.acknowledge().await;
 
@@ -767,7 +741,6 @@ impl Group {
             "shuffle_teams"     => self.dash_shuffle(cc, game_id).await,
             "start_match"       => self.dash_start(cc,   game_id).await,
             "end_match"         => self.dash_end(cc,     game_id).await,
-            "end_match_confirm" => self.dash_end_confirm(cc, game_id).await,
             _ => {
                 cc.reply(&format!("Unknown button action: {}", action))
                     .await?;
