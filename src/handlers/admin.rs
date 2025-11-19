@@ -12,6 +12,7 @@ use serenity::all::{
 use tracing::{error, info, warn};
 
 use crate::DEFAULT_QUOTA;
+use crate::database::repositories::Repository;
 use crate::handlers::player::{check_role, create_rank_roles, validate_rank_roles, validate_system_roles};
 use crate::models::{CommandContext as CC, Role, Server, SETUP_STATE};
 
@@ -165,31 +166,64 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
     Ok(())
 }
 
-/// `/grouplink` - Links existing channels to a group
-pub async fn cmd_group_link(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
+/// `/grouplink` - Interactive flow to link existing channels to a group
+pub async fn cmd_group_link(cc: &CC<'_>, _server: &mut Server) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can set up the dashboard!").ephemeral(true));
+        let response = CIR::Message(CIRM::new().content("Only admins can set up groups!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     let user_id = cc.intax.user.id;
-    let dashboard_channel = cc.intax.channel_id;
 
-    // Initialize setup state with dashboard channel pre-filled
+    // Initialize setup state
     SETUP_STATE.start_setup(user_id, guild_id);
-    SETUP_STATE.update_setup(user_id, guild_id, |config| {
-        config.dashboard_channel = Some(dashboard_channel.get());
-    });
 
-    start_init_group_flow(cc, dashboard_channel).await?;
+    // Start the channel selection flow
+    start_grouplink_flow(cc).await?;
+
+    Ok(())
+}
+
+/// Starts the grouplink flow - Step 1: Dashboard channel
+async fn start_grouplink_flow(cc: &CC<'_>) -> Result<()> {
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    let guild = guild_id.to_partial_guild(&cc.ctx.http).await?;
+
+    let welcome_embed = CE::new()
+        .title("Link Existing Channels")
+        .description(format!(
+            "Let's link your existing channels to create a PUG group for **{}**.\n\n\
+            **Step 1/5: Dashboard Channel**\n\
+            Select the text channel where the dashboard will be displayed:",
+            guild.name
+        ))
+        .color(0x00ff00);
+
+    let channels = get_text_channels(&guild, cc.ctx).await?;
+    let channel_options = create_channel_options(&channels, "grouplink_dashboard");
+
+    let select_menu = CreateSelectMenu::new("grouplink_dashboard", CreateSelectMenuKind::String { options: channel_options })
+        .placeholder("Select dashboard channel...")
+        .max_values(1);
+
+    let action_row = CreateActionRow::SelectMenu(select_menu);
+
+    let response = CIR::Message(
+        CIRM::new()
+            .embed(welcome_embed)
+            .components(vec![action_row])
+            .ephemeral(true)
+    );
+
+    cc.intax.create_response(&cc.ctx.http, response).await?;
 
     Ok(())
 }
 
 /// `/groupadd` - Creates a new category with all necessary channels
-pub async fn cmd_group_add(cc: &CC<'_>, _guild: &mut Server) -> Result<()> {
+pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can create group channels!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -197,60 +231,240 @@ pub async fn cmd_group_add(cc: &CC<'_>, _guild: &mut Server) -> Result<()> {
     }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-    let user_id = cc.intax.user.id;
+    let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
     
-    // Send initial "creating channels" message
-    let loading_embed = CE::new()
-        .title("Creating Group Channels")
-        .description("Creating a new category with all necessary channels...\nThis may take a moment.")
-        .color(0xffaa00);
+    // Check if runner and admin roles are configured
+    let missing_system_roles = match validate_system_roles(cc.ctx, &cc.db, guild_id).await {
+        Ok(roles) => roles,
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("Error")
+                .description(format!("Failed to check roles: {}", e))
+                .color(0xff0000);
 
-    let response = CIR::Message(CIRM::new().embed(loading_embed).ephemeral(true));
-    cc.intax.create_response(&cc.ctx.http, response).await?;
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+
+    // Check if rank roles are configured
+    let missing_rank_roles = match validate_rank_roles(cc.ctx, &cc.db, guild_id).await {
+        Ok(roles) => roles,
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("Error")
+                .description(format!("Failed to check rank roles: {}", e))
+                .color(0xff0000);
+
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+
+    // If roles are missing, start role setup flow first
+    if !missing_system_roles.is_empty() || !missing_rank_roles.is_empty() {
+        let user_id = cc.intax.user.id;
+        SETUP_STATE.start_setup(user_id, guild_id);
+        
+        let mut description = String::from("Before creating a group, we need to set up roles.\n\n");
+        
+        if !missing_system_roles.is_empty() {
+            description.push_str(&format!("**Missing System Roles:** {}\n", missing_system_roles.join(", ")));
+        }
+        if !missing_rank_roles.is_empty() {
+            description.push_str(&format!("**Missing Rank Roles:** {}\n", missing_rank_roles.join(", ")));
+        }
+        
+        description.push_str("\nLet's create these roles now, then we'll proceed with group creation.");
+        
+        let embed = CE::new()
+            .title("Role Setup Required")
+            .description(description)
+            .color(0xffaa00);
+
+        let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+
+        // Create the roles
+        info!("[{}] Creating missing roles for groupadd flow", guild_name);
+        
+        // Create runner and admin roles if missing
+        if !missing_system_roles.is_empty() {
+            use serenity::all::Permissions;
+            use serenity::builder::EditRole;
+            
+            if missing_system_roles.contains(&"PUG Runner".to_string()) {
+                match guild_id.create_role(&cc.ctx.http, 
+                    EditRole::new()
+                        .name("PUG Runner")
+                        .colour(0x3498db)
+                        .permissions(Permissions::empty())
+                ).await {
+                    Ok(role) => {
+                        if let Err(e) = cc.db.config.set_config("runner_role", &role.id.to_string(), guild_id.get()).await {
+                            warn!("Failed to save runner_role config: {}", e);
+                        }
+                        info!("[{}] Created PUG Runner role", guild_name);
+                    },
+                    Err(e) => {
+                        error!("[{}] Failed to create PUG Runner role: {}", guild_name, e);
+                    }
+                }
+            }
+            
+            if missing_system_roles.contains(&"PUG Admin".to_string()) {
+                match guild_id.create_role(&cc.ctx.http,
+                    EditRole::new()
+                        .name("PUG Admin")
+                        .colour(0xe74c3c)
+                        .permissions(Permissions::empty())
+                ).await {
+                    Ok(role) => {
+                        if let Err(e) = cc.db.config.set_config("admin_role", &role.id.to_string(), guild_id.get()).await {
+                            warn!("Failed to save admin_role config: {}", e);
+                        }
+                        info!("[{}] Created PUG Admin role", guild_name);
+                    },
+                    Err(e) => {
+                        error!("[{}] Failed to create PUG Admin role: {}", guild_name, e);
+                    }
+                }
+            }
+        }
+        
+        // Create rank roles if missing
+        if !missing_rank_roles.is_empty() {
+            if let Err(e) = create_rank_roles(cc.ctx, &cc.db, guild_id).await {
+                warn!("[{}] Failed to create rank roles: {}", guild_name, e);
+            } else {
+                info!("[{}] Created rank roles", guild_name);
+            }
+        }
+        
+        // Update the message to show roles were created and now proceeding
+        let success_embed = CE::new()
+            .title("Roles Created!")
+            .description("All required roles have been created.\n\nNow creating group channels...")
+            .color(0x00ff00);
+
+        cc.intax.edit_response(&cc.ctx.http,
+            serenity::all::EditInteractionResponse::new().embed(success_embed)
+        ).await?;
+        
+        // Small delay to let the user see the message
+        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    } else {
+        // Roles exist, send initial "creating channels" message
+        let loading_embed = CE::new()
+            .title("Creating Group Channels")
+            .description("Creating a new category with all necessary channels...\nThis may take a moment.")
+            .color(0xffaa00);
+
+        let response = CIR::Message(CIRM::new().embed(loading_embed).ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+    }
 
     // Create the category and channels
     match create_group_channels(cc.ctx, guild_id).await {
         Ok((category_id, dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel)) => {
-            // Initialize setup state with all channels pre-filled
-            SETUP_STATE.start_setup(user_id, guild_id);
-            SETUP_STATE.update_setup(user_id, guild_id, |config| {
-                config.dashboard_channel = Some(dashboard_channel.get());
-                config.queue_channel = Some(queue_channel.get());
-                config.queue_vc_channel = Some(queue_vc_channel.get());
-                config.red_channel = Some(red_channel.get());
-                config.blue_channel = Some(blue_channel.get());
-            });
+            // Create a temporary Group in memory to publish the dashboard
+            use crate::models::{Group, Channels, TeamChannel};
+            use serenity::all::MessageId;
+            
+            let mut temp_group = Group {
+                group_id: 0, // Will be assigned by DB
+                quota: crate::DEFAULT_QUOTA,
+                timeout: 180,
+                dashboard_msg: MessageId::new(1), // Temporary, will be replaced
+                channels: Channels {
+                    queue_chat: queue_channel,
+                    queue_vc: queue_vc_channel,
+                    teams: vec![TeamChannel {
+                        red_vc: red_channel,
+                        blu_vc: blue_channel,
+                    }],
+                    dashboard: dashboard_channel,
+                },
+                sessions: vec![],
+            };
+            
+            // Publish the dashboard to get the actual message ID
+            match temp_group.dash_publish(cc.ctx, dashboard_channel).await {
+                Ok(_) => {
+                    let dashboard_msg_id = temp_group.dashboard_msg.get();
+                    info!("[{}] Dashboard message created with ID {}", guild_name, dashboard_msg_id);
+                    
+                    // Now create the group in the database with the actual dashboard message ID
+                    match cc.db.groups.create_group(
+                        guild_id.get(),
+                        dashboard_channel.get(),
+                        queue_channel.get(),
+                        queue_vc_channel.get(),
+                        dashboard_msg_id,
+                        red_channel.get(),
+                        blue_channel.get(),
+                        crate::DEFAULT_QUOTA,
+                    ).await {
+                        Ok(db_group) => {
+                            info!("[{}] Group {} saved to database", guild_name, db_group.group_id);
 
-            // Create dashboard message in the new dashboard channel
-            let initial_embed = CE::new()
-                .title("PUG Queue Dashboard")
-                .description("Setting up queue system...")
-                .color(0xffaa00);
+                            // Add group to in-memory server and create initial session
+                            if let Err(e) = server.add_group(db_group.clone()) {
+                                error!("Failed to add group to server: {}", e);
+                            }
 
-            let dashboard_msg = match dashboard_channel.send_message(&cc.ctx.http,
-                CreateMessage::new().embed(initial_embed)
-            ).await {
-                Ok(msg) => msg,
+                            let success_embed = CE::new()
+                                .title("Group Created!")
+                                .description(format!(
+                                    "New PUG group is ready!\n\n\
+                                    **Configuration:**\n\
+                                    • Dashboard: <#{}>\n\
+                                    • Queue Text: <#{}>\n\
+                                    • Queue Voice: <#{}>\n\
+                                    • Red Team: <#{}>\n\
+                                    • Blue Team: <#{}>\n\
+                                    • Category: <#{}>",
+                                    dashboard_channel.get(), 
+                                    queue_channel.get(), 
+                                    queue_vc_channel.get(), 
+                                    red_channel.get(), 
+                                    blue_channel.get(),
+                                    category_id.get()
+                                ))
+                                .color(0x00ff00);
+
+                            cc.intax.edit_response(&cc.ctx.http,
+                                serenity::all::EditInteractionResponse::new().embed(success_embed)
+                            ).await?;
+                        },
+                        Err(e) => {
+                            // Dashboard was created but DB save failed - delete the dashboard message
+                            let _ = dashboard_channel.delete_message(&cc.ctx.http, dashboard_msg_id).await;
+                            
+                            let error_embed = CE::new()
+                                .title("Failed to Save Group")
+                                .description(format!("Failed to save group to database: {}", e))
+                                .color(0xff0000);
+
+                            cc.intax.edit_response(&cc.ctx.http,
+                                serenity::all::EditInteractionResponse::new().embed(error_embed)
+                            ).await?;
+                        }
+                    }
+                },
                 Err(e) => {
                     let error_embed = CE::new()
-                        .title("Setup Failed")
-                        .description(format!("Failed to create dashboard message: {}", e))
+                        .title("Dashboard Creation Failed")
+                        .description(format!("Failed to create dashboard: {}", e))
                         .color(0xff0000);
 
-                    cc.intax.edit_response(&cc.ctx.http, 
+                    cc.intax.edit_response(&cc.ctx.http,
                         serenity::all::EditInteractionResponse::new().embed(error_embed)
                     ).await?;
-                    return Ok(());
                 }
-            };
-
-            // Store dashboard message ID
-            SETUP_STATE.update_setup(user_id, guild_id, |config| {
-                config.dashboard_msg_id = Some(dashboard_msg.id.get());
-            });
-
-            // Send success message and start role selection flow
-            start_role_selection_flow(cc, guild_id, user_id, category_id).await?;
+            }
         },
         Err(e) => {
             let error_embed = CE::new()
@@ -268,7 +482,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, _guild: &mut Server) -> Result<()> {
 }
 
 /// Creates a category and all necessary group channels
-async fn create_group_channels(
+pub async fn create_group_channels(
     ctx: &Context,
     guild_id: GuildId,
 ) -> Result<(CI, CI, CI, CI, CI, CI)> {
@@ -696,6 +910,13 @@ pub async fn handle_setup_interaction(ctx: &Context, interaction: &ComponentInte
         ButtonType::InitBlue       => handle_init_blue_selection(    ctx, interaction, channel_or_role_id).await?,
         ButtonType::InitRunner     => handle_init_runner_selection(  ctx, interaction, channel_or_role_id).await?,
         ButtonType::InitAdmin      => handle_init_admin_selection(   ctx, interaction, channel_or_role_id, db, manager).await?,
+
+        // GroupLink flow
+        ButtonType::GroupLinkDashboard => handle_grouplink_dashboard_selection(ctx, interaction, channel_or_role_id).await?,
+        ButtonType::GroupLinkQueue     => handle_grouplink_queue_selection(    ctx, interaction, channel_or_role_id).await?,
+        ButtonType::GroupLinkQueueVc   => handle_grouplink_queuevc_selection(  ctx, interaction, channel_or_role_id).await?,
+        ButtonType::GroupLinkRed       => handle_grouplink_red_selection(      ctx, interaction, channel_or_role_id).await?,
+        ButtonType::GroupLinkBlue      => handle_grouplink_blue_selection(     ctx, interaction, channel_or_role_id, db, manager).await?,
 
         // Unknown button types are ignored
         _ => {}
@@ -1733,7 +1954,7 @@ async fn finalize_group_setup(
             }
 
             let server = mgr.get_server(guild_id)?;
-            server.groups.push(new_group);
+            server.add_group(new_group)?;
 
             // Get the newly added group and immediately update its dashboard
             let group = server.groups.last_mut()
@@ -1755,4 +1976,301 @@ async fn finalize_group_setup(
             Err(anyhow!("[{}] Failed to load groups from database: {}", guild_name, e))
         }
     }
+}
+
+/// Handles grouplink dashboard channel selection - Step 1
+async fn handle_grouplink_dashboard_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+    let user_id = interaction.user.id;
+    let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+    let guild = guild_id.to_partial_guild(&ctx.http).await?;
+
+    SETUP_STATE.update_setup(user_id, guild_id, |config| {
+        config.dashboard_channel = Some(channel_id);
+    });
+
+    let embed = CE::new()
+        .title("Dashboard Channel Selected")
+        .description(format!(
+            "Dashboard: <#{}>\n\n\
+            **Step 2/5: Queue Text Channel**\n\
+            Select the text channel for queue commands:",
+            channel_id
+        ))
+        .color(0x00ff00);
+
+    let channels = get_text_channels(&guild, ctx).await?;
+    let channel_options = create_channel_options(&channels, "grouplink_queue");
+
+    let select_menu = CreateSelectMenu::new("grouplink_queue", CreateSelectMenuKind::String { options: channel_options })
+        .placeholder("Select queue text channel...")
+        .max_values(1);
+
+    let action_row = CreateActionRow::SelectMenu(select_menu);
+
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
+    interaction.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
+/// Handles grouplink queue text channel selection - Step 2
+async fn handle_grouplink_queue_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+    let user_id = interaction.user.id;
+    let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+    let guild = guild_id.to_partial_guild(&ctx.http).await?;
+
+    SETUP_STATE.update_setup(user_id, guild_id, |config| {
+        config.queue_channel = Some(channel_id);
+    });
+
+    let embed = CE::new()
+        .title("Queue Text Channel Selected")
+        .description(format!(
+            "Queue text: <#{}>\n\n\
+            **Step 3/5: Queue Voice Channel**\n\
+            Select the voice channel where players wait:",
+            channel_id
+        ))
+        .color(0x00ff00);
+
+    let channels = get_voice_channels(&guild, ctx).await?;
+    let channel_options = create_channel_options(&channels, "grouplink_queuevc");
+
+    let select_menu = CreateSelectMenu::new("grouplink_queuevc", CreateSelectMenuKind::String { options: channel_options })
+        .placeholder("Select queue voice channel...")
+        .max_values(1);
+
+    let action_row = CreateActionRow::SelectMenu(select_menu);
+
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
+    interaction.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
+/// Handles grouplink queue voice channel selection - Step 3
+async fn handle_grouplink_queuevc_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+    let user_id = interaction.user.id;
+    let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+    let guild = guild_id.to_partial_guild(&ctx.http).await?;
+
+    SETUP_STATE.update_setup(user_id, guild_id, |config| {
+        config.queue_vc_channel = Some(channel_id);
+    });
+
+    let embed = CE::new()
+        .title("Queue Voice Channel Selected")
+        .description(format!(
+            "Queue voice: <#{}>\n\n\
+            **Step 4/5: Red Team Voice Channel**\n\
+            Select the Red team voice channel:",
+            channel_id
+        ))
+        .color(0x00ff00);
+
+    let channels = get_voice_channels(&guild, ctx).await?;
+    let channel_options = create_channel_options(&channels, "grouplink_red");
+
+    let select_menu = CreateSelectMenu::new("grouplink_red", CreateSelectMenuKind::String { options: channel_options })
+        .placeholder("Select red team channel...")
+        .max_values(1);
+
+    let action_row = CreateActionRow::SelectMenu(select_menu);
+
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
+    interaction.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
+/// Handles grouplink red team channel selection - Step 4
+async fn handle_grouplink_red_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+    let user_id = interaction.user.id;
+    let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+    let guild = guild_id.to_partial_guild(&ctx.http).await?;
+
+    SETUP_STATE.update_setup(user_id, guild_id, |config| {
+        config.red_channel = Some(channel_id);
+    });
+
+    let embed = CE::new()
+        .title("Red Team Channel Selected")
+        .description(format!(
+            "Red team: <#{}>\n\n\
+            **Step 5/5: Blue Team Voice Channel**\n\
+            Select the Blue team voice channel:",
+            channel_id
+        ))
+        .color(0x00ff00);
+
+    let channels = get_voice_channels(&guild, ctx).await?;
+    let channel_options = create_channel_options(&channels, "grouplink_blue");
+
+    let select_menu = CreateSelectMenu::new("grouplink_blue", CreateSelectMenuKind::String { options: channel_options })
+        .placeholder("Select blue team channel...")
+        .max_values(1);
+
+    let action_row = CreateActionRow::SelectMenu(select_menu);
+
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
+    interaction.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
+/// Handles grouplink blue team channel selection - Step 5 (final step, creates the group)
+async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64, db: &std::sync::Arc<crate::Database>, manager: &Arc<Mutex<crate::models::Manager>>) -> Result<()> {
+    let user_id = interaction.user.id;
+    let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+    let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+
+    SETUP_STATE.update_setup(user_id, guild_id, |config| {
+        config.blue_channel = Some(channel_id);
+    });
+
+    // Get complete configuration
+    let config = SETUP_STATE.get_setup(user_id, guild_id)
+        .ok_or_else(|| anyhow!("Setup configuration not found"))?;
+
+    let dashboard_channel = CI::new(config.dashboard_channel.ok_or_else(|| anyhow!("Dashboard channel not set"))?);
+    let queue_channel = CI::new(config.queue_channel.ok_or_else(|| anyhow!("Queue channel not set"))?);
+    let queue_vc_channel = CI::new(config.queue_vc_channel.ok_or_else(|| anyhow!("Queue VC channel not set"))?);
+    let red_channel = CI::new(config.red_channel.ok_or_else(|| anyhow!("Red channel not set"))?);
+    let blue_channel = CI::new(config.blue_channel.ok_or_else(|| anyhow!("Blue channel not set"))?);
+
+    // Send "creating group" message
+    let loading_embed = CE::new()
+        .title("Creating Group")
+        .description("Linking channels and creating PUG group...\n\nCleaning up any old configurations...")
+        .color(0xffaa00);
+
+    let response = CIR::UpdateMessage(CIRM::new().embed(loading_embed).components(vec![]));
+    interaction.create_response(&ctx.http, response).await?;
+
+    // Check and clean up old groups that use these channels
+    let mut mgr = manager.lock().await;
+    let server_opt = mgr.servers.iter_mut().find(|s| s.guild_id == guild_id);
+    
+    if let Some(server) = server_opt {
+        let mut groups_to_remove = Vec::new();
+        
+        for (idx, group) in server.groups.iter().enumerate() {
+            if group.channels.dashboard == dashboard_channel ||
+               group.channels.queue_chat == queue_channel ||
+               group.channels.queue_vc == queue_vc_channel ||
+               group.channels.teams.iter().any(|t| t.red_vc == red_channel || t.blu_vc == blue_channel) {
+                groups_to_remove.push((idx, group.group_id));
+            }
+        }
+        
+        // Remove old configurations from database and memory
+        for (idx, group_id) in groups_to_remove.iter().rev() {
+            info!("[{}] Removing old group {} configuration", guild_name, group_id);
+            if let Err(e) = db.groups.delete(*group_id).await {
+                warn!("[{}] Failed to delete old group {}: {}", guild_name, group_id, e);
+            }
+            server.groups.remove(*idx);
+        }
+    }
+    drop(mgr);
+
+    // Create temporary group and publish dashboard
+    use crate::models::{Group, Channels, TeamChannel};
+    use serenity::all::MessageId;
+    
+    let mut temp_group = Group {
+        group_id: 0,
+        quota: crate::DEFAULT_QUOTA,
+        timeout: 180,
+        dashboard_msg: MessageId::new(1),
+        channels: Channels {
+            queue_chat: queue_channel,
+            queue_vc: queue_vc_channel,
+            teams: vec![TeamChannel {
+                red_vc: red_channel,
+                blu_vc: blue_channel,
+            }],
+            dashboard: dashboard_channel,
+        },
+        sessions: vec![],
+    };
+    
+    // Publish dashboard to get message ID
+    match temp_group.dash_publish(ctx, dashboard_channel).await {
+        Ok(_) => {
+            let dashboard_msg_id = temp_group.dashboard_msg.get();
+            
+            // Save to database
+            match db.groups.create_group(
+                guild_id.get(),
+                dashboard_channel.get(),
+                queue_channel.get(),
+                queue_vc_channel.get(),
+                dashboard_msg_id,
+                red_channel.get(),
+                blue_channel.get(),
+                crate::DEFAULT_QUOTA,
+            ).await {
+                Ok(db_group) => {
+                    info!("[{}] Group {} created via grouplink", guild_name, db_group.group_id);
+
+                    // Add to manager
+                    let mut mgr = manager.lock().await;
+                    if let Ok(server) = mgr.get_server(guild_id) {
+                        if let Err(e) = server.add_group(db_group.clone()) {
+                            error!("[{}] Failed to add group: {}", guild_name, e);
+                        }
+                    }
+                    drop(mgr);
+
+                    // Clean up setup state
+                    SETUP_STATE.complete_setup(user_id, guild_id);
+
+                    let success_embed = CE::new()
+                        .title("Group Created!")
+                        .description(format!(
+                            "Successfully linked existing channels!\n\n\
+                            **Configuration:**\n\
+                            • Dashboard: <#{}>\n\
+                            • Queue Text: <#{}>\n\
+                            • Queue Voice: <#{}>\n\
+                            • Red Team: <#{}>\n\
+                            • Blue Team: <#{}>\n\n\
+                            The PUG queue is now ready to use!",
+                            dashboard_channel.get(),
+                            queue_channel.get(),
+                            queue_vc_channel.get(),
+                            red_channel.get(),
+                            blue_channel.get()
+                        ))
+                        .color(0x00ff00);
+
+                    interaction.edit_response(&ctx.http,
+                        serenity::all::EditInteractionResponse::new().embed(success_embed)
+                    ).await?;
+                },
+                Err(e) => {
+                    // Delete dashboard message on failure
+                    let _ = dashboard_channel.delete_message(&ctx.http, dashboard_msg_id).await;
+                    
+                    let error_embed = CE::new()
+                        .title("Failed to Save Group")
+                        .description(format!("Error saving to database: {}", e))
+                        .color(0xff0000);
+
+                    interaction.edit_response(&ctx.http,
+                        serenity::all::EditInteractionResponse::new().embed(error_embed)
+                    ).await?;
+                }
+            }
+        },
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("Dashboard Creation Failed")
+                .description(format!("Failed to create dashboard: {}", e))
+                .color(0xff0000);
+
+            interaction.edit_response(&ctx.http,
+                serenity::all::EditInteractionResponse::new().embed(error_embed)
+            ).await?;
+        }
+    }
+
+    Ok(())
 }
