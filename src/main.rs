@@ -94,6 +94,7 @@ impl EventHandler for Handler {
                                                               .op("role",  "Discord role to assign",          false),
             cmd("dashboard", "Create/update interactive dashboard"),
             cmd("grouplink", "Link channels to a group"),
+            cmd("groupinit", "Create a new category with all group channels"),
             cmd("setup",     "Run guild setup wizard"),
             cmd("checkranks", "Check and create missing rank roles"),
             cmd("setquota",  "Set the queue quota")              .op("quota", "Number of players required (2-100)", true),
@@ -242,6 +243,10 @@ impl EventHandler for Handler {
                                 info();
                                 admin::cmd_group_link(&cmd_ctx, server).await
                             }
+                            "groupinit" => {
+                                info();
+                                admin::cmd_group_init(&cmd_ctx, server).await
+                            }
                             "dashboard" => {
                                 info();
                                 admin::cmd_dashboard(&cmd_ctx, server).await
@@ -322,7 +327,7 @@ impl EventHandler for Handler {
                     if !is_admin {
                         let error_response = serenity::all::CreateInteractionResponse::Message(
                             serenity::all::CreateInteractionResponseMessage::new()
-                                .content("❌ Only administrators can confirm bot permissions.")
+                                .content("Only administrators can confirm bot permissions.")
                                 .ephemeral(true)
                         );
                         if let Err(e) = itx.create_response(&ctx.http, error_response).await {
@@ -347,7 +352,7 @@ impl EventHandler for Handler {
                         // Still missing permissions
                         let error_response = serenity::all::CreateInteractionResponse::Message(
                             serenity::all::CreateInteractionResponseMessage::new()
-                                .content(format!("❌ Still missing permissions: {}", missing_perms))
+                                .content(format!("Still missing permissions: {}", missing_perms))
                                 .ephemeral(true)
                         );
                         if let Err(e) = itx.create_response(&ctx.http, error_response).await {
@@ -445,7 +450,7 @@ impl EventHandler for Handler {
                                         error!("[{}] Could not get server from manager", guild_name);
                                         let error_response = CIR::Message(
                                             CIRM::new()
-                                                .content("⚠️ Dashboard state was lost. Please run `/setup` to reconfigure.")
+                                                .content("Dashboard state was lost. Please run `/setup` to reconfigure.")
                                                 .ephemeral(true)
                                         );
                                         if let Err(e) = itx.create_response(&ctx.http, error_response).await {
@@ -457,7 +462,7 @@ impl EventHandler for Handler {
                                     error!("[{}] No group found in database for #{}", guild_name, channel_name);
                                     let error_response = CIR::Message(
                                         CIRM::new()
-                                            .content("⚠️ Dashboard configuration not found. Please run `/setup` to configure this channel.")
+                                            .content("Dashboard configuration not found. Please run `/setup` to configure this channel.")
                                             .ephemeral(true)
                                     );
                                     if let Err(e) = itx.create_response(&ctx.http, error_response).await {
@@ -470,7 +475,7 @@ impl EventHandler for Handler {
                                 error!("Failed to load groups from database: {}", e);
                                 let error_response = CIR::Message(
                                     CIRM::new()
-                                        .content("⚠️ Failed to access database. Please contact an administrator.")
+                                        .content("Failed to access database. Please contact an administrator.")
                                         .ephemeral(true)
                                 );
                                 if let Err(e) = itx.create_response(&ctx.http, error_response).await {
@@ -900,7 +905,7 @@ impl Handler {
             // Create a warning dashboard in the first available text channel
             if let Some(channel) = guild.channels.values().find(|c| c.kind == serenity::all::ChannelType::Text) {
                 let warning_embed = serenity::all::CreateEmbed::new()
-                    .title("⚠️ Missing Bot Permissions")
+                    .title("Missing Bot Permissions")
                     .description(format!(
                         "The bot is missing required permissions to function properly.\n\n\
                         **Missing Permissions:**\n{}\n\n\

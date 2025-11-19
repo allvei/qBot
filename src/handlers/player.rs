@@ -535,7 +535,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         }
 
         if found {
-            cc.reply(&format!("❌ Left the queue! ({}/{} players)", queue_count, group.quota)).await?;
+            cc.reply(&format!("Left the queue! ({}/{} players)", queue_count, group.quota)).await?;
         }
 
         group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
@@ -548,7 +548,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     let guild_id = match cc.intax.guild_id {
         Some(id) => id,
         None => {
-            cc.reply("❌ This command can only be used in a server.").await?;
+            cc.reply("This command can only be used in a server.").await?;
             return Ok(());
         }
     };
@@ -557,7 +557,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     let rank = match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user).await {
         Ok(rank) => rank,
         Err(e) => {
-            cc.reply(&format!("❌ Failed to get or assign rank: {}. Please contact an admin.", e)).await?;
+            cc.reply(&format!("Failed to get or assign rank: {}. Please contact an admin.", e)).await?;
             return Ok(());
         }
     };
@@ -576,7 +576,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     // Check if we have an idle session
     let idle_sessions = group.get_sessions_by_status(&SessionStatus::Idle);
     if idle_sessions.is_empty() {
-        cc.reply("❌ No queue available. A match is currently in progress.").await?;
+        cc.reply("No queue available. A match is currently in progress.").await?;
         return Ok(());
     } else if idle_sessions.len() > 1 {
         return Err(anyhow!("Found more than one idle game ({}). This is unexpected.", idle_sessions.len()));
@@ -593,7 +593,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         if idle_sessions.is_empty() {
             // No idle session means match is in progress
             drop(manager);
-            cc.reply("❌ Cannot join queue while match is in progress. Please wait for current match to end.").await?;
+            cc.reply("Cannot join queue while match is in progress. Please wait for current match to end.").await?;
             return Ok(());
         }
 
@@ -710,7 +710,7 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
         .collect();
 
     let embed_content = format!(
-        "**🎲 Teams Generated!**\n\n**🔴 Red Team:**\n{}\n\n**🔵 Blue Team:**\n{}",
+        "**Teams Generated!**\n\n**Red Team:**\n{}\n\n**Blue Team:**\n{}",
         red_team_names.join("\n"),
         blu_team_names.join("\n")
     );

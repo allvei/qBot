@@ -50,6 +50,8 @@ pub enum ButtonType {
     InitQueueVc,
     InitRed,
     InitBlue,
+    InitRunner,
+    InitAdmin,
     InitQuota,
 
     // Dashboard action buttons
@@ -88,6 +90,8 @@ impl ButtonType {
             "init_queuevc"    => Self::InitQueueVc,
             "init_red"        => Self::InitRed,
             "init_blue"       => Self::InitBlue,
+            "init_runner"     => Self::InitRunner,
+            "init_admin"      => Self::InitAdmin,
             "init_quota"      => Self::InitQuota,
 
             // Dashboard buttons
@@ -124,6 +128,8 @@ impl ButtonType {
             Self::InitQueueVc    |
             Self::InitRed        |
             Self::InitBlue       |
+            Self::InitRunner     |
+            Self::InitAdmin      |
             Self::InitQuota
         )
     }
@@ -255,7 +261,7 @@ impl Group {
                             if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
                                 let ready_timestamp = duration_since_epoch.as_secs();
                                 let deadline_timestamp = ready_timestamp + DEFAULT_MISSING_TIMEOUT;
-                                description.push_str(&format!("⏰ Join deadline: <t:{}:R>\n\n", deadline_timestamp));
+                                description.push_str(&format!("Join deadline: <t:{}:R>\n\n", deadline_timestamp));
                             }
                         }
 
@@ -308,7 +314,7 @@ impl Group {
                             if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
                                 let ready_timestamp = duration_since_epoch.as_secs();
                                 let deadline_timestamp = ready_timestamp + DEFAULT_MISSING_TIMEOUT;
-                                description.push_str(&format!("⏰ Join deadline: <t:{}:R>\n\n", deadline_timestamp));
+                                description.push_str(&format!("Join deadline: <t:{}:R>\n\n", deadline_timestamp));
                             }
                         }
 
@@ -360,7 +366,7 @@ impl Group {
                     let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
                     elo_b.cmp(&elo_a) // Descending order
                 });
-                embed = embed.field("🔴 Red", format_team_field(&team_red), true);
+                embed = embed.field("🔴 Red",  format_team_field(&team_red), true);
                 embed = embed.field("🔵 Blue", format_team_field(&team_blu), true);
 
                 // Show next queue AFTER teams if there are overflow players
@@ -393,7 +399,7 @@ impl Group {
                     let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
                     elo_b.cmp(&elo_a) // Descending order
                 });
-                embed = embed.field("🔴 Red", format_team_field(&team_red), true);
+                embed = embed.field("🔴 Red",  format_team_field(&team_red), true);
                 embed = embed.field("🔵 Blue", format_team_field(&team_blu), true);
             }
         }
@@ -545,7 +551,7 @@ impl Group {
             );
 
             if !has_joinable_session {
-                cc.reply("❌ Cannot join - match is in progress. Please wait.").await?;
+                cc.reply("Cannot join - match is in progress. Please wait.").await?;
                 return Ok(());
             }
 
@@ -579,7 +585,7 @@ impl Group {
                     }
                 }
             } else {
-                cc.reply("❌ This command can only be used in a server.").await?;
+                cc.reply("This command can only be used in a server.").await?;
                 return Ok(());
             }
         }
@@ -603,7 +609,7 @@ impl Group {
         );
 
         if session.is_none() {
-            cc.reply(&format!("❌ No game ready for shuffling. Need at least {} players in queue.", quota)).await?;
+            cc.reply(&format!("No game ready for shuffling. Need at least {} players in queue.", quota)).await?;
             return Ok(());
         }
 
@@ -625,12 +631,12 @@ impl Group {
                 // User has Runner role, proceed
             },
             Ok(false) => {
-                cc.reply("❌ Only runners can start matches.").await?;
+                cc.reply("Only runners can start matches.").await?;
                 return Ok(());
             },
             Err(e) => {
                 warn!("Failed to check runner role: {}", e);
-                cc.reply("❌ Failed to verify permissions.").await?;
+                cc.reply("Failed to verify permissions.").await?;
                 return Ok(());
             }
         }
@@ -639,7 +645,7 @@ impl Group {
         let has_hot_game = self.sessions.iter().any(|s| s.is_hot());
 
         if !has_hot_game {
-            cc.reply("❌ No hot game ready to start.").await?;
+            cc.reply("No hot game ready to start.").await?;
             return Ok(());
         }
 
@@ -667,7 +673,7 @@ impl Group {
         let has_active_game = self.sessions.iter().any(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live);
 
         if !has_active_game {
-            cc.reply("❌ No active match to end.").await?;
+            cc.reply("No active match to end.").await?;
             return Ok(());
         }
 

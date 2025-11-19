@@ -783,7 +783,7 @@ impl ConsoleHandler {
                                 }
                             },
                             Err(e) => {
-                                println!("  ❌ Error checking groups: {}", e);
+                                println!("  Error checking groups: {}", e);
                             }
                         }
                     }
@@ -911,7 +911,7 @@ impl ConsoleHandler {
                     .map_err(|_| format!("Invalid quota value: {}", value))?;
 
                 if quota == 0 || quota > 20 {
-                    println!("❌ Quota must be between 1 and 20");
+                    println!("Quota must be between 1 and 20");
                     return Ok(());
                 }
 
@@ -938,10 +938,10 @@ impl ConsoleHandler {
                                 group.queue_dash_update(ctx, guild_id).await;
                             }
                         } else {
-                            println!("⚠️  Context not available, dashboard not updated");
+                            println!("  Context not available, dashboard not updated");
                         }
                     },
-                    Err(e) => println!("❌ Failed to update quota: {}", e),
+                    Err(e) => println!("Failed to update quota: {}", e),
                 }
             },
             "timeout" => {
@@ -959,7 +959,7 @@ impl ConsoleHandler {
                         group.queue_dash_update(ctx, guild_id).await;
                     }
                 } else {
-                    println!("❌ Context not available");
+                    println!("Context not available");
                 }
             },
             "dashboard" => {
@@ -976,7 +976,7 @@ impl ConsoleHandler {
                     group.quota as u8,
                 ).await {
                     Ok(_) => println!("Updated dashboard channel to {} for guild {}", dashboard_id, guild_id),
-                    Err(e) => println!("❌ Failed to update dashboard: {}", e),
+                    Err(e) => println!("Failed to update dashboard: {}", e),
                 }
             },
             "red" | "red_team" => {
@@ -993,7 +993,7 @@ impl ConsoleHandler {
                     group.quota as u8,
                 ).await {
                     Ok(_)  => println!("Updated red team channel to {} for guild {}", red_id, guild_id),
-                    Err(e) => println!("❌ Failed to update red team channel: {}", e),
+                    Err(e) => println!("Failed to update red team channel: {}", e),
                 }
             },
             "blue" | "blu" | "blue_team" => {
@@ -1010,11 +1010,11 @@ impl ConsoleHandler {
                     group.quota as u8,
                 ).await {
                     Ok(_) => println!("Updated blue team channel to {} for guild {}", blue_id, guild_id),
-                    Err(e) => println!("❌ Failed to update blue team channel: {}", e),
+                    Err(e) => println!("Failed to update blue team channel: {}", e),
                 }
             },
             _ => {
-                println!("❌ Unknown configuration key: {}", key);
+                println!("Unknown configuration key: {}", key);
                 println!("Available keys: quota, timeout, dashboard, red, blue");
             }
         }
@@ -1037,7 +1037,7 @@ impl ConsoleHandler {
             .map_err(|_| format!("Invalid quota: {}", quota_str))?;
 
         if quota == 0 || quota > 20 {
-            println!("❌ Game quota must be between 1 and 20");
+            println!("Game quota must be between 1 and 20");
             return Ok(());
         }
 
@@ -1047,13 +1047,13 @@ impl ConsoleHandler {
         match group_repo.get_groups_for_guild(guild_id).await {
             Ok(groups) => {
                 if !groups.is_empty() {
-                    println!("❌ Guild {} already has {} group configuration(s)", guild_id, groups.len());
+                    println!("Guild {} already has {} group configuration(s)", guild_id, groups.len());
                     println!("Use 'config' command to modify existing configurations");
                     return Ok(());
                 }
             },
             Err(e) => {
-                println!("⚠️  Error checking existing groups: {}", e);
+                println!("  Error checking existing groups: {}", e);
             }
         }
 
@@ -1076,7 +1076,7 @@ impl ConsoleHandler {
                 println!("   Game Quota: {}", quota);
             },
             Err(e) => {
-                println!("❌ Failed to create group configuration: {}", e);
+                println!("Failed to create group configuration: {}", e);
             }
         }
 
@@ -1120,7 +1120,7 @@ impl ConsoleHandler {
 
             // Check if there's a session with enough players
             if let Ok(session) = group.get_queue().await {
-                println!("🔄 Forcing team generation for guild {} group {} with {} players...", guild_id, group_id, session.pool.len());
+                println!("Forcing team generation for guild {} group {} with {} players...", guild_id, group_id, session.pool.len());
                 group.generate_teams(ctx, serenity::model::id::GuildId::new(guild_id)).await;
                 println!("Teams generated successfully!");
 
@@ -1145,10 +1145,10 @@ impl ConsoleHandler {
                     }
                 }
             } else {
-                println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
+                println!("No active queue found for guild {} group {}", guild_id, group_id);
             }
         } else {
-            println!("❌ Context not available. Cannot generate teams without Discord context.");
+            println!("Context not available. Cannot generate teams without Discord context.");
         }
 
         Ok(())
@@ -1162,7 +1162,7 @@ impl ConsoleHandler {
             .map_err(|_| format!("Invalid player count: {}", count_str))?;
 
         if count == 0 || count > 20 {
-            println!("❌ Player count must be between 1 and 20");
+            println!("Player count must be between 1 and 20");
             return Ok(());
         }
 
@@ -1171,7 +1171,7 @@ impl ConsoleHandler {
 
         // Get the idle session
         if let Ok(session) = group.get_queue().await {
-            println!("🔄 Adding {} fake player(s) to guild {} group {}...", count, guild_id, group_id);
+            println!("Adding {} fake player(s) to guild {} group {}...", count, guild_id, group_id);
 
             // Generate fake player IDs starting from a high number to avoid conflicts
             let base_id = 9000000000000000000_u64;
@@ -1189,7 +1189,7 @@ impl ConsoleHandler {
                 group.queue_dash_update(&ctx, guild_id).await;
             }
         } else {
-            println!("❌ Failed to get queue for guild {} group {}", guild_id, group_id);
+            println!("Failed to get queue for guild {} group {}", guild_id, group_id);
         }
 
         Ok(())
@@ -1208,12 +1208,12 @@ impl ConsoleHandler {
             let group = server.groups.iter().find(|g| g.group_id == group_id)
                 .ok_or(format!("Group {} not found for guild {}", group_id, guild_id))?;
 
-            println!("🔄 Testing notify method for guild {} group {}...", guild_id, group_id);
+            println!("Testing notify method for guild {} group {}...", guild_id, group_id);
             group.notify(ctx).await;
             println!("Notify method called successfully!");
             println!("   Check the queue chat channel for the notification message.");
         } else {
-            println!("❌ Context not available. Cannot test notify without Discord context.");
+            println!("Context not available. Cannot test notify without Discord context.");
         }
 
         Ok(())
@@ -1247,7 +1247,7 @@ impl ConsoleHandler {
                 }
             }
         } else {
-            println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
+            println!("No active queue found for guild {} group {}", guild_id, group_id);
         }
 
         Ok(())
@@ -1270,25 +1270,25 @@ impl ConsoleHandler {
                 .collect();
 
             if red_players.is_empty() && blu_players.is_empty() {
-                println!("❌ No teams have been generated yet.");
+                println!("No teams have been generated yet.");
                 println!("   Use 'forcegen' to generate teams.");
             } else {
                 println!("\n=== Teams for Guild {} Group {} ===", guild_id, group_id);
 
-                println!("\n🔴 Red Team ({} players):", red_players.len());
+                println!("\nRed Team ({} players):", red_players.len());
                 for p in red_players {
                     let elo = p.player.rank.map(|r| r.elo()).unwrap_or(30);
                     println!("  - {} (ELO: {})", p.player.discord_id, elo);
                 }
 
-                println!("\n🔵 Blue Team ({} players):", blu_players.len());
+                println!("\nBlue Team ({} players):", blu_players.len());
                 for p in blu_players {
                     let elo = p.player.rank.map(|r| r.elo()).unwrap_or(30);
                     println!("  - {} (ELO: {})", p.player.discord_id, elo);
                 }
             }
         } else {
-            println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
+            println!("No active queue found for guild {} group {}", guild_id, group_id);
         }
 
         Ok(())
@@ -1312,7 +1312,7 @@ impl ConsoleHandler {
                 group.queue_dash_update(&ctx, guild_id).await;
             }
         } else {
-            println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
+            println!("No active queue found for guild {} group {}", guild_id, group_id);
         }
 
         Ok(())
@@ -1330,7 +1330,7 @@ impl ConsoleHandler {
 
         if let Ok(session) = group.get_queue().await {
             if index >= session.pool.len() {
-                println!("❌ Index {} is out of bounds. Queue has {} player(s)", index, session.pool.len());
+                println!("Index {} is out of bounds. Queue has {} player(s)", index, session.pool.len());
             } else {
                 let removed_player = session.pool.remove(index);
                 println!("Removed player {} from position {}", removed_player.player.discord_id, index);
@@ -1341,7 +1341,7 @@ impl ConsoleHandler {
                 }
             }
         } else {
-            println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
+            println!("No active queue found for guild {} group {}", guild_id, group_id);
         }
 
         Ok(())
@@ -1357,15 +1357,15 @@ impl ConsoleHandler {
             let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
             if let Ok(_session) = group.get_queue().await {
-                println!("🔄 Forcing session to Hot status...");
+                println!("Forcing session to Hot status...");
                 group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None).await?;
                 println!("Session is now Hot!");
                 println!("   Teams have been generated and players have been notified.");
             } else {
-                println!("❌ No active queue found for guild {} group {}", guild_id, group_id);
+                println!("No active queue found for guild {} group {}", guild_id, group_id);
             }
         } else {
-            println!("❌ Context not available. Cannot force hot without Discord context.");
+            println!("Context not available. Cannot force hot without Discord context.");
         }
 
         Ok(())
@@ -1380,18 +1380,18 @@ impl ConsoleHandler {
             let mut manager = self.manager.lock().await;
             let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
-            println!("🔄 Forcing push to team channels...");
+            println!("Forcing push to team channels...");
             match group.push(ctx).await {
                 Ok(_) => {
                     println!("Players pushed to team channels!");
                     println!("   Session is now Live.");
                 },
                 Err(e) => {
-                    println!("❌ Failed to push players: {}", e);
+                    println!("Failed to push players: {}", e);
                 }
             }
         } else {
-            println!("❌ Context not available. Cannot force push without Discord context.");
+            println!("Context not available. Cannot force push without Discord context.");
         }
 
         Ok(())
@@ -1406,18 +1406,18 @@ impl ConsoleHandler {
             let mut manager = self.manager.lock().await;
             let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
-            println!("🔄 Forcing pull back to queue...");
+            println!("Forcing pull back to queue...");
             match group.pull(ctx).await {
                 Ok(_) => {
                     println!("Players pulled back to queue!");
                     println!("   Session reset to Idle.");
                 },
                 Err(e) => {
-                    println!("❌ Failed to pull players: {}", e);
+                    println!("Failed to pull players: {}", e);
                 }
             }
         } else {
-            println!("❌ Context not available. Cannot force pull without Discord context.");
+            println!("Context not available. Cannot force pull without Discord context.");
         }
 
         Ok(())
@@ -1429,7 +1429,7 @@ impl ConsoleHandler {
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
 
         if let Some(ctx) = &self.ctx {
-            println!("\n🎮 Starting complete game cycle simulation...\n");
+            println!("\nStarting complete game cycle simulation...\n");
 
             // Step 1: Add fake players to fill quota
             {
@@ -1479,7 +1479,7 @@ impl ConsoleHandler {
                 let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
                 match group.push(ctx).await {
                     Ok(_) => println!("   Players pushed, session is Live\n"),
-                    Err(e) => println!("   ⚠️  Push failed: {}\n", e),
+                    Err(e) => println!("     Push failed: {}\n", e),
                 }
             }
 
@@ -1492,13 +1492,13 @@ impl ConsoleHandler {
                 let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
                 match group.pull(ctx).await {
                     Ok(_) => println!("   Players pulled back, session reset to Idle\n"),
-                    Err(e) => println!("   ⚠️  Pull failed: {}\n", e),
+                    Err(e) => println!("     Pull failed: {}\n", e),
                 }
             }
 
-            println!("🏁 Complete game cycle simulation finished!\n");
+            println!("Complete game cycle simulation finished!\n");
         } else {
-            println!("❌ Context not available. Cannot simulate cycle without Discord context.");
+            println!("Context not available. Cannot simulate cycle without Discord context.");
         }
 
         Ok(())

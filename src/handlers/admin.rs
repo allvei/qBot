@@ -162,7 +162,7 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
     Ok(())
 }
 
-/// `/cmd_init_group`
+/// `/grouplink` - Links existing channels to a group
 pub async fn cmd_group_link(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can set up the dashboard!").ephemeral(true));
@@ -186,6 +186,214 @@ pub async fn cmd_group_link(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
     Ok(())
 }
 
+/// `/groupinit` - Creates a new category with all necessary channels
+pub async fn cmd_group_init(cc: &CC<'_>, _guild: &mut Server) -> Result<()> {
+    if !check_role(cc, &Role::Admin).await? {
+        let response = CIR::Message(CIRM::new().content("Only admins can create group channels!").ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    let user_id = cc.intax.user.id;
+    
+    // Send initial "creating channels" message
+    let loading_embed = CE::new()
+        .title("Creating Group Channels")
+        .description("Creating a new category with all necessary channels...\nThis may take a moment.")
+        .color(0xffaa00);
+
+    let response = CIR::Message(CIRM::new().embed(loading_embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+
+    // Create the category and channels
+    match create_group_channels(cc.ctx, guild_id).await {
+        Ok((category_id, dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel)) => {
+            // Initialize setup state with all channels pre-filled
+            SETUP_STATE.start_setup(user_id, guild_id);
+            SETUP_STATE.update_setup(user_id, guild_id, |config| {
+                config.dashboard_channel = Some(dashboard_channel.get());
+                config.queue_channel = Some(queue_channel.get());
+                config.queue_vc_channel = Some(queue_vc_channel.get());
+                config.red_channel = Some(red_channel.get());
+                config.blue_channel = Some(blue_channel.get());
+            });
+
+            // Create dashboard message in the new dashboard channel
+            let initial_embed = CE::new()
+                .title("PUG Queue Dashboard")
+                .description("Setting up queue system...")
+                .color(0xffaa00);
+
+            let dashboard_msg = match dashboard_channel.send_message(&cc.ctx.http,
+                CreateMessage::new().embed(initial_embed)
+            ).await {
+                Ok(msg) => msg,
+                Err(e) => {
+                    let error_embed = CE::new()
+                        .title("Setup Failed")
+                        .description(format!("Failed to create dashboard message: {}", e))
+                        .color(0xff0000);
+
+                    cc.intax.edit_response(&cc.ctx.http, 
+                        serenity::all::EditInteractionResponse::new().embed(error_embed)
+                    ).await?;
+                    return Ok(());
+                }
+            };
+
+            // Store dashboard message ID
+            SETUP_STATE.update_setup(user_id, guild_id, |config| {
+                config.dashboard_msg_id = Some(dashboard_msg.id.get());
+            });
+
+            // Send success message and start role selection flow
+            start_role_selection_flow(cc, guild_id, user_id, category_id).await?;
+        },
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("Channel Creation Failed")
+                .description(format!("Failed to create channels: {}\n\nMake sure the bot has proper permissions.", e))
+                .color(0xff0000);
+
+            cc.intax.edit_response(&cc.ctx.http,
+                serenity::all::EditInteractionResponse::new().embed(error_embed)
+            ).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Creates a category and all necessary group channels
+async fn create_group_channels(
+    ctx: &Context,
+    guild_id: GuildId,
+) -> Result<(CI, CI, CI, CI, CI, CI)> {
+    use serenity::all::{CreateChannel, EditChannel, PermissionOverwrite, PermissionOverwriteType, Permissions};
+    
+    let guild = guild_id.to_partial_guild(&ctx.http).await?;
+    let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+    
+    // Get bot's role for permission overwrites
+    let bot_user_id = ctx.cache.current_user().id;
+    
+    // Create category
+    info!("[{}] Creating PUG Queue category", guild_name);
+    let category = guild_id.create_channel(&ctx.http,
+        CreateChannel::new("PUG Queue")
+            .kind(ChannelType::Category)
+    ).await?;
+    
+    let category_id = category.id;
+    
+    // Create dashboard text channel
+    info!("[{}] Creating dashboard channel", guild_name);
+    let dashboard_channel = guild_id.create_channel(&ctx.http,
+        CreateChannel::new("dashboard")
+            .kind(ChannelType::Text)
+            .category(category_id)
+            .topic("PUG queue dashboard - use buttons to join/leave")
+    ).await?;
+    
+    // Create queue text channel
+    info!("[{}] Creating queue text channel", guild_name);
+    let queue_channel = guild_id.create_channel(&ctx.http,
+        CreateChannel::new("pug-add-up")
+            .kind(ChannelType::Text)
+            .category(category_id)
+            .topic("Queue discussion and commands")
+    ).await?;
+    
+    // Create queue voice channel
+    info!("[{}] Creating queue voice channel", guild_name);
+    let queue_vc_channel = guild_id.create_channel(&ctx.http,
+        CreateChannel::new("Queue")
+            .kind(ChannelType::Voice)
+            .category(category_id)
+    ).await?;
+    
+    // Create red team voice channel
+    info!("[{}] Creating red team voice channel", guild_name);
+    let red_channel = guild_id.create_channel(&ctx.http,
+        CreateChannel::new("🔴 Red Team")
+            .kind(ChannelType::Voice)
+            .category(category_id)
+    ).await?;
+    
+    // Create blue team voice channel
+    info!("[{}] Creating blue team voice channel", guild_name);
+    let blue_channel = guild_id.create_channel(&ctx.http,
+        CreateChannel::new("🔵 Blue Team")
+            .kind(ChannelType::Voice)
+            .category(category_id)
+    ).await?;
+    
+    info!("[{}] Successfully created all group channels", guild_name);
+    
+    Ok((
+        category_id,
+        dashboard_channel.id,
+        queue_channel.id,
+        queue_vc_channel.id,
+        red_channel.id,
+        blue_channel.id,
+    ))
+}
+
+/// Starts the role selection flow after channels are created
+async fn start_role_selection_flow(
+    cc: &CC<'_>,
+    guild_id: GuildId,
+    user_id: UserId,
+    category_id: CI,
+) -> Result<()> {
+    let guild = guild_id.to_partial_guild(&cc.ctx.http).await?;
+    
+    // Get config to show created channels
+    let config = SETUP_STATE.get_setup(user_id, guild_id)
+        .ok_or_else(|| anyhow!("Setup state not found"))?;
+    
+    let success_embed = CE::new()
+        .title("Channels Created!")
+        .description(format!(
+            "Successfully created all channels in category <#{}>!\n\n\
+            **Created Channels:**\n\
+            • Dashboard: <#{}>\n\
+            • Queue Text: <#{}>\n\
+            • Queue Voice: <#{}>\n\
+            • Red Team: <#{}>\n\
+            • Blue Team: <#{}>\n\n\
+            **Step 1/2: Runner Role**\n\
+            Select the role for queue runners (who can manage matches):",
+            category_id,
+            config.dashboard_channel.unwrap(),
+            config.queue_channel.unwrap(),
+            config.queue_vc_channel.unwrap(),
+            config.red_channel.unwrap(),
+            config.blue_channel.unwrap()
+        ))
+        .color(0x00ff00);
+
+    // Get roles for dropdown
+    let roles = get_guild_roles(&guild).await?;
+    let role_options = create_role_options(&roles, "init_runner");
+
+    let select_menu = CreateSelectMenu::new("init_runner", CreateSelectMenuKind::String { options: role_options })
+        .placeholder("Select runner role...")
+        .max_values(1);
+
+    let action_row = CreateActionRow::SelectMenu(select_menu);
+
+    cc.intax.edit_response(&cc.ctx.http,
+        serenity::all::EditInteractionResponse::new()
+            .embed(success_embed)
+            .components(vec![action_row])
+    ).await?;
+
+    Ok(())
+}
+
 /// Starts the interactive init_group setup flow with ephemeral messages
 async fn start_init_group_flow(cc: &CC<'_>, dashboard_channel: CI) -> Result<()> {
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
@@ -194,8 +402,8 @@ async fn start_init_group_flow(cc: &CC<'_>, dashboard_channel: CI) -> Result<()>
 
     // Step 1: Create dashboard message immediately with "loading..." placeholder
     let loading_embed = CE::new()
-        .title("🎮 PUG Queue Dashboard")
-        .description("⏳ Setting up queue system...")
+        .title("PUG Queue Dashboard")
+        .description("Setting up queue system...")
         .color(0xffaa00);
 
     let dashboard_msg = match dashboard_channel.send_message(&cc.ctx.http,
@@ -205,7 +413,7 @@ async fn start_init_group_flow(cc: &CC<'_>, dashboard_channel: CI) -> Result<()>
         Err(e) => {
             let error_response = CIR::Message(
                 CIRM::new()
-                    .content(format!("❌ Failed to create dashboard message: {}", e))
+                    .content(format!("Failed to create dashboard message: {}", e))
                     .ephemeral(true)
             );
             cc.intax.create_response(&cc.ctx.http, error_response).await?;
@@ -224,7 +432,7 @@ async fn start_init_group_flow(cc: &CC<'_>, dashboard_channel: CI) -> Result<()>
         .description(format!(
             "Dashboard message created in <#{}>\n\n\
             Now let's configure the remaining channels for **{}**.\n\n\
-            💡 **Make sure these channels exist:**\n\
+            **Make sure these channels exist:**\n\
             • Queue text channel (for commands)\n\
             • Queue voice channel (where players wait)\n\
             • Red team voice channel\n\
@@ -333,12 +541,12 @@ async fn start_setup_flow(cc: &CC<'_>, guild_id: GuildId, user_id: UserId) -> Re
 
     // Send welcome message as ephemeral reply
     let welcome_embed = CE::new()
-        .title("🛠️ Guild Setup Wizard")
+        .title("Guild Setup Wizard")
         .description(format!(
             "Welcome to the setup wizard for **{}**!\n\n\
             I'll guide you through configuring the bot step by step.\n\
             You'll select channels and roles using dropdown menus.\n\n\
-            💡 **Before continuing**, make sure you have created:\n\
+            **Before continuing**, make sure you have created:\n\
             • A text channel for the dashboard\n\
             • A text channel for queue commands\n\
             • A voice channel for the queue\n\
@@ -483,7 +691,9 @@ pub async fn handle_setup_interaction(ctx: &Context, interaction: &ComponentInte
         ButtonType::InitQueue      => handle_init_queue_selection(   ctx, interaction, channel_or_role_id).await?,
         ButtonType::InitQueueVc    => handle_init_queue_vc_selection(ctx, interaction, channel_or_role_id).await?,
         ButtonType::InitRed        => handle_init_red_selection(     ctx, interaction, channel_or_role_id).await?,
-        ButtonType::InitBlue       => handle_init_blue_selection(    ctx, interaction, channel_or_role_id, db).await?,
+        ButtonType::InitBlue       => handle_init_blue_selection(    ctx, interaction, channel_or_role_id).await?,
+        ButtonType::InitRunner     => handle_init_runner_selection(  ctx, interaction, channel_or_role_id).await?,
+        ButtonType::InitAdmin      => handle_init_admin_selection(   ctx, interaction, channel_or_role_id, db, manager).await?,
 
         // Unknown button types are ignored
         _ => {}
@@ -746,7 +956,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
         Some(cfg) if cfg.is_complete() => cfg,
         _ => {
             let error_embed = CE::new()
-                .title("❌ Setup Error")
+                .title("Setup Error")
                 .description("Configuration is incomplete. Please restart the setup process.")
                 .color(0xff0000);
 
@@ -772,7 +982,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
     // Create the initial dashboard message
     let dashboard_channel_id = CI::new(dashboard_channel);
     let initial_embed = CE::new()
-        .title("🎮 PUG Queue Dashboard")
+        .title("PUG Queue Dashboard")
         .description("Queue is empty. Be the first to join!")
         .color(0x00aaff);
 
@@ -780,7 +990,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
         Ok(msg) => msg,
         Err(e) => {
             let error_embed = CE::new()
-                .title("❌ Setup Failed")
+                .title("Setup Failed")
                 .description(format!("Failed to create dashboard message: {}", e))
                 .color(0xff0000);
 
@@ -862,7 +1072,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
             SETUP_STATE.complete_setup(user_id, guild_id);
 
             let success_embed = CE::new()
-                .title("🎉 Setup Complete!")
+                .title("Setup Complete!")
                 .description(format!(
                     "Your PUG bot is now fully configured and ready to use!\n\n\
                     **Configuration Summary:**\n\
@@ -888,7 +1098,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
         },
         Err(e) => {
             let error_embed = CE::new()
-                .title("❌ Setup Failed")
+                .title("Setup Failed")
                 .description(format!("Failed to save configuration: {}", e))
                 .color(0xff0000);
 
@@ -1020,17 +1230,95 @@ async fn handle_init_red_selection(ctx: &Context, interaction: &ComponentInterac
     Ok(())
 }
 
-/// Handles blue team channel selection and completes init_group setup
-async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64, db: &std::sync::Arc<crate::Database>) -> Result<()> {
+/// Handles blue team channel selection for init_group flow (created channels)
+async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+    let guild_id = match interaction.guild_id {
+        Some(id) => id,
+        None => return Err(anyhow!("Guild ID not found - setup must be run in a server"))
+    };
+    let guild = guild_id.to_partial_guild(&ctx.http).await?;
+    let user_id = interaction.user.id;
+
+    // Store the selection
+    SETUP_STATE.update_setup(user_id, guild_id, |config| {
+        config.blue_channel = Some(channel_id);
+    });
+
+    let embed = CE::new()
+        .title("Blue Team Channel Selected")
+        .description(format!(
+            "Blue team channel: <#{}>\n\n\
+            **Step 2/2: Admin Role**\n\
+            Select the role for bot administrators:",
+            channel_id
+        ))
+        .color(0x00ff00);
+
+    let roles = get_guild_roles(&guild).await?;
+    let role_options = create_role_options(&roles, "init_admin");
+
+    let select_menu = CreateSelectMenu::new("init_admin", CreateSelectMenuKind::String { options: role_options })
+        .placeholder("Select admin role...")
+        .max_values(1);
+
+    let action_row = CreateActionRow::SelectMenu(select_menu);
+
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
+
+    interaction.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
+/// Handles runner role selection for init_group flow
+async fn handle_init_runner_selection(ctx: &Context, interaction: &ComponentInteraction, role_id: u64) -> Result<()> {
+    let guild_id = match interaction.guild_id {
+        Some(id) => id,
+        None => return Err(anyhow!("Guild ID not found - setup must be run in a server"))
+    };
+    let guild = guild_id.to_partial_guild(&ctx.http).await?;
+    let user_id = interaction.user.id;
+
+    // Store the selection
+    SETUP_STATE.update_setup(user_id, guild_id, |config| {
+        config.runner_role = Some(role_id);
+    });
+
+    let embed = CE::new()
+        .title("Runner Role Selected")
+        .description(format!(
+            "Runner role: <@&{}>\n\n\
+            **Step 2/2: Admin Role**\n\
+            Select the role for bot administrators:",
+            role_id
+        ))
+        .color(0x00ff00);
+
+    let roles = get_guild_roles(&guild).await?;
+    let role_options = create_role_options(&roles, "init_admin");
+
+    let select_menu = CreateSelectMenu::new("init_admin", CreateSelectMenuKind::String { options: role_options })
+        .placeholder("Select admin role...")
+        .max_values(1);
+
+    let action_row = CreateActionRow::SelectMenu(select_menu);
+
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
+
+    interaction.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
+/// Handles admin role selection and completes init_group setup
+async fn handle_init_admin_selection(ctx: &Context, interaction: &ComponentInteraction, role_id: u64, db: &std::sync::Arc<crate::Database>, manager: &Arc<Mutex<crate::models::Manager>>) -> Result<()> {
     let guild_id = match interaction.guild_id {
         Some(id) => id,
         None => return Err(anyhow!("Guild ID not found - setup must be run in a server"))
     };
     let user_id = interaction.user.id;
 
-    // Store the final selection and retrieve complete config
+    // Store the admin role selection
     let config = SETUP_STATE.update_setup(user_id, guild_id, |config| {
-        config.blue_channel = Some(channel_id);
+        config.admin_role = Some(role_id);
     });
 
     // Validate all required fields are present
@@ -1040,10 +1328,12 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
                   && cfg.queue_channel    .is_some()
                   && cfg.queue_vc_channel .is_some()
                   && cfg.red_channel      .is_some()
-                  && cfg.blue_channel     .is_some() => cfg,
+                  && cfg.blue_channel     .is_some()
+                  && cfg.runner_role      .is_some()
+                  && cfg.admin_role       .is_some() => cfg,
         _ => {
             let error_embed = CE::new()
-                .title("❌ Setup Error")
+                .title("Setup Error")
                 .description("Configuration is incomplete. Please restart the setup process.")
                 .color(0xff0000);
 
@@ -1059,7 +1349,24 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
     let queue_channel     = config.queue_channel    .unwrap();
     let queue_vc_channel  = config.queue_vc_channel .unwrap();
     let red_channel       = config.red_channel      .unwrap();
-    let blue_channel      = channel_id;
+    let blue_channel      = config.blue_channel     .unwrap();
+    let runner_role       = config.runner_role      .unwrap();
+    let admin_role        = role_id;
+
+    // Save role configurations to database
+    if let Err(e) = db.config.set_config("runner_role", &runner_role.to_string(), guild_id.get()).await {
+        warn!("Failed to save runner_role config: {}", e);
+    }
+    if let Err(e) = db.config.set_config("admin_role", &admin_role.to_string(), guild_id.get()).await {
+        warn!("Failed to save admin_role config: {}", e);
+    }
+
+    // Create/validate rank roles
+    let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+    info!("[{}] Creating/validating rank roles", guild_name);
+    if let Err(e) = create_rank_roles(ctx, db, guild_id).await {
+        warn!("[{}] Failed to create rank roles: {}", guild_name, e);
+    }
 
     // Create the group configuration in database with actual dashboard message ID
     match db.groups.create_group(
@@ -1072,30 +1379,45 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
         blue_channel,
         DEFAULT_QUOTA,
     ).await {
-        Ok(group) => {
-            // Update the dashboard message with the actual dashboard content
-            use crate::models::{Group, Channels, TeamChannel};
-            use serenity::all::{ChannelId as CI2, MessageId as MI};
+        Ok(_) => {
+            info!("[{}] Group configuration saved to database", guild_name);
 
-            let mut temp_group = Group::new(
-                group.group_id,
-                DEFAULT_QUOTA,
-                120,
-                MI::new(dashboard_msg_id),
-                Channels::new(
-                    CI2::new(queue_channel),
-                    CI2::new(queue_vc_channel),
-                    vec![TeamChannel::new(CI2::new(red_channel), CI2::new(blue_channel))],
-                    CI2::new(dashboard_channel),
-                ),
-                Vec::new(),
-            );
+            // Load the group back and add to manager
+            match db.groups.get_groups_for_guild(guild_id.get()).await {
+                Ok(groups) if !groups.is_empty() => {
+                    let new_group = groups.into_iter()
+                        .find(|g| g.dashboard_msg.get() == dashboard_msg_id)
+                        .ok_or_else(|| anyhow!("Could not find newly created group"))?;
 
-            // Update the dashboard message to show the proper dashboard UI
-            temp_group.queue_dash_update(ctx, guild_id.get()).await;
+                    use crate::models::Server;
+                    let mut mgr = manager.lock().await;
+
+                    if mgr.get_server(guild_id).is_err() {
+                        let server = Server::empty(guild_id, guild_name.clone());
+                        mgr.servers.push(server);
+                    }
+
+                    let server = mgr.get_server(guild_id)?;
+                    server.groups.push(new_group);
+
+                    let group = server.groups.last_mut().ok_or_else(|| anyhow!("Failed to get newly added group"))?;
+                    group.queue_dash_update(ctx, guild_id.get()).await;
+
+                    info!("[{}] Group added to in-memory manager and dashboard updated", guild_name);
+                },
+                Ok(_) => {
+                    warn!("[{}] No groups found after creation", guild_name);
+                },
+                Err(e) => {
+                    warn!("[{}] Failed to load groups from database: {}", guild_name, e);
+                }
+            }
         },
         Err(e) => {
-            let error_embed = CE::new().title("❌ Setup Failed").description(format!("Failed to create group configuration: {}", e)).color(0xff0000);
+            let error_embed = CE::new()
+                .title("Setup Failed")
+                .description(format!("Failed to create group configuration: {}", e))
+                .color(0xff0000);
 
             let response = CIR::UpdateMessage(CIRM::new().embed(error_embed).components(vec![]));
 
@@ -1150,7 +1472,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
         Ok(roles) => roles,
         Err(e) => {
             let error_embed = CE::new()
-                .title("❌ Error")
+                .title("Error")
                 .description(format!("Failed to check system roles: {}", e))
                 .color(0xff0000);
 
@@ -1165,7 +1487,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
         Ok(roles) => roles,
         Err(e) => {
             let error_embed = CE::new()
-                .title("❌ Error")
+                .title("Error")
                 .description(format!("Failed to check rank roles: {}", e))
                 .color(0xff0000);
 
@@ -1193,7 +1515,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
             let system_list = missing_system_roles.join(", ");
             description.push_str(&format!(
                 "**Missing System Roles:**\n{}\n\n\
-                ⚠️ System roles should be created manually and assigned appropriate permissions.\n\n",
+                 System roles should be created manually and assigned appropriate permissions.\n\n",
                 system_list
             ));
         }
@@ -1203,13 +1525,13 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
             description.push_str(&format!(
                 "**Missing Rank Roles:**\n{}\n\n\
                 Would you like me to create these rank roles automatically?\n\n\
-                ⚠️ Note: The roles will be created but you may need to adjust their permissions and position in the role hierarchy.",
+                 Note: The roles will be created but you may need to adjust their permissions and position in the role hierarchy.",
                 rank_list
             ));
         }
 
         let embed = CE::new()
-            .title("⚠️ Missing Roles")
+            .title("Missing Roles")
             .description(description)
             .color(0xffaa00);
 
@@ -1254,7 +1576,7 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
     if !create {
         // User cancelled
         let cancel_embed = CE::new()
-            .title("❌ Cancelled")
+            .title("Cancelled")
             .description("Rank role creation was cancelled.")
             .color(0x999999);
 
@@ -1273,7 +1595,7 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
         Ok(roles) => roles,
         Err(e) => {
             let error_embed = CE::new()
-                .title("❌ Error")
+                .title("Error")
                 .description(format!("Failed to create rank roles: {}", e))
                 .color(0xff0000);
 
@@ -1290,7 +1612,7 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
 
     if created_roles.is_empty() {
         let embed = CE::new()
-            .title("ℹ️ No Roles Created")
+            .title("No Roles Created")
             .description("All rank roles already exist in this server.")
             .color(0x00aaff);
 
@@ -1307,7 +1629,7 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
             .title("Rank Roles Created")
             .description(format!(
                 "Successfully created the following rank roles:\n**{}**\n\n\
-                💡 You may want to:\n\
+                You may want to:\n\
                 • Adjust role positions in Server Settings\n\
                 • Configure role permissions\n\
                 • Assign roles to existing members",
@@ -1343,7 +1665,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
     // Validate quota range
     if !(2..=100).contains(&quota) {
         let error_embed = CE::new()
-            .title("❌ Invalid Quota")
+            .title("Invalid Quota")
             .description("Quota must be between 2 and 100 players.")
             .color(0xff0000);
 
@@ -1360,7 +1682,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
         Ok(s) => s,
         Err(e) => {
             let error_embed = CE::new()
-                .title("❌ Server Not Found")
+                .title("Server Not Found")
                 .description(format!("Server not configured: {}", e))
                 .color(0xff0000);
 
@@ -1374,7 +1696,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
         Ok(g) => g,
         Err(e) => {
             let error_embed = CE::new()
-                .title("❌ Group Not Found")
+                .title("Group Not Found")
                 .description(format!("No queue group found in this channel: {}", e))
                 .color(0xff0000);
 
@@ -1420,7 +1742,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
         },
         Err(e) => {
             let error_embed = CE::new()
-                .title("❌ Failed to Update Quota")
+                .title("Failed to Update Quota")
                 .description(format!("Failed to save quota to database: {}", e))
                 .color(0xff0000);
 
