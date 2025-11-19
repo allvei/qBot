@@ -73,6 +73,13 @@ pub enum ButtonType {
     InitAdmin,
     InitQuota,
 
+    // Group link buttons
+    GroupLinkDashboard,
+    GroupLinkQueue,
+    GroupLinkQueueVc,
+    GroupLinkRed,
+    GroupLinkBlue,
+
     // Dashboard action buttons
     DashboardToggleQueue,
     DashboardShuffle,
@@ -113,6 +120,13 @@ impl ButtonType {
             "init_admin"      => Self::InitAdmin,
             "init_quota"      => Self::InitQuota,
 
+            // Group link buttons
+            "grouplink_dashboard" => Self::GroupLinkDashboard,
+            "grouplink_queue"     => Self::GroupLinkQueue,
+            "grouplink_queuevc"   => Self::GroupLinkQueueVc,
+            "grouplink_red"       => Self::GroupLinkRed,
+            "grouplink_blue"      => Self::GroupLinkBlue,
+
             // Dashboard buttons
             "toggle_queue"    => Self::DashboardToggleQueue,
             "shuffle_teams"   => Self::DashboardShuffle,
@@ -149,7 +163,12 @@ impl ButtonType {
             Self::InitBlue       |
             Self::InitRunner     |
             Self::InitAdmin      |
-            Self::InitQuota
+            Self::InitQuota      |
+            Self::GroupLinkDashboard |
+            Self::GroupLinkQueue     |
+            Self::GroupLinkQueueVc   |
+            Self::GroupLinkRed       |
+            Self::GroupLinkBlue
         )
     }
 
@@ -230,14 +249,7 @@ impl Group {
     }
 
     pub async fn dash_publish(&mut self, ctx: &Context, channel: CI) -> Result<(), Error>{
-        // Check if dashboard already exists and is accessible
-        if self.has_dashboard(ctx).await {
-            let channel_name = channel.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", channel));
-            info!("Dashboard already exists in #{}, updating instead of creating new one", channel_name);
-            return self.dash_update(ctx).await;
-        }
-        
-        // Create new dashboard message
+        // Create new dashboard message (don't check if it exists - caller should check)
         let channel_name = channel.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", channel));
         let msg = channel.send_message(&ctx.http, self.dash_init().await.unwrap()).await;
         if let Ok(msg) = msg {
@@ -256,32 +268,7 @@ impl Group {
         let inactives = self.get_inactives();
         let actives   = self.get_actives();
         
-        // Determine phase indicator based on session status
-        let phase_indicator = if !actives.is_empty() {
-            // Active session exists
-            let session = actives.first().unwrap();
-            match session.status {
-                SessionStatus::Hot => "[READY] ",
-                SessionStatus::Push => "[STARTING] ",
-                SessionStatus::Live => "[IN PROGRESS] ",
-                SessionStatus::Pull => "[ENDING] ",
-                _ => ""
-            }
-        } else if let Some(session) = inactives.first() {
-            // No active sessions
-            if session.is_hot() {
-                "[READY] "
-            } else if session.pool.len() >= quota {
-                "[READY] "
-            } else {
-                "[QUEUE OPEN] "
-            }
-        } else {
-            "[QUEUE OPEN] "
-        };
-        
-        let title = format!("{}PUG Dashboard", phase_indicator);
-        let mut embed       = CE::new().title(title);
+        let mut embed = CE::new().title("PUG Dashboard");
         let mut description = String::new();
 
         // Show active games first (Hot/Push/Live/Pull)
@@ -450,14 +437,29 @@ impl Group {
     }
 
     /// Updates a dashboard based on current group state
-    pub async fn dash_update(&self, ctx: &Context) -> Result<(), Error> {
+    /// Auto-recovers by creating a new dashboard if the current one is missing/deleted
+    pub async fn dash_update(&mut self, ctx: &Context) -> Result<(), Error> {
         let mut dash = match self.dash_get(ctx).await {
             Ok(msg) => msg,
             Err(e) => {
-                warn!("Failed to get dashboard message: {}", e);
-                return Err(e);
+                warn!("Dashboard message not found (may have been deleted): {}", e);
+                info!("Auto-recovering: creating new dashboard message");
+                
+                // Dashboard is missing - create a new one
+                match self.dash_publish(ctx, self.channels.dashboard).await {
+                    Ok(_) => {
+                        info!("Successfully created new dashboard message with ID {}", self.dashboard_msg);
+                        // Return early since dash_publish already creates the dashboard with current content
+                        return Ok(());
+                    },
+                    Err(publish_err) => {
+                        error!("Failed to auto-recover dashboard: {}", publish_err);
+                        return Err(publish_err);
+                    }
+                }
             }
         };
+        
         let (embed, buttons) = self.build_dashboard_content().await?;
         match dash.edit(&ctx.http, EditMessage::new().embed(embed).components(buttons)).await {
             Ok(_) => {Ok(())},
@@ -476,20 +478,14 @@ impl Group {
         if let Some(queue) = data.get::<DashboardQueueKey>() {
             queue.request_update(guild_id, self.group_id as u64);
         } else {
-            warn!("Dashboard queue not initialized in Context - falling back to blocking update");
-            drop(data); // Release the read lock before calling dash_update
-            // Fallback: call blocking update directly (happens during startup race condition)
-            if let Err(e) = self.dash_update(ctx).await {
-                warn!("Failed to update dashboard in fallback: {}", e);
-            }
+            warn!("Dashboard queue not initialized in Context");
+            // Note: Can't fallback to dash_update here because we'd need &mut self
+            // The dashboard queue should always be initialized, so this is just a safety check
         }
     }
 
     /// Handles the toggle queue button (combines join/leave)
     async fn dash_toggle_queue(&mut self, cc: &CC<'_>) -> Result<()> {
-        // Acknowledge immediately for instant button feedback
-        cc.acknowledge().await;
-        
         let user_id = cc.component.user.id;
         let quota = self.quota as usize;
 
@@ -511,6 +507,9 @@ impl Group {
 
             // If player is in VC, disconnect them from voice channel
             if player_in_vc {
+                // Acknowledge button press before disconnecting
+                cc.defer_update().await?;
+                
                 let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
                 info!("Player {} clicked leave while in queue VC - disconnecting", username);
                 
@@ -585,6 +584,9 @@ impl Group {
                 cc.reply("Cannot join - match is in progress. Please wait.").await?;
                 return Ok(());
             }
+            
+            // Defer update now that we know we'll succeed
+            cc.defer_update().await?;
 
             // Get or assign player's rank (auto-creates ranks and assigns Apprentice if needed)
             use crate::handlers::player::get_or_assign_player_rank;
@@ -619,6 +621,9 @@ impl Group {
                 cc.reply("This command can only be used in a server.").await?;
                 return Ok(());
             }
+        } else {
+            // Player is leaving - defer update
+            cc.defer_update().await?;
         }
 
         // Update dashboard to reflect changes
@@ -629,9 +634,6 @@ impl Group {
 
     /// Handles the shuffle teams button
     async fn dash_shuffle(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
-        // Acknowledge immediately for instant button feedback
-        cc.acknowledge().await;
-        
         let quota = self.quota as usize;
 
         // Find the game to shuffle - can be Idle (if quota met) or Hot
@@ -643,6 +645,9 @@ impl Group {
             cc.reply(&format!("No game ready for shuffling. Need at least {} players in queue.", quota)).await?;
             return Ok(());
         }
+        
+        // Defer update now that we know we have a game to shuffle
+        cc.defer_update().await?;
 
         // Call the same team generation logic used by generate_teams
         // This ensures balanced teams using the BCH algorithm
@@ -679,9 +684,9 @@ impl Group {
             cc.reply("No hot game ready to start.").await?;
             return Ok(());
         }
-
-        // Acknowledge immediately to prevent Discord timeout
-        cc.acknowledge().await;
+        
+        // Defer update now that we're going to start the match
+        cc.defer_update().await?;
 
         // Move players to team channels (Hot → Push → Live)
         match self.push(cc.ctx).await {
@@ -707,9 +712,9 @@ impl Group {
             cc.reply("No active match to end.").await?;
             return Ok(());
         }
-
-        // Acknowledge immediately to prevent Discord timeout
-        cc.acknowledge().await;
+        
+        // Defer update now that we're going to end the match
+        cc.defer_update().await?;
 
         // Move players back to queue channel (Hot/Live → Pull → Idle)
         match self.pull(cc.ctx).await {
