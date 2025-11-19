@@ -806,9 +806,10 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
     }
 
     // Create/validate rank roles
-    info!("Creating/validating rank roles for guild {}", guild_id);
+    let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+    info!("[{}] Creating/validating rank roles", guild_name);
     if let Err(e) = crate::handlers::player::create_rank_roles(ctx, db, guild_id).await {
-        warn!("Failed to create rank roles: {}", e);
+        warn!("[{}] Failed to create rank roles: {}", guild_name, e);
     }
 
     // Create the group configuration in database
@@ -823,7 +824,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
         crate::DEFAULT_QUOTA,
     ).await {
         Ok(_) => {
-            info!("Group configuration saved to database");
+            info!("[{}] Group configuration saved to database", guild_name);
 
             match db.groups.get_groups_for_guild(guild_id.get()).await {
                 Ok(groups) if !groups.is_empty() => {
@@ -848,13 +849,13 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
                     let group = server.groups.last_mut().ok_or_else(|| anyhow!("Failed to get newly added group"))?;
                     group.queue_dash_update(ctx, guild_id.get()).await;
 
-                    info!("Group added to in-memory manager and dashboard updated");
+                    info!("[{}] Group added to in-memory manager and dashboard updated", guild_name);
                 },
                 Ok(_) => {
-                    warn!("No groups found after creation");
+                    warn!("[{}] No groups found after creation", guild_name);
                 },
                 Err(e) => {
-                    warn!("Failed to load groups from database: {}", e);
+                    warn!("[{}] Failed to load groups from database: {}", guild_name, e);
                 }
             }
 
@@ -1399,7 +1400,8 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
         quota as u8,
     ).await {
         Ok(_) => {
-            info!("Updated quota from {} to {} for guild {}", old_quota, quota, guild_id);
+            let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+            info!("[{}] Updated quota from {} to {}", guild_name, old_quota, quota);
 
             let success_embed = CE::new()
                 .title("Quota Updated")

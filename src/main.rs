@@ -404,7 +404,9 @@ impl EventHandler for Handler {
                     Ok(group) => group,
                     Err(_) => {
                         // Group not in manager - try to recover from database
-                        info!("Group not found in manager for channel {}, attempting recovery from database", channel_id);
+                        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                        let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", channel_id));
+                        info!("[{}] Group not found in manager for #{}, attempting recovery from database", guild_name, channel_name);
 
                         // Get the message ID from the interaction
                         let message_id = itx.message.id;
@@ -420,13 +422,13 @@ impl EventHandler for Handler {
                                 if let Some(mut recovered_group) = groups.into_iter()
                                     .find(|g| g.channels.dashboard.get() == channel_id_u64)
                                 {
-                                    info!("Found group in database for dashboard channel {}", channel_id);
+                                    info!("[{}] Found group in database for #{}", guild_name, channel_name);
 
                                     // Update the dashboard message ID in the database
                                     if let Err(e) = group_repo.update_dashboard_msg(guild_id_u64, channel_id_u64, message_id_u64).await {
-                                        error!("Failed to update dashboard message ID: {}", e);
+                                        error!("[{}] Failed to update dashboard message ID: {}", guild_name, e);
                                     } else {
-                                        info!("Updated dashboard message ID to {} in database", message_id_u64);
+                                        info!("[{}] Updated dashboard message ID in database", guild_name);
                                         // Update the in-memory group too
                                         recovered_group.dashboard_msg = message_id;
                                     }
@@ -435,12 +437,12 @@ impl EventHandler for Handler {
                                     let server = manager.get_server(guild_id);
                                     if let Ok(server) = server {
                                         server.groups.push(recovered_group);
-                                        info!("Recovered group added to manager");
+                                        info!("[{}] Recovered group added to manager", guild_name);
 
                                         // Now get the group from the manager
                                         manager.get_group(guild_id, channel_id).unwrap()
                                     } else {
-                                        error!("Could not get server for guild {}", guild_id);
+                                        error!("[{}] Could not get server from manager", guild_name);
                                         let error_response = CIR::Message(
                                             CIRM::new()
                                                 .content("⚠️ Dashboard state was lost. Please run `/setup` to reconfigure.")
@@ -452,7 +454,7 @@ impl EventHandler for Handler {
                                         return;
                                     }
                                 } else {
-                                    error!("No group found in database for dashboard channel {}", channel_id);
+                                    error!("[{}] No group found in database for #{}", guild_name, channel_name);
                                     let error_response = CIR::Message(
                                         CIRM::new()
                                             .content("⚠️ Dashboard configuration not found. Please run `/setup` to configure this channel.")
@@ -887,7 +889,7 @@ impl Handler {
 
     /// Creates dashboard for a guild using in-memory groups from manager
     async fn create_guild_dashboard_from_manager(&self, ctx: &Context, guild: &Guild, manager: &mut Manager) {
-        info!("Creating dashboard for guild: {}", guild.name);
+        info!("[{}] Creating dashboard", guild.name);
 
         // FIRST: Check bot permissions
         let (has_perms, missing_perms) = self.check_bot_permissions(ctx, guild).await;

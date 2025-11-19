@@ -343,7 +343,9 @@ pub async fn check_role(
             None => match guild_id.member(&cc.ctx.http, cc.intax.user.id).await {
                 Ok(m) => m,
                 Err(e) => {
-                    warn!("Failed to fetch member for user {} in guild {}: {:?}", cc.intax.user.id, guild_id, e);
+                    let username = &cc.intax.user.name;
+                    let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                    warn!("[{}] Failed to fetch member for user {}: {:?}", guild_name, username, e);
                     return Ok(false);
                 }
             }
@@ -354,7 +356,7 @@ pub async fn check_role(
             if let Some(guild_ref) = guild_id.to_guild_cached(&cc.ctx.cache) {
                 let perms = guild_ref.member_permissions(&member);
                 if perms.contains(Permissions::ADMINISTRATOR) || perms.contains(Permissions::MANAGE_GUILD) {
-                    info!("User {} has Discord admin/manage permissions", cc.intax.user.id);
+                    info!("User {} has Discord admin/manage permissions", &cc.intax.user.name);
                     return Ok(true);
                 }
             }
@@ -362,10 +364,10 @@ pub async fn check_role(
 
         // Check configured role
         if let Some(role_id) = role.id(&cc.db, guild_id.get()).await {
-            info!("Checking if user has {} role with ID: {}", role.name(), role_id);
             return Ok(member.roles.contains(&role_id));
         } else {
-            info!("Role {} not configured for guild {}", role.name(), guild_id);
+            let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+            info!("[{}] Role {} not configured", guild_name, role.name());
         }
     }
     Ok(false)
@@ -396,7 +398,9 @@ pub async fn check_component_role(
             None => match guild_id.member(&cc.ctx.http, cc.component.user.id).await {
                 Ok(m) => m,
                 Err(e) => {
-                    warn!("Failed to fetch member for user {} in guild {}: {:?}", cc.component.user.id, guild_id, e);
+                    let username = &cc.component.user.name;
+                    let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                    warn!("[{}] Failed to fetch member for user {}: {:?}", guild_name, username, e);
                     return Ok(false);
                 }
             }
@@ -407,7 +411,7 @@ pub async fn check_component_role(
             if let Some(guild_ref) = guild_id.to_guild_cached(&cc.ctx.cache) {
                 let perms = guild_ref.member_permissions(&member);
                 if perms.contains(Permissions::ADMINISTRATOR) || perms.contains(Permissions::MANAGE_GUILD) {
-                    info!("User {} has Discord admin/manage permissions", cc.component.user.id);
+                    info!("User {} has Discord admin/manage permissions", &cc.component.user.name);
                     return Ok(true);
                 }
             }
@@ -415,10 +419,10 @@ pub async fn check_component_role(
 
         // Check configured role
         if let Some(role_id) = role.id(&cc.db, guild_id.get()).await {
-            info!("Checking if user {} has {} role with ID: {}", cc.component.user.name, role.name(), role_id);
             return Ok(member.roles.contains(&role_id));
         } else {
-            info!("Role {} not configured for guild {}", role.name(), guild_id);
+            let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+            info!("[{}] Role {} not configured", guild_name, role.name());
         }
     }
     Ok(false)

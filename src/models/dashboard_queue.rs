@@ -125,7 +125,7 @@ impl DashboardUpdateQueue {
                 // Acquire lock briefly to get CURRENT dashboard data
                 // This ensures we always show the latest state, regardless of how many
                 // update requests were queued - they all get collapsed into this one update
-                let (channel_id, dashboard_channel_id, message_id, embed, buttons) = {
+                let (channel_id, dashboard_channel_id, message_id, embed, buttons, guild_name) = {
                     let mut manager_lock = manager.lock().await;
                     
                     let server = match manager_lock.get_server(serenity::all::GuildId::new(guild_id)) {
@@ -136,10 +136,12 @@ impl DashboardUpdateQueue {
                         }
                     };
                     
+                    let guild_name = server.guild_name.clone();
+                    
                     let group = match server.groups.iter_mut().find(|g| g.group_id == group_id as u8) {
                         Some(g) => g,
                         None => {
-                            warn!("Failed to find group {} for dashboard update", group_id);
+                            warn!("[{}] Failed to find group {} for dashboard update", guild_name, group_id);
                             return;
                         }
                     };
@@ -153,30 +155,31 @@ impl DashboardUpdateQueue {
                     let (embed, buttons) = match group.build_dashboard_content().await {
                         Ok(content) => content,
                         Err(e) => {
-                            warn!("Failed to build dashboard content for group {}: {}", group_id, e);
+                            warn!("[{}] Failed to build dashboard content for group {}: {}", guild_name, group_id, e);
                             return;
                         }
                     };
                     
-                    (channel_id, dashboard_channel_id, message_id, embed, buttons)
+                    (channel_id, dashboard_channel_id, message_id, embed, buttons, guild_name)
                 }; // Release lock here
                 
                 // Update the dashboard message WITHOUT holding any locks
                 use serenity::all::EditMessage;
+                let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", channel_id));
                 match channel_id.edit_message(&ctx.http, message_id, EditMessage::new().embed(embed.clone()).components(buttons.clone())).await {
                     Ok(_) => {
-                        info!("Updated dashboard for guild {} group {}", guild_id, group_id);
+                        info!("[{}] Updated dashboard in #{}", guild_name, channel_name);
                     }
                     Err(e) => {
                         // Check if message was deleted (404 error)
                         if e.to_string().contains("404") || e.to_string().contains("Unknown Message") {
-                            warn!("Dashboard message was deleted for guild {} group {}, recreating...", guild_id, group_id);
+                            warn!("[{}] Dashboard message was deleted in #{}, recreating...", guild_name, channel_name);
                             
                             // Recreate the dashboard message
                             use serenity::all::CreateMessage;
                             match channel_id.send_message(&ctx.http, CreateMessage::new().embed(embed).components(buttons)).await {
                                 Ok(new_msg) => {
-                                    info!("Recreated dashboard message {} for guild {} group {}", new_msg.id, guild_id, group_id);
+                                    info!("[{}] Recreated dashboard in #{}", guild_name, channel_name);
                                     
                                     // Update the stored message ID in memory
                                     let mut manager_lock = manager.lock().await;
@@ -193,11 +196,11 @@ impl DashboardUpdateQueue {
                                     }
                                 }
                                 Err(create_err) => {
-                                    warn!("Failed to recreate dashboard for guild {} group {}: {}", guild_id, group_id, create_err);
+                                    warn!("[{}] Failed to recreate dashboard in #{}: {}", guild_name, channel_name, create_err);
                                 }
                             }
                         } else {
-                            warn!("Failed to update dashboard for guild {} group {}: {}", guild_id, group_id, e);
+                            warn!("[{}] Failed to update dashboard in #{}: {}", guild_name, channel_name, e);
                         }
                     }
                 }

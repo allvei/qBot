@@ -193,13 +193,14 @@ impl Group {
 
     pub async fn has_dashboard(&self, ctx: &Context) -> bool {
         let ch = CI::new(self.channels.dashboard.into());
-        info!("Checking if dashboard message {} exists in channel {}", self.dashboard_msg, ch);
+        let channel_name = ch.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", ch));
+        info!("Checking if dashboard message exists in #{}", channel_name);
         let msg = ch.message(&ctx.http, self.dashboard_msg).await;
         let exists = msg.is_ok();
         if !exists {
-            info!("Dashboard message {} not found: {:?}", self.dashboard_msg, msg.err());
+            info!("Dashboard message not found in #{}: {:?}", channel_name, msg.err());
         } else {
-            info!("Dashboard message {} exists", self.dashboard_msg);
+            info!("Dashboard message exists in #{}", channel_name);
         }
         exists
     }
@@ -207,18 +208,20 @@ impl Group {
     pub async fn dash_publish(&mut self, ctx: &Context, channel: CI) -> Result<(), Error>{
         // Check if dashboard already exists and is accessible
         if self.has_dashboard(ctx).await {
-            info!("Dashboard already exists, updating instead of creating new one");
+            let channel_name = channel.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", channel));
+            info!("Dashboard already exists in #{}, updating instead of creating new one", channel_name);
             return self.dash_update(ctx).await;
         }
         
         // Create new dashboard message
+        let channel_name = channel.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", channel));
         let msg = channel.send_message(&ctx.http, self.dash_init().await.unwrap()).await;
         if let Ok(msg) = msg {
             self.dashboard_msg = msg.id;
-            info!("Created new dashboard message {}", msg.id);
+            info!("Created new dashboard in #{}", channel_name);
             Ok(())
         } else {
-            error!("Failed to send game ready notification");
+            error!("Failed to send dashboard message in #{}", channel_name);
             Err(anyhow!("Failed to send game ready notification"))
         }
     }
@@ -483,19 +486,21 @@ impl Group {
 
             // If player is in VC, don't actually remove them - just acknowledge
             if player_in_vc {
-                info!("Player {} clicked leave but is in queue VC - ignoring", user_id);
+                let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
+                info!("Player {} clicked leave but is in queue VC - ignoring", username);
                 cc.acknowledge().await;
                 return Ok(());
             }
 
             // Player is in queue but not in VC, remove them
             let was_hot = session.is_hot();
+            let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
             session.remove_player(user_id);
             let pool_len = session.pool.len();
             if let Some(idx) = session_idx {
-                info!("[Session {}] Removed player from game. Queue now has {} players", idx, pool_len);
+                info!("[Session {}] Removed {} from queue. Queue now has {} players", idx, username, pool_len);
             } else {
-                info!("Removed player from game. Queue now has {} players", pool_len);
+                info!("Removed {} from queue. Queue now has {} players", username, pool_len);
             }
 
             // If session was hot, check what to do next

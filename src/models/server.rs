@@ -66,9 +66,9 @@ pub struct Server {
 
 impl Server {
     pub fn new(
-        guild_id: GI,
+        guild_id:   GI,
         guild_name: String,
-        roles: Roles,
+        roles:      Roles,
     ) -> Self {
         Self {
             guild_id,
