@@ -71,7 +71,7 @@ impl EventHandler for Handler {
         // Spawn console command handler in a separate task
         let console_handler = command::ConsoleHandler::new(
             self.manager.clone(),
-            self.database.pool().clone(),
+            self.database.clone(),
             Arc::new(ctx.clone()),
         );
 

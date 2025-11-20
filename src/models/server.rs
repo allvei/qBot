@@ -398,7 +398,7 @@ impl Group {
 
     }
 
-    pub async fn pull(&mut self, ctx: &Context) -> Result<(), Error> {
+    pub async fn pull(&mut self, ctx: &Context, guild_id: serenity::all::GuildId, db: &crate::Database) -> Result<(), Error> {
         // Extract queue vc channel ID
         let queue_vc = self.channels.queue_vc;
 
@@ -418,8 +418,6 @@ impl Group {
             .collect();
 
         // Move all players back to queue voice channel
-        let guild_id = ctx.cache.guilds().first().copied()
-            .ok_or_else(|| anyhow!("No guild found in cache"))?;
         for player in &players_to_requeue {
             let tag = player.discord_tag.as_deref().unwrap_or("Unknown");
             if let Err(e) = self.move_user(guild_id, player.discord_id, queue_vc, ctx).await {
@@ -451,7 +449,7 @@ impl Group {
 
         // Check if the queue now meets quota and transition to Hot if needed
         if self.is_quota() {
-            self.hot(ctx, None, None).await?;
+            self.hot(ctx, Some(guild_id), Some(db)).await?;
         }
 
         self.queue_dash_update(ctx, guild_id.get()).await;

@@ -724,8 +724,10 @@ impl Group {
         // Defer update now that we're going to end the match
         cc.defer_update().await?;
 
+        let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+
         // Move players back to queue channel (Hot/Live → Pull → Idle)
-        match self.pull(cc.ctx).await {
+        match self.pull(cc.ctx, guild_id, &cc.db).await {
             Ok(_) => {
                 info!("Match ended, players moved back to queue");
                 Ok(())

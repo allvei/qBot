@@ -10,11 +10,11 @@ use rustyline::{CompletionType, Config, Editor};
 use rustyline::Helper;
 use serenity::all::UserId;
 use serenity::prelude::Context;
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
-use pf_pug_bot::database::repositories::GroupRepository;
+use pf_pug_bot::Database;
 use pf_pug_bot::models::{Manager, Team};
 
 /// Command definition with all metadata for auto-generated documentation
@@ -401,13 +401,13 @@ impl Completer for CommandCompleter {
 
 pub struct ConsoleHandler {
     manager:  Arc<Mutex<Manager>>,
-    database: SqlitePool,
+    database: Arc<Database>,
     ctx:      Option<Arc<Context>>,
     registry: CommandRegistry,
 }
 
 impl ConsoleHandler {
-    pub fn new(manager: Arc<Mutex<Manager>>, database: SqlitePool, ctx: Arc<Context>) -> Self {
+    pub fn new(manager: Arc<Mutex<Manager>>, database: Arc<Database>, ctx: Arc<Context>) -> Self {
         Self {
             manager,
             database,
@@ -416,7 +416,7 @@ impl ConsoleHandler {
         }
     }
 
-    pub fn new_without_context(manager: Arc<Mutex<Manager>>, database: SqlitePool) -> Self {
+    pub fn new_without_context(manager: Arc<Mutex<Manager>>, database: Arc<Database>) -> Self {
         Self {
             manager,
             database,
@@ -768,14 +768,13 @@ impl ConsoleHandler {
         println!("=== Connected Guilds ===");
 
         // List guilds from database (more reliable and Send-safe)
-        let group_repo = GroupRepository::new(self.database.clone());
-        match sqlx::query("SELECT DISTINCT guild_id FROM groups").fetch_all(&self.database).await {
+        match sqlx::query("SELECT DISTINCT guild_id FROM groups").fetch_all(self.database.pool()).await {
             Ok(rows) => {
                 for row in rows {
                     if let Ok(guild_id) = row.try_get::<i64, _>("guild_id") {
                         println!("Guild ID: {}", guild_id);
 
-                        match group_repo.get_groups_for_guild(guild_id as u64).await {
+                        match self.database.groups.get_groups_for_guild(guild_id as u64).await {
                             Ok(groups) => {
                                 println!("  {} group(s) configured", groups.len());
                                 for group in groups {
@@ -835,7 +834,7 @@ impl ConsoleHandler {
         }
 
         // Try resolving by guild name from database
-        match sqlx::query("SELECT DISTINCT guild_id FROM groups").fetch_all(&self.database).await {
+        match sqlx::query("SELECT DISTINCT guild_id FROM groups").fetch_all(self.database.pool()).await {
             Ok(rows) => {
                 for row in rows {
                     if let Ok(guild_id) = row.try_get::<i64, _>("guild_id") {
@@ -858,8 +857,7 @@ impl ConsoleHandler {
     async fn cmd_print_config(&self, guild_identifier: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
 
-        let group_repo = GroupRepository::new(self.database.clone());
-        match group_repo.get_groups_for_guild(guild_id).await {
+        match self.database.groups.get_groups_for_guild(guild_id).await {
             Ok(groups) => {
                 if groups.is_empty() {
                     println!("No configuration found for guild ID: {}", guild_id);
@@ -897,8 +895,7 @@ impl ConsoleHandler {
         let group_id: u8 = group_id_str.parse()
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
 
-        let group_repo = GroupRepository::new(self.database.clone());
-        let groups = group_repo.get_groups_for_guild(guild_id).await?;
+        let groups = self.database.groups.get_groups_for_guild(guild_id).await?;
 
         let group = groups.iter().find(|g| g.group_id == group_id)
             .ok_or(format!("Group {} not found for guild {}", group_id, guild_id))?;
@@ -916,7 +913,7 @@ impl ConsoleHandler {
                 }
 
                 // Update database
-                match group_repo.update_group(
+                match self.database.groups.update_group(
                     queue_id,
                     guild_id,
                     group.channels.dashboard.get(),
@@ -966,7 +963,7 @@ impl ConsoleHandler {
                 let dashboard_id: u64 = value.parse()
                     .map_err(|_| format!("Invalid dashboard channel ID: {}", value))?;
 
-                match group_repo.update_group(
+                match self.database.groups.update_group(
                     queue_id,
                     guild_id,
                     dashboard_id,
@@ -983,7 +980,7 @@ impl ConsoleHandler {
                 let red_id: u64 = value.parse()
                     .map_err(|_| format!("Invalid red team channel ID: {}", value))?;
 
-                match group_repo.update_group(
+                match self.database.groups.update_group(
                     queue_id,
                     guild_id,
                     group.channels.dashboard.into(),
@@ -1000,7 +997,7 @@ impl ConsoleHandler {
                 let blue_id: u64 = value.parse()
                     .map_err(|_| format!("Invalid blue team channel ID: {}", value))?;
 
-                match group_repo.update_group(
+                match self.database.groups.update_group(
                     queue_id,
                     guild_id,
                     group.channels.dashboard.into(),
@@ -1041,10 +1038,8 @@ impl ConsoleHandler {
             return Ok(());
         }
 
-        let group_repo = GroupRepository::new(self.database.clone());
-
         // Check if group already exists
-        match group_repo.get_groups_for_guild(guild_id).await {
+        match self.database.groups.get_groups_for_guild(guild_id).await {
             Ok(groups) => {
                 if !groups.is_empty() {
                     println!("Guild {} already has {} group configuration(s)", guild_id, groups.len());
@@ -1058,7 +1053,7 @@ impl ConsoleHandler {
         }
 
         // Create new group configuration
-        match group_repo.update_group(
+        match self.database.groups.update_group(
             queue_id,
             guild_id,
             dashboard_id,
@@ -1084,7 +1079,7 @@ impl ConsoleHandler {
     }
 
     async fn cmd_query_db(&self, sql: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        match sqlx::query(sql).fetch_all(&self.database).await {
+        match sqlx::query(sql).fetch_all(self.database.pool()).await {
             Ok(rows) => {
                 println!("Query executed successfully. Rows returned: {}", rows.len());
                 for (i, row) in rows.iter().enumerate() {
@@ -1407,7 +1402,7 @@ impl ConsoleHandler {
             let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
             println!("Forcing pull back to queue...");
-            match group.pull(ctx).await {
+            match group.pull(ctx, serenity::model::id::GuildId::new(guild_id), &self.database).await {
                 Ok(_) => {
                     println!("Players pulled back to queue!");
                     println!("   Session reset to Idle.");
@@ -1490,7 +1485,7 @@ impl ConsoleHandler {
             {
                 let mut manager = self.manager.lock().await;
                 let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-                match group.pull(ctx).await {
+                match group.pull(ctx, serenity::model::id::GuildId::new(guild_id), &self.database).await {
                     Ok(_) => println!("   Players pulled back, session reset to Idle\n"),
                     Err(e) => println!("     Pull failed: {}\n", e),
                 }
