@@ -118,6 +118,7 @@ pub struct Group {
     pub dashboard_msg: MI,
     pub channels:      Channels,
     pub sessions:      Vec<Session>,
+    pub connect_info:  Option<String>,
 }
 
 impl Group {
@@ -136,6 +137,7 @@ impl Group {
             dashboard_msg,
             channels,
             sessions: games,
+            connect_info: None,
         }
     }
 
@@ -495,7 +497,7 @@ impl Group {
         let pool_size = quota.min(game.pool.len());
         let players_to_balance: Vec<(usize, u32)> = players_with_elo.into_iter().take(pool_size).collect();
 
-        // Generate all possible team splits (C(8,4) = 70 combinations)
+        // Generate all possible team splits using BCH (deterministic)
         let team_size = pool_size / 2;
         let mut best_split: Option<(Vec<usize>, Vec<usize>)> = None;
         let mut best_score = f64::INFINITY;
@@ -529,8 +531,42 @@ impl Group {
             }
         }
 
-        if let Some((red_indices, blu_indices)) = best_split {
+        if let Some((mut red_indices, mut blu_indices)) = best_split {
             info!("[Session {}] Best team balance found with score: {:.2}", session_idx, best_score);
+
+            // Randomize by swapping players with the same ELO
+            // Group players by ELO, then shuffle within each ELO group
+            use std::collections::HashMap;
+            use rand::seq::SliceRandom;
+            let mut rng = rand::rng();
+            
+            // Create map of ELO -> Vec<indices in players_to_balance>
+            let mut elo_groups: HashMap<u32, Vec<usize>> = HashMap::new();
+            for i in 0..pool_size {
+                let elo = players_to_balance[i].1;
+                elo_groups.entry(elo).or_insert_with(Vec::new).push(i);
+            }
+            
+            // For each ELO group with multiple players, shuffle them across teams
+            for (elo, indices) in elo_groups.iter_mut() {
+                if indices.len() > 1 {
+                    // Count how many of this ELO are on each team
+                    let red_count = indices.iter().filter(|&&i| red_indices.contains(&i)).count();
+                    let blu_count = indices.len() - red_count;
+                    
+                    // Shuffle the indices with this ELO
+                    indices.shuffle(&mut rng);
+                    
+                    // Reassign to teams with the same distribution
+                    red_indices.retain(|&i| !indices.contains(&i));
+                    blu_indices.retain(|&i| !indices.contains(&i));
+                    
+                    red_indices.extend_from_slice(&indices[..red_count]);
+                    blu_indices.extend_from_slice(&indices[red_count..]);
+                    
+                    info!("[Session {}] Shuffled {} players with ELO {}", session_idx, indices.len(), elo);
+                }
+            }
 
             // Assign teams in-place to preserve in_queue_vc and has_joined_vc_once flags
             // First assign red team
