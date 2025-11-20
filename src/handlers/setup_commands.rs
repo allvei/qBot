@@ -121,6 +121,7 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             dashboard: dashboard_channel,
         },
         sessions: vec![],
+        connect_info: None,
     };
     
     // Publish the dashboard to get message ID

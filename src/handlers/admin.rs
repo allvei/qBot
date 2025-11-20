@@ -388,6 +388,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                     dashboard: dashboard_channel,
                 },
                 sessions: vec![],
+                connect_info: None,
             };
             
             // Publish the dashboard to get the actual message ID
@@ -503,13 +504,20 @@ pub async fn create_group_channels(
     
     let category_id = category.id;
     
-    // Create dashboard text channel
+    // Create dashboard text channel (read-only for @everyone)
     info!("[{}] Creating dashboard channel", guild_name);
     let dashboard_channel = guild_id.create_channel(&ctx.http,
         CreateChannel::new("dashboard")
             .kind(ChannelType::Text)
             .category(category_id)
             .topic("PUG queue dashboard - use buttons to join/leave")
+            .permissions(vec![
+                PermissionOverwrite {
+                    allow: Permissions::empty(),
+                    deny: Permissions::SEND_MESSAGES,
+                    kind: PermissionOverwriteType::Role(guild_id.everyone_role()),
+                }
+            ])
     ).await?;
     
     // Create queue text channel
@@ -1925,6 +1933,75 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
     Ok(())
 }
 
+/// `/addconnect` - Set server connection info for the current group
+///
+/// * `connect_info` - The server connect command (e.g., "connect 1.1.1.1:1234; password 1234")
+pub async fn cmd_add_connect(cc: &CC<'_>, connect_info: String) -> Result<()> {
+    info!("Processing /addconnect");
+
+    // Check admin permissions
+    if !check_role(cc, &Role::Admin).await? {
+        let response = CIR::Message(CIRM::new().content("Only admins can set server connect info!").ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+
+    // Get the group from the current channel
+    let mut manager = cc.manager.lock().await;
+    let server = match manager.get_server(guild_id) {
+        Ok(s) => s,
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("Server Not Found")
+                .description(format!("Server not configured: {}", e))
+                .color(0xff0000);
+
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+
+    let group = match server.get_group(cc.intax.channel_id) {
+        Ok(g) => g,
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("Group Not Found")
+                .description(format!("No queue group found in this channel: {}", e))
+                .color(0xff0000);
+
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+
+    // Update the connect info in the group
+    group.connect_info = Some(connect_info.clone());
+
+    let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+    info!("[{}] Set server connect info for group {}", guild_name, group.group_id);
+
+    let success_embed = CE::new()
+        .title("Server Connect Info Updated")
+        .description(format!(
+            "Server connection command has been set:\n\n```{}```\n\n\
+            This will now appear on the dashboard when players are ready to join.",
+            connect_info
+        ))
+        .color(0x00ff00);
+
+    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+
+    // Update the dashboard to show the new connect info
+    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
+
+    Ok(())
+}
+
 /// Helper function to finalize group setup by loading it into manager and immediately updating dashboard
 async fn finalize_group_setup(
     ctx: &Context,
@@ -2189,6 +2266,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &ComponentI
             dashboard: dashboard_channel,
         },
         sessions: vec![],
+        connect_info: None,
     };
     
     // Publish dashboard to get message ID
