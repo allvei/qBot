@@ -41,7 +41,6 @@ impl Session {
     pub fn add_player_in_vc(&mut self, player: Player, rank: crate::models::Rank) {
         let mut session_player = SessionPlayer::add(player, rank);
         session_player.in_queue_vc = true;
-        session_player.has_joined_vc_once = true;
         self.pool.push(session_player);
         self.sort_by_join_time();
     }
@@ -89,7 +88,6 @@ impl Session {
         // Clear team assignments and VC join tracking when going back to idle
         for player in &mut self.pool {
             player.team = None;
-            player.has_joined_vc_once = false;
         }
     }
 
@@ -182,7 +180,6 @@ pub struct SessionPlayer {
     pub team:                Option<Team>,
     pub is_buffered:         bool,
     pub in_queue_vc:         bool,
-    pub has_joined_vc_once:  bool,
     pub in_queue_cmd:        bool,
     #[serde(with = "systemtime_serde")]
     pub joined_at:           SystemTime,
@@ -218,7 +215,6 @@ impl SessionPlayer {
             team:                None,
             is_buffered:         false,
             in_queue_vc:         false,
-            has_joined_vc_once:  false,
             in_queue_cmd:        false,
             joined_at:           SystemTime::now(),
         }

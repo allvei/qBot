@@ -281,7 +281,7 @@ impl Group {
                     // Check for players who have NEVER joined the VC (not just currently not in VC)
                     let players_never_joined: Vec<_> = session.pool.iter()
                         .take(quota)
-                        .filter(|p| !p.has_joined_vc_once)
+                        .filter(|p| !p.in_queue_vc)
                         .collect();
 
                     // Only show countdown and missing players if there are players who have never joined
@@ -323,7 +323,7 @@ impl Group {
                     // Check for players who have NEVER joined the VC (not just currently not in VC)
                     let players_never_joined: Vec<_> = current_session.pool.iter()
                         .take(quota)
-                        .filter(|p| !p.has_joined_vc_once)
+                        .filter(|p| !p.in_queue_vc)
                         .collect();
 
                     // Only show countdown and missing players if there are players who have never joined
@@ -516,12 +516,14 @@ impl Group {
                         Some("Player left queue via dashboard button")
                     ).await;
                 }
-                
                 // The voice_state_update handler will handle removing them from the queue
                 return Ok(());
             }
 
             // Player is in queue but not in VC, remove them
+            // Defer update immediately
+            cc.defer_update().await?;
+            
             let was_hot = session.is_hot();
             let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
             session.remove_player(user_id);
@@ -562,6 +564,12 @@ impl Group {
         // Regenerate teams if needed (outside the session borrow scope)
         if should_regenerate_teams {
             self.generate_teams(cc.ctx, cc.component.guild_id.unwrap()).await;
+        }
+
+        // If player was in queue, we removed them above - update dashboard and return
+        if player_was_in_queue {
+            self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
+            return Ok(());
         }
 
         // Only add player if they were NOT originally in the queue
@@ -616,9 +624,6 @@ impl Group {
                 cc.reply("This command can only be used in a server.").await?;
                 return Ok(());
             }
-        } else {
-            // Player is leaving - defer update
-            cc.defer_update().await?;
         }
 
         // Update dashboard to reflect changes

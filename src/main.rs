@@ -782,12 +782,11 @@ impl EventHandler for Handler {
                         if let Ok(session) = group.get_user_session(user_id).await {
                             if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
                                 player.in_queue_vc = true;
-                                player.has_joined_vc_once = true;
                                 // Don't update dashboard here - pull() will handle it
                                 // This avoids multiple rapid updates when players rejoin after match end
                             }
                         } else {
-                            // Player not in session yet, try to add them if idle session available
+                            // Player not in session yet, add them
                             if group.get_inactives().is_empty() {
                                 error!("No idle sessions present.");
                             } else {

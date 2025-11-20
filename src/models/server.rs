@@ -286,11 +286,11 @@ impl Group {
         for idx in hot_sessions {
             let session = &mut self.sessions[idx];
 
-            // Get players who have never joined VC (timed out)
+            // Get players who are not in VC (timed out)
             let timed_out_players: Vec<_> = session.pool
                 .iter()
                 .take(quota)
-                .filter(|p| !p.has_joined_vc_once)
+                .filter(|p| !p.in_queue_vc)
                 .map(|p| p.player.discord_id)
                 .collect();
 
@@ -332,6 +332,12 @@ impl Group {
         let player_moves: Vec<(UI, CI, String)> = game.pool
             .iter()
             .filter_map(|player| {
+                // Only move players who are actually in the queue VC
+                // This prevents disconnecting players who aren't in voice
+                if !player.in_queue_vc {
+                    return None;
+                }
+
                 match player.team {
                     Some(crate::models::Team::Red) => Some((
                         player.player.discord_id,
@@ -421,11 +427,16 @@ impl Group {
             }
         }
 
-        // Find the idle session (queue) and add all players back to it
-        let idle_session_idx = self.sessions
-            .iter()
-            .position(|s| s.status == SessionStatus::Idle)
-            .ok_or(anyhow!("No idle session found for re-queuing players"))?;
+        // Find or create the idle session (queue) and add all players back to it
+        let idle_session_idx = match self.sessions.iter().position(|s| s.status == SessionStatus::Idle) {
+            Some(idx) => idx,
+            None => {
+                // No idle session exists (game ended from Hot without push), create one
+                info!("No idle session found, creating one for re-queuing players");
+                self.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
+                self.sessions.len() - 1
+            }
+        };
         let idle_session = &mut self.sessions[idle_session_idx];
 
         for player in players_to_requeue {
@@ -568,7 +579,7 @@ impl Group {
                 }
             }
 
-            // Assign teams in-place to preserve in_queue_vc and has_joined_vc_once flags
+            // Assign teams in-place to preserve in_queue_vc and in_queue_vc flags
             // First assign red team
             for &idx in &red_indices {
                 let pool_idx = players_to_balance[idx].0;
