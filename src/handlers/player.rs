@@ -36,13 +36,24 @@ pub async fn get_player_rank(
         }
     };
     
-    // Check all member roles and find the first matching rank
+    // Check all member roles and find the highest matching rank
+    let mut highest_rank: Option<Rank> = None;
     for role_id in &member.roles {
         if let Some(rank) = Rank::from_role_id(*role_id, db, guild_id.get()).await {
-            return Some(rank);
+            highest_rank = match highest_rank {
+                None => Some(rank),
+                Some(current) => {
+                    // Compare ELO values to find highest rank
+                    if rank.elo() > current.elo() {
+                        Some(rank)
+                    } else {
+                        Some(current)
+                    }
+                }
+            };
         }
     }
-    None
+    highest_rank
 }
 
 /// Get or assign player rank - creates ranks if needed and assigns default rank if player has no rank

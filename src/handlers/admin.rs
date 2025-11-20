@@ -534,10 +534,10 @@ pub async fn create_group_channels(
     // Step 2: Create dashboard text channel with proper permissions
     info!("[{}] Creating dashboard channel", guild_name);
     let mut permissions = vec![
-        // Deny @everyone from sending messages
+        // Deny @everyone from sending messages and creating threads
         PermissionOverwrite {
             allow: Permissions::empty(),
-            deny: Permissions::SEND_MESSAGES,
+            deny: Permissions::SEND_MESSAGES | Permissions::CREATE_PUBLIC_THREADS | Permissions::CREATE_PRIVATE_THREADS,
             kind: PermissionOverwriteType::Role(guild_id.everyone_role()),
         },
         // Allow bot user explicitly

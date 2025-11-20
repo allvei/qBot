@@ -234,15 +234,15 @@ pub async fn cmd_rank_role_add(cc: &CC<'_>, rank_name: String, role_mention: Str
     // Parse the rank
     use crate::models::Rank;
     let rank = match rank_name.to_lowercase().as_str() {
-        "beginner" => Rank::Beginner,
-        "newcomer" => Rank::Newcomer,
-        "novice" => Rank::Novice,
-        "apprentice" => Rank::Apprentice,
-        "journeyman" => Rank::Journeyman,
-        "expert" => Rank::Expert,
-        "master" => Rank::Master,
+        "beginner"                     => Rank::Beginner,
+        "newcomer"                     => Rank::Newcomer,
+        "novice"                       => Rank::Novice,
+        "apprentice"                   => Rank::Apprentice,
+        "journeyman"                   => Rank::Journeyman,
+        "expert"                       => Rank::Expert,
+        "master"                       => Rank::Master,
         "masterelite" | "master elite" => Rank::MasterElite,
-        "grandmaster" => Rank::Grandmaster,
+        "grandmaster"                  => Rank::Grandmaster,
         _ => {
             let response = CIR::Message(CIRM::new()
                 .content("Invalid rank name. Valid ranks: Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, MasterElite, Grandmaster")
