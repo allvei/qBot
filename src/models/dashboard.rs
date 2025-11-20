@@ -315,18 +315,6 @@ impl Group {
                 }
             }
             description.push('\n');
-
-            // Show next queue if there's an idle session with overflow players
-            if let Some(next_session) = inactives.first() {
-                if !next_session.pool.is_empty() {
-                    description.push_str(&format!("**Bench ({}/{}):**\n", next_session.pool.len(), quota));
-                    for (i, player) in next_session.pool.iter().enumerate() {
-                        let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
-                        description.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
-                    }
-                    description.push('\n');
-                }
-            }
         } else {
             // No active games - show queue status or hot game info
             if let Some(current_session) = inactives.first() {
@@ -380,6 +368,11 @@ impl Group {
 
         embed = embed.description(description);
 
+        // Add connect info if available
+        if let Some(ref connect_info) = self.connect_info {
+            embed = embed.field("🎮 JOIN SERVER", format!("```{}```", connect_info), false);
+        }
+
         // Add team fields for inactive sessions with enough players
         if let Some(current_session) = inactives.first() {
             let queue_players = current_session.pool.len();
@@ -388,15 +381,15 @@ impl Group {
                 embed = embed.field("🔴 RED",  format_team_field(&team_red), true);
                 embed = embed.field("🔵 BLUE", format_team_field(&team_blu), true);
 
-                // Show next queue AFTER teams if there are overflow players
+                // Show fatkidded players AFTER teams if there are overflow players
                 if current_session.is_hot() && queue_players > quota {
                     let overflow_count = queue_players - quota;
-                    let mut next_queue = format!("**Bench ({}/{}):**\n", overflow_count, quota);
+                    let mut fatkidded = format!("**Fatkidded ({}/{}):**\n", overflow_count, quota);
                     for (i, player) in current_session.pool.iter().skip(quota).enumerate() {
                         let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
-                        next_queue.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
+                        fatkidded.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
                     }
-                    embed = embed.field("\u{200B}", next_queue, false); // Full-width field
+                    embed = embed.field("\u{200B}", fatkidded, false); // Full-width field
                 }
             }
         }
@@ -410,16 +403,16 @@ impl Group {
             }
         }
 
-        // Show next queue for idle session with players (when there's an active game)
+        // Show fatkidded players for idle session (when there's an active game)
         if !actives.is_empty() {
             if let Some(next_session) = inactives.first() {
                 if !next_session.pool.is_empty() {
-                    let mut next_queue = format!("**Bench ({}/{}):**\n", next_session.pool.len(), quota);
+                    let mut fatkidded = format!("**Fatkidded ({}/{}):**\n", next_session.pool.len(), quota);
                     for (i, player) in next_session.pool.iter().enumerate() {
                         let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
-                        next_queue.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
+                        fatkidded.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
                     }
-                    embed = embed.field("\u{200B}", next_queue, false); // Full-width field
+                    embed = embed.field("\u{200B}", fatkidded, false); // Full-width field
                 }
             }
         }
@@ -608,6 +601,8 @@ impl Group {
                 
                 match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user_id).await {
                     Ok(rank) => {
+                        // Refresh player rank from current Discord roles before queueing
+                        player.rank = Some(rank);
                         if let Err(e) = self.queue_player(player, rank, cc.ctx, Some(guild_id), Some(&cc.db)).await {
                             warn!("Failed to queue player: {}", e);
                         }
@@ -649,9 +644,17 @@ impl Group {
         // Defer update now that we know we have a game to shuffle
         cc.defer_update().await?;
 
+        // Refresh player ranks from Discord roles before shuffling teams
+        if let Some(guild_id) = cc.component.guild_id {
+            self.refresh_player_ranks(cc.ctx, guild_id, &cc.db).await;
+        }
+
         // Call the same team generation logic used by generate_teams
         // This ensures balanced teams using the BCH algorithm
         self.generate_teams(cc.ctx, cc.component.guild_id.unwrap()).await;
+        
+        // Update dashboard to show new teams
+        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
 
         Ok(())
     }
