@@ -135,7 +135,7 @@ impl EventHandler for Handler {
                                 self.check_existing_voice_users(&ctx, &guild, &mut manager).await;
                                 self.create_guild_dashboard_from_manager(&ctx, &guild, &mut manager).await;
                             } else {
-                                warn!("{} has no valid group configurations. ID: {}", guild.name, guild_id);
+                                warn!("{} has no valid group configurations.", guild.name);
                             }
                         }
                     },
@@ -238,6 +238,15 @@ impl EventHandler for Handler {
                             .and_then(|s| s.parse::<i64>().ok())
                             .unwrap_or(0);
                         admin::cmd_set_quota(&cmd_ctx, quota).await
+                    }
+                    "addconnect" => {
+                        info();
+                        let connect_info = cdo.iter()
+                            .find(|opt| opt.name == "connect_info")
+                            .and_then(|opt| opt.value.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        admin::cmd_add_connect(&cmd_ctx, connect_info).await
                     }
                     "groupadd" => {
                         info();
@@ -647,17 +656,17 @@ impl EventHandler for Handler {
                         if !sesh.is_active() {
                             let was_hot = sesh.is_hot();
                             
-                            // For Hot sessions, just mark as not in VC instead of removing
-                            // This preserves has_joined_vc_once flag so they're not shown as "missing"
-                            if was_hot {
-                                if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
-                                    player.in_queue_vc = false;
-                                    // has_joined_vc_once is preserved
-                                }
-                                false // No regeneration needed
+                            // Remove player from session when they leave VC
+                            sesh.remove_player(user_id);
+                            
+                            // If session was hot and still has enough players, regenerate teams
+                            if was_hot && sesh.pool.len() >= quota {
+                                true
+                            } else if was_hot && sesh.pool.len() < quota {
+                                // Dropped below quota, transition to Idle
+                                sesh.idle();
+                                false
                             } else {
-                                // For Idle sessions, remove player completely
-                                sesh.remove_player(user_id);
                                 false
                             }
                         } else {
@@ -694,17 +703,17 @@ impl EventHandler for Handler {
                         if !sesh.is_active() {
                             let was_hot = sesh.is_hot();
                             
-                            // For Hot sessions, just mark as not in VC instead of removing
-                            // This preserves has_joined_vc_once flag so they're not shown as "missing"
-                            if was_hot {
-                                if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
-                                    player.in_queue_vc = false;
-                                    // has_joined_vc_once is preserved
-                                }
-                                false // No regeneration needed
+                            // Remove player from session when they move out of queue VC
+                            sesh.remove_player(user_id);
+                            
+                            // If session was hot and still has enough players, regenerate teams
+                            if was_hot && sesh.pool.len() >= quota {
+                                true
+                            } else if was_hot && sesh.pool.len() < quota {
+                                // Dropped below quota, transition to Idle
+                                sesh.idle();
+                                false
                             } else {
-                                // For Idle sessions, remove player completely
-                                sesh.remove_player(user_id);
                                 false
                             }
                         } else {
