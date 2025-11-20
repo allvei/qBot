@@ -768,16 +768,12 @@ impl EventHandler for Handler {
 
         // Mutex scope
         {
-            info!("[DEBUG] Acquiring manager lock for player addition...");
             let mut manager = self.manager.lock().await;
-            info!("[DEBUG] Manager lock acquired, looking up group for channel {:?}", new.channel_id);
 
             // Find the guild by ID and check if the new channel is a queue voice channel in any group
             match manager.get_group(server, new.channel_id.unwrap()) {
                 Ok(group) => {
-                    info!("[DEBUG] Group found, checking if channel is queue_vc. queue_vc={:?}, joined_channel={:?}", group.channels.queue_vc, new.channel_id);
                     if group.channels.queue_vc == new.channel_id.unwrap() {
-                        info!("[DEBUG] Player joined queue VC, processing...");
                         // Check if player is already in any session and mark them as in VC
                         if let Ok(session) = group.get_user_session(user_id).await {
                             if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
@@ -814,11 +810,10 @@ impl EventHandler for Handler {
                         }
                     }
                 },
-                Err(e) => {
-                    error!("[DEBUG] Failed to get group: {}", e);
+                Err(_) => {
+                    // Silently ignore - not a queue channel (expected for non-queue VCs)
                 }
             }
-            info!("[DEBUG] Releasing manager lock after player addition check");
         }
     }
 }

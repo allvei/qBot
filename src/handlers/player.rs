@@ -144,15 +144,17 @@ pub async fn validate_rank_roles(
         let has_role_by_id = configured_ids.iter().any(|id| guild_role_ids.contains(id));
 
         if !has_role_by_id {
-            // Fallback: search for ALL roles that contain the rank name (case-insensitive)
+            // Fallback: search for ALL roles that contain the rank name as a whole word (case-insensitive)
             // This handles variants like "Journeyman", "Journeyman EU", "Journeyman NA", "Retired Journeyman"
             let rank_name = rank.name().to_lowercase();
             let matching_roles: Vec<_> = guild_roles.iter()
                 .filter(|r| {
                     let role_name_lower = r.name.to_lowercase();
-                    // Match if role name contains rank name as a word
-                    // This catches: "Journeyman", "Journeyman EU", "Retired Journeyman", etc.
-                    role_name_lower.contains(&rank_name)
+                    // Match if role name contains rank name as a complete word (not substring)
+                    // This catches: "Journeyman", "Journeyman EU", "Retired Journeyman"
+                    // But prevents: "Master" matching "Grandmaster" or "Master Elite"
+                    role_name_lower.split(|c: char| !c.is_alphanumeric())
+                        .any(|word| word == rank_name)
                 })
                 .collect();
 
@@ -160,8 +162,8 @@ pub async fn validate_rank_roles(
                 // Found one or more roles matching this rank! Auto-save all of them to config
                 let role_ids: Vec<String> = matching_roles.iter()
                     .map(|r| {
-                        info!("Found existing role '{}' (ID: {}) matching {}, saving to config", 
-                            r.name, r.id, rank.name());
+                        info!("Found existing role '{}' matching {}, saving to config", 
+                            r.name, rank.name());
                         r.id.get().to_string()
                     })
                     .collect();
@@ -219,17 +221,22 @@ pub async fn create_rank_roles(
         let has_role_by_id = existing_ids.iter().any(|id| guild_role_ids.contains(id));
 
         if !has_role_by_id {
-            // Check if ANY roles contain this rank name (case-insensitive)
+            // Check if ANY roles contain this rank name as a whole word (case-insensitive)
             // This handles variants like "Journeyman", "Journeyman EU", "Journeyman NA", "Retired Journeyman"
             let rank_name = rank.name().to_lowercase();
             let matching_roles: Vec<_> = guild_roles.iter()
-                .filter(|r| r.name.to_lowercase().contains(&rank_name))
+                .filter(|r| {
+                    let role_name_lower = r.name.to_lowercase();
+                    // Match whole words only to prevent "Master" matching "Grandmaster" or "Master Elite"
+                    role_name_lower.split(|c: char| !c.is_alphanumeric())
+                        .any(|word| word == rank_name)
+                })
                 .collect();
 
             if !matching_roles.is_empty() {
                 // Found existing role(s) matching this rank, use them instead of creating
                 for role in matching_roles {
-                    info!("Found existing role '{}' (ID: {}) matching {} during creation", role.name, role.id, rank.name());
+                    info!("Found existing role '{}' matching {} during creation", role.name, rank.name());
                     role_ids_for_rank.push(role.id.get());
                 }
             } else {
@@ -329,7 +336,7 @@ pub async fn validate_system_roles(
 
             if let Some(found) = found_role {
                 // Found a role with matching name! Auto-save it to config
-                info!("Found existing role '{}' (ID: {}) by name, saving to config", found.name, found.id);
+                info!("Found existing role '{}', saving to config", found.name);
 
                 // Save this role ID to the database config
                 let role_id_str = found.id.get().to_string();
