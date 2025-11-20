@@ -180,11 +180,19 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                     ).await?;
                 },
                 Err(e) => {
+                    // Database save failed - clean up everything
+                    info!("[{}] Database save failed, cleaning up channels and dashboard", guild_name);
                     let _ = dashboard_channel.delete_message(&cc.ctx.http, dashboard_msg_id).await;
+                    let _ = dashboard_channel.delete(&cc.ctx.http).await;
+                    let _ = queue_channel.delete(&cc.ctx.http).await;
+                    let _ = queue_vc_channel.delete(&cc.ctx.http).await;
+                    let _ = red_channel.delete(&cc.ctx.http).await;
+                    let _ = blue_channel.delete(&cc.ctx.http).await;
+                    let _ = category_id.delete(&cc.ctx.http).await;
                     
                     let error_embed = CE::new()
                         .title("Setup Failed")
-                        .description(format!("Failed to save group to database: {}\n\nRoles and channels were created.", e))
+                        .description(format!("Failed to save group to database: {}\n\nChannels were cleaned up. Roles remain.", e))
                         .color(0xff0000);
 
                     cc.intax.edit_response(&cc.ctx.http,
@@ -194,9 +202,18 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             }
         },
         Err(e) => {
+            // Dashboard creation failed - clean up the created channels
+            info!("[{}] Dashboard creation failed, cleaning up channels", guild_name);
+            let _ = dashboard_channel.delete(&cc.ctx.http).await;
+            let _ = queue_channel.delete(&cc.ctx.http).await;
+            let _ = queue_vc_channel.delete(&cc.ctx.http).await;
+            let _ = red_channel.delete(&cc.ctx.http).await;
+            let _ = blue_channel.delete(&cc.ctx.http).await;
+            let _ = category_id.delete(&cc.ctx.http).await;
+            
             let error_embed = CE::new()
                 .title("Setup Failed")
-                .description(format!("Failed to create dashboard: {}\n\nRoles and channels were created.", e))
+                .description(format!("Failed to create dashboard: {}\n\nChannels were cleaned up. Roles remain.", e))
                 .color(0xff0000);
 
             cc.intax.edit_response(&cc.ctx.http,

@@ -441,12 +441,19 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                             ).await?;
                         },
                         Err(e) => {
-                            // Dashboard was created but DB save failed - delete the dashboard message
+                            // Database save failed - clean up everything
+                            info!("[{}] Database save failed, cleaning up channels and dashboard", guild_name);
                             let _ = dashboard_channel.delete_message(&cc.ctx.http, dashboard_msg_id).await;
+                            let _ = dashboard_channel.delete(&cc.ctx.http).await;
+                            let _ = queue_channel.delete(&cc.ctx.http).await;
+                            let _ = queue_vc_channel.delete(&cc.ctx.http).await;
+                            let _ = red_channel.delete(&cc.ctx.http).await;
+                            let _ = blue_channel.delete(&cc.ctx.http).await;
+                            let _ = category_id.delete(&cc.ctx.http).await;
                             
                             let error_embed = CE::new()
                                 .title("Failed to Save Group")
-                                .description(format!("Failed to save group to database: {}", e))
+                                .description(format!("Failed to save group to database: {}\n\nChannels were cleaned up.", e))
                                 .color(0xff0000);
 
                             cc.intax.edit_response(&cc.ctx.http,
@@ -456,9 +463,18 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                     }
                 },
                 Err(e) => {
+                    // Dashboard creation failed - clean up the created channels
+                    info!("[{}] Dashboard creation failed, cleaning up channels", guild_name);
+                    let _ = dashboard_channel.delete(&cc.ctx.http).await;
+                    let _ = queue_channel.delete(&cc.ctx.http).await;
+                    let _ = queue_vc_channel.delete(&cc.ctx.http).await;
+                    let _ = red_channel.delete(&cc.ctx.http).await;
+                    let _ = blue_channel.delete(&cc.ctx.http).await;
+                    let _ = category_id.delete(&cc.ctx.http).await;
+                    
                     let error_embed = CE::new()
                         .title("Dashboard Creation Failed")
-                        .description(format!("Failed to create dashboard: {}", e))
+                        .description(format!("Failed to create dashboard: {}\n\nChannels were cleaned up.", e))
                         .color(0xff0000);
 
                     cc.intax.edit_response(&cc.ctx.http,
@@ -483,75 +499,171 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 }
 
 /// Creates a category and all necessary group channels
+/// Flow: Create category -> Create dashboard -> Test message send -> Create other channels
+/// If dashboard message send fails, cleanup and abort
 pub async fn create_group_channels(
     ctx: &Context,
     guild_id: GuildId,
 ) -> Result<(CI, CI, CI, CI, CI, CI)> {
-    use serenity::all::{CreateChannel, EditChannel, PermissionOverwrite, PermissionOverwriteType, Permissions};
+    use serenity::all::{CreateChannel, CreateEmbed, CreateMessage, PermissionOverwrite, PermissionOverwriteType, Permissions};
     
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
     let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
     
-    // Get bot's role for permission overwrites
+    // Get bot's user ID and find bot's integration role "qBot"
     let bot_user_id = ctx.cache.current_user().id;
+    let bot_role = guild.roles.values()
+        .find(|r| r.name == "qBot" && r.managed)
+        .map(|r| r.id);
     
-    // Create category
+    // Step 1: Create category
     info!("[{}] Creating PUG Queue category", guild_name);
-    let category = guild_id.create_channel(&ctx.http,
+    let category = match guild_id.create_channel(&ctx.http,
         CreateChannel::new("PUG Queue")
             .kind(ChannelType::Category)
-    ).await?;
+    ).await {
+        Ok(cat) => cat,
+        Err(e) => {
+            error!("[{}] Failed to create category: {}", guild_name, e);
+            return Err(anyhow!("Failed to create category: {}", e));
+        }
+    };
     
     let category_id = category.id;
     
-    // Create dashboard text channel (read-only for @everyone)
+    // Step 2: Create dashboard text channel with proper permissions
     info!("[{}] Creating dashboard channel", guild_name);
-    let dashboard_channel = guild_id.create_channel(&ctx.http,
+    let mut permissions = vec![
+        // Deny @everyone from sending messages
+        PermissionOverwrite {
+            allow: Permissions::empty(),
+            deny: Permissions::SEND_MESSAGES,
+            kind: PermissionOverwriteType::Role(guild_id.everyone_role()),
+        },
+        // Allow bot user explicitly
+        PermissionOverwrite {
+            allow: Permissions::SEND_MESSAGES | Permissions::VIEW_CHANNEL | Permissions::EMBED_LINKS,
+            deny: Permissions::empty(),
+            kind: PermissionOverwriteType::Member(bot_user_id),
+        }
+    ];
+    
+    // Add bot's integration role if found
+    if let Some(role_id) = bot_role {
+        info!("[{}] Adding explicit permissions for qBot role", guild_name);
+        permissions.push(PermissionOverwrite {
+            allow: Permissions::SEND_MESSAGES | Permissions::VIEW_CHANNEL | Permissions::EMBED_LINKS,
+            deny: Permissions::empty(),
+            kind: PermissionOverwriteType::Role(role_id),
+        });
+    }
+    
+    let dashboard_channel = match guild_id.create_channel(&ctx.http,
         CreateChannel::new("dashboard")
             .kind(ChannelType::Text)
             .category(category_id)
             .topic("PUG queue dashboard - use buttons to join/leave")
-            .permissions(vec![
-                PermissionOverwrite {
-                    allow: Permissions::empty(),
-                    deny: Permissions::SEND_MESSAGES,
-                    kind: PermissionOverwriteType::Role(guild_id.everyone_role()),
-                }
-            ])
-    ).await?;
+            .permissions(permissions)
+    ).await {
+        Ok(ch) => ch,
+        Err(e) => {
+            error!("[{}] Failed to create dashboard channel: {}", guild_name, e);
+            // Clean up category
+            let _ = category_id.delete(&ctx.http).await;
+            return Err(anyhow!("Failed to create dashboard channel: {}", e));
+        }
+    };
     
-    // Create queue text channel
-    info!("[{}] Creating queue text channel", guild_name);
-    let queue_channel = guild_id.create_channel(&ctx.http,
+    // Step 3: Test dashboard message send - CRITICAL STEP
+    info!("[{}] Testing dashboard message send", guild_name);
+    let test_embed = CreateEmbed::new()
+        .title("PUG Dashboard")
+        .description("Setting up queue system...")
+        .color(0xffaa00);
+    
+    let test_msg = dashboard_channel.id.send_message(&ctx.http, 
+        CreateMessage::new().embed(test_embed)
+    ).await;
+    
+    if let Err(e) = test_msg {
+        error!("[{}] Failed to send dashboard message: {}", guild_name, e);
+        // Clean up dashboard channel and category
+        info!("[{}] Cleaning up dashboard channel and category", guild_name);
+        let _ = dashboard_channel.id.delete(&ctx.http).await;
+        let _ = category_id.delete(&ctx.http).await;
+        return Err(anyhow!("Failed to send dashboard message (bot may lack permissions): {}", e));
+    }
+    
+    // Delete the test message - we'll create the real one later
+    if let Ok(msg) = test_msg {
+        let _ = dashboard_channel.id.delete_message(&ctx.http, msg.id).await;
+    }
+    
+    info!("[{}] Dashboard channel verified, creating remaining channels", guild_name);
+    
+    // Step 4: Create remaining channels (only if dashboard works)
+    let queue_channel = match guild_id.create_channel(&ctx.http,
         CreateChannel::new("pug-add-up")
             .kind(ChannelType::Text)
             .category(category_id)
             .topic("Queue discussion and commands")
-    ).await?;
+    ).await {
+        Ok(ch) => ch,
+        Err(e) => {
+            error!("[{}] Failed to create queue text channel: {}", guild_name, e);
+            let _ = dashboard_channel.id.delete(&ctx.http).await;
+            let _ = category_id.delete(&ctx.http).await;
+            return Err(anyhow!("Failed to create queue text channel: {}", e));
+        }
+    };
     
-    // Create queue voice channel
-    info!("[{}] Creating queue voice channel", guild_name);
-    let queue_vc_channel = guild_id.create_channel(&ctx.http,
+    let queue_vc_channel = match guild_id.create_channel(&ctx.http,
         CreateChannel::new("Queue")
             .kind(ChannelType::Voice)
             .category(category_id)
-    ).await?;
+    ).await {
+        Ok(ch) => ch,
+        Err(e) => {
+            error!("[{}] Failed to create queue voice channel: {}", guild_name, e);
+            let _ = queue_channel.id.delete(&ctx.http).await;
+            let _ = dashboard_channel.id.delete(&ctx.http).await;
+            let _ = category_id.delete(&ctx.http).await;
+            return Err(anyhow!("Failed to create queue voice channel: {}", e));
+        }
+    };
     
-    // Create red team voice channel
-    info!("[{}] Creating red team voice channel", guild_name);
-    let red_channel = guild_id.create_channel(&ctx.http,
+    let red_channel = match guild_id.create_channel(&ctx.http,
         CreateChannel::new("🔴 RED")
             .kind(ChannelType::Voice)
             .category(category_id)
-    ).await?;
+    ).await {
+        Ok(ch) => ch,
+        Err(e) => {
+            error!("[{}] Failed to create red team channel: {}", guild_name, e);
+            let _ = queue_vc_channel.id.delete(&ctx.http).await;
+            let _ = queue_channel.id.delete(&ctx.http).await;
+            let _ = dashboard_channel.id.delete(&ctx.http).await;
+            let _ = category_id.delete(&ctx.http).await;
+            return Err(anyhow!("Failed to create red team channel: {}", e));
+        }
+    };
     
-    // Create blue team voice channel
-    info!("[{}] Creating blue team voice channel", guild_name);
-    let blue_channel = guild_id.create_channel(&ctx.http,
+    let blue_channel = match guild_id.create_channel(&ctx.http,
         CreateChannel::new("🔵 BLUE")
             .kind(ChannelType::Voice)
             .category(category_id)
-    ).await?;
+    ).await {
+        Ok(ch) => ch,
+        Err(e) => {
+            error!("[{}] Failed to create blue team channel: {}", guild_name, e);
+            let _ = red_channel.id.delete(&ctx.http).await;
+            let _ = queue_vc_channel.id.delete(&ctx.http).await;
+            let _ = queue_channel.id.delete(&ctx.http).await;
+            let _ = dashboard_channel.id.delete(&ctx.http).await;
+            let _ = category_id.delete(&ctx.http).await;
+            return Err(anyhow!("Failed to create blue team channel: {}", e));
+        }
+    };
     
     info!("[{}] Successfully created all group channels", guild_name);
     

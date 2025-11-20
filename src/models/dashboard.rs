@@ -251,14 +251,14 @@ impl Group {
     pub async fn dash_publish(&mut self, ctx: &Context, channel: CI) -> Result<(), Error>{
         // Create new dashboard message (don't check if it exists - caller should check)
         let channel_name = channel.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", channel));
-        let msg = channel.send_message(&ctx.http, self.dash_init().await.unwrap()).await;
+        let msg = channel.send_message(&ctx.http, self.dash_init().await?).await;
         if let Ok(msg) = msg {
             self.dashboard_msg = msg.id;
             info!("Created new dashboard in #{}", channel_name);
             Ok(())
         } else {
             error!("Failed to send dashboard message in #{}", channel_name);
-            Err(anyhow!("Failed to send game ready notification"))
+            Err(anyhow!("Failed to send dashboard message in #{}: {}", channel_name, msg.unwrap_err()))
         }
     }
 
