@@ -180,6 +180,20 @@ impl Rank {
         }
     }
 
+    /// Get ELO value from config, falling back to default if not set
+    pub async fn elo_from_config(&self, db: &Database, guild_id: u64) -> u32 {
+        let config_key = format!("rank_{}_elo", self.name().to_lowercase().replace(" ", "_"));
+        
+        if let Ok(Some(value)) = db.config.get_config_value(&config_key, guild_id).await {
+            if let Ok(elo) = value.parse::<u32>() {
+                return elo;
+            }
+        }
+        
+        // Fall back to default ELO
+        self.elo()
+    }
+
     /// Convert a Discord RoleId to a Rank enum using guild config
     /// Supports multiple Discord roles mapping to the same rank (EU/NA/Retired variants)
     pub async fn from_role_id(role_id: RoleId, db: &Database, guild_id: u64) -> Option<Rank> {

@@ -318,7 +318,7 @@ pub async fn cmd_rank_role_add(cc: &CC<'_>, rank_name: String, role_mention: Str
 }
 
 /// Parse role ID from mention format <@&123456> or raw ID
-fn parse_role_id(role_str: &str) -> Result<String> {
+pub fn parse_role_id(role_str: &str) -> Result<String> {
     if role_str.starts_with("<@&") && role_str.ends_with('>') {
         Ok(role_str[3..role_str.len()-1].to_string())
     } else {

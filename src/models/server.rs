@@ -261,7 +261,7 @@ impl Group {
         
         // Generate teams - guild_id is required for dashboard updates
         if let Some(gid) = guild_id {
-            self.generate_teams(ctx, gid).await;
+            self.generate_teams(ctx, gid, db).await;
         } else {
             warn!("Cannot generate teams: guild_id not provided");
         }
@@ -351,7 +351,7 @@ impl Group {
         if changes_made {
             if self.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= quota) {
                 // Re-generate teams for the hot session
-                self.generate_teams(ctx, guild_id).await;
+                self.generate_teams(ctx, guild_id, None).await;
             }
         }
 
@@ -553,7 +553,7 @@ impl Group {
         }
     }
 
-    pub async fn generate_teams(&mut self, ctx: &Context, guild_id: serenity::all::GuildId) {
+    pub async fn generate_teams(&mut self, ctx: &Context, guild_id: serenity::all::GuildId, db: Option<&crate::Database>) {
         use itertools::Itertools;
 
         let quota = self.quota as usize;
@@ -576,15 +576,18 @@ impl Group {
             return;
         }
 
-        // Extract player ELOs (use default ELO if rank is None)
-        let players_with_elo: Vec<(usize, u32)> = game.pool
-            .iter()
-            .enumerate()
-            .map(|(idx, gp)| {
-                let elo = gp.player.rank.map(|r| r.elo()).unwrap_or(30); // Default to Novice (30)
-                (idx, elo)
-            })
-            .collect();
+        // Extract player ELOs (use config-based ELO if available, otherwise default)
+        let mut players_with_elo: Vec<(usize, u32)> = Vec::new();
+        for (idx, gp) in game.pool.iter().enumerate() {
+            let elo = if let (Some(rank), Some(database)) = (gp.player.rank, db) {
+                rank.elo_from_config(database, guild_id.get()).await
+            } else if let Some(rank) = gp.player.rank {
+                rank.elo()
+            } else {
+                30 // Default to Novice (30)
+            };
+            players_with_elo.push((idx, elo));
+        }
 
         // Balance exactly quota players (first N in queue)
         let pool_size = quota.min(game.pool.len());

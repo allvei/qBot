@@ -106,6 +106,8 @@ impl EventHandler for Handler {
             cmd("setquota",    "Set the queue quota")                .op("quota", "Number of players required (2-100)", true),
             cmd("connectadd",  "Set server connection info")         .op("connect_info", "Server connect command (e.g., connect 1.1.1.1:27015)", true),
             cmd("clear",       "Clear all players from the queue"),
+            cmd("ranksetelo",  "Set custom ELO value for a rank")    .op("rank_role", "The rank role (mention or ID)", true)
+                                                                      .op("elo", "ELO value (1-100)", true),
         ];
 
         if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
@@ -327,6 +329,20 @@ impl EventHandler for Handler {
                             "clear" => {
                                 info();
                                 admin::cmd_clear_queue(&cmd_ctx, server).await
+                            }
+                            "ranksetelo" => {
+                                info();
+                                let rank_role = cdo.iter()
+                                    .find(|opt| opt.name == "rank_role")
+                                    .and_then(|opt| opt.value.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let elo = cdo.iter()
+                                    .find(|opt| opt.name == "elo")
+                                    .and_then(|opt| opt.value.as_str())
+                                    .and_then(|s| s.parse::<i64>().ok())
+                                    .unwrap_or(0);
+                                admin::cmd_rank_set_elo(&cmd_ctx, rank_role, elo).await
                             }
                             _ => {
                                 let response = CIR::Message(CIRM::new().content("Unknown command").ephemeral(true));
@@ -684,7 +700,7 @@ impl EventHandler for Handler {
                     };
 
                     if should_regenerate {
-                        group.generate_teams(&ctx, server).await;
+                        group.generate_teams(&ctx, server, Some(&self.database)).await;
                     }
                     group.queue_dash_update(&ctx, server.get()).await;
                 }
@@ -731,7 +747,7 @@ impl EventHandler for Handler {
                     };
 
                     if should_regenerate {
-                        group.generate_teams(&ctx, server).await;
+                        group.generate_teams(&ctx, server, Some(&self.database)).await;
                     }
                     group.queue_dash_update(&ctx, server.get()).await;
                 }

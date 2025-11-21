@@ -1116,7 +1116,7 @@ impl ConsoleHandler {
             // Check if there's a session with enough players
             if let Ok(session) = group.get_queue().await {
                 println!("Forcing team generation for guild {} group {} with {} players...", guild_id, group_id, session.pool.len());
-                group.generate_teams(ctx, serenity::model::id::GuildId::new(guild_id)).await;
+                group.generate_teams(ctx, serenity::model::id::GuildId::new(guild_id), None).await;
                 println!("Teams generated successfully!");
 
                 // Show the teams

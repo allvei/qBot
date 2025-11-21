@@ -659,7 +659,7 @@ impl Group {
 
         // Regenerate teams if needed (outside the session borrow scope)
         if should_regenerate_teams {
-            self.generate_teams(cc.ctx, cc.component.guild_id.unwrap()).await;
+            self.generate_teams(cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
         }
 
         // If player was in queue, we removed them above - update dashboard and return
@@ -752,7 +752,7 @@ impl Group {
 
         // Call the same team generation logic used by generate_teams
         // This ensures balanced teams using the BCH algorithm
-        self.generate_teams(cc.ctx, cc.component.guild_id.unwrap()).await;
+        self.generate_teams(cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
         
         // Update dashboard to show new teams
         self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
