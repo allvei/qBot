@@ -741,7 +741,10 @@ impl EventHandler for Handler {
             },
             VoiceStateUpdate::Moved => {
                 if group.channels.queue_vc == lookup_channel {
-                    info!("{} left the queue", discord_tag);
+                    let channel_name = ctx.cache.channel(lookup_channel)
+                        .map(|ch| ch.name.clone())
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    info!("[{}] -{} ", channel_name, discord_tag);
 
                     let quota = group.quota as usize;
                     // Get session index before mutable borrow
