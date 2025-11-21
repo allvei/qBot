@@ -445,7 +445,8 @@ pub async fn cmd_rank_role_list(cc: &CC<'_>, rank_name: Option<String>) -> Resul
         let rank = rank.unwrap();
         
         let role_ids = rank.role_ids(&cc.db, guild_id.get()).await;
-        description.push_str(&format!("**{}** ({} role(s)):\n", rank.name(), role_ids.len()));
+        let elo = rank.elo_from_config(&cc.db, guild_id.get()).await;
+        description.push_str(&format!("**{}** (ELO: {}, {} role(s)):\n", rank.name(), elo, role_ids.len()));
         
         if role_ids.is_empty() {
             description.push_str("  *No roles configured*\n");
@@ -475,7 +476,8 @@ pub async fn cmd_rank_role_list(cc: &CC<'_>, rank_name: Option<String>) -> Resul
 
         for rank in all_ranks {
             let role_ids = rank.role_ids(&cc.db, guild_id.get()).await;
-            description.push_str(&format!("**{}** ({} role(s)):\n", rank.name(), role_ids.len()));
+            let elo = rank.elo_from_config(&cc.db, guild_id.get()).await;
+            description.push_str(&format!("**{}** (ELO: {}, {} role(s)):\n", rank.name(), elo, role_ids.len()));
             
             if role_ids.is_empty() {
                 description.push_str("  *No roles configured*\n");
