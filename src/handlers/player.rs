@@ -393,7 +393,6 @@ pub async fn check_role(
             if let Some(guild_ref) = guild_id.to_guild_cached(&cc.ctx.cache) {
                 let perms = guild_ref.member_permissions(&member);
                 if perms.contains(Permissions::ADMINISTRATOR) || perms.contains(Permissions::MANAGE_GUILD) {
-                    info!("User {} has Discord admin/manage permissions", &cc.intax.user.name);
                     return Ok(true);
                 }
             }
