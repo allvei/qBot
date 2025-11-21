@@ -221,8 +221,8 @@ pub async fn cmd_role_remove(cc: &CC<'_>, role_type: String) -> Result<()> {
     Ok(())
 }
 
-/// `/rankroleadd` - Add an existing Discord role to a rank (supports multiple roles per rank)
-pub async fn cmd_rank_role_add(cc: &CC<'_>, rank_name: String, role_mention: String) -> Result<()> {
+/// `/rankroleadd` - Add Discord role(s) to a rank (supports multiple roles at once)
+pub async fn cmd_rank_role_add(cc: &CC<'_>, rank_name: String, role_mentions: String) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can configure rank roles!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -232,25 +232,117 @@ pub async fn cmd_rank_role_add(cc: &CC<'_>, rank_name: String, role_mention: Str
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     
     // Parse the rank
-    use crate::models::Rank;
-    let rank = match rank_name.to_lowercase().as_str() {
-        "beginner"                     => Rank::Beginner,
-        "newcomer"                     => Rank::Newcomer,
-        "novice"                       => Rank::Novice,
-        "apprentice"                   => Rank::Apprentice,
-        "journeyman"                   => Rank::Journeyman,
-        "expert"                       => Rank::Expert,
-        "master"                       => Rank::Master,
-        "masterelite" | "master elite" => Rank::MasterElite,
-        "grandmaster"                  => Rank::Grandmaster,
-        _ => {
-            let response = CIR::Message(CIRM::new()
-                .content("Invalid rank name. Valid ranks: Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, MasterElite, Grandmaster")
-                .ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
+    let rank = parse_rank_name(&rank_name)?;
+    if rank.is_none() {
+        let response = CIR::Message(CIRM::new()
+            .content("Invalid rank name. Valid ranks: Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, MasterElite, Grandmaster")
+            .ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+    let rank = rank.unwrap();
+
+    // Parse multiple role mentions (space-separated)
+    let role_mentions_vec: Vec<&str> = role_mentions.split_whitespace().collect();
+    let guild_roles = cc.ctx.http.get_guild_roles(guild_id).await?;
+    
+    let mut roles_to_add = Vec::new();
+    for role_mention in role_mentions_vec {
+        let role_id_str = parse_role_id(role_mention)?;
+        let role_id = match role_id_str.parse::<u64>() {
+            Ok(id) => serenity::all::RoleId::new(id),
+            Err(_) => {
+                let response = CIR::Message(CIRM::new()
+                    .content(format!("Invalid role format: {}. Please mention roles or provide role IDs.", role_mention))
+                    .ephemeral(true));
+                cc.intax.create_response(&cc.ctx.http, response).await?;
+                return Ok(());
+            }
+        };
+
+        // Verify the role exists
+        let role = match guild_roles.iter().find(|r| r.id == role_id) {
+            Some(r) => r,
+            None => {
+                let response = CIR::Message(CIRM::new()
+                    .content(format!("Role {} not found in this server.", role_mention))
+                    .ephemeral(true));
+                cc.intax.create_response(&cc.ctx.http, response).await?;
+                return Ok(());
+            }
+        };
+        
+        roles_to_add.push((role_id, role.name.clone()));
+    }
+
+    // Get existing role IDs for this rank
+    let mut existing_ids = rank.role_ids(&cc.db, guild_id.get()).await;
+    let mut added_roles = Vec::new();
+    let mut skipped_roles = Vec::new();
+    
+    for (role_id, role_name) in roles_to_add {
+        if existing_ids.contains(&role_id) {
+            skipped_roles.push(role_name);
+        } else {
+            existing_ids.push(role_id);
+            info!("Added role '{}' (ID: {}) to rank {} for guild {}", role_name, role_id, rank.name(), guild_id);
+            added_roles.push(role_name);
         }
-    };
+    }
+
+    // Save to database
+    let role_ids_str = existing_ids.iter()
+        .map(|id| id.get().to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    cc.db.config.set_config(rank.config_key(), &role_ids_str, guild_id.get()).await?;
+
+    let mut description = String::new();
+    if !added_roles.is_empty() {
+        description.push_str(&format!("**Added {} role(s) to rank {}:**\n", added_roles.len(), rank.name()));
+        for role in &added_roles {
+            description.push_str(&format!("  • {}\n", role));
+        }
+    }
+    if !skipped_roles.is_empty() {
+        description.push_str(&format!("\n**Skipped {} role(s) (already configured):**\n", skipped_roles.len()));
+        for role in &skipped_roles {
+            description.push_str(&format!("  • {}\n", role));
+        }
+    }
+    description.push_str(&format!("\nThis rank now has {} role(s) configured.", existing_ids.len()));
+
+    let success_embed = CE::new()
+        .title("Rank Roles Updated")
+        .description(description)
+        .color(0x00ff00);
+
+    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+
+    Ok(())
+}
+
+/// `/rankroleremove` - Remove a Discord role from a rank
+pub async fn cmd_rank_role_remove(cc: &CC<'_>, rank_name: String, role_mention: String) -> Result<()> {
+    if !check_role(cc, &Role::Admin).await? {
+        let response = CIR::Message(CIRM::new().content("Only admins can configure rank roles!").ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+
+    let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+    
+    // Parse the rank
+    let rank = parse_rank_name(&rank_name)?;
+    if rank.is_none() {
+        let response = CIR::Message(CIRM::new()
+            .content("Invalid rank name. Valid ranks: Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, MasterElite, Grandmaster")
+            .ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+    let rank = rank.unwrap();
 
     // Parse role ID from mention
     let role_id_str = parse_role_id(&role_mention)?;
@@ -265,33 +357,27 @@ pub async fn cmd_rank_role_add(cc: &CC<'_>, rank_name: String, role_mention: Str
         }
     };
 
-    // Verify the role exists
-    let guild_roles = cc.ctx.http.get_guild_roles(guild_id).await?;
-    let role = match guild_roles.iter().find(|r| r.id == role_id) {
-        Some(r) => r,
-        None => {
-            let response = CIR::Message(CIRM::new()
-                .content("Role not found in this server.")
-                .ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
-        }
-    };
-
     // Get existing role IDs for this rank
     let mut existing_ids = rank.role_ids(&cc.db, guild_id.get()).await;
     
-    // Check if this role is already configured for this rank
-    if existing_ids.contains(&role_id) {
+    // Check if this role is configured for this rank
+    if !existing_ids.contains(&role_id) {
         let response = CIR::Message(CIRM::new()
-            .content(format!("Role '{}' is already configured for rank {}!", role.name, rank.name()))
+            .content(format!("Role is not configured for rank {}!", rank.name()))
             .ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
-    // Add the new role ID
-    existing_ids.push(role_id);
+    // Get role name for display
+    let guild_roles = cc.ctx.http.get_guild_roles(guild_id).await?;
+    let role_name = guild_roles.iter()
+        .find(|r| r.id == role_id)
+        .map(|r| r.name.clone())
+        .unwrap_or_else(|| format!("Unknown ({})", role_id));
+
+    // Remove the role ID
+    existing_ids.retain(|id| *id != role_id);
     let role_ids_str = existing_ids.iter()
         .map(|id| id.get().to_string())
         .collect::<Vec<_>>()
@@ -300,14 +386,14 @@ pub async fn cmd_rank_role_add(cc: &CC<'_>, rank_name: String, role_mention: Str
     // Save to database
     cc.db.config.set_config(rank.config_key(), &role_ids_str, guild_id.get()).await?;
 
-    info!("Added role '{}' (ID: {}) to rank {} for guild {}", role.name, role_id, rank.name(), guild_id);
+    info!("Removed role '{}' (ID: {}) from rank {} for guild {}", role_name, role_id, rank.name(), guild_id);
 
     let success_embed = CE::new()
-        .title("Rank Role Added")
+        .title("Rank Role Removed")
         .description(format!(
-            "Successfully added role '{}' to rank **{}**.\n\n\
+            "Successfully removed role '{}' from rank **{}**.\n\n\
             This rank now has {} role(s) configured.",
-            role.name, rank.name(), existing_ids.len()
+            role_name, rank.name(), existing_ids.len()
         ))
         .color(0x00ff00);
 
@@ -315,6 +401,108 @@ pub async fn cmd_rank_role_add(cc: &CC<'_>, rank_name: String, role_mention: Str
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
     Ok(())
+}
+
+/// `/rankrolelist` - List all role mappings for a rank
+pub async fn cmd_rank_role_list(cc: &CC<'_>, rank_name: Option<String>) -> Result<()> {
+    if !check_role(cc, &Role::Admin).await? {
+        let response = CIR::Message(CIRM::new().content("Only admins can view rank role configurations!").ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+
+    let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+    let guild_roles = cc.ctx.http.get_guild_roles(guild_id).await?;
+
+    let mut description = String::new();
+
+    // If specific rank provided, show only that rank
+    if let Some(rank_name_str) = rank_name {
+        let rank = parse_rank_name(&rank_name_str)?;
+        if rank.is_none() {
+            let response = CIR::Message(CIRM::new()
+                .content("Invalid rank name. Valid ranks: Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, MasterElite, Grandmaster")
+                .ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+        let rank = rank.unwrap();
+        
+        let role_ids = rank.role_ids(&cc.db, guild_id.get()).await;
+        description.push_str(&format!("**{}** ({} role(s)):\n", rank.name(), role_ids.len()));
+        
+        if role_ids.is_empty() {
+            description.push_str("  *No roles configured*\n");
+        } else {
+            for role_id in role_ids {
+                let role_name = guild_roles.iter()
+                    .find(|r| r.id == role_id)
+                    .map(|r| r.name.clone())
+                    .unwrap_or_else(|| format!("Unknown ({})", role_id));
+                description.push_str(&format!("  • {} (<@&{}>)\n", role_name, role_id));
+            }
+        }
+    } else {
+        // Show all ranks
+        use crate::models::Rank;
+        let all_ranks = [
+            Rank::Beginner,
+            Rank::Newcomer,
+            Rank::Novice,
+            Rank::Apprentice,
+            Rank::Journeyman,
+            Rank::Expert,
+            Rank::Master,
+            Rank::MasterElite,
+            Rank::Grandmaster,
+        ];
+
+        for rank in all_ranks {
+            let role_ids = rank.role_ids(&cc.db, guild_id.get()).await;
+            description.push_str(&format!("**{}** ({} role(s)):\n", rank.name(), role_ids.len()));
+            
+            if role_ids.is_empty() {
+                description.push_str("  *No roles configured*\n");
+            } else {
+                for role_id in role_ids {
+                    let role_name = guild_roles.iter()
+                        .find(|r| r.id == role_id)
+                        .map(|r| r.name.clone())
+                        .unwrap_or_else(|| format!("Unknown ({})", role_id));
+                    description.push_str(&format!("  • {} (<@&{}>)\n", role_name, role_id));
+                }
+            }
+            description.push('\n');
+        }
+    }
+
+    let embed = CE::new()
+        .title("Rank Role Mappings")
+        .description(description)
+        .color(0x3498db);
+
+    let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+
+    Ok(())
+}
+
+/// Parse rank name to Rank enum
+fn parse_rank_name(rank_name: &str) -> Result<Option<crate::models::Rank>> {
+    use crate::models::Rank;
+    let rank = match rank_name.to_lowercase().as_str() {
+        "beginner"                     => Some(Rank::Beginner),
+        "newcomer"                     => Some(Rank::Newcomer),
+        "novice"                       => Some(Rank::Novice),
+        "apprentice"                   => Some(Rank::Apprentice),
+        "journeyman"                   => Some(Rank::Journeyman),
+        "expert"                       => Some(Rank::Expert),
+        "master"                       => Some(Rank::Master),
+        "masterelite" | "master elite" => Some(Rank::MasterElite),
+        "grandmaster"                  => Some(Rank::Grandmaster),
+        _ => None,
+    };
+    Ok(rank)
 }
 
 /// Parse role ID from mention format <@&123456> or raw ID

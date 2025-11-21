@@ -93,9 +93,13 @@ impl EventHandler for Handler {
             cmd("rolelink",   "Link existing runner and admin roles").op("runner_role", "Runner role to link", false)
                                                                       .op("admin_role",  "Admin role to link",  false),
             cmd("roleremove", "Remove role configuration")           .op("role_type",   "Role type: runner, admin, or both", true),
-            cmd("rankroleadd", "Add a Discord role to a rank (supports multiple roles per rank)")
+            cmd("rankroleadd", "Add Discord role(s) to a rank (supports multiple roles)")
                                                                       .op("rank", "Rank name (e.g., Journeyman)", true)
-                                                                      .op("role", "Discord role to add", true),
+                                                                      .op("role", "Discord role(s) to add (space-separated)", true),
+            cmd("rankroleremove", "Remove a Discord role from a rank")
+                                                                      .op("rank", "Rank name (e.g., Journeyman)", true)
+                                                                      .op("role", "Discord role to remove", true),
+            cmd("rankrolelist", "List all role mappings for ranks") .op("rank", "Rank name to filter (optional)", false),
             
             // Group commands
             cmd("groupadd",    "Create a new category with all group channels"),
@@ -233,6 +237,28 @@ impl EventHandler for Handler {
                             .unwrap_or("")
                             .to_string();
                         pf_pug_bot::handlers::role_commands::cmd_rank_role_add(&cmd_ctx, rank_name, role_mention).await
+                    }
+                    "rankroleremove" => {
+                        info();
+                        let rank_name = cdo.iter()
+                            .find(|opt| opt.name == "rank")
+                            .and_then(|opt| opt.value.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let role_mention = cdo.iter()
+                            .find(|opt| opt.name == "role")
+                            .and_then(|opt| opt.value.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        pf_pug_bot::handlers::role_commands::cmd_rank_role_remove(&cmd_ctx, rank_name, role_mention).await
+                    }
+                    "rankrolelist" => {
+                        info();
+                        let rank_name = cdo.iter()
+                            .find(|opt| opt.name == "rank")
+                            .and_then(|opt| opt.value.as_str())
+                            .map(|s| s.to_string());
+                        pf_pug_bot::handlers::role_commands::cmd_rank_role_list(&cmd_ctx, rank_name).await
                     }
                     "setquota" => {
                         info();
