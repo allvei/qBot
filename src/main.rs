@@ -90,28 +90,28 @@ impl EventHandler for Handler {
             
             // Role commands
             cmd("roleadd",    "Create runner and admin roles"),
-            cmd("rolelink",   "Link existing runner and admin roles").op("runner_role", "Runner role to link", false)
-                                                                      .op("admin_role",  "Admin role to link",  false),
-            cmd("roleremove", "Remove role configuration")           .op("role_type",   "Role type: runner, admin, or both", true),
-            cmd("rankroleadd", "Add Discord role(s) to a rank (supports multiple roles)")
-                                                                      .op("rank", "Rank name (e.g., Journeyman)", true)
-                                                                      .op("role", "Discord role(s) to add (space-separated)", true),
-            cmd("rankroleremove", "Remove Discord role(s) from a rank (supports multiple roles)")
-                                                                      .op("rank", "Rank name (e.g., Journeyman)", true)
-                                                                      .op("role", "Discord role(s) to remove (space-separated)", true),
-            cmd("rankrolelist", "List all role mappings for ranks") .op("rank", "Rank name to filter (optional)", false),
-            
+            cmd("rolelink",   "Link existing runner and admin roles")                        .op("runner_role", "Runner role to link", false)
+                                                                                             .op("admin_role",  "Admin role to link",  false),
+            cmd("roledel", "Remove role configuration")                                   .op("role_type",   "Role type: runner, admin, or both", true),
+
+            // Rank commands
+            cmd("rankadd",    "Add Discord role(s) to a rank (supports multiple roles)")        .op("rank", "Rank name", true)
+                                                                                             .op("role", "Discord roles to add", true),
+            cmd("rankdel", "Remove Discord role(s) from a rank (supports multiple roles)").op("rank", "Rank name", true)
+                                                                                             .op("role", "Discord roles to remove", true),
+            cmd("ranklist",   "List all role mappings for ranks")                              .op("rank", "Rank name to filter (optional)", false),
+
             // Group commands
             cmd("groupadd",    "Create a new category with all group channels"),
             cmd("grouplink",   "Link existing channels to a group"),
             cmd("groupremove", "Remove a group")                     .op("group_id", "Group ID to remove (defaults to current channel's group)", false),
-            
+
             // Admin commands
-            cmd("setquota",    "Set the queue quota")                .op("quota", "Number of players required (2-100)", true),
-            cmd("connectadd",  "Set server connection info")         .op("connect_info", "Server connect command (e.g., connect 1.1.1.1:27015)", true),
+            cmd("quotaset",    "Set the queue quota")            .op("quota", "Number of players required (2-100)", true),
+            cmd("connectadd",  "Set server connection info")     .op("connect_info", "Server connect command (e.g., connect 192.168.10.10:27015)", true),
             cmd("clear",       "Clear all players from the queue"),
-            cmd("ranksetelo",  "Set custom ELO value for a rank")    .op("rank_role", "The rank role (mention or ID)", true)
-                                                                      .op("elo", "ELO value (1-100)", true),
+            cmd("rankelo",     "Set custom ELO value for a rank").op("rank_role", "The rank role (mention or ID)", true)
+                                                                 .op("elo", "ELO value (1-100)", true),
         ];
 
         if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
@@ -260,7 +260,7 @@ impl EventHandler for Handler {
                             .map(|s| s.to_string());
                         pf_pug_bot::handlers::role_commands::cmd_rank_role_list(&cmd_ctx, rank_name).await
                     }
-                    "setquota" => {
+                    "quotaset" => {
                         info();
                         let quota = cdo.iter()
                             .find(|opt| opt.name == "quota")

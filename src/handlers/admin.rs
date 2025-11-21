@@ -1940,11 +1940,11 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
     Ok(())
 }
 
-/// `/setquota` - Set the queue quota for the current group
+/// `/quotaset` - Set the queue quota for the current group
 ///
 /// * `quota` - The new quota value (number of players required to start a game)
 pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
-    info!("Processing /setquota quota: {}", quota);
+    info!("Processing /quotaset quota: {}", quota);
 
     // Check admin permissions
     if !check_role(cc, &Role::Admin).await? {
@@ -2534,12 +2534,12 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
 
     // Validate ELO range (1-100)
-    if elo < 1 || elo > 100 {
+    if elo < 1 {
         let error_embed = CE::new()
             .title("Invalid ELO Value")
-            .description("ELO must be between 1 and 100")
+            .description("ELO must be above 0")
             .color(0xff0000);
-
+        info!("Invalid ELO value: {}", elo);
         let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
