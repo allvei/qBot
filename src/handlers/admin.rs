@@ -649,7 +649,7 @@ pub async fn create_group_channels(
     };
     
     let blue_channel = match guild_id.create_channel(&ctx.http,
-        CreateChannel::new("🔵 BLUE")
+        CreateChannel::new("🔵 BLU")
             .kind(ChannelType::Voice)
             .category(category_id)
     ).await {
@@ -2045,11 +2045,11 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
     Ok(())
 }
 
-/// `/addconnect` - Set server connection info for the current group
+/// `/connectadd` - Set server connection info for the current group
 ///
 /// * `connect_info` - The server connect command (e.g., "connect 1.1.1.1:1234; password 1234")
 pub async fn cmd_add_connect(cc: &CC<'_>, connect_info: String) -> Result<()> {
-    info!("Processing /addconnect");
+    info!("Processing /connectadd");
 
     // Check admin permissions
     if !check_role(cc, &Role::Admin).await? {
@@ -2461,6 +2461,58 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &ComponentI
             ).await?;
         }
     }
+
+    Ok(())
+}
+
+/// `/clear` - Clear all players from the queue
+pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
+    info!("Processing /clear command");
+
+    // Check admin permissions
+    if !check_role(cc, &Role::Admin).await? {
+        let response = CIR::Message(CIRM::new().content("Only admins can clear the queue!").ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+
+    // Get the group from the current channel
+    let group = match server.get_group(cc.intax.channel_id) {
+        Ok(g) => g,
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("Group Not Found")
+                .description(format!("No queue group found in this channel: {}", e))
+                .color(0xff0000);
+
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+
+    // Get the idle session and clear it
+    let player_count = match group.get_queue().await {
+        Ok(session) => {
+            let count = session.pool.len();
+            session.pool.clear();
+            count
+        },
+        Err(_) => 0
+    };
+
+    // Update the dashboard
+    group.queue_dash_update(cc.ctx, guild_id.get()).await;
+
+    let success_embed = CE::new()
+        .title("Queue Cleared")
+        .description(format!("Removed {} player(s) from the queue.", player_count))
+        .color(0x00ff00);
+
+    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
 
     Ok(())
 }
