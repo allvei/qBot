@@ -638,7 +638,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         queue.add_player(player, rank);
 
         if group.is_quota() {
-            group.hot(cc.ctx, Some(guild_id), Some(&cc.db)).await?;
+            group.hot(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await?;
         }
 
         group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;

@@ -104,6 +104,8 @@ impl EventHandler for Handler {
             
             // Admin commands
             cmd("setquota",    "Set the queue quota")                .op("quota", "Number of players required (2-100)", true),
+            cmd("connectadd",  "Set server connection info")         .op("connect_info", "Server connect command (e.g., connect 1.1.1.1:27015)", true),
+            cmd("clear",       "Clear all players from the queue"),
         ];
 
         if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
@@ -239,7 +241,7 @@ impl EventHandler for Handler {
                             .unwrap_or(0);
                         admin::cmd_set_quota(&cmd_ctx, quota).await
                     }
-                    "addconnect" => {
+                    "connectadd" => {
                         info();
                         let connect_info = cdo.iter()
                             .find(|opt| opt.name == "connect_info")
@@ -321,6 +323,10 @@ impl EventHandler for Handler {
                                     }
                                 }
                                 Ok(())
+                            }
+                            "clear" => {
+                                info();
+                                admin::cmd_clear_queue(&cmd_ctx, server).await
                             }
                             _ => {
                                 let response = CIR::Message(CIRM::new().content("Unknown command").ephemeral(true));
@@ -566,6 +572,7 @@ impl EventHandler for Handler {
                     ctx:       &ctx,
                     component: &itx,
                     db:        self.database.clone(),
+                    manager:   &self.manager,
                 };
 
                 // Handle different button actions based on custom_id
@@ -776,10 +783,17 @@ impl EventHandler for Handler {
                     if group.channels.queue_vc == new.channel_id.unwrap() {
                         // Check if player is already in any session and mark them as in VC
                         if let Ok(session) = group.get_user_session(user_id).await {
+                            let was_hot = session.is_hot();
                             if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
+                                let was_missing = !player.in_queue_vc;
                                 player.in_queue_vc = true;
-                                // Don't update dashboard here - pull() will handle it
-                                // This avoids multiple rapid updates when players rejoin after match end
+                                
+                                // Update dashboard if player was missing in a hot session
+                                // This removes them from the "Missing players" list
+                                if was_hot && was_missing {
+                                    info!("{} joined VC during hot session, updating dashboard", discord_tag);
+                                    group.queue_dash_update(&ctx, server.get()).await;
+                                }
                             }
                         } else {
                             // Player not in session yet, add them
@@ -791,7 +805,7 @@ impl EventHandler for Handler {
                                 match get_or_assign_player_rank(&ctx, &self.database, server, user_id).await {
                                     Ok(rank) => {
                                         // Use queue_player_with_vc_status to set in_queue_vc BEFORE quota check/notification
-                                        if let Err(e) = group.queue_player_with_vc_status(player.clone(), rank, &ctx, Some(server), Some(&self.database), true).await {
+                                        if let Err(e) = group.queue_player_with_vc_status(player.clone(), rank, &ctx, Some(server), Some(&self.database), Some(self.manager.clone()), true).await {
                                             error!("Failed to add player to queue: {}", e);
                                         }
 
@@ -804,7 +818,7 @@ impl EventHandler for Handler {
                             }
                         }
 
-                        if group.check_hot_timeout(&ctx).await {
+                        if group.check_hot_timeout(&ctx, server).await {
                             info!("Hot session timeout detected, updating dashboard");
                             group.queue_dash_update(&ctx, server.get()).await;
                         }
@@ -949,7 +963,7 @@ impl Handler {
 
                 // NOW check quota once after all players added
                 if group.is_quota() {
-                    if let Err(e) = group.hot(ctx, Some(guild.id), Some(&self.database)).await {
+                    if let Err(e) = group.hot(ctx, Some(guild.id), Some(&self.database), Some(self.manager.clone())).await {
                         error!("Failed to transition to hot: {}", e);
                     }
                 }

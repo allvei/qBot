@@ -1064,11 +1064,11 @@ impl ConsoleHandler {
         ).await {
             Ok(_) => {
                 println!("Created new group configuration for guild {}", guild_id);
-                println!("   Queue Channel: {}", queue_id);
+                println!("   Queue Channel: {}",     queue_id);
                 println!("   Dashboard Channel: {}", dashboard_id);
-                println!("   Red Team Channel: {}", red_id);
+                println!("   Red Team Channel: {}",  red_id);
                 println!("   Blue Team Channel: {}", blue_id);
-                println!("   Game Quota: {}", quota);
+                println!("   Game Quota: {}",        quota);
             },
             Err(e) => {
                 println!("Failed to create group configuration: {}", e);
@@ -1196,15 +1196,15 @@ impl ConsoleHandler {
             .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
 
         if let Some(ctx) = &self.ctx {
-            let manager = self.manager.lock().await;
-            let server = manager.servers.iter().find(|s| s.guild_id == guild_id)
+            let mut manager = self.manager.lock().await;
+            let server = manager.servers.iter_mut().find(|s| s.guild_id == guild_id)
                 .ok_or(format!("Server not found for guild ID: {}", guild_id))?;
 
-            let group = server.groups.iter().find(|g| g.group_id == group_id)
+            let group = server.groups.iter_mut().find(|g| g.group_id == group_id)
                 .ok_or(format!("Group {} not found for guild {}", group_id, guild_id))?;
 
             println!("Testing notify method for guild {} group {}...", guild_id, group_id);
-            group.notify(ctx).await;
+            group.notify(ctx, serenity::model::id::GuildId::new(guild_id)).await;
             println!("Notify method called successfully!");
             println!("   Check the queue chat channel for the notification message.");
         } else {
@@ -1353,7 +1353,7 @@ impl ConsoleHandler {
 
             if let Ok(_session) = group.get_queue().await {
                 println!("Forcing session to Hot status...");
-                group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None).await?;
+                group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None, Some(self.manager.clone())).await?;
                 println!("Session is now Hot!");
                 println!("   Teams have been generated and players have been notified.");
             } else {
@@ -1376,7 +1376,7 @@ impl ConsoleHandler {
             let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
             println!("Forcing push to team channels...");
-            match group.push(ctx).await {
+            match group.push(ctx, serenity::model::id::GuildId::new(guild_id)).await {
                 Ok(_) => {
                     println!("Players pushed to team channels!");
                     println!("   Session is now Live.");
@@ -1402,7 +1402,7 @@ impl ConsoleHandler {
             let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
             println!("Forcing pull back to queue...");
-            match group.pull(ctx, serenity::model::id::GuildId::new(guild_id), &self.database).await {
+            match group.pull(ctx, serenity::model::id::GuildId::new(guild_id), &self.database, Some(self.manager.clone())).await {
                 Ok(_) => {
                     println!("Players pulled back to queue!");
                     println!("   Session reset to Idle.");
@@ -1461,7 +1461,7 @@ impl ConsoleHandler {
             {
                 let mut manager = self.manager.lock().await;
                 let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-                group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None).await?;
+                group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None, Some(self.manager.clone())).await?;
                 println!("   Session is Hot, teams generated\n");
             }
 
@@ -1472,7 +1472,7 @@ impl ConsoleHandler {
             {
                 let mut manager = self.manager.lock().await;
                 let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-                match group.push(ctx).await {
+                match group.push(ctx, serenity::model::id::GuildId::new(guild_id)).await {
                     Ok(_) => println!("   Players pushed, session is Live\n"),
                     Err(e) => println!("     Push failed: {}\n", e),
                 }
@@ -1485,7 +1485,7 @@ impl ConsoleHandler {
             {
                 let mut manager = self.manager.lock().await;
                 let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-                match group.pull(ctx, serenity::model::id::GuildId::new(guild_id), &self.database).await {
+                match group.pull(ctx, serenity::model::id::GuildId::new(guild_id), &self.database, Some(self.manager.clone())).await {
                     Ok(_) => println!("   Players pulled back, session reset to Idle\n"),
                     Err(e) => println!("     Pull failed: {}\n", e),
                 }

@@ -31,6 +31,7 @@ pub struct ComponentContext<'a> {
     pub ctx:       &'a Context,
     pub component: &'a ComponentInteraction,
     pub db:        Arc<Database>,
+    pub manager:   &'a Arc<Mutex<GameManager>>,
 }
 
 impl CommandContext<'_> {
@@ -169,7 +170,7 @@ impl Rank {
         match self {
             Rank::Beginner    => 10,
             Rank::Newcomer    => 30,
-            Rank::Novice      => 45,
+            Rank::Novice      => 40,
             Rank::Apprentice  => 50,
             Rank::Journeyman  => 65,
             Rank::Expert      => 75,

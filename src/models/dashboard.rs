@@ -14,8 +14,8 @@ use crate::models::{ComponentContext as CC, DashboardQueueKey, Group, Session, S
 macro_rules! list_players {
     ($desc:ident, $team:ident) => {
         for (i, player) in $team.iter().enumerate() {
-            let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
-            $desc.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
+            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
+            $desc.push_str(&format!("{}<@{}>\n", elo_str, player.player.discord_id));
         }
     };
 }
@@ -25,8 +25,8 @@ fn format_team_field(team: &[crate::models::SessionPlayer]) -> String {
     team.iter()
         .enumerate()
         .map(|(i, player)| {
-            let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
-            format!("{}. {}<@{}>", i + 1, elo_str, player.player.discord_id)
+            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
+            format!("{}<@{}>", elo_str, player.player.discord_id)
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -298,10 +298,10 @@ impl Group {
 
                         description.push_str("**Missing players:**\n");
                         for player in players_never_joined {
-                            let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
+                            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
                             description.push_str(&format!("  • {}<@{}>\n", elo_str, player.player.discord_id));
                         }
-                        description.push_str("\n");
+                        description.push_str("\n\n");
                     }
                 } else {
                     // For Push/Live/Pull sessions, just show status
@@ -340,21 +340,21 @@ impl Group {
 
                         description.push_str("**Missing players:**\n");
                         for player in players_never_joined {
-                            let elo_str = player.player.rank.map(|r| format!("**[{}]** ", r.elo())).unwrap_or_default();
+                            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
                             description.push_str(&format!("  • {}<@{}>\n", elo_str, player.player.discord_id));
                         }
-                        description.push_str("\n");
+                        description.push_str("\n\n");
                     }
                     // Note: Next Queue for overflow will be shown after teams
                 } else {
                     // Session is Idle - show normal queue
                     let queue_players = current_session.pool.len();
-                    description.push_str(&format!("**Queue ({}/{}):**\n", queue_players, quota));
+                    description.push_str(&format!("**Queue ({}/{})**\n", queue_players, quota));
 
                     if queue_players > 0 {
                         for (i, player) in current_session.pool.iter().enumerate() {
                             let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
-                            description.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
+                            description.push_str(&format!("{}<@{}>\n", elo_str, player.player.discord_id));
                         }
                     } else {
                         description.push_str("*No players in queue. Join to get started!*\n");
@@ -362,7 +362,7 @@ impl Group {
                     description.push('\n');
                 }
             } else {
-                description.push_str("**Queue status**\n*No active games. Join the queue to get started!*\n\n");
+                description.push_str("**Queue status**\n* Empty. Join to get started!*\n\n");
             }
         }
 
@@ -370,7 +370,15 @@ impl Group {
 
         // Add connect info if available
         if let Some(ref connect_info) = self.connect_info {
-            embed = embed.field("🎮 JOIN SERVER", format!("```{}```", connect_info), false);
+            let mut field_value = format!("```{}```", connect_info);
+            
+            // Try to extract IP:PORT and create a Steam link
+            // Discord doesn't support steam:// protocol links, so display as copyable text
+            if let Some(steam_link) = Self::extract_steam_link(connect_info) {
+                field_value.push_str(&format!("\n**Steam Link:**\n```{}```", steam_link));
+            }
+            
+            embed = embed.field("Server connect info:", field_value, false);
         }
 
         // Add team fields for inactive sessions with enough players
@@ -378,18 +386,18 @@ impl Group {
             let queue_players = current_session.pool.len();
             if queue_players >= quota {
                 let (team_red, team_blu) = get_sorted_teams(&current_session.pool, quota);
-                embed = embed.field("🔴 RED",  format_team_field(&team_red), true);
-                embed = embed.field("🔵 BLUE", format_team_field(&team_blu), true);
+                embed = embed.field("🔴 RED", format_team_field(&team_red), true);
+                embed = embed.field("🔵 BLU", format_team_field(&team_blu), true);
 
                 // Show fatkidded players AFTER teams if there are overflow players
                 if current_session.is_hot() && queue_players > quota {
                     let overflow_count = queue_players - quota;
-                    let mut fatkidded = format!("**Fatkidded ({}/{}):**\n", overflow_count, quota);
+                    let mut fatkid = format!("**Waiting for next game ({}/{}):**\n", overflow_count, quota);
                     for (i, player) in current_session.pool.iter().skip(quota).enumerate() {
                         let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
-                        fatkidded.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
+                        fatkid.push_str(&format!("{}<@{}>\n", elo_str, player.player.discord_id));
                     }
-                    embed = embed.field("\u{200B}", fatkidded, false); // Full-width field
+                    embed = embed.field("\u{200B}", fatkid, false); // Full-width field
                 }
             }
         }
@@ -398,8 +406,8 @@ impl Group {
         for session in &actives {
             if session.pool.len() >= quota {
                 let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
-                embed = embed.field("🔴 RED",  format_team_field(&team_red), true);
-                embed = embed.field("🔵 BLUE", format_team_field(&team_blu), true);
+                embed = embed.field("🔴 RED", format_team_field(&team_red), true);
+                embed = embed.field("🔵 BLU", format_team_field(&team_blu), true);
             }
         }
 
@@ -407,12 +415,12 @@ impl Group {
         if !actives.is_empty() {
             if let Some(next_session) = inactives.first() {
                 if !next_session.pool.is_empty() {
-                    let mut fatkidded = format!("**Fatkidded ({}/{}):**\n", next_session.pool.len(), quota);
+                    let mut fatkid = format!("**Waiting for next game ({}/{}):**\n", next_session.pool.len(), quota);
                     for (i, player) in next_session.pool.iter().enumerate() {
                         let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
-                        fatkidded.push_str(&format!("{}. {}<@{}>\n", i + 1, elo_str, player.player.discord_id));
+                        fatkid.push_str(&format!("{}<@{}>\n", elo_str, player.player.discord_id));
                     }
-                    embed = embed.field("\u{200B}", fatkidded, false); // Full-width field
+                    embed = embed.field("\u{200B}", fatkid, false); // Full-width field
                 }
             }
         }
@@ -420,6 +428,85 @@ impl Group {
         let buttons = self.create_dashboard_buttons().await.unwrap();
 
         Ok((embed, buttons))
+    }
+
+    /// Extract IP:PORT and password from connect info and create a steam:// link
+    /// Supports formats like:
+    /// - "connect 1.1.1.1:27015"
+    /// - "1.1.1.1:27015"
+    /// - "connect 1.1.1.1:27015; password 1234"
+    /// - "1.1.1.1:27015; password mypass"
+    fn extract_steam_link(connect_info: &str) -> Option<String> {
+        // Manual parsing without regex crate dependency
+        
+        // Find IP:PORT pattern
+        let mut ip_start = None;
+        let mut ip_end = None;
+        
+        let chars: Vec<char> = connect_info.chars().collect();
+        let mut i = 0;
+        
+        while i < chars.len() {
+            // Look for digit that could start an IP address
+            if chars[i].is_ascii_digit() {
+                let start = i;
+                let mut dots = 0;
+                let mut has_port = false;
+                
+                // Try to match IP:PORT pattern
+                while i < chars.len() {
+                    if chars[i].is_ascii_digit() {
+                        i += 1;
+                    } else if chars[i] == '.' {
+                        dots += 1;
+                        i += 1;
+                    } else if chars[i] == ':' && dots == 3 {
+                        has_port = true;
+                        i += 1;
+                        // Continue to parse port
+                        while i < chars.len() && chars[i].is_ascii_digit() {
+                            i += 1;
+                        }
+                        break;
+                    } else {
+                        break;
+                    }
+                }
+                
+                if dots == 3 && has_port {
+                    ip_start = Some(start);
+                    ip_end = Some(i);
+                    break;
+                }
+            }
+            i += 1;
+        }
+        
+        let ip_port = if let (Some(start), Some(end)) = (ip_start, ip_end) {
+            connect_info[start..end].to_string()
+        } else {
+            return None;
+        };
+        
+        // Look for password
+        let password = if let Some(pwd_pos) = connect_info.to_lowercase().find("password") {
+            let after_password = &connect_info[pwd_pos + 8..].trim_start();
+            // Extract password (everything after "password" until semicolon, newline, or end)
+            after_password
+                .split(&[';', '\n', '\r'][..])
+                .next()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        };
+        
+        // Build Steam link
+        if let Some(pwd) = password {
+            Some(format!("steam://connect/{}/{}", ip_port, pwd))
+        } else {
+            Some(format!("steam://connect/{}", ip_port))
+        }
     }
 
     /// Initializes a dashboard based on current group state
@@ -611,7 +698,7 @@ impl Group {
                     Ok(rank) => {
                         // Refresh player rank from current Discord roles before queueing
                         player.rank = Some(rank);
-                        if let Err(e) = self.queue_player(player, rank, cc.ctx, Some(guild_id), Some(&cc.db)).await {
+                        if let Err(e) = self.queue_player(player, rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
                             warn!("Failed to queue player: {}", e);
                         }
                     },
@@ -697,7 +784,7 @@ impl Group {
         cc.defer_update().await?;
 
         // Move players to team channels (Hot → Push → Live)
-        match self.push(cc.ctx).await {
+        match self.push(cc.ctx, cc.component.guild_id.unwrap()).await {
             Ok(_) => {
                 info!("Players moved to team channels and game is now live");
                 // Update dashboard to reflect Live status
@@ -727,7 +814,7 @@ impl Group {
         let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
         // Move players back to queue channel (Hot/Live → Pull → Idle)
-        match self.pull(cc.ctx, guild_id, &cc.db).await {
+        match self.pull(cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await {
             Ok(_) => {
                 info!("Match ended, players moved back to queue");
                 Ok(())
