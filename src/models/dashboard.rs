@@ -32,11 +32,20 @@ fn format_team_field(team: &[crate::models::SessionPlayer]) -> String {
         .join("\n")
 }
 
-/// Helper function to split pool into teams and sort by ELO descending
+/// Helper function to split pool into teams by actual team assignments and sort by ELO descending
 fn get_sorted_teams(pool: &[crate::models::SessionPlayer], quota: usize) -> (Vec<crate::models::SessionPlayer>, Vec<crate::models::SessionPlayer>) {
-    let team_size = quota / 2;
-    let mut team_red: Vec<_> = pool[0..team_size].to_vec();
-    let mut team_blu: Vec<_> = pool[team_size..quota].to_vec();
+    // Filter players by their actual team assignment (not by position!)
+    let mut team_red: Vec<_> = pool.iter()
+        .take(quota)
+        .filter(|p| p.team == Some(crate::models::Team::Red))
+        .cloned()
+        .collect();
+    
+    let mut team_blu: Vec<_> = pool.iter()
+        .take(quota)
+        .filter(|p| p.team == Some(crate::models::Team::Blu))
+        .cloned()
+        .collect();
     
     // Sort both teams by ELO descending
     let sort_by_elo = |a: &crate::models::SessionPlayer, b: &crate::models::SessionPlayer| {
