@@ -176,7 +176,7 @@ impl DashboardUpdateQueue {
                 let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", channel_id));
                 match channel_id.edit_message(&ctx.http, message_id, EditMessage::new().embed(embed.clone()).components(buttons.clone())).await {
                     Ok(_) => {
-                        info!("[{}] Updated dashboard in #{}", guild_name, channel_name);
+                        // info!("[{}] Updated dashboard in #{}", guild_name, channel_name);
                     }
                     Err(e) => {
                         // Check if message was deleted (404 error)

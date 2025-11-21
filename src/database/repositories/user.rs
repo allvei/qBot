@@ -47,7 +47,7 @@ impl UserRepository {
     }
 
     pub async fn create_or_update(&self, discord_id: UserId, steam_id: Option<u64>) -> Result<Player> {
-        info!("Creating or updating user with discord_id: {}", discord_id);
+        // info!("Creating or updating user with discord_id: {}", discord_id);
 
         let result = sqlx::query(
             "INSERT INTO users (discord_id, steam_id)
@@ -64,7 +64,7 @@ impl UserRepository {
     }
 
     pub async fn create_or_update_with_tag(&self, discord_id: UserId, steam_id: Option<u64>, ctx: &Context) -> Result<Player> {
-        info!("Creating or updating user with discord_id: {}", discord_id);
+        // info!("Creating or updating user with discord_id: {}", discord_id);
 
         let result = sqlx::query(
             "INSERT INTO users (discord_id, steam_id)

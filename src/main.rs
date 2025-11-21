@@ -759,7 +759,7 @@ impl EventHandler for Handler {
                 new.channel_id.unwrap().name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string())
             }
         };
-        info!("{} joined {}", discord_tag, channel_name);
+        info!("[{}] +{} ", channel_name, discord_tag);
 
         // Get player data
         let player = match self.database.get_user_with_tag(user_id, &ctx).await {
