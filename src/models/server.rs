@@ -743,9 +743,13 @@ impl Group {
         let mut manager = cc.manager.lock().await;
         let server = manager.get_server(cc.intax.guild_id.unwrap())?;
         let group = server.get_group(cc.intax.channel_id)?;
+        let guild_id = cc.intax.guild_id.unwrap();
         
         // Find the session containing the player
         let session = group.get_user_session(user_id).await?;
+        
+        // Check if session is hot (will need to regenerate teams)
+        let is_hot = session.is_hot();
         
         // Find the player's index in the pool
         let player_idx = session.pool.iter()
@@ -753,18 +757,20 @@ impl Group {
             .ok_or_else(|| anyhow!("Player not found in session"))?;
         
         // Remove the player from their current position
-        let mut player = session.pool.remove(player_idx);
-        
-        // Set buffered status
-        player.buff();
+        let player = session.pool.remove(player_idx);
         
         // Insert the player at the front of the queue (index 0)
         session.pool.insert(0, player);
         
         info!("Buffered player {} to front of queue", user_id);
         
-        // Update dashboard to reflect buffered status and new order
-        group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
+        // If session is hot, regenerate teams with new order
+        if is_hot {
+            group.generate_teams(cc.ctx, guild_id, Some(&cc.db)).await;
+        }
+        
+        // Update dashboard to reflect new order and teams
+        group.queue_dash_update(cc.ctx, guild_id.get()).await;
         
         Ok(())
     }

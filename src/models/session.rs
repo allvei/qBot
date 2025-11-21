@@ -172,7 +172,6 @@ pub enum SessionStatus {
 pub struct SessionPlayer {
     pub player:       Player,
     pub team:         Option<Team>,
-    pub is_buffered:  bool,
     pub in_queue_vc:  bool,
     pub in_queue_cmd: bool,
 }
@@ -183,18 +182,9 @@ impl SessionPlayer {
         Self {
             player,
             team:         None,
-            is_buffered:  false,
             in_queue_vc:  false,
             in_queue_cmd: false,
         }
-    }
-
-    pub fn buff(&mut self) {
-        self.is_buffered = true;
-    }
-
-    pub fn unbuff(&mut self) {
-        self.is_buffered = false;
     }
 
     pub fn team(
