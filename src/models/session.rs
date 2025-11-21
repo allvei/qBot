@@ -33,7 +33,6 @@ impl Session {
     pub fn add_player(&mut self, player: Player, rank: crate::models::Rank) {
         let session_player = SessionPlayer::add(player, rank);
         self.pool.push(session_player);
-        self.sort_by_join_time();
     }
 
     /// Add a player to the session with their rank, marking them as already in queue VC
@@ -42,17 +41,12 @@ impl Session {
         let mut session_player = SessionPlayer::add(player, rank);
         session_player.in_queue_vc = true;
         self.pool.push(session_player);
-        self.sort_by_join_time();
     }
 
     pub fn remove_player(&mut self, discord_id: UserId) {
         self.pool.retain(|p| p.player.discord_id != discord_id);
     }
 
-    /// Sort players by join time (first-come-first-serve)
-    pub fn sort_by_join_time(&mut self) {
-        self.pool.sort_by_key(|p| p.joined_at);
-    }
 
     /// Create a new session
     pub fn new(
@@ -176,35 +170,11 @@ pub enum SessionStatus {
 // SessionPlayer
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct SessionPlayer {
-    pub player:              Player,
-    pub team:                Option<Team>,
-    pub is_buffered:         bool,
-    pub in_queue_vc:         bool,
-    pub in_queue_cmd:        bool,
-    #[serde(with = "systemtime_serde")]
-    pub joined_at:           SystemTime,
-}
-
-// Serde serialization for SystemTime
-mod systemtime_serde {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    pub fn serialize<S>(time: &SystemTime, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let duration = time.duration_since(UNIX_EPOCH).map_err(serde::ser::Error::custom)?;
-        duration.as_secs().serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<SystemTime, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let secs = u64::deserialize(deserializer)?;
-        Ok(UNIX_EPOCH + std::time::Duration::from_secs(secs))
-    }
+    pub player:       Player,
+    pub team:         Option<Team>,
+    pub is_buffered:  bool,
+    pub in_queue_vc:  bool,
+    pub in_queue_cmd: bool,
 }
 
 impl SessionPlayer {
@@ -212,11 +182,10 @@ impl SessionPlayer {
         player.set_rank(Some(rank));
         Self {
             player,
-            team:                None,
-            is_buffered:         false,
-            in_queue_vc:         false,
-            in_queue_cmd:        false,
-            joined_at:           SystemTime::now(),
+            team:         None,
+            is_buffered:  false,
+            in_queue_vc:  false,
+            in_queue_cmd: false,
         }
     }
 
