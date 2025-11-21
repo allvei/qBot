@@ -146,6 +146,14 @@ impl DashboardUpdateQueue {
                         }
                     };
                     
+                    // Refresh player ranks from Discord to ensure dashboard shows current ranks
+                    // This prevents desync when players are promoted while sitting in queue
+                    group.refresh_player_ranks(&ctx, serenity::all::GuildId::new(guild_id), &database).await;
+                    
+                    // Validate VC status to ensure accurate display of who is in voice chat
+                    // This prevents desync where flags don't match Discord's actual voice states
+                    group.validate_vc_status(&ctx, serenity::all::GuildId::new(guild_id)).await;
+                    
                     // Get dashboard message info
                     let channel_id = group.channels.dashboard;
                     let dashboard_channel_id = channel_id.get();
