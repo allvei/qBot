@@ -323,8 +323,8 @@ pub async fn cmd_rank_role_add(cc: &CC<'_>, rank_name: String, role_mentions: St
     Ok(())
 }
 
-/// `/rankroleremove` - Remove a Discord role from a rank
-pub async fn cmd_rank_role_remove(cc: &CC<'_>, rank_name: String, role_mention: String) -> Result<()> {
+/// `/rankroleremove` - Remove Discord role(s) from a rank (supports multiple roles at once)
+pub async fn cmd_rank_role_remove(cc: &CC<'_>, rank_name: String, role_mentions: String) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can configure rank roles!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -344,57 +344,73 @@ pub async fn cmd_rank_role_remove(cc: &CC<'_>, rank_name: String, role_mention: 
     }
     let rank = rank.unwrap();
 
-    // Parse role ID from mention
-    let role_id_str = parse_role_id(&role_mention)?;
-    let role_id = match role_id_str.parse::<u64>() {
-        Ok(id) => serenity::all::RoleId::new(id),
-        Err(_) => {
-            let response = CIR::Message(CIRM::new()
-                .content("Invalid role format. Please mention a role or provide a role ID.")
-                .ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
-        }
-    };
+    // Parse multiple role mentions (space-separated)
+    let role_mentions_vec: Vec<&str> = role_mentions.split_whitespace().collect();
+    let guild_roles = cc.ctx.http.get_guild_roles(guild_id).await?;
+    
+    let mut roles_to_remove = Vec::new();
+    for role_mention in role_mentions_vec {
+        let role_id_str = parse_role_id(role_mention)?;
+        let role_id = match role_id_str.parse::<u64>() {
+            Ok(id) => serenity::all::RoleId::new(id),
+            Err(_) => {
+                let response = CIR::Message(CIRM::new()
+                    .content(format!("Invalid role format: {}. Please mention roles or provide role IDs.", role_mention))
+                    .ephemeral(true));
+                cc.intax.create_response(&cc.ctx.http, response).await?;
+                return Ok(());
+            }
+        };
+
+        // Get role name for display
+        let role_name = guild_roles.iter()
+            .find(|r| r.id == role_id)
+            .map(|r| r.name.clone())
+            .unwrap_or_else(|| format!("Unknown ({})", role_id));
+        
+        roles_to_remove.push((role_id, role_name));
+    }
 
     // Get existing role IDs for this rank
     let mut existing_ids = rank.role_ids(&cc.db, guild_id.get()).await;
+    let mut removed_roles = Vec::new();
+    let mut not_found_roles = Vec::new();
     
-    // Check if this role is configured for this rank
-    if !existing_ids.contains(&role_id) {
-        let response = CIR::Message(CIRM::new()
-            .content(format!("Role is not configured for rank {}!", rank.name()))
-            .ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
+    for (role_id, role_name) in roles_to_remove {
+        if existing_ids.contains(&role_id) {
+            existing_ids.retain(|id| *id != role_id);
+            info!("Removed role '{}' (ID: {}) from rank {} for guild {}", role_name, role_id, rank.name(), guild_id);
+            removed_roles.push(role_name);
+        } else {
+            not_found_roles.push(role_name);
+        }
     }
 
-    // Get role name for display
-    let guild_roles = cc.ctx.http.get_guild_roles(guild_id).await?;
-    let role_name = guild_roles.iter()
-        .find(|r| r.id == role_id)
-        .map(|r| r.name.clone())
-        .unwrap_or_else(|| format!("Unknown ({})", role_id));
-
-    // Remove the role ID
-    existing_ids.retain(|id| *id != role_id);
+    // Save to database
     let role_ids_str = existing_ids.iter()
         .map(|id| id.get().to_string())
         .collect::<Vec<_>>()
         .join(",");
-
-    // Save to database
     cc.db.config.set_config(rank.config_key(), &role_ids_str, guild_id.get()).await?;
 
-    info!("Removed role '{}' (ID: {}) from rank {} for guild {}", role_name, role_id, rank.name(), guild_id);
+    let mut description = String::new();
+    if !removed_roles.is_empty() {
+        description.push_str(&format!("**Removed {} role(s) from rank {}:**\n", removed_roles.len(), rank.name()));
+        for role in &removed_roles {
+            description.push_str(&format!("  • {}\n", role));
+        }
+    }
+    if !not_found_roles.is_empty() {
+        description.push_str(&format!("\n**Skipped {} role(s) (not configured for this rank):**\n", not_found_roles.len()));
+        for role in &not_found_roles {
+            description.push_str(&format!("  • {}\n", role));
+        }
+    }
+    description.push_str(&format!("\nThis rank now has {} role(s) configured.", existing_ids.len()));
 
     let success_embed = CE::new()
-        .title("Rank Role Removed")
-        .description(format!(
-            "Successfully removed role '{}' from rank **{}**.\n\n\
-            This rank now has {} role(s) configured.",
-            role_name, rank.name(), existing_ids.len()
-        ))
+        .title("Rank Roles Updated")
+        .description(description)
         .color(0x00ff00);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));

@@ -96,9 +96,9 @@ impl EventHandler for Handler {
             cmd("rankroleadd", "Add Discord role(s) to a rank (supports multiple roles)")
                                                                       .op("rank", "Rank name (e.g., Journeyman)", true)
                                                                       .op("role", "Discord role(s) to add (space-separated)", true),
-            cmd("rankroleremove", "Remove a Discord role from a rank")
+            cmd("rankroleremove", "Remove Discord role(s) from a rank (supports multiple roles)")
                                                                       .op("rank", "Rank name (e.g., Journeyman)", true)
-                                                                      .op("role", "Discord role to remove", true),
+                                                                      .op("role", "Discord role(s) to remove (space-separated)", true),
             cmd("rankrolelist", "List all role mappings for ranks") .op("rank", "Rank name to filter (optional)", false),
             
             // Group commands
