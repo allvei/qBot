@@ -743,10 +743,27 @@ impl Group {
         let mut manager = cc.manager.lock().await;
         let server = manager.get_server(cc.intax.guild_id.unwrap())?;
         let group = server.get_group(cc.intax.channel_id)?;
-        let game_player = group.get_player(user_id)?;
-        game_player.buff();
         
-        // Update dashboard to reflect buffered status
+        // Find the session containing the player
+        let session = group.get_user_session(user_id).await?;
+        
+        // Find the player's index in the pool
+        let player_idx = session.pool.iter()
+            .position(|p| p.player.discord_id == user_id)
+            .ok_or_else(|| anyhow!("Player not found in session"))?;
+        
+        // Remove the player from their current position
+        let mut player = session.pool.remove(player_idx);
+        
+        // Set buffered status
+        player.buff();
+        
+        // Insert the player at the front of the queue (index 0)
+        session.pool.insert(0, player);
+        
+        info!("Buffered player {} to front of queue", user_id);
+        
+        // Update dashboard to reflect buffered status and new order
         group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
         
         Ok(())
