@@ -446,7 +446,7 @@ pub async fn cmd_rank_role_list(cc: &CC<'_>, rank_name: Option<String>) -> Resul
         
         let role_ids = rank.role_ids(&cc.db, guild_id.get()).await;
         let elo = rank.elo_from_config(&cc.db, guild_id.get()).await;
-        description.push_str(&format!("**{}** (ELO: {}, {} role(s)):\n", rank.name(), elo, role_ids.len()));
+        description.push_str(&format!("**{} [ELO: {}]**:\n", rank.name(), elo));
         
         if role_ids.is_empty() {
             description.push_str("  *No roles configured*\n");
@@ -456,7 +456,7 @@ pub async fn cmd_rank_role_list(cc: &CC<'_>, rank_name: Option<String>) -> Resul
                     .find(|r| r.id == role_id)
                     .map(|r| r.name.clone())
                     .unwrap_or_else(|| format!("Unknown ({})", role_id));
-                description.push_str(&format!("  • {} (<@&{}>)\n", role_name, role_id));
+                description.push_str(&format!("- <@&{}>\n", role_id));
             }
         }
     } else {
@@ -477,7 +477,7 @@ pub async fn cmd_rank_role_list(cc: &CC<'_>, rank_name: Option<String>) -> Resul
         for rank in all_ranks {
             let role_ids = rank.role_ids(&cc.db, guild_id.get()).await;
             let elo = rank.elo_from_config(&cc.db, guild_id.get()).await;
-            description.push_str(&format!("**{}** (ELO: {}, {} role(s)):\n", rank.name(), elo, role_ids.len()));
+            description.push_str(&format!("**{} [ELO: {}]**:\n", rank.name(), elo));
             
             if role_ids.is_empty() {
                 description.push_str("  *No roles configured*\n");
@@ -487,7 +487,7 @@ pub async fn cmd_rank_role_list(cc: &CC<'_>, rank_name: Option<String>) -> Resul
                         .find(|r| r.id == role_id)
                         .map(|r| r.name.clone())
                         .unwrap_or_else(|| format!("Unknown ({})", role_id));
-                    description.push_str(&format!("  • {} (<@&{}>)\n", role_name, role_id));
+                    description.push_str(&format!("- <@&{}>\n", role_id));
                 }
             }
             description.push('\n');
