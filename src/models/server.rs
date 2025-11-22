@@ -275,7 +275,7 @@ impl Group {
                 use tokio::time::{sleep, Duration};
                 
                 // Wait for the deadline
-                sleep(Duration::from_secs(DEFAULT_TIMEOUT)).await;
+                sleep(Duration::from_secs(DEFAULT_TIMEOUT as u64)).await;
                 
                 // Check if players have joined, remove those who haven't
                 let mut manager_lock = mgr.lock().await;
@@ -304,7 +304,7 @@ impl Group {
             .iter()
             .enumerate()
             .filter_map(|(idx, s)| {
-                if s.is_hot_timeout(DEFAULT_TIMEOUT) {
+                if s.is_hot_timeout(DEFAULT_TIMEOUT as u64) {
                     Some(idx)
                 } else {
                     None
