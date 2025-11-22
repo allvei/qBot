@@ -258,15 +258,15 @@ pub async fn create_rank_roles(
                 .colour(color)
                 .hoist(true)  // Display role members separately in the member list
                 .mentionable(false);
-
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
             match guild_id.create_role(&ctx.http, role_builder).await {
                 Ok(created_role) => {
-                    info!("Created rank role: {} (ID: {})", rank.name(), created_role.id);
+                    info!("[{}] Added rank: {}", guild_name, rank.name());
                     created_roles.push(rank.name().to_string());
                     role_ids_for_rank.push(created_role.id.get());
                 },
                 Err(e) => {
-                    warn!("Failed to create role {}: {}", rank.name(), e);
+                    warn!("[{}] Failed to create rank: {}", guild_name, rank.name());
                 }
             }
             }
@@ -287,11 +287,11 @@ pub async fn create_rank_roles(
             .map(|id| id.to_string())
             .collect::<Vec<_>>()
             .join(",");
-
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
         if let Err(e) = db.config.set_config(config_key, &role_ids_str, guild_id.get()).await {
-            warn!("Failed to save rank config {}: {}", config_key, e);
+            warn!("[{}] Failed to save rank config {}: {}", guild_name, config_key, e);
         } else {
-            info!("Saved rank config {}: {}", config_key, role_ids_str);
+            info!("[{}] Saved rank {}: {}", guild_name, config_key, role_ids_str);
         }
     }
 
