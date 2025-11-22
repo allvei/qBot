@@ -22,7 +22,7 @@ use tracing::{error, info, warn};
 use pf_pug_bot::database::migrations::DatabaseMigrations;
 use pf_pug_bot::database::repositories::GroupRepository;
 use pf_pug_bot::handlers::{admin, player};
-use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database, Group, Manager, Roles, Server, SessionStatus, VoiceStateUpdate};
+use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database, Group, Manager, QueueToggleType::{self, *}, Roles, Server, SessionStatus, VoiceStateUpdate, log_queue_toggle};
 use pf_pug_bot::models::constants::VoiceStateUpdate::*;
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
@@ -64,7 +64,6 @@ impl EventHandler for Handler {
                 
                 // Store in Context data for global access
                 ctx.data.write().await.insert::<DashboardQueueKey>(queue_arc);
-                info!("Dashboard update queue initialized and stored in Context");
             }
         }
 
@@ -82,7 +81,7 @@ impl EventHandler for Handler {
         // Register slash commands globally or for specific guild
         let cmds = vec![
             // Player commands
-            cmd("buffer",    "Buffer a player")               .op("user",  "User to buffer",                  true),
+            cmd("buffer", "Buffer a player").op("user",  "User to buffer", true),
             
             // Setup commands
             cmd("setupadd",   "Create roles and group (full setup)"),
@@ -90,16 +89,16 @@ impl EventHandler for Handler {
             
             // Role commands
             cmd("roleadd",    "Create runner and admin roles"),
-            cmd("rolelink",   "Link existing runner and admin roles")                        .op("runner_role", "Runner role to link", false)
-                                                                                             .op("admin_role",  "Admin role to link",  false),
-            cmd("roledel", "Remove role configuration")                                   .op("role_type",   "Role type: runner, admin, or both", true),
+            cmd("rolelink",   "Link existing runner and admin roles").op("runner_role", "Runner role to link", false)
+                                                                     .op("admin_role",  "Admin role to link",  false),
+            cmd("roledel", "Remove role configuration")              .op("role_type",   "Role type: runner, admin, or both", true),
 
             // Rank commands
-            cmd("rankadd",    "Add Discord role(s) to a rank (supports multiple roles)")        .op("rank", "Rank name", true)
+            cmd("rankadd",    "Add Discord role(s) to a rank (supports multiple roles)")      .op("rank", "Rank name", true)
                                                                                              .op("role", "Discord roles to add", true),
-            cmd("rankdel", "Remove Discord role(s) from a rank (supports multiple roles)").op("rank", "Rank name", true)
+            cmd("rankremove", "Remove Discord role(s) from a rank (supports multiple roles)").op("rank", "Rank name", true)
                                                                                              .op("role", "Discord roles to remove", true),
-            cmd("ranklist",   "List all role mappings for ranks")                              .op("rank", "Rank name to filter (optional)", false),
+            cmd("ranklist",   "List all role mappings for ranks")                            .op("rank", "Rank name to filter (optional)", false),
 
             // Group commands
             cmd("groupadd",    "Create a new category with all group channels"),
@@ -110,7 +109,7 @@ impl EventHandler for Handler {
             cmd("quotaset",    "Set the queue quota")            .op("quota", "Number of players required (2-100)", true),
             cmd("connectadd",  "Set server connection info")     .op("connect_info", "Server connect command (e.g., connect 192.168.10.10:27015)", true),
             cmd("clear",       "Clear all players from the queue"),
-            cmd("rankelo",     "Set custom ELO value for a rank").op("rank_role", "The rank role (mention or ID)", true)
+            cmd("ranksetelo",  "Set custom ELO value for a rank").op("rank_role", "The rank role (mention or ID)", true)
                                                                  .op("elo", "ELO value (1-100)", true),
         ];
 
@@ -143,7 +142,7 @@ impl EventHandler for Handler {
                                 self.check_existing_voice_users(&ctx, &guild, &mut manager).await;
                                 self.create_guild_dashboard_from_manager(&ctx, &guild, &mut manager).await;
                             } else {
-                                warn!("{} has no valid group configurations.", guild.name);
+                                warn!("[{}] No valid group configurations.", guild.name);
                             }
                         }
                     },
@@ -180,7 +179,8 @@ impl EventHandler for Handler {
                 let cdo         = &cd.options;
 
                 let info = || {
-                    info!("{}: /{}", discord_tag, itx.data.name);
+                    let guild_name = itx.guild_id.and_then(|gid| ctx.cache.guild(gid).map(|g| g.name.clone())).unwrap_or_else(|| "DM".to_string());
+                    info!("[{}] {} used /{}", guild_name, discord_tag, itx.data.name);
                 };
 
                 // Handle commands that don't need a server/group first
@@ -224,7 +224,7 @@ impl EventHandler for Handler {
                         info();
                         pf_pug_bot::handlers::setup_commands::cmd_setup_link(&cmd_ctx).await
                     }
-                    "rankroleadd" => {
+                    "rankadd" => {
                         info();
                         let rank_name = cdo.iter()
                             .find(|opt| opt.name == "rank")
@@ -236,9 +236,9 @@ impl EventHandler for Handler {
                             .and_then(|opt| opt.value.as_str())
                             .unwrap_or("")
                             .to_string();
-                        pf_pug_bot::handlers::role_commands::cmd_rank_role_add(&cmd_ctx, rank_name, role_mention).await
+                        pf_pug_bot::handlers::role_commands::cmd_rank_add(&cmd_ctx, rank_name, role_mention).await
                     }
-                    "rankroleremove" => {
+                    "rankremove" => {
                         info();
                         let rank_name = cdo.iter()
                             .find(|opt| opt.name == "rank")
@@ -250,15 +250,15 @@ impl EventHandler for Handler {
                             .and_then(|opt| opt.value.as_str())
                             .unwrap_or("")
                             .to_string();
-                        pf_pug_bot::handlers::role_commands::cmd_rank_role_remove(&cmd_ctx, rank_name, role_mention).await
+                        pf_pug_bot::handlers::role_commands::cmd_rank_remove(&cmd_ctx, rank_name, role_mention).await
                     }
-                    "rankrolelist" => {
+                    "ranklist" => {
                         info();
                         let rank_name = cdo.iter()
                             .find(|opt| opt.name == "rank")
                             .and_then(|opt| opt.value.as_str())
                             .map(|s| s.to_string());
-                        pf_pug_bot::handlers::role_commands::cmd_rank_role_list(&cmd_ctx, rank_name).await
+                        pf_pug_bot::handlers::role_commands::cmd_rank_list(&cmd_ctx, rank_name).await
                     }
                     "quotaset" => {
                         info();
@@ -396,7 +396,6 @@ impl EventHandler for Handler {
                     Err(_) => itx.user.name.clone(),
                 };
                 let button_type = ButtonType::parse(&itx.data.custom_id);
-                info!("{} clicked {:?}", discord_tag, button_type);
 
                 // Handle permission confirmation button
                 if matches!(button_type, ButtonType::ConfirmPermissions) {
@@ -694,7 +693,11 @@ impl EventHandler for Handler {
         match state {
             VoiceStateUpdate::Disconnected => {
                 if group.channels.queue_vc == lookup_channel {
-                    info!("- {}", discord_tag);
+                    let guild_name = ctx.cache.guild(server).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                    let group_name = ctx.cache.channel(group.channels.dashboard)
+                        .map(|ch| ch.name.clone())
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    log_queue_toggle(&guild_name, &group_name, &discord_tag, VL);
 
                     let quota = group.quota as usize;
                     // Get session index before mutable borrow
@@ -741,10 +744,11 @@ impl EventHandler for Handler {
             },
             VoiceStateUpdate::Moved => {
                 if group.channels.queue_vc == lookup_channel {
-                    let channel_name = ctx.cache.channel(lookup_channel)
+                    let guild_name = ctx.cache.guild(server).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                    let group_name = ctx.cache.channel(group.channels.dashboard)
                         .map(|ch| ch.name.clone())
                         .unwrap_or_else(|| "Unknown".to_string());
-                    info!("[{}] -{} ", channel_name, discord_tag);
+                    log_queue_toggle(&guild_name, &group_name, &discord_tag, VL);
 
                     let quota = group.quota as usize;
                     // Get session index before mutable borrow
@@ -792,19 +796,7 @@ impl EventHandler for Handler {
             return;
         }
 
-        // Try to get channel name from cache first (fast path)
-        // Clone immediately to avoid holding CacheRef across await
-        let channel_name = ctx.cache.channel(new.channel_id.unwrap())
-            .map(|ch| ch.name.clone());
-        
-        let channel_name = match channel_name {
-            Some(name) => name,
-            None => {
-                // Fallback to HTTP if not in cache
-                new.channel_id.unwrap().name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string())
-            }
-        };
-        info!("[{}] +{} ", channel_name, discord_tag);
+        // Note: Join logging is done inside the queue VC check below to avoid logging unrelated channel joins
 
         // Get player data
         let player = match self.database.get_user_with_tag(user_id, &ctx).await {
@@ -852,6 +844,13 @@ impl EventHandler for Handler {
                                         // Use queue_player_with_vc_status to set in_queue_vc BEFORE quota check/notification
                                         if let Err(e) = group.queue_player_with_vc_status(player.clone(), rank, &ctx, Some(server), Some(&self.database), Some(self.manager.clone()), true).await {
                                             error!("Failed to add player to queue: {}", e);
+                                        } else {
+                                            // Log successful queue join via voice channel
+                                            let guild_name = ctx.cache.guild(server).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                                            let group_name = ctx.cache.channel(group.channels.dashboard)
+                                                .map(|ch| ch.name.clone())
+                                                .unwrap_or_else(|| "Unknown".to_string());
+                                            log_queue_toggle(&guild_name, &group_name, &discord_tag, QueueToggleType::VJ);
                                         }
 
                                         group.queue_dash_update(&ctx, server.get()).await;
@@ -937,6 +936,7 @@ impl Handler {
         // Iterate through all groups and check their queue voice channels
         for group in &mut server.groups {
             let queue_vc_id = group.channels.queue_vc;
+            let dashboard_channel = group.channels.dashboard;
 
             // Check if there's an idle session available
             let has_idle_session = !group.get_sessions_by_status(&SessionStatus::Idle).is_empty();
@@ -985,6 +985,12 @@ impl Handler {
 
             // Add all players to the session WITHOUT quota check
             if let Ok(session) = group.get_queue().await {
+                // Get server and group names for logging
+                let guild_name = guild.name.clone();
+                let group_name = ctx.cache.channel(dashboard_channel)
+                    .map(|ch| ch.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string());
+
                 for (user_id, rank, discord_tag) in &players_to_add {
                     // Fetch player from database to preserve discord_tag
                     let player = match self.database.get_user_with_tag(*user_id, ctx).await {
@@ -998,13 +1004,12 @@ impl Handler {
                         }
                     };
                     session.add_player_in_vc(player, *rank);
-                    info!("Added {} ({:?})", discord_tag, rank);
+                    log_queue_toggle(&guild_name, &group_name, &discord_tag, QueueToggleType::VJ);
                 }
             }
 
             let users_added = players_to_add.len();
             if users_added > 0 {
-                info!("Added {} user(s) to queue for group in channel {}", users_added, queue_vc_id);
 
                 // NOW check quota once after all players added
                 if group.is_quota() {
@@ -1021,8 +1026,6 @@ impl Handler {
 
     /// Creates dashboard for a guild using in-memory groups from manager
     async fn create_guild_dashboard_from_manager(&self, ctx: &Context, guild: &Guild, manager: &mut Manager) {
-        info!("[{}] Creating dashboard", guild.name);
-
         // FIRST: Check bot permissions
         let (has_perms, missing_perms) = self.check_bot_permissions(ctx, guild).await;
 

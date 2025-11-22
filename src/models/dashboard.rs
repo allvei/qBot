@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Error, Result};
 use std::time::SystemTime;
 use std::cmp::Ordering::*;
-use crate::models::constants::DEFAULT_MISSING_TIMEOUT;
+use crate::{QueueToggleType, log_queue_toggle, models::constants::DEFAULT_MISSING_TIMEOUT};
 use serenity::all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
     CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM,
@@ -245,27 +245,18 @@ impl Group {
 
     pub async fn has_dashboard(&self, ctx: &Context) -> bool {
         let ch = CI::new(self.channels.dashboard.into());
-        let channel_name = ch.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", ch));
-        info!("Checking if dashboard message exists in #{}", channel_name);
         let msg = ch.message(&ctx.http, self.dashboard_msg).await;
-        let exists = msg.is_ok();
-        if !exists {
-            info!("Dashboard message not found in #{}: {:?}", channel_name, msg.err());
-        } else {
-            info!("Dashboard message exists in #{}", channel_name);
-        }
-        exists
+        msg.is_ok()
     }
 
     pub async fn dash_publish(&mut self, ctx: &Context, channel: CI) -> Result<(), Error>{
         // Create new dashboard message (don't check if it exists - caller should check)
-        let channel_name = channel.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", channel));
         let msg = channel.send_message(&ctx.http, self.dash_init().await?).await;
         if let Ok(msg) = msg {
             self.dashboard_msg = msg.id;
-            info!("Created new dashboard in #{}", channel_name);
             Ok(())
         } else {
+            let channel_name = channel.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", channel));
             error!("Failed to send dashboard message in #{}", channel_name);
             Err(anyhow!("Failed to send dashboard message in #{}: {}", channel_name, msg.unwrap_err()))
         }
@@ -577,6 +568,9 @@ impl Group {
     async fn dash_toggle_queue(&mut self, cc: &CC<'_>) -> Result<()> {
         let user_id = cc.component.user.id;
         let quota = self.quota as usize;
+        
+        // Store channel IDs before any borrows
+        let dashboard_channel = self.channels.dashboard;
 
         // Get session index before mutable borrow
         let session_idx = self.sessions.iter()
@@ -600,7 +594,6 @@ impl Group {
                 cc.defer_update().await?;
                 
                 let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
-                info!("Player {} clicked leave while in queue VC - disconnecting", username);
                 
                 // Disconnect player from voice channel
                 if let Some(guild_id) = cc.component.guild_id {
@@ -624,11 +617,14 @@ impl Group {
             let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
             session.remove_player(user_id);
             let pool_len = session.pool.len();
-            if let Some(idx) = session_idx {
-                info!("[Session {}] Removed {} from queue. Queue now has {} players", idx, username, pool_len);
-            } else {
-                info!("Removed {} from queue. Queue now has {} players", username, pool_len);
-            }
+            
+            // Log with server and group context
+            let guild_id = cc.component.guild_id.unwrap();
+            let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+            let group_name = cc.ctx.cache.channel(dashboard_channel)
+                .map(|ch| ch.name.clone())
+                .unwrap_or_else(|| "Unknown".to_string());
+            log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BL);
 
             // If session was hot, check what to do next
             if was_hot {
@@ -709,6 +705,14 @@ impl Group {
                         player.rank = Some(rank);
                         if let Err(e) = self.queue_player(player, rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
                             warn!("Failed to queue player: {}", e);
+                        } else {
+                            // Log successful queue join via button
+                            let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                            let group_name = cc.ctx.cache.channel(dashboard_channel)
+                                .map(|ch| ch.name.clone())
+                                .unwrap_or_else(|| "Unknown".to_string());
+                            let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
+                            log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ);
                         }
                     },
                     Err(e) => {
@@ -847,11 +851,32 @@ impl Group {
         let action  = parts[0];
         let game_id = parts.get(1).map(|s| s.to_string());
 
+        // Get server and group names for logging - store channel ID before any mut borrows
+        let guild_id = cc.component.guild_id.unwrap();
+        let dashboard_channel = self.channels.dashboard;
+        let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+        let group_name = cc.ctx.cache.channel(dashboard_channel)
+            .map(|ch| ch.name.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+        let username = cc.ctx.cache.user(cc.component.user.id).map(|u| u.name.clone()).unwrap_or_else(|| cc.component.user.id.to_string());
+
         match action {
-            "toggle_queue"      => self.dash_toggle_queue(cc).await,
-            "shuffle_teams"     => self.dash_shuffle(cc, game_id).await,
-            "start_match"       => self.dash_start(cc,   game_id).await,
-            "end_match"         => self.dash_end(cc,     game_id).await,
+            "toggle_queue"      => {
+                // Log will be done inside dash_toggle_queue with proper context
+                self.dash_toggle_queue(cc).await
+            },
+            "shuffle_teams"     => {
+                info!("[{}][{}] {} used Shuffle", server_name, group_name, username);
+                self.dash_shuffle(cc, game_id).await
+            },
+            "start_match"       => {
+                info!("[{}][{}] {} used Start", server_name, group_name, username);
+                self.dash_start(cc,   game_id).await
+            },
+            "end_match"         => {
+                info!("[{}][{}] {} used End", server_name, group_name, username);
+                self.dash_end(cc,     game_id).await
+            },
             _ => {
                 cc.reply(&format!("Unknown button action: {}", action))
                     .await?;

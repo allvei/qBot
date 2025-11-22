@@ -2,8 +2,11 @@
 
 pub mod database;
 pub mod handlers;
+pub mod log;
 pub mod models;
+
 
 pub use database::*;
 pub use handlers::{admin, player};
+pub use log::*;
 pub use models::*;
