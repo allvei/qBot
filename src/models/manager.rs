@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use serenity::all::{Cache, ChannelId, GuildId};
 use tracing::info;
 
-use crate::models::{Group, Roles, Server, Session, SessionStatus};
+use crate::models::{Group, Roles, Server, SessionStatus};
 
 /// Manages multiple servers and their associated groups/games
 #[derive(Default, Clone)]
