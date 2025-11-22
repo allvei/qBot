@@ -517,7 +517,6 @@ pub async fn create_group_channels(
         .map(|r| r.id);
     
     // Step 1: Create category
-    info!("[{}] Creating PUG Queue category", guild_name);
     let category = match guild_id.create_channel(&ctx.http,
         CreateChannel::new("PUG Queue")
             .kind(ChannelType::Category)
@@ -532,7 +531,6 @@ pub async fn create_group_channels(
     let category_id = category.id;
     
     // Step 2: Create dashboard text channel with proper permissions
-    info!("[{}] Creating dashboard channel", guild_name);
     let mut permissions = vec![
         // Deny @everyone from sending messages and creating threads
         PermissionOverwrite {
@@ -550,7 +548,6 @@ pub async fn create_group_channels(
     
     // Add bot's integration role if found
     if let Some(role_id) = bot_role {
-        info!("[{}] Adding explicit permissions for qBot role", guild_name);
         permissions.push(PermissionOverwrite {
             allow: Permissions::SEND_MESSAGES | Permissions::VIEW_CHANNEL | Permissions::EMBED_LINKS,
             deny: Permissions::empty(),
@@ -575,7 +572,6 @@ pub async fn create_group_channels(
     };
     
     // Step 3: Test dashboard message send - CRITICAL STEP
-    info!("[{}] Testing dashboard message send", guild_name);
     let test_embed = CreateEmbed::new()
         .title("PUG Dashboard")
         .description("Setting up queue system...")
@@ -2519,11 +2515,9 @@ pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 
 /// `/ranksetelo` - Set custom ELO value for a rank
 ///
-/// * `rank_role` - The rank role mention/ID
+/// * `rank_role` - The rank name or role mention/ID
 /// * `elo` - The ELO value to set for this rank
 pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Result<()> {
-    info!("Processing /ranksetelo command");
-
     // Check admin permissions
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can modify rank ELO values!").ephemeral(true));
@@ -2532,6 +2526,7 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
     }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
 
     // Validate ELO range (1-100)
     if elo < 1 {
@@ -2539,36 +2534,73 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
             .title("Invalid ELO Value")
             .description("ELO must be above 0")
             .color(0xff0000);
-        info!("Invalid ELO value: {}", elo);
         let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
-    // Parse role ID from mention or raw ID
-    let role_id_str = crate::handlers::role_commands::parse_role_id(&rank_role)?;
-    let role_id: u64 = role_id_str.parse()
-        .map_err(|_| anyhow!("Invalid role ID: {}", role_id_str))?;
-
-    // Check if this role is a rank role by trying to find which rank it belongs to
-    let rank = crate::models::Rank::from_role_id(RoleId::new(role_id), &cc.db, guild_id.get()).await;
-
-    if rank.is_none() {
-        let error_embed = CE::new()
-            .title("Not a Rank Role")
-            .description(format!("Role <@&{}> is not configured as a rank role.\nUse `/check_ranks` to set up rank roles first.", role_id))
-            .color(0xff0000);
-
-        let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
+    // Try to parse as rank name first
+    let rank = if let Ok(Some(rank_from_name)) = crate::handlers::role_commands::parse_rank_name(&rank_role) {
+        // Verify this rank has a role configured
+        let config_key = format!("rank_{}_role", rank_from_name.name().to_lowercase().replace(" ", "_"));
+        match cc.db.config.get_config_value(&config_key, guild_id.get()).await {
+            Ok(Some(_)) => Some(rank_from_name),
+            _ => {
+                error!("[{}] - Invalid rank name: {}", guild_name, rank_role);
+                let error_embed = CE::new()
+                    .title("Rank Not Configured")
+                    .description(format!("Rank '{}' is not configured.\nUse `/check_ranks` to set up rank roles first.", rank_role))
+                    .color(0xff0000);
+                let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+                cc.intax.create_response(&cc.ctx.http, response).await?;
+                return Ok(());
+            }
+        }
+    } else {
+        // Try to parse as role ID
+        let role_id_str = crate::handlers::role_commands::parse_role_id(&rank_role)?;
+        match role_id_str.parse::<u64>() {
+            Ok(role_id) => {
+                // Check if this role is a rank role
+                let rank_opt = crate::models::Rank::from_role_id(RoleId::new(role_id), &cc.db, guild_id.get()).await;
+                if rank_opt.is_none() {
+                    error!("[{}] - Invalid role ID: {}", guild_name, rank_role);
+                    let error_embed = CE::new()
+                        .title("Not a Rank Role")
+                        .description(format!("Role <@&{}> is not configured as a rank role.\nUse `/check_ranks` to set up rank roles first.", role_id))
+                        .color(0xff0000);
+                    let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+                    cc.intax.create_response(&cc.ctx.http, response).await?;
+                    return Ok(());
+                }
+                rank_opt
+            }
+            Err(_) => {
+                error!("[{}] - Invalid role ID: {}", guild_name, rank_role);
+                let error_embed = CE::new()
+                    .title("Invalid Input")
+                    .description(format!("'{}' is not a valid rank name or role ID.", rank_role))
+                    .color(0xff0000);
+                let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+                cc.intax.create_response(&cc.ctx.http, response).await?;
+                return Ok(());
+            }
+        }
+    };
 
     let rank = rank.unwrap();
     let config_key = format!("rank_{}_elo", rank.name().to_lowercase().replace(" ", "_"));
 
     // Store ELO value in config
     cc.db.config.set_config(&config_key, &elo.to_string(), guild_id.get()).await?;
+
+    // Get role ID for display in success message
+    let role_config_key = format!("rank_{}_role", rank.name().to_lowercase().replace(" ", "_"));
+    let role_id = cc.db.config.get_config_value(&role_config_key, guild_id.get()).await
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
 
     let success_embed = CE::new()
         .title("Rank ELO Updated")
@@ -2584,7 +2616,7 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
-    info!("[Guild: {}] Set {} ELO to {}", guild_id, rank.name(), elo);
+    info!("[{}] - {} = {}", guild_name, rank.name(), elo);
 
     Ok(())
 }
