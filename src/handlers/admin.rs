@@ -376,7 +376,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             let mut temp_group = Group {
                 group_id: 0, // Will be assigned by DB
                 quota: crate::DEFAULT_QUOTA,
-                timeout: 180,
+                timeout: crate::DEFAULT_TIMEOUT,
                 dashboard_msg: MessageId::new(1), // Temporary, will be replaced
                 channels: Channels {
                     queue_chat: queue_channel,
@@ -795,27 +795,6 @@ async fn start_init_group_flow(cc: &CC<'_>, dashboard_channel: CI) -> Result<()>
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
     Ok(())
-}
-
-/// Parses a user mention to get the Discord ID.
-///
-/// * `mention` - The user mention to parse.
-fn parse_user_mention(mention: &str,) -> Result<u64> {
-    // Parse Discord user mention format: <@!123456789> or <@123456789>
-    let mention =
-        mention
-            .trim();
-    if mention.starts_with("<@!") && mention.ends_with('>') {
-        mention[3..mention.len() - 1].to_string().parse::<u64>()
-            .map_err(|_| anyhow!("Invalid user ID in mention"))
-    } else if mention.starts_with("<@") && mention.ends_with('>') {
-        mention[2..mention.len() - 1].to_string().parse::<u64>()
-            .map_err(|_| anyhow!("Invalid user ID in mention"))
-    } else {
-        // Assume it's already a raw user ID
-        mention.parse::<u64>()
-            .map_err(|_| anyhow!("Invalid user ID format"))
-    }
 }
 
 /// `/dashboard`
@@ -2362,7 +2341,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &ComponentI
     let mut temp_group = Group {
         group_id: 0,
         quota: crate::DEFAULT_QUOTA,
-        timeout: 180,
+        timeout: crate::DEFAULT_TIMEOUT,
         dashboard_msg: MessageId::new(1),
         channels: Channels {
             queue_chat: queue_channel,
@@ -2618,5 +2597,98 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
 
     info!("[{}] - {} = {}", guild_name, rank.name(), elo);
 
+    Ok(())
+}
+
+/// `/buffer`
+///
+/// * `user_id` - The user ID to buffer.
+/// * `server` - The server (already has manager lock held by caller)
+pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UserId) -> Result<()> {
+    info!("Processing /buffer command for user {}", user_id);
+    
+    if !check_role(cc, &Role::Admin).await? {
+        info!("User lacks admin permissions for /buffer");
+        let response = CIR::Message(CIRM::new().content("Only admins can buffer players!").ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+    
+    info!("[{}] Getting group from channel {}", guild_name, cc.intax.channel_id);
+    // Get the group from the current channel
+    let group = match server.get_group(cc.intax.channel_id) {
+        Ok(g) => g,
+        Err(e) => {
+            warn!("[{}] No group found in channel {}: {}", guild_name, cc.intax.channel_id, e);
+            let error_embed = CE::new()
+                .title("Group Not Found")
+                .description(format!("No queue group found in this channel: {}", e))
+                .color(0xff0000);
+
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+    
+    info!("[{}] Finding session for user {}", guild_name, user_id);
+    // Find the session containing the player
+    let session = match group.get_user_session(user_id).await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("[{}] User {} not found in any session: {}", guild_name, user_id, e);
+            let error_embed = CE::new()
+                .title("Player Not Found")
+                .description(format!("<@{}> is not in any queue.", user_id))
+                .color(0xff0000);
+
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+    
+    // Find the player's index in the pool
+    let player_idx = match session.pool.iter().position(|p| p.player.discord_id == user_id) {
+        Some(idx) => idx,
+        None => {
+            error!("[{}] Player {} not found in pool despite being in session", guild_name, user_id);
+            let error_embed = CE::new()
+                .title("Player Not Found")
+                .description(format!("<@{}> is not in the queue pool.", user_id))
+                .color(0xff0000);
+
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+    
+    // Remove the player from their current position
+    let player = session.pool.remove(player_idx);
+    
+    // Insert the player at the front of the queue (index 0)
+    session.pool.insert(0, player);
+    
+    let is_hot = session.is_hot();
+    
+    // If session is hot, regenerate teams with new order
+    if is_hot {
+        group.generate_teams(cc.ctx, guild_id, Some(&cc.db)).await;
+    }
+    
+    group.queue_dash_update(cc.ctx, guild_id.get()).await;
+
+    
+    let success_embed = CE::new()
+        .title("Player Buffered")
+        .description(format!("<@{}> moved to front of queue.", user_id))
+        .color(0x00ff00);
+
+    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
     Ok(())
 }

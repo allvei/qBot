@@ -32,12 +32,18 @@ fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
 pub trait CmdOp:
     Sized {
     fn op(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self;
+    fn op_user(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self;
 }
 
 impl CmdOp for CC {
-    /// Adds an option to the command
+    /// Adds a string option to the command
     fn op(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self {
         self.add_option(CCO::new(COT::String, name, desc).required(req))
+    }
+    
+    /// Adds a user option to the command
+    fn op_user(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self {
+        self.add_option(CCO::new(COT::User, name, desc).required(req))
     }
 }
 
@@ -81,7 +87,7 @@ impl EventHandler for Handler {
         // Register slash commands globally or for specific guild
         let cmds = vec![
             // Player commands
-            cmd("buffer", "Buffer a player").op("user",  "User to buffer", true),
+            cmd("buffer", "Buffer a player").op_user("user",  "User to buffer", true),
             
             // Setup commands
             cmd("setupadd",   "Create roles and group (full setup)"),
@@ -346,8 +352,10 @@ impl EventHandler for Handler {
                             "buffer" => {
                                 info();
                                 if let Some(user_option) = cdo.first() {
-                                    if let Some(user_id) = user_option.value.as_str() {
-                                        Group::cmd_buffer(&cmd_ctx, user_id).await.expect("Failed to buffer player")
+                                    if let Some(user_id) = user_option.value.as_user_id() {
+                                        admin::cmd_buffer(&cmd_ctx, server, user_id).await.expect("Failed to buffer player")
+                                    } else {
+                                        error!("Failed to parse user ID from buffer command");
                                     }
                                 }
                                 Ok(())
