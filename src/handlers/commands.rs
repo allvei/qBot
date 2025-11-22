@@ -4,9 +4,12 @@ use serenity::all::{
     CreateInteractionResponseMessage as CIRM, GuildId, Permissions,
 };
 use serenity::builder::EditRole;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
+use crate::Server;
+use crate::admin::create_group_channels;
 use crate::models::{CommandContext as CC, Role};
+use crate::repositories::Repository;
 use super::player::{check_role, create_rank_roles};
 
 /// `/roleadd` - Create runner and admin roles for the bot
@@ -578,4 +581,463 @@ fn parse_multiple_role_ids(role_str: &str) -> Result<Vec<String>> {
 
 fn log_rank_remove(rank_name: &str, role_name: &str) {
     info!("- Removed role '{}' from rank {}", role_name, rank_name);
+}
+
+/// `/setupadd` - Creates both roles and a new group with channels
+pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
+    if !check_role(cc, &Role::Admin).await? {
+        let response = CIR::Message(CIRM::new().content("Only admins can run setup!").ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+
+    let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+    let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+    
+    let loading_embed = CE::new()
+        .title("Setting Up PUG Bot")
+        .description("Creating roles and group channels...\nThis may take a moment.")
+        .color(0xffaa00);
+
+    let response = CIR::Message(CIRM::new().embed(loading_embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+
+    // Step 1: Create Runner role
+    let runner_role = match guild_id.create_role(&cc.ctx.http, 
+        EditRole::new()
+            .name("PUG Runner")
+            .colour(0x3498db)
+            .permissions(Permissions::empty())
+    ).await {
+        Ok(role) => role,
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("Setup Failed")
+                .description(format!("Failed to create Runner role: {}", e))
+                .color(0xff0000);
+
+            cc.intax.edit_response(&cc.ctx.http,
+                serenity::all::EditInteractionResponse::new().embed(error_embed)
+            ).await?;
+            return Ok(());
+        }
+    };
+
+    // Step 2: Create Admin role
+    let admin_role = match guild_id.create_role(&cc.ctx.http,
+        EditRole::new()
+            .name("PUG Admin")
+            .colour(0xe74c3c)
+            .permissions(Permissions::empty())
+    ).await {
+        Ok(role) => role,
+        Err(e) => {
+            let error_embed = CE::new()
+                .title("Setup Failed")
+                .description(format!("Failed to create Admin role: {}", e))
+                .color(0xff0000);
+
+            cc.intax.edit_response(&cc.ctx.http,
+                serenity::all::EditInteractionResponse::new().embed(error_embed)
+            ).await?;
+            return Ok(());
+        }
+    };
+
+    // Step 3: Save roles to database
+    if let Err(e) = cc.db.config.set_config("runner_role", &runner_role.id.to_string(), guild_id.get()).await {
+        warn!("Failed to save runner_role config: {}", e);
+    }
+    if let Err(e) = cc.db.config.set_config("admin_role", &admin_role.id.to_string(), guild_id.get()).await {
+        warn!("Failed to save admin_role config: {}", e);
+    }
+
+    // Step 4: Create rank roles
+    info!("[{}] Creating rank roles", guild_name);
+    if let Err(e) = create_rank_roles(cc.ctx, &cc.db, guild_id).await {
+        warn!("[{}] Failed to create rank roles: {}", guild_name, e);
+    }
+
+    // Step 5: Create group channels
+    let (category_id, dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel) = 
+        match create_group_channels(cc.ctx, guild_id).await {
+            Ok(channels) => channels,
+            Err(e) => {
+                let error_embed = CE::new()
+                    .title("Setup Failed")
+                    .description(format!("Failed to create channels: {}\n\nRoles were created successfully.", e))
+                    .color(0xff0000);
+
+                cc.intax.edit_response(&cc.ctx.http,
+                    serenity::all::EditInteractionResponse::new().embed(error_embed)
+                ).await?;
+                return Ok(());
+            }
+        };
+
+    // Step 6: Create temporary Group and publish dashboard
+    use crate::models::{Group, Channels, TeamChannel};
+    use serenity::all::MessageId;
+    
+    let mut temp_group = Group {
+        group_id: 0,
+        quota: crate::DEFAULT_QUOTA,
+        timeout: crate::DEFAULT_TIMEOUT,
+        dashboard_msg: MessageId::new(1),
+        channels: Channels {
+            queue_chat: queue_channel,
+            queue_vc: queue_vc_channel,
+            teams: vec![TeamChannel {
+                red_vc: red_channel,
+                blu_vc: blue_channel,
+            }],
+            dashboard: dashboard_channel,
+        },
+        sessions: vec![],
+        connect_info: None,
+    };
+    
+    // Publish the dashboard to get message ID
+    match temp_group.dash_publish(cc.ctx, dashboard_channel, &cc.db, guild_id.get()).await {
+        Ok(_) => {
+            let dashboard_msg_id = temp_group.dashboard_msg.get();
+            
+            // Step 7: Save group to database
+            match cc.db.groups.create_group(
+                guild_id.get(),
+                dashboard_channel.get(),
+                queue_channel.get(),
+                queue_vc_channel.get(),
+                dashboard_msg_id,
+                red_channel.get(),
+                blue_channel.get(),
+                crate::DEFAULT_QUOTA,
+            ).await {
+                Ok(db_group) => {
+                    info!("[{}] Group {} saved to database", guild_name, db_group.group_id);
+
+                    // Add group to in-memory server and create initial session
+                    if let Err(e) = server.add_group(db_group.clone()) {
+                        error!("Failed to add group to server: {}", e);
+                    }
+
+                    let success_embed = CE::new()
+                        .title("Setup Complete!")
+                        .description(format!(
+                            "PUG bot is now fully configured!\n\n\
+                            **Roles Created:**\n\
+                            • Runner: <@&{}>\n\
+                            • Admin: <@&{}>\n\
+                            • Rank Roles: Created\n\n\
+                            **Group Created:**\n\
+                            • Dashboard: <#{}>\n\
+                            • Queue Text: <#{}>\n\
+                            • Queue Voice: <#{}>\n\
+                            • Red Team: <#{}>\n\
+                            • Blue Team: <#{}>\n\
+                            • Category: <#{}>\n\n\
+                            **Ready to use!** Players can join the queue now.",
+                            runner_role.id,
+                            admin_role.id,
+                            dashboard_channel.get(), 
+                            queue_channel.get(), 
+                            queue_vc_channel.get(), 
+                            red_channel.get(), 
+                            blue_channel.get(),
+                            category_id.get()
+                        ))
+                        .color(0x00ff00);
+
+                    cc.intax.edit_response(&cc.ctx.http,
+                        serenity::all::EditInteractionResponse::new().embed(success_embed)
+                    ).await?;
+                },
+                Err(e) => {
+                    // Database save failed - clean up everything
+                    info!("[{}] Database save failed, cleaning up channels and dashboard", guild_name);
+                    let _ = dashboard_channel.delete_message(&cc.ctx.http, dashboard_msg_id).await;
+                    let _ = dashboard_channel.delete(&cc.ctx.http).await;
+                    let _ = queue_channel.delete(&cc.ctx.http).await;
+                    let _ = queue_vc_channel.delete(&cc.ctx.http).await;
+                    let _ = red_channel.delete(&cc.ctx.http).await;
+                    let _ = blue_channel.delete(&cc.ctx.http).await;
+                    let _ = category_id.delete(&cc.ctx.http).await;
+                    
+                    let error_embed = CE::new()
+                        .title("Setup Failed")
+                        .description(format!("Failed to save group to database: {}\n\nChannels were cleaned up. Roles remain.", e))
+                        .color(0xff0000);
+
+                    cc.intax.edit_response(&cc.ctx.http,
+                        serenity::all::EditInteractionResponse::new().embed(error_embed)
+                    ).await?;
+                }
+            }
+        },
+        Err(e) => {
+            // Dashboard creation failed - clean up the created channels
+            info!("[{}] Dashboard creation failed, cleaning up channels", guild_name);
+            let _ = dashboard_channel.delete(&cc.ctx.http).await;
+            let _ = queue_channel.delete(&cc.ctx.http).await;
+            let _ = queue_vc_channel.delete(&cc.ctx.http).await;
+            let _ = red_channel.delete(&cc.ctx.http).await;
+            let _ = blue_channel.delete(&cc.ctx.http).await;
+            let _ = category_id.delete(&cc.ctx.http).await;
+            
+            let error_embed = CE::new()
+                .title("Setup Failed")
+                .description(format!("Failed to create dashboard: {}\n\nChannels were cleaned up. Roles remain.", e))
+                .color(0xff0000);
+
+            cc.intax.edit_response(&cc.ctx.http,
+                serenity::all::EditInteractionResponse::new().embed(error_embed)
+            ).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// `/setuplink` - Links existing roles and channels
+pub async fn cmd_setup_link(cc: &CC<'_>) -> Result<()> {
+    if !check_role(cc, &Role::Admin).await? {
+        let response = CIR::Message(CIRM::new().content("Only admins can run setup!").ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+
+    let embed = CE::new()
+        .title("Link Existing Configuration")
+        .description(
+            "To link existing roles and channels, use these commands:\n\n\
+            **Link Roles:**\n\
+            `/rolelink runner_role:@Runner admin_role:@Admin`\n\n\
+            **Link Group Channels:**\n\
+            `/grouplink` (run in the dashboard channel)\n\n\
+            Or create new ones with:\n\
+            • `/roleadd` - Create new roles\n\
+            • `/groupadd` - Create new group channels"
+        )
+        .color(0x3498db);
+
+    let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+
+    Ok(())
+}
+
+/// `/groupremove` - Remove a group from the server
+///
+/// * `group_id` - The ID of the group to remove (0 = auto-detect from current channel)
+pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) -> Result<()> {
+    info!("Processing /groupremove for group_id: {}", group_id);
+
+    // Check admin permissions
+    if !check_role(cc, &Role::Admin).await? {
+        let response = CIR::Message(CIRM::new().content("Only admins can remove groups!").ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    let channel_id = cc.intax.channel_id;
+
+    // Determine which group to remove
+    let group_index = if group_id == 0 {
+        // Auto-detect group from current channel
+        server.groups.iter().position(|g| g.contains_channel(channel_id))
+    } else {
+        // Use provided group_id
+        server.groups.iter().position(|g| g.group_id == group_id)
+    };
+
+    match group_index {
+        Some(index) => {
+            let group = &server.groups[index];
+            let actual_group_id = group.group_id;
+            let channels = group.channels.clone();
+            
+            // Send response immediately before deleting channels
+            let loading_embed = CE::new()
+                .title("Removing Group")
+                .description(format!(
+                    "Removing group {} and deleting all associated channels...\n\nThis may take a moment.",
+                    actual_group_id
+                ))
+                .color(0xffaa00);
+
+            let response = CIR::Message(CIRM::new().embed(loading_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            
+            // Get user for DM
+            let user = cc.intax.user.clone();
+            
+            // Remove from database
+            match cc.db.groups.delete(actual_group_id).await {
+                Ok(_) => {
+                    info!("[Guild: {}] Group {} removed from database", guild_id, actual_group_id);
+                    
+                    // Remove from in-memory server
+                    server.groups.remove(index);
+                    
+                    // Get category ID from one of the channels before deleting them
+                    let category_id = match channels.dashboard.to_channel(&cc.ctx.http).await {
+                        Ok(channel) => {
+                            if let Some(guild_channel) = channel.guild() {
+                                guild_channel.parent_id
+                            } else {
+                                None
+                            }
+                        },
+                        Err(e) => {
+                            warn!("Failed to get dashboard channel info: {}", e);
+                            None
+                        }
+                    };
+                    
+                    // Delete Discord channels
+                    let mut deleted_channels = Vec::new();
+                    let mut failed_channels = Vec::new();
+                    
+                    // Delete dashboard channel
+                    if let Err(e) = channels.dashboard.delete(&cc.ctx.http).await {
+                        warn!("Failed to delete dashboard channel: {}", e);
+                        failed_channels.push("dashboard");
+                    } else {
+                        deleted_channels.push("dashboard");
+                    }
+                    
+                    // Delete queue text channel
+                    if let Err(e) = channels.queue_chat.delete(&cc.ctx.http).await {
+                        warn!("Failed to delete queue text channel: {}", e);
+                        failed_channels.push("queue text");
+                    } else {
+                        deleted_channels.push("queue text");
+                    }
+                    
+                    // Delete queue voice channel
+                    if let Err(e) = channels.queue_vc.delete(&cc.ctx.http).await {
+                        warn!("Failed to delete queue voice channel: {}", e);
+                        failed_channels.push("queue voice");
+                    } else {
+                        deleted_channels.push("queue voice");
+                    }
+                    
+                    // Delete team voice channels
+                    for (i, team) in channels.teams.iter().enumerate() {
+                        if let Err(e) = team.red_vc.delete(&cc.ctx.http).await {
+                            warn!("Failed to delete red team channel {}: {}", i, e);
+                            failed_channels.push("red team");
+                        } else {
+                            deleted_channels.push("red team");
+                        }
+                        
+                        if let Err(e) = team.blu_vc.delete(&cc.ctx.http).await {
+                            warn!("Failed to delete blue team channel {}: {}", i, e);
+                            failed_channels.push("blue team");
+                        } else {
+                            deleted_channels.push("blue team");
+                        }
+                    }
+                    
+                    // Delete the category after all channels are deleted
+                    if let Some(cat_id) = category_id {
+                        if let Err(e) = cat_id.delete(&cc.ctx.http).await {
+                            warn!("Failed to delete category: {}", e);
+                            failed_channels.push("category");
+                        } else {
+                            deleted_channels.push("category");
+                            info!("[Guild: {}] Deleted category {}", guild_id, cat_id);
+                        }
+                    }
+                    
+                    let mut description = format!("Successfully removed group {}.", actual_group_id);
+                    
+                    if !deleted_channels.is_empty() {
+                        description.push_str(&format!(
+                            "\n\n**Deleted {} channel{}:**\n• {}",
+                            deleted_channels.len(),
+                            if deleted_channels.len() == 1 { "" } else { "s" },
+                            deleted_channels.join("\n• ")
+                        ));
+                    }
+                    
+                    if !failed_channels.is_empty() {
+                        description.push_str(&format!(
+                            "\n\n**Failed to delete {} channel{}:**\n• {}",
+                            failed_channels.len(),
+                            if failed_channels.len() == 1 { "" } else { "s" },
+                            failed_channels.join("\n• ")
+                        ));
+                    }
+                    
+                    let success_embed = CE::new()
+                        .title("Group Removed")
+                        .description(description)
+                        .color(0x00ff00);
+
+                    // Try to edit the original response first
+                    if let Err(e) = cc.intax.edit_response(&cc.ctx.http,
+                        serenity::all::EditInteractionResponse::new().embed(success_embed.clone())
+                    ).await {
+                        warn!("Failed to edit response (channel may be deleted): {}", e);
+                        
+                        // If that fails, send a DM to the user
+                        if let Err(dm_err) = user.direct_message(&cc.ctx.http, 
+                            serenity::all::CreateMessage::new().embed(success_embed)
+                        ).await {
+                            warn!("Failed to send DM to user: {}", dm_err);
+                        } else {
+                            info!("Sent group removal confirmation via DM to user {}", user.id);
+                        }
+                    }
+                },
+                Err(e) => {
+                    warn!("[Guild: {}] Failed to remove group {} from database: {}", guild_id, actual_group_id, e);
+                    
+                    let error_embed = CE::new()
+                        .title("Failed to Remove Group")
+                        .description(format!("Error: {}", e))
+                        .color(0xff0000);
+
+                    // Edit the loading message with error
+                    cc.intax.edit_response(&cc.ctx.http,
+                        serenity::all::EditInteractionResponse::new().embed(error_embed)
+                    ).await?;
+                }
+            }
+        },
+        None => {
+            // Group not found
+            let error_message = if group_id == 0 {
+                "No group found for this channel. Use this command in a channel that belongs to a group."
+            } else {
+                "Group not found with the specified ID."
+            };
+            
+            let groups_list = if server.groups.is_empty() {
+                "No groups configured for this server.".to_string()
+            } else {
+                let mut list = String::from("Available groups:\n");
+                for g in &server.groups {
+                    list.push_str(&format!("• Group {} (Dashboard: <#{}>)\n", g.group_id, g.channels.dashboard.get()));
+                }
+                list
+            };
+
+            let error_embed = CE::new()
+                .title("Group Not Found")
+                .description(format!(
+                    "{}\n\n{}",
+                    error_message,
+                    groups_list
+                ))
+                .color(0xff0000);
+
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+        }
+    }
+
+    Ok(())
 }

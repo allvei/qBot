@@ -4,6 +4,7 @@ use std::env;
 use std::sync::Arc;
 
 use anyhow::Result;
+use pf_pug_bot::commands;
 use pf_pug_bot::player::queue;
 use serenity::all::{
     Client, Command, CommandOptionType as COT, Context, EventHandler, Guild, GuildId,
@@ -48,8 +49,8 @@ impl CmdOp for CC {
 }
 
 struct Handler {
-    database: Arc<Database>,
-    manager:  Arc<Mutex<Manager>>,
+    database:        Arc<Database>,
+    manager:         Arc<Mutex<Manager>>,
     dashboard_queue: Arc<tokio::sync::Mutex<Option<DashboardUpdateQueue>>>,
 }
 
@@ -87,36 +88,41 @@ impl EventHandler for Handler {
         // Register slash commands globally or for specific guild
         let cmds = vec![
             // Player commands
-            cmd("buffer", "Buffer a player").op_user("user",  "User to buffer", true),
+            cmd("buffer", "Buffer a player")
+                .op_user("user",  "User to buffer", true),
             
-            // Setup commands
             cmd("setupadd",   "Create roles and group (full setup)"),
             cmd("setuplink",  "Guide to link existing roles and channels"),
             
-            // Role commands
             cmd("roleadd",    "Create runner and admin roles"),
-            cmd("rolelink",   "Link existing runner and admin roles").op("runner_role", "Runner role to link", false)
-                                                                     .op("admin_role",  "Admin role to link",  false),
-            cmd("roledel", "Remove role configuration")              .op("role_type",   "Role type: runner, admin, or both", true),
+            cmd("rolelink",   "Link existing runner and admin roles")
+                .op("runner_role", "Runner role to link", false)
+                .op("admin_role",  "Admin role to link",  false),
+            cmd("roledel", "Remove role configuration")
+                .op("role_type",   "Role type: runner, admin, or both", true),
 
-            // Rank commands
-            cmd("rankadd",    "Add Discord role(s) to a rank (supports multiple roles)")      .op("rank", "Rank name", true)
-                                                                                             .op("role", "Discord roles to add", true),
-            cmd("rankremove", "Remove Discord role(s) from a rank (supports multiple roles)").op("rank", "Rank name", true)
-                                                                                             .op("role", "Discord roles to remove", true),
-            cmd("ranklist",   "List all role mappings for ranks")                            .op("rank", "Rank name to filter (optional)", false),
+            cmd("rankadd",    "Add Discord role(s) to a rank (supports multiple roles)")     
+                .op("rank", "Rank name", true)
+                .op("role", "Discord roles to add", true),
+            cmd("rankremove", "Remove Discord role(s) from a rank (supports multiple roles)")
+                .op("rank", "Rank name", true)
+                .op("role", "Discord roles to remove", true),
+            cmd("ranklist",   "List all role mappings for ranks")                            
+                .op("rank", "Rank name to filter (optional)", false),
 
-            // Group commands
             cmd("groupadd",    "Create a new category with all group channels"),
             cmd("grouplink",   "Link existing channels to a group"),
-            cmd("groupremove", "Remove a group")                     .op("group_id", "Group ID to remove (defaults to current channel's group)", false),
+            cmd("groupremove", "Remove a group")
+                .op("group_id", "Group ID to remove (defaults to current channel's group)", false),
 
-            // Admin commands
-            cmd("quotaset",    "Set the queue quota")            .op("quota", "Number of players required (2-100)", true),
-            cmd("connectadd",  "Set server connection info")     .op("connect_info", "Server connect command (e.g., connect 192.168.10.10:27015)", true),
+            cmd("quotaset",    "Set the queue quota")            
+                .op("quota", "Number of players required (2-100)", true),
+            cmd("connectadd",  "Set server connection info")     
+                .op("connect_info", "Server connect command (e.g., connect 192.168.10.10:27015)", true),
             cmd("clear",       "Clear all players from the queue"),
-            cmd("ranksetelo",  "Set custom ELO value for a rank").op("rank_role", "The rank role (mention or ID)", true)
-                                                                 .op("elo", "ELO value (1-100)", true),
+            cmd("ranksetelo",  "Set custom ELO value for a rank")
+                .op("rank_role", "The rank role (mention or ID)", true)
+                .op("elo", "ELO value (1-100)", true),
         ];
 
         if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
@@ -197,18 +203,18 @@ impl EventHandler for Handler {
                     }
                     "roleadd" => {
                         info();
-                        pf_pug_bot::handlers::role_commands::cmd_role_add(&cmd_ctx).await
+                        commands::cmd_role_add(&cmd_ctx).await
                     }
                     "rolelink" => {
                         info();
                         let runner_role = cdo.iter().find(|opt| opt.name == "runner_role").and_then(|opt| opt.value.as_str()).map(|s| s.to_string());
                         let admin_role  = cdo.iter().find(|opt| opt.name == "admin_role").and_then(|opt| opt.value.as_str()).map(|s| s.to_string());
-                        pf_pug_bot::handlers::role_commands::cmd_role_link(&cmd_ctx, runner_role, admin_role).await
+                        commands::cmd_role_link(&cmd_ctx, runner_role, admin_role).await
                     }
                     "roleremove" => {
                         info();
                         let role_type = cdo.iter().find(|opt| opt.name == "role_type").and_then(|opt| opt.value.as_str()).unwrap_or("both").to_string();
-                        pf_pug_bot::handlers::role_commands::cmd_role_remove(&cmd_ctx, role_type).await
+                        commands::cmd_role_remove(&cmd_ctx, role_type).await
                     }
                     "setupadd" => {
                         info();
@@ -224,11 +230,11 @@ impl EventHandler for Handler {
                                 manager.servers.last_mut().unwrap()
                             }
                         };
-                        pf_pug_bot::handlers::setup_commands::cmd_setup_add(&cmd_ctx, server).await
+                        commands::cmd_setup_add(&cmd_ctx, server).await
                     }
                     "setuplink" => {
                         info();
-                        pf_pug_bot::handlers::setup_commands::cmd_setup_link(&cmd_ctx).await
+                        commands::cmd_setup_link(&cmd_ctx).await
                     }
                     "rankadd" => {
                         info();
@@ -242,7 +248,7 @@ impl EventHandler for Handler {
                             .and_then(|opt| opt.value.as_str())
                             .unwrap_or("")
                             .to_string();
-                        pf_pug_bot::handlers::role_commands::cmd_rank_add(&cmd_ctx, rank_name, role_mention).await
+                        commands::cmd_rank_add(&cmd_ctx, rank_name, role_mention).await
                     }
                     "rankremove" => {
                         info();
@@ -256,7 +262,7 @@ impl EventHandler for Handler {
                             .and_then(|opt| opt.value.as_str())
                             .unwrap_or("")
                             .to_string();
-                        pf_pug_bot::handlers::role_commands::cmd_rank_remove(&cmd_ctx, rank_name, role_mention).await
+                        commands::cmd_rank_remove(&cmd_ctx, rank_name, role_mention).await
                     }
                     "ranklist" => {
                         info();
@@ -264,7 +270,7 @@ impl EventHandler for Handler {
                             .find(|opt| opt.name == "rank")
                             .and_then(|opt| opt.value.as_str())
                             .map(|s| s.to_string());
-                        pf_pug_bot::handlers::role_commands::cmd_rank_list(&cmd_ctx, rank_name).await
+                        commands::cmd_rank_list(&cmd_ctx, rank_name).await
                     }
                     "quotaset" => {
                         info();
@@ -333,7 +339,7 @@ impl EventHandler for Handler {
                                 return;
                             }
                         };
-                        admin::cmd_group_remove(&cmd_ctx, server, group_id).await
+                        commands::cmd_group_remove(&cmd_ctx, server, group_id).await
                     }
                     _ => {
                         // All other commands need a server
@@ -531,7 +537,7 @@ impl EventHandler for Handler {
                 let channel_id = itx.channel_id;
 
                 // Try to get the group from the manager
-                let group = match manager.get_group(guild_id, channel_id) {
+                let group = match manager.get_group_by_channel(guild_id, channel_id) {
                     Ok(group) => group,
                     Err(_) => {
                         // Group not in manager - try to recover from database
@@ -574,7 +580,7 @@ impl EventHandler for Handler {
                                         }
 
                                         // Now get the group from the manager
-                                        manager.get_group(guild_id, channel_id).unwrap()
+                                        manager.get_group_by_channel(guild_id, channel_id).unwrap()
                                     } else {
                                         error!("[{}] Could not get server from manager", guild_name);
                                         let error_response = CIR::Message(
@@ -693,7 +699,7 @@ impl EventHandler for Handler {
             VoiceStateUpdate::Reconnected => return, // Early return for reconnects
         };
 
-        let group = match manager.get_group(server, lookup_channel) {
+        let group = match manager.get_group_by_channel(server, lookup_channel) {
             Ok(g) => g,
             Err(_) => return, // Channel not configured for pug queue
         };
@@ -825,7 +831,7 @@ impl EventHandler for Handler {
             let mut manager = self.manager.lock().await;
 
             // Find the guild by ID and check if the new channel is a queue voice channel in any group
-            match manager.get_group(server, new.channel_id.unwrap()) {
+            match manager.get_group_by_channel(server, new.channel_id.unwrap()) {
                 Ok(group) => {
                     if group.channels.queue_vc == new.channel_id.unwrap() {
                         // Check if player is already in any session and mark them as in VC
@@ -915,20 +921,18 @@ impl Handler {
         let guild_permissions = guild.member_permissions(&bot_member);
 
         // Check required permissions
-        if !guild_permissions.contains(Permissions::MOVE_MEMBERS) {
-            missing_perms.push("Move Members");
-        }
-        if !guild_permissions.contains(Permissions::SEND_MESSAGES) {
-            missing_perms.push("Send Messages");
-        }
-        if !guild_permissions.contains(Permissions::EMBED_LINKS) {
-            missing_perms.push("Embed Links");
-        }
-        if !guild_permissions.contains(Permissions::VIEW_CHANNEL) {
-            missing_perms.push("View Channels");
-        }
-        if !guild_permissions.contains(Permissions::MANAGE_CHANNELS) {
-            missing_perms.push("Manage Channels");
+        let required_perms = [
+            (Permissions::MOVE_MEMBERS,    "Move Members"),
+            (Permissions::SEND_MESSAGES,   "Send Messages"),
+            (Permissions::EMBED_LINKS,     "Embed Links"),
+            (Permissions::VIEW_CHANNEL,    "View Channels"),
+            (Permissions::MANAGE_CHANNELS, "Manage Channels"),
+        ];
+
+        for (perm, name) in required_perms {
+            if !guild_permissions.contains(perm) {
+                missing_perms.push(name);
+            }
         }
 
         if missing_perms.is_empty() {

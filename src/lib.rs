@@ -7,6 +7,6 @@ pub mod models;
 
 
 pub use database::*;
-pub use handlers::{admin, player};
+pub use handlers::{admin, player, commands};
 pub use log::*;
 pub use models::*;

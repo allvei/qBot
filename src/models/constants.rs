@@ -8,19 +8,10 @@ use sqlx::FromRow;
 
 use super::types::Rank;
 
-pub const DEFAULT_QUOTA: u8 = 8;
-pub const DEFAULT_RANK: Rank = Rank::Apprentice;
+pub const DEFAULT_QUOTA:   u8   = 8;
+pub const DEFAULT_RANK:    Rank = Rank::Apprentice;
+pub const DEFAULT_TIMEOUT: u16  = 120;
 
-/// Timeout in seconds for players to join VC after session goes Hot
-pub const DEFAULT_TIMEOUT: u16 = 120;
-
-// Note: Runner and Admin role IDs are now configured per guild via database during setup.
-// The hardcoded values below are kept for reference only (passtime.tf server roles).
-// Use the /setup command to configure roles for each guild with dropdown menus.
-// pub const RUNNER_R_ID: u64 = 1386951114225746040;
-// pub const ADMIN_R_ID: u64 = 1386951155052974141;
-
-// ConfigFormat
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct ConfigFormat {
     pub key: String,
@@ -96,10 +87,10 @@ impl VoiceStateUpdate {
 
     pub fn is(&self, voice_state_update: VoiceStateUpdate) -> bool {
         match self {
-            VoiceStateUpdate::Connected => voice_state_update == VoiceStateUpdate::Connected,
-            VoiceStateUpdate::Reconnected => voice_state_update == VoiceStateUpdate::Reconnected,
+            VoiceStateUpdate::Connected    => voice_state_update == VoiceStateUpdate::Connected,
+            VoiceStateUpdate::Reconnected  => voice_state_update == VoiceStateUpdate::Reconnected,
             VoiceStateUpdate::Disconnected => voice_state_update == VoiceStateUpdate::Disconnected,
-            VoiceStateUpdate::Moved => voice_state_update == VoiceStateUpdate::Moved,
+            VoiceStateUpdate::Moved        => voice_state_update == VoiceStateUpdate::Moved,
         }
     }
 }

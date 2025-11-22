@@ -4,20 +4,18 @@ use tokio::sync::Mutex;
 
 use anyhow::{anyhow, Result};
 use serenity::all::{
-    ChannelId as CI, ChannelType, ComponentInteraction, ComponentInteractionDataKind,
-    Context, CreateActionRow, CreateEmbed as CE, CreateInteractionResponse as CIR,
-    CreateInteractionResponseMessage as CIRM, CreateMessage, CreateSelectMenu,
-    CreateSelectMenuKind, CreateSelectMenuOption, GuildId, PartialGuild, RoleId, UserId,
+    ChannelId as CI, ChannelType, ComponentInteraction as CX, ComponentInteractionDataKind as CXD,
+    Context, CreateActionRow as CAR, CreateEmbed as CE, CreateInteractionResponse as CIR,
+    CreateInteractionResponseMessage as CIRM, CreateMessage, CreateSelectMenu as CSM,
+    CreateSelectMenuKind as CSMK, CreateSelectMenuOption as CSMO, GuildId as GI, PartialGuild as PG, RoleId as RI, UserId as UI,
 };
 use tracing::{error, info, warn};
 
-use crate::DEFAULT_QUOTA;
+use crate::{DEFAULT_QUOTA, Database, Manager};
+use crate::commands::{parse_rank_name, parse_role_id};
 use crate::database::repositories::Repository;
 use crate::handlers::player::{check_role, create_rank_roles, validate_rank_roles, validate_system_roles};
 use crate::models::{CommandContext as CC, Role, Server, SETUP_STATE};
-
-// Re-export group_remove command
-pub use super::group_remove::cmd_group_remove;
 
 /// `/config`
 ///
@@ -204,11 +202,11 @@ async fn start_grouplink_flow(cc: &CC<'_>) -> Result<()> {
     let channels = get_text_channels(&guild, cc.ctx).await?;
     let channel_options = create_channel_options(&channels, "grouplink_dashboard");
 
-    let select_menu = CreateSelectMenu::new("grouplink_dashboard", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("grouplink_dashboard", CSMK::String { options: channel_options })
         .placeholder("Select dashboard channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::Message(
         CIRM::new()
@@ -501,10 +499,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 /// Creates a category and all necessary group channels
 /// Flow: Create category -> Create dashboard -> Test message send -> Create other channels
 /// If dashboard message send fails, cleanup and abort
-pub async fn create_group_channels(
-    ctx: &Context,
-    guild_id: GuildId,
-) -> Result<(CI, CI, CI, CI, CI, CI)> {
+pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, CI, CI, CI, CI, CI)> {
     use serenity::all::{CreateChannel, CreateEmbed, CreateMessage, PermissionOverwrite, PermissionOverwriteType, Permissions};
     
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -674,12 +669,7 @@ pub async fn create_group_channels(
 }
 
 /// Starts the role selection flow after channels are created
-async fn start_role_selection_flow(
-    cc: &CC<'_>,
-    guild_id: GuildId,
-    user_id: UserId,
-    category_id: CI,
-) -> Result<()> {
+async fn start_role_selection_flow(cc: &CC<'_>, guild_id: GI, user_id: UI, category_id: CI) -> Result<()> {
     let guild = guild_id.to_partial_guild(&cc.ctx.http).await?;
     
     // Get config to show created channels
@@ -711,11 +701,11 @@ async fn start_role_selection_flow(
     let roles = get_guild_roles(&guild).await?;
     let role_options = create_role_options(&roles, "init_runner");
 
-    let select_menu = CreateSelectMenu::new("init_runner", CreateSelectMenuKind::String { options: role_options })
+    let select_menu = CSM::new("init_runner", CSMK::String { options: role_options })
         .placeholder("Select runner role...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     cc.intax.edit_response(&cc.ctx.http,
         serenity::all::EditInteractionResponse::new()
@@ -779,11 +769,11 @@ async fn start_init_group_flow(cc: &CC<'_>, dashboard_channel: CI) -> Result<()>
     let channels = get_text_channels(&guild, cc.ctx).await?;
     let channel_options = create_channel_options(&channels, "init_queue");
 
-    let select_menu = CreateSelectMenu::new("init_queue", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("init_queue", CSMK::String { options: channel_options })
         .placeholder("Select queue channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::Message(
         CIRM::new()
@@ -834,8 +824,8 @@ pub async fn cmd_setup(cc: &CC<'_>) -> Result<()> {
         return Ok(());
     }
 
-    let guild_id: GuildId = cc.intax.guild_id.expect("Guild ID not found");
-    let user_id:  UserId  = cc.intax.user.id;
+    let guild_id: GI = cc.intax.guild_id.expect("Guild ID not found");
+    let user_id:  UI  = cc.intax.user.id;
 
     // Start the setup flow with ephemeral message
     start_setup_flow(cc, guild_id, user_id).await?;
@@ -844,7 +834,7 @@ pub async fn cmd_setup(cc: &CC<'_>) -> Result<()> {
 }
 
 /// Starts the interactive setup flow with ephemeral messages
-async fn start_setup_flow(cc: &CC<'_>, guild_id: GuildId, user_id: UserId) -> Result<()> {
+async fn start_setup_flow(cc: &CC<'_>, guild_id: GI, user_id: UI) -> Result<()> {
     // Initialize setup state
     SETUP_STATE.start_setup(user_id, guild_id);
 
@@ -873,11 +863,11 @@ async fn start_setup_flow(cc: &CC<'_>, guild_id: GuildId, user_id: UserId) -> Re
     let channels = get_text_channels(&guild, cc.ctx).await?;
     let channel_options = create_channel_options(&channels, "dashboard");
 
-    let select_menu = CreateSelectMenu::new("setup_dashboard", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("setup_dashboard", CSMK::String { options: channel_options })
         .placeholder("Select dashboard channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::Message(
         CIRM::new()
@@ -892,7 +882,7 @@ async fn start_setup_flow(cc: &CC<'_>, guild_id: GuildId, user_id: UserId) -> Re
 }
 
 /// Gets text channels from a guild
-async fn get_text_channels(guild: &PartialGuild, ctx: &Context) -> Result<Vec<(CI, String)>> {
+async fn get_text_channels(guild: &PG, ctx: &Context) -> Result<Vec<(CI, String)>> {
     let mut channels = Vec::new();
 
     let guild_channels = guild.channels(&ctx.http).await?;
@@ -908,7 +898,7 @@ async fn get_text_channels(guild: &PartialGuild, ctx: &Context) -> Result<Vec<(C
 }
 
 /// Gets voice channels from a guild
-async fn get_voice_channels(guild: &PartialGuild, ctx: &Context) -> Result<Vec<(CI, String)>> {
+async fn get_voice_channels(guild: &PG, ctx: &Context) -> Result<Vec<(CI, String)>> {
     let mut channels = Vec::new();
 
     let guild_channels = guild.channels(&ctx.http).await?;
@@ -924,7 +914,7 @@ async fn get_voice_channels(guild: &PartialGuild, ctx: &Context) -> Result<Vec<(
 }
 
 /// Gets roles from a guild (excluding @everyone)
-async fn get_guild_roles(guild: &PartialGuild) -> Result<Vec<(RoleId, String)>> {
+async fn get_guild_roles(guild: &PG) -> Result<Vec<(RI, String)>> {
     let mut roles = Vec::new();
 
     for (role_id, role) in &guild.roles {
@@ -940,36 +930,36 @@ async fn get_guild_roles(guild: &PartialGuild) -> Result<Vec<(RoleId, String)>> 
 }
 
 /// Creates channel select options for dropdown
-fn create_channel_options(channels: &[(CI, String)], prefix: &str) -> Vec<CreateSelectMenuOption> {
+fn create_channel_options(channels: &[(CI, String)], prefix: &str) -> Vec<CSMO> {
     channels.iter()
         .take(25) // Discord limit
         .map(|(id, name)| {
-            CreateSelectMenuOption::new(name.clone(), format!("{}_{}", prefix, id.get()))
+            CSMO::new(name.clone(), format!("{}_{}", prefix, id.get()))
                 .description(format!("Channel ID: {}", id.get()))
         })
         .collect()
 }
 
 /// Creates role select options for dropdown
-fn create_role_options(roles: &[(RoleId, String)], prefix: &str) -> Vec<CreateSelectMenuOption> {
+fn create_role_options(roles: &[(RI, String)], prefix: &str) -> Vec<CSMO> {
     roles.iter()
         .take(25) // Discord limit
         .map(|(id, name)| {
-            CreateSelectMenuOption::new(name.clone(), format!("{}_{}", prefix, id.get()))
+            CSMO::new(name.clone(), format!("{}_{}", prefix, id.get()))
                 .description(format!("Role ID: {}", id.get()))
         })
         .collect()
 }
 
 /// Handles setup interaction responses
-pub async fn handle_setup_interaction(ctx: &Context, interaction: &ComponentInteraction, db: &std::sync::Arc<crate::Database>, manager: &Arc<Mutex<crate::models::Manager>>) -> Result<()> {
+pub async fn handle_setup_interaction(ctx: &Context, interaction: &CX, db: &Arc<Database>, manager: &Arc<Mutex<Manager>>) -> Result<()> {
     use crate::models::ButtonType;
 
     let button_type = ButtonType::parse(&interaction.data.custom_id);
 
     // Extract selected value from dropdown
     let selected_values = match &interaction.data.kind {
-        ComponentInteractionDataKind::StringSelect { values } => values,
+        CXD::StringSelect { values } => values,
         _ => return Ok(()),
     };
 
@@ -1022,7 +1012,7 @@ pub async fn handle_setup_interaction(ctx: &Context, interaction: &ComponentInte
 }
 
 /// Handles dashboard channel selection
-async fn handle_dashboard_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+async fn handle_dashboard_selection(ctx: &Context, interaction: &CX, channel_id: u64) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -1045,11 +1035,11 @@ async fn handle_dashboard_selection(ctx: &Context, interaction: &ComponentIntera
     let channels = get_text_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "queue");
 
-    let select_menu = CreateSelectMenu::new("setup_queue", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("setup_queue", CSMK::String { options: channel_options })
         .placeholder("Select queue channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(
         CIRM::new()
@@ -1062,7 +1052,7 @@ async fn handle_dashboard_selection(ctx: &Context, interaction: &ComponentIntera
 }
 
 /// Handles queue channel selection
-async fn handle_queue_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+async fn handle_queue_selection(ctx: &Context, interaction: &CX, channel_id: u64) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -1085,11 +1075,11 @@ async fn handle_queue_selection(ctx: &Context, interaction: &ComponentInteractio
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "queuevc");
 
-    let select_menu = CreateSelectMenu::new("setup_queuevc", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("setup_queuevc", CSMK::String { options: channel_options })
         .placeholder("Select queue voice channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(
         CIRM::new()
@@ -1102,7 +1092,7 @@ async fn handle_queue_selection(ctx: &Context, interaction: &ComponentInteractio
 }
 
 /// Handles queue voice channel selection
-async fn handle_queue_vc_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+async fn handle_queue_vc_selection(ctx: &Context, interaction: &CX, channel_id: u64) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -1125,11 +1115,11 @@ async fn handle_queue_vc_selection(ctx: &Context, interaction: &ComponentInterac
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "red");
 
-    let select_menu = CreateSelectMenu::new("setup_red", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("setup_red", CSMK::String { options: channel_options })
         .placeholder("Select red team voice channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(
         CIRM::new()
@@ -1142,7 +1132,7 @@ async fn handle_queue_vc_selection(ctx: &Context, interaction: &ComponentInterac
 }
 
 /// Handles red team channel selection
-async fn handle_red_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+async fn handle_red_selection(ctx: &Context, interaction: &CX, channel_id: u64) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -1165,11 +1155,11 @@ async fn handle_red_selection(ctx: &Context, interaction: &ComponentInteraction,
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "blue");
 
-    let select_menu = CreateSelectMenu::new("setup_blue", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("setup_blue", CSMK::String { options: channel_options })
         .placeholder("Select blue team voice channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(
         CIRM::new()
@@ -1182,7 +1172,7 @@ async fn handle_red_selection(ctx: &Context, interaction: &ComponentInteraction,
 }
 
 /// Handles blue team channel selection
-async fn handle_blue_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+async fn handle_blue_selection(ctx: &Context, interaction: &CX, channel_id: u64) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -1205,11 +1195,11 @@ async fn handle_blue_selection(ctx: &Context, interaction: &ComponentInteraction
     let roles = get_guild_roles(&guild).await?;
     let role_options = create_role_options(&roles, "runner");
 
-    let select_menu = CreateSelectMenu::new("setup_runner", CreateSelectMenuKind::String { options: role_options })
+    let select_menu = CSM::new("setup_runner", CSMK::String { options: role_options })
         .placeholder("Select runner role...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(
         CIRM::new()
@@ -1222,7 +1212,7 @@ async fn handle_blue_selection(ctx: &Context, interaction: &ComponentInteraction
 }
 
 /// Handles runner role selection
-async fn handle_runner_selection(ctx: &Context, interaction: &ComponentInteraction, role_id: u64) -> Result<()> {
+async fn handle_runner_selection(ctx: &Context, interaction: &CX, role_id: u64) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -1245,11 +1235,11 @@ async fn handle_runner_selection(ctx: &Context, interaction: &ComponentInteracti
     let roles = get_guild_roles(&guild).await?;
     let role_options = create_role_options(&roles, "admin");
 
-    let select_menu = CreateSelectMenu::new("setup_admin", CreateSelectMenuKind::String { options: role_options })
+    let select_menu = CSM::new("setup_admin", CSMK::String { options: role_options })
         .placeholder("Select admin role...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(
         CIRM::new()
@@ -1262,7 +1252,7 @@ async fn handle_runner_selection(ctx: &Context, interaction: &ComponentInteracti
 }
 
 /// Handles admin role selection and completes setup
-async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteraction, role_id: u64, db: &std::sync::Arc<crate::Database>, manager: &Arc<Mutex<crate::models::Manager>>) -> Result<()> {
+async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, db: &Arc<Database>, manager: &Arc<Mutex<Manager>>) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
@@ -1405,7 +1395,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &ComponentInteractio
 // ==================== INIT GROUP HANDLERS ====================
 
 /// Handles queue channel selection for init_group
-async fn handle_init_queue_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+async fn handle_init_queue_selection(ctx: &Context, interaction: &CX, channel_id: u64) -> Result<()> {
     let guild_id = match interaction.guild_id {
         Some(id) => id,
         None => return Err(anyhow!("Guild ID not found - setup must be run in a server"))
@@ -1431,11 +1421,11 @@ async fn handle_init_queue_selection(ctx: &Context, interaction: &ComponentInter
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "init_queuevc");
 
-    let select_menu = CreateSelectMenu::new("init_queuevc", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("init_queuevc", CSMK::String { options: channel_options })
         .placeholder("Select queue voice channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
 
@@ -1444,7 +1434,7 @@ async fn handle_init_queue_selection(ctx: &Context, interaction: &ComponentInter
 }
 
 /// Handles queue voice channel selection for init_group
-async fn handle_init_queue_vc_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+async fn handle_init_queue_vc_selection(ctx: &Context, interaction: &CX, channel_id: u64) -> Result<()> {
     let guild_id = match interaction.guild_id {
         Some(id) => id,
         None     => return Err(anyhow!("Guild ID not found - setup must be run in a server"))
@@ -1470,11 +1460,11 @@ async fn handle_init_queue_vc_selection(ctx: &Context, interaction: &ComponentIn
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "init_red");
 
-    let select_menu = CreateSelectMenu::new("init_red", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("init_red", CSMK::String { options: channel_options })
         .placeholder("Select red team voice channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
 
@@ -1483,7 +1473,7 @@ async fn handle_init_queue_vc_selection(ctx: &Context, interaction: &ComponentIn
 }
 
 /// Handles red team channel selection for init_group
-async fn handle_init_red_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+async fn handle_init_red_selection(ctx: &Context, interaction: &CX, channel_id: u64) -> Result<()> {
     let guild_id = match interaction.guild_id {
         Some(id) => id,
         None => return Err(anyhow!("Guild ID not found - setup must be run in a server"))
@@ -1509,11 +1499,11 @@ async fn handle_init_red_selection(ctx: &Context, interaction: &ComponentInterac
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "init_blue");
 
-    let select_menu = CreateSelectMenu::new("init_blue", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("init_blue", CSMK::String { options: channel_options })
         .placeholder("Select blue team voice channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
 
@@ -1522,7 +1512,7 @@ async fn handle_init_red_selection(ctx: &Context, interaction: &ComponentInterac
 }
 
 /// Handles blue team channel selection for init_group flow (created channels)
-async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+async fn handle_init_blue_selection(ctx: &Context, interaction: &CX, channel_id: u64) -> Result<()> {
     let guild_id = match interaction.guild_id {
         Some(id) => id,
         None => return Err(anyhow!("Guild ID not found - setup must be run in a server"))
@@ -1548,11 +1538,11 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
     let roles = get_guild_roles(&guild).await?;
     let role_options = create_role_options(&roles, "init_admin");
 
-    let select_menu = CreateSelectMenu::new("init_admin", CreateSelectMenuKind::String { options: role_options })
+    let select_menu = CSM::new("init_admin", CSMK::String { options: role_options })
         .placeholder("Select admin role...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
 
@@ -1561,7 +1551,7 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &ComponentIntera
 }
 
 /// Handles runner role selection for init_group flow
-async fn handle_init_runner_selection(ctx: &Context, interaction: &ComponentInteraction, role_id: u64) -> Result<()> {
+async fn handle_init_runner_selection(ctx: &Context, interaction: &CX, role_id: u64) -> Result<()> {
     let guild_id = match interaction.guild_id {
         Some(id) => id,
         None => return Err(anyhow!("Guild ID not found - setup must be run in a server"))
@@ -1587,11 +1577,11 @@ async fn handle_init_runner_selection(ctx: &Context, interaction: &ComponentInte
     let roles = get_guild_roles(&guild).await?;
     let role_options = create_role_options(&roles, "init_admin");
 
-    let select_menu = CreateSelectMenu::new("init_admin", CreateSelectMenuKind::String { options: role_options })
+    let select_menu = CSM::new("init_admin", CSMK::String { options: role_options })
         .placeholder("Select admin role...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
 
@@ -1600,7 +1590,7 @@ async fn handle_init_runner_selection(ctx: &Context, interaction: &ComponentInte
 }
 
 /// Handles admin role selection and completes init_group setup
-async fn handle_init_admin_selection(ctx: &Context, interaction: &ComponentInteraction, role_id: u64, db: &std::sync::Arc<crate::Database>, manager: &Arc<Mutex<crate::models::Manager>>) -> Result<()> {
+async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, db: &std::sync::Arc<crate::Database>, manager: &Arc<Mutex<crate::models::Manager>>) -> Result<()> {
     let guild_id = match interaction.guild_id {
         Some(id) => id,
         None => return Err(anyhow!("Guild ID not found - setup must be run in a server"))
@@ -1813,7 +1803,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
                 .label("Cancel")
                 .style(ButtonStyle::Secondary);
 
-            let buttons = CreateActionRow::Buttons(vec![yes_button, no_button]);
+            let buttons = CAR::Buttons(vec![yes_button, no_button]);
 
             let response = CIR::Message(
                 CIRM::new()
@@ -1834,7 +1824,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
 }
 
 /// Handle rank role creation confirmation button
-pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, interaction: &ComponentInteraction, create: bool) -> Result<()> {
+pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, interaction: &CX, create: bool) -> Result<()> {
     let guild_id = match interaction.guild_id {
         Some(id) => id,
         None => return Err(anyhow!("Guild ID not found - this command must be run in a server"))
@@ -2091,13 +2081,7 @@ pub async fn cmd_add_connect(cc: &CC<'_>, connect_info: String) -> Result<()> {
 }
 
 /// Helper function to finalize group setup by loading it into manager and immediately updating dashboard
-async fn finalize_group_setup(
-    ctx: &Context,
-    db: &std::sync::Arc<crate::Database>,
-    manager: &Arc<Mutex<crate::models::Manager>>,
-    guild_id: serenity::all::GuildId,
-    dashboard_msg_id: u64,
-) -> Result<()> {
+async fn finalize_group_setup(ctx: &Context, db: &Arc<Database>, manager: &Arc<Mutex<Manager>>, guild_id: GI, dashboard_msg_id: u64) -> Result<()> {
     let guild_name = ctx.cache.guild(guild_id)
         .map(|g| g.name.clone())
         .unwrap_or_else(|| "Unknown".to_string());
@@ -2144,7 +2128,7 @@ async fn finalize_group_setup(
 }
 
 /// Handles grouplink dashboard channel selection - Step 1
-async fn handle_grouplink_dashboard_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+async fn handle_grouplink_dashboard_selection(ctx: &Context, interaction: &CX, channel_id: u64) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -2166,11 +2150,11 @@ async fn handle_grouplink_dashboard_selection(ctx: &Context, interaction: &Compo
     let channels = get_text_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "grouplink_queue");
 
-    let select_menu = CreateSelectMenu::new("grouplink_queue", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("grouplink_queue", CSMK::String { options: channel_options })
         .placeholder("Select queue text channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
     interaction.create_response(&ctx.http, response).await?;
@@ -2178,7 +2162,7 @@ async fn handle_grouplink_dashboard_selection(ctx: &Context, interaction: &Compo
 }
 
 /// Handles grouplink queue text channel selection - Step 2
-async fn handle_grouplink_queue_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+async fn handle_grouplink_queue_selection(ctx: &Context, interaction: &CX, channel_id: u64) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -2200,11 +2184,11 @@ async fn handle_grouplink_queue_selection(ctx: &Context, interaction: &Component
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "grouplink_queuevc");
 
-    let select_menu = CreateSelectMenu::new("grouplink_queuevc", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("grouplink_queuevc", CSMK::String { options: channel_options })
         .placeholder("Select queue voice channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
     interaction.create_response(&ctx.http, response).await?;
@@ -2212,7 +2196,7 @@ async fn handle_grouplink_queue_selection(ctx: &Context, interaction: &Component
 }
 
 /// Handles grouplink queue voice channel selection - Step 3
-async fn handle_grouplink_queuevc_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+async fn handle_grouplink_queuevc_selection(ctx: &Context, interaction: &CX, channel_id: u64) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -2234,11 +2218,11 @@ async fn handle_grouplink_queuevc_selection(ctx: &Context, interaction: &Compone
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "grouplink_red");
 
-    let select_menu = CreateSelectMenu::new("grouplink_red", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("grouplink_red", CSMK::String { options: channel_options })
         .placeholder("Select red team channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
     interaction.create_response(&ctx.http, response).await?;
@@ -2246,7 +2230,7 @@ async fn handle_grouplink_queuevc_selection(ctx: &Context, interaction: &Compone
 }
 
 /// Handles grouplink red team channel selection - Step 4
-async fn handle_grouplink_red_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64) -> Result<()> {
+async fn handle_grouplink_red_selection(ctx: &Context, interaction: &CX, channel_id: u64) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -2268,11 +2252,11 @@ async fn handle_grouplink_red_selection(ctx: &Context, interaction: &ComponentIn
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "grouplink_blue");
 
-    let select_menu = CreateSelectMenu::new("grouplink_blue", CreateSelectMenuKind::String { options: channel_options })
+    let select_menu = CSM::new("grouplink_blue", CSMK::String { options: channel_options })
         .placeholder("Select blue team channel...")
         .max_values(1);
 
-    let action_row = CreateActionRow::SelectMenu(select_menu);
+    let action_row = CAR::SelectMenu(select_menu);
 
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![action_row]));
     interaction.create_response(&ctx.http, response).await?;
@@ -2280,7 +2264,7 @@ async fn handle_grouplink_red_selection(ctx: &Context, interaction: &ComponentIn
 }
 
 /// Handles grouplink blue team channel selection - Step 5 (final step, creates the group)
-async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &ComponentInteraction, channel_id: u64, db: &std::sync::Arc<crate::Database>, manager: &Arc<Mutex<crate::models::Manager>>) -> Result<()> {
+async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channel_id: u64, db: &std::sync::Arc<crate::Database>, manager: &Arc<Mutex<crate::models::Manager>>) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
@@ -2520,7 +2504,7 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
     }
 
     // Try to parse as rank name first
-    let rank = if let Ok(Some(rank_from_name)) = crate::handlers::role_commands::parse_rank_name(&rank_role) {
+    let rank = if let Ok(Some(rank_from_name)) = parse_rank_name(&rank_role) {
         // Verify this rank has a role configured
         let config_key = format!("rank_{}_role", rank_from_name.name().to_lowercase().replace(" ", "_"));
         match cc.db.config.get_config_value(&config_key, guild_id.get()).await {
@@ -2538,11 +2522,11 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
         }
     } else {
         // Try to parse as role ID
-        let role_id_str = crate::handlers::role_commands::parse_role_id(&rank_role)?;
+        let role_id_str = parse_role_id(&rank_role)?;
         match role_id_str.parse::<u64>() {
             Ok(role_id) => {
                 // Check if this role is a rank role
-                let rank_opt = crate::models::Rank::from_role_id(RoleId::new(role_id), &cc.db, guild_id.get()).await;
+                let rank_opt = crate::models::Rank::from_role_id(RI::new(role_id), &cc.db, guild_id.get()).await;
                 if rank_opt.is_none() {
                     error!("[{}] - Invalid role ID: {}", guild_name, rank_role);
                     let error_embed = CE::new()
@@ -2605,7 +2589,7 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
 ///
 /// * `user_id` - The user ID to buffer.
 /// * `server` - The server (already has manager lock held by caller)
-pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UserId) -> Result<()> {
+pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result<()> {
     info!("Processing /buffer command for user {}", user_id);
     
     if !check_role(cc, &Role::Admin).await? {
