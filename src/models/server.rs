@@ -4,10 +4,10 @@
 //! A Server represents a Discord guild with associated groups and games.
 
 use anyhow::{anyhow, Error, Result};
-use crate::models::constants::DEFAULT_MISSING_TIMEOUT;
+use crate::models::constants::DEFAULT_TIMEOUT;
 use serde::{Deserialize, Serialize};
 use serenity::all::{
-    parse_user_mention, ButtonStyle, ChannelId as CI, Context, CreateActionRow,
+    ButtonStyle, ChannelId as CI, Context, CreateActionRow,
     CreateButton, CreateEmbed, CreateEmbedFooter as CEF,
     CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM,
     CreateMessage as CM, GuildId as GI, Message, MessageId as MI, RoleId as RI,
@@ -275,7 +275,7 @@ impl Group {
                 use tokio::time::{sleep, Duration};
                 
                 // Wait for the deadline
-                sleep(Duration::from_secs(DEFAULT_MISSING_TIMEOUT)).await;
+                sleep(Duration::from_secs(DEFAULT_TIMEOUT)).await;
                 
                 // Check if players have joined, remove those who haven't
                 let mut manager_lock = mgr.lock().await;
@@ -304,7 +304,7 @@ impl Group {
             .iter()
             .enumerate()
             .filter_map(|(idx, s)| {
-                if s.is_hot_timeout(DEFAULT_MISSING_TIMEOUT) {
+                if s.is_hot_timeout(DEFAULT_TIMEOUT) {
                     Some(idx)
                 } else {
                     None
@@ -686,8 +686,6 @@ impl Group {
             // The pool MUST remain sorted by join_time to ensure overflow players
             // maintain their proper queue position (first-come-first-serve).
             // Team assignment is stored in each player's team field and used during push/display.
-
-            info!("[Session {}] Teams generated and assigned successfully", session_idx);
         } else {
             warn!("Failed to generate balanced teams");
         }
@@ -727,53 +725,6 @@ impl Group {
         channel_id: CI,
     ) -> bool {
         self.channels.contains_channel(channel_id)
-    }
-
-    /// `/buffer`
-    ///
-    /// * `user_mention` - The user mention to buffer.
-    pub async fn cmd_buffer(cc: &CommandContext<'_>,user_mention: &str,) -> Result<()> {
-        info!("Processing buffer command for user mention: {}", user_mention);
-        let user_id = parse_user_mention(user_mention)
-            .ok_or_else(|| anyhow!("Invalid user mention format"))?;
-        if !check_role(cc, &Role::Admin).await? {
-            let response = CIR::Message(CIRM::new().content("Only admins can buffer players!").ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
-        }
-        let mut manager = cc.manager.lock().await;
-        let server = manager.get_server(cc.intax.guild_id.unwrap())?;
-        let group = server.get_group(cc.intax.channel_id)?;
-        let guild_id = cc.intax.guild_id.unwrap();
-        
-        // Find the session containing the player
-        let session = group.get_user_session(user_id).await?;
-        
-        // Check if session is hot (will need to regenerate teams)
-        let is_hot = session.is_hot();
-        
-        // Find the player's index in the pool
-        let player_idx = session.pool.iter()
-            .position(|p| p.player.discord_id == user_id)
-            .ok_or_else(|| anyhow!("Player not found in session"))?;
-        
-        // Remove the player from their current position
-        let player = session.pool.remove(player_idx);
-        
-        // Insert the player at the front of the queue (index 0)
-        session.pool.insert(0, player);
-        
-        info!("Buffered player {} to front of queue", user_id);
-        
-        // If session is hot, regenerate teams with new order
-        if is_hot {
-            group.generate_teams(cc.ctx, guild_id, Some(&cc.db)).await;
-        }
-        
-        // Update dashboard to reflect new order and teams
-        group.queue_dash_update(cc.ctx, guild_id.get()).await;
-        
-        Ok(())
     }
 
     pub fn is_quota(&self) -> bool {

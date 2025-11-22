@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Error, Result};
 use std::time::SystemTime;
 use std::cmp::Ordering::*;
-use crate::{QueueToggleType, log_queue_toggle, models::constants::DEFAULT_MISSING_TIMEOUT};
+use crate::{QueueToggleType, log_queue_toggle, models::constants::DEFAULT_TIMEOUT};
 use serenity::all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
     CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM,
@@ -290,7 +290,7 @@ impl Group {
                         if let Some(ready_at) = session.ready_at {
                             if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
                                 let ready_timestamp = duration_since_epoch.as_secs();
-                                let deadline_timestamp = ready_timestamp + DEFAULT_MISSING_TIMEOUT;
+                                let deadline_timestamp = ready_timestamp + DEFAULT_TIMEOUT;
                                 description.push_str(&format!("Join deadline: <t:{}:R>\n", deadline_timestamp));
                                 description.push_str("Missing players will be removed. Overflow players will take their spots.\n\n");
                             }
@@ -332,7 +332,7 @@ impl Group {
                         if let Some(ready_at) = current_session.ready_at {
                             if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
                                 let ready_timestamp = duration_since_epoch.as_secs();
-                                let deadline_timestamp = ready_timestamp + DEFAULT_MISSING_TIMEOUT;
+                                let deadline_timestamp = ready_timestamp + DEFAULT_TIMEOUT;
                                 description.push_str(&format!("Join deadline: <t:{}:R>\n", deadline_timestamp));
                                 description.push_str("Missing players will be removed. Overflow players will take their spots.\n\n");
                             }
