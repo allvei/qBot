@@ -1108,7 +1108,7 @@ impl Handler {
             let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
 
             // Create dashboard in the dashboard channel
-            match group.dash_publish(ctx, channel_id).await {
+            match group.dash_publish(ctx, channel_id, &self.database, guild.id.get()).await {
                 Ok(_) => {
                     info!("Dashboard created successfully for channel {}", channel_name);
                     

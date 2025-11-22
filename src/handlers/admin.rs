@@ -392,7 +392,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             };
             
             // Publish the dashboard to get the actual message ID
-            match temp_group.dash_publish(cc.ctx, dashboard_channel).await {
+            match temp_group.dash_publish(cc.ctx, dashboard_channel, &cc.db, guild_id.get()).await {
                 Ok(_) => {
                     let dashboard_msg_id = temp_group.dashboard_msg.get();
                     info!("[{}] Dashboard message created with ID {}", guild_name, dashboard_msg_id);
@@ -810,10 +810,11 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
     }
 
     let channel = cc.intax.channel_id;
+    let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("This command must be used in a server"))?;
     let group = guild.get_group(channel)?;
 
     // Create and send dashboard
-    group.dash_publish(cc.ctx, channel).await?;
+    group.dash_publish(cc.ctx, channel, &cc.db, guild_id.get()).await?;
 
     cc.reply("Dashboard created/updated successfully!").await?;
 
@@ -2357,7 +2358,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &ComponentI
     };
     
     // Publish dashboard to get message ID
-    match temp_group.dash_publish(ctx, dashboard_channel).await {
+    match temp_group.dash_publish(ctx, dashboard_channel, db, guild_id.get()).await {
         Ok(_) => {
             let dashboard_msg_id = temp_group.dashboard_msg.get();
             

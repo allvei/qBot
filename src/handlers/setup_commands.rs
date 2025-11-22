@@ -125,7 +125,7 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
     };
     
     // Publish the dashboard to get message ID
-    match temp_group.dash_publish(cc.ctx, dashboard_channel).await {
+    match temp_group.dash_publish(cc.ctx, dashboard_channel, &cc.db, guild_id.get()).await {
         Ok(_) => {
             let dashboard_msg_id = temp_group.dashboard_msg.get();
             

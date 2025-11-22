@@ -21,15 +21,18 @@ macro_rules! list_players {
 }
 
 /// Helper function to format team players as a string for embed fields
-fn format_team_field(team: &[crate::models::SessionPlayer]) -> String {
-    team.iter()
-        .enumerate()
-        .map(|(i, player)| {
-            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
-            format!("{}<@{}>", elo_str, player.player.discord_id)
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+async fn format_team_field(team: &[crate::models::SessionPlayer], db: &crate::Database, guild_id: u64) -> String {
+    let mut lines = Vec::new();
+    for player in team {
+        let elo_str = if let Some(rank) = player.player.rank {
+            let elo = rank.elo_from_config(db, guild_id).await;
+            format!("[**{}**] ", elo)
+        } else {
+            String::new()
+        };
+        lines.push(format!("{}<@{}>", elo_str, player.player.discord_id));
+    }
+    lines.join("\n")
 }
 
 /// Helper function to split pool into teams by actual team assignments and sort by ELO descending
@@ -249,9 +252,9 @@ impl Group {
         msg.is_ok()
     }
 
-    pub async fn dash_publish(&mut self, ctx: &Context, channel: CI) -> Result<(), Error>{
+    pub async fn dash_publish(&mut self, ctx: &Context, channel: CI, db: &crate::Database, guild_id: u64) -> Result<(), Error>{
         // Create new dashboard message (don't check if it exists - caller should check)
-        let msg = channel.send_message(&ctx.http, self.dash_init().await?).await;
+        let msg = channel.send_message(&ctx.http, self.dash_init(db, guild_id).await?).await;
         if let Ok(msg) = msg {
             self.dashboard_msg = msg.id;
             Ok(())
@@ -263,7 +266,7 @@ impl Group {
     }
 
     /// Builds dashboard embed and components based on current group state
-    pub async fn build_dashboard_content(&self) -> Result<(CE, Vec<CAR>)> {
+    pub async fn build_dashboard_content(&self, db: &crate::Database, guild_id: u64) -> Result<(CE, Vec<CAR>)> {
         let quota     = self.quota as usize;
         let inactives = self.get_inactives();
         let actives   = self.get_actives();
@@ -298,7 +301,12 @@ impl Group {
 
                         description.push_str("**Missing players:**\n");
                         for player in players_never_joined {
-                            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
+                            let elo_str = if let Some(rank) = player.player.rank {
+                                let elo = rank.elo_from_config(db, guild_id).await;
+                                format!("[**{}**] ", elo)
+                            } else {
+                                String::new()
+                            };
                             description.push_str(&format!("  • {}<@{}>\n", elo_str, player.player.discord_id));
                         }
                         description.push_str("\n\n");
@@ -340,7 +348,12 @@ impl Group {
 
                         description.push_str("**Missing players:**\n");
                         for player in players_never_joined {
-                            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
+                            let elo_str = if let Some(rank) = player.player.rank {
+                                let elo = rank.elo_from_config(db, guild_id).await;
+                                format!("[**{}**] ", elo)
+                            } else {
+                                String::new()
+                            };
                             description.push_str(&format!("  • {}<@{}>\n", elo_str, player.player.discord_id));
                         }
                         description.push_str("\n\n");
@@ -353,7 +366,12 @@ impl Group {
 
                     if queue_players > 0 {
                         for (i, player) in current_session.pool.iter().enumerate() {
-                            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
+                            let elo_str = if let Some(rank) = player.player.rank {
+                                let elo = rank.elo_from_config(db, guild_id).await;
+                                format!("[**{}**] ", elo)
+                            } else {
+                                String::new()
+                            };
                             description.push_str(&format!("{}<@{}>\n", elo_str, player.player.discord_id));
                         }
                     } else {
@@ -386,15 +404,20 @@ impl Group {
             let queue_players = current_session.pool.len();
             if queue_players >= quota {
                 let (team_red, team_blu) = get_sorted_teams(&current_session.pool, quota);
-                embed = embed.field("🔴 RED", format_team_field(&team_red), true);
-                embed = embed.field("🔵 BLU", format_team_field(&team_blu), true);
+                embed = embed.field("🔴 RED", format_team_field(&team_red, db, guild_id).await, true);
+                embed = embed.field("🔵 BLU", format_team_field(&team_blu, db, guild_id).await, true);
 
                 // Show fatkidded players AFTER teams if there are overflow players
                 if current_session.is_hot() && queue_players > quota {
                     let overflow_count = queue_players - quota;
                     let mut fatkid = format!("**Waiting for next game ({}/{}):**\n", overflow_count, quota);
                     for (i, player) in current_session.pool.iter().skip(quota).enumerate() {
-                        let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
+                        let elo_str = if let Some(rank) = player.player.rank {
+                            let elo = rank.elo_from_config(db, guild_id).await;
+                            format!("[**{}**] ", elo)
+                        } else {
+                            String::new()
+                        };
                         fatkid.push_str(&format!("{}<@{}>\n", elo_str, player.player.discord_id));
                     }
                     embed = embed.field("\u{200B}", fatkid, false); // Full-width field
@@ -406,8 +429,8 @@ impl Group {
         for session in &actives {
             if session.pool.len() >= quota {
                 let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
-                embed = embed.field("🔴 RED", format_team_field(&team_red), true);
-                embed = embed.field("🔵 BLU", format_team_field(&team_blu), true);
+                embed = embed.field("🔴 RED", format_team_field(&team_red, db, guild_id).await, true);
+                embed = embed.field("🔵 BLU", format_team_field(&team_blu, db, guild_id).await, true);
             }
         }
 
@@ -417,7 +440,12 @@ impl Group {
                 if !next_session.pool.is_empty() {
                     let mut fatkid = format!("**Waiting for next game ({}/{}):**\n", next_session.pool.len(), quota);
                     for (i, player) in next_session.pool.iter().enumerate() {
-                        let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
+                        let elo_str = if let Some(rank) = player.player.rank {
+                            let elo = rank.elo_from_config(db, guild_id).await;
+                            format!("[**{}**] ", elo)
+                        } else {
+                            String::new()
+                        };
                         fatkid.push_str(&format!("{}<@{}>\n", elo_str, player.player.discord_id));
                     }
                     embed = embed.field("\u{200B}", fatkid, false); // Full-width field
@@ -510,8 +538,8 @@ impl Group {
     }
 
     /// Initializes a dashboard based on current group state
-    pub async fn dash_init(&mut self) -> Result<CM> {
-        let (embed, buttons) = self.build_dashboard_content().await?;
+    pub async fn dash_init(&mut self, db: &crate::Database, guild_id: u64) -> Result<CM> {
+        let (embed, buttons) = self.build_dashboard_content(db, guild_id).await?;
         let message = CM::new().embed(embed).components(buttons);
         Ok(message)
     }
@@ -526,7 +554,10 @@ impl Group {
                 info!("Auto-recovering: creating new dashboard message");
                 
                 // Dashboard is missing - create a new one
-                match self.dash_publish(ctx, self.channels.dashboard).await {
+                // Note: We can't call dash_publish here because we don't have db and guild_id
+                // This path should not be hit since the queue processor handles recreation
+                return Err(anyhow!("Dashboard message missing - requires recreation with db/guild_id"));
+                /* match self.dash_publish(ctx, self.channels.dashboard).await {
                     Ok(_) => {
                         info!("Successfully created new dashboard message with ID {}", self.dashboard_msg);
                         // Return early since dash_publish already creates the dashboard with current content
@@ -536,18 +567,13 @@ impl Group {
                         error!("Failed to auto-recover dashboard: {}", publish_err);
                         return Err(publish_err);
                     }
-                }
+                } */
             }
         };
         
-        let (embed, buttons) = self.build_dashboard_content().await?;
-        match dash.edit(&ctx.http, EditMessage::new().embed(embed).components(buttons)).await {
-            Ok(_) => {Ok(())},
-            Err(e) => {
-                error!("Failed to update dashboard: {}", e);
-                Err(e.into())
-            }
-        }
+        // Note: This function is deprecated and should not be called directly
+        // Use the dashboard queue processor which has access to db and guild_id
+        return Err(anyhow!("dash_update requires db and guild_id - use dashboard queue"));
     }
     
     /// Queue a dashboard update (non-blocking, batched)

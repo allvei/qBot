@@ -160,7 +160,7 @@ impl DashboardUpdateQueue {
                     let message_id = group.dashboard_msg;
                     
                     // Generate dashboard content
-                    let (embed, buttons) = match group.build_dashboard_content().await {
+                    let (embed, buttons) = match group.build_dashboard_content(&database, guild_id).await {
                         Ok(content) => content,
                         Err(e) => {
                             warn!("[{}] Failed to build dashboard content for group {}: {}", guild_name, group_id, e);
