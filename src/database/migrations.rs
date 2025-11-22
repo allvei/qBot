@@ -2,6 +2,8 @@ use anyhow::Result;
 use sqlx::{Row, SqlitePool};
 use tracing::info;
 
+use crate::DEFAULT_TIMEOUT;
+
 /// Database migration system for managing schema changes
 pub struct DatabaseMigrations {
     pool: SqlitePool,
@@ -138,7 +140,7 @@ impl DatabaseMigrations {
                 "CREATE TABLE groups (
                     id                INTEGER PRIMARY KEY,
                     group_id          INTEGER DEFAULT 0,
-                    timeout           INTEGER DEFAULT 120,
+                    timeout           INTEGER DEFAULT {},
                     guild_id          INTEGER NOT NULL,
                     dashboard         INTEGER NOT NULL,
                     chat              INTEGER NOT NULL,
@@ -149,7 +151,7 @@ impl DatabaseMigrations {
                     game              INTEGER DEFAULT 0,
                     game_increment    INTEGER DEFAULT 0,
                     quota             INTEGER DEFAULT {}
-                )", DEFAULT_QUOTA
+                )", DEFAULT_TIMEOUT, DEFAULT_QUOTA
             ))
             .execute(&self.pool)
             .await?;
@@ -163,7 +165,7 @@ impl DatabaseMigrations {
                     "CREATE TABLE groups (
                         id                INTEGER PRIMARY KEY,
                         group_id          INTEGER DEFAULT 0,
-                        timeout           INTEGER DEFAULT 120,
+                        timeout           INTEGER DEFAULT {},
                         guild_id          INTEGER NOT NULL,
                         dashboard         INTEGER NOT NULL,
                         chat              INTEGER NOT NULL,
@@ -174,7 +176,7 @@ impl DatabaseMigrations {
                         game              INTEGER DEFAULT 0,
                         game_increment    INTEGER DEFAULT 0,
                         quota             INTEGER DEFAULT {}
-                    )", DEFAULT_QUOTA
+                    )", DEFAULT_TIMEOUT, DEFAULT_QUOTA
                 ))
                 .execute(&self.pool)
                 .await?;

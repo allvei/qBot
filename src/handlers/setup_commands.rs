@@ -109,7 +109,7 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
     let mut temp_group = Group {
         group_id: 0,
         quota: crate::DEFAULT_QUOTA,
-        timeout: 180,
+        timeout: crate::DEFAULT_TIMEOUT,
         dashboard_msg: MessageId::new(1),
         channels: Channels {
             queue_chat: queue_channel,
