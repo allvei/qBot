@@ -37,8 +37,6 @@ impl ConfigRepository {
     }
 
     pub async fn set_config(&self, key: &str, value: &str, guild_id: u64) -> Result<()> {
-        info!("Setting config key '{}' to value '{}' for guild {}", key, value, guild_id);
-
         let query_result = sqlx::query(
             "INSERT OR REPLACE INTO config (guild, key, value) VALUES (?, ?, ?)"
         )
