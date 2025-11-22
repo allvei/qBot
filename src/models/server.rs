@@ -457,11 +457,14 @@ impl Group {
             .map(|p| p.player.clone())
             .collect();
 
-        // Move all players back to queue voice channel
+        // Move all players back to queue voice channel and track who successfully moved
+        let mut successfully_moved = std::collections::HashSet::new();
         for player in &players_to_requeue {
             let tag = player.discord_tag.as_deref().unwrap_or("Unknown");
             if let Err(e) = self.move_user(guild_id, player.discord_id, queue_vc, ctx).await {
-                warn!("Failed to move user {} back to queue: {}", tag, e);
+                warn!("Failed to move user {} back to queue (likely not in voice): {}", tag, e);
+            } else {
+                successfully_moved.insert(player.discord_id);
             }
         }
 
@@ -477,10 +480,17 @@ impl Group {
         };
         let idle_session = &mut self.sessions[idle_session_idx];
 
+        // Only re-add players who were successfully moved (i.e., were still in voice)
         for player in players_to_requeue {
             if let Some(rank) = player.rank {
-                // Use add_player_in_vc since we just moved them to the queue channel
-                idle_session.add_player_in_vc(player, rank);
+                if successfully_moved.contains(&player.discord_id) {
+                    // Player was successfully moved back to queue VC
+                    idle_session.add_player_in_vc(player, rank);
+                } else {
+                    // Player was not in voice, don't re-add them
+                    let tag = player.discord_tag.as_deref().unwrap_or("Unknown");
+                    info!("Not re-queueing {} - they left voice before match ended", tag);
+                }
             }
         }
 
