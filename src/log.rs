@@ -15,4 +15,3 @@ pub enum QueueToggleType {
     VJ, // Voice Join
     VL, // Voice Leave
 }
-    

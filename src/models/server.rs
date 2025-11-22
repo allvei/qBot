@@ -618,8 +618,9 @@ impl Group {
             let (avg_a, med_a, std_a) = calculate_stats(&team_a_elos);
             let (avg_b, med_b, std_b) = calculate_stats(&team_b_elos);
 
-            // BCH score: sum of absolute differences
-            let score = (avg_a - avg_b).abs() + (med_a - med_b).abs() + (std_a - std_b).abs();
+            // BCH score: weighted sum prioritizing average ELO balance
+            // Average is weighted 3x higher because it directly determines team strength
+            let score = 3.0 * (avg_a - avg_b).abs() + (med_a - med_b).abs() + (std_a - std_b).abs();
 
             if score < best_score {
                 best_score = score;
