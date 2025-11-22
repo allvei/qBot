@@ -878,14 +878,23 @@ impl Role {
         }
     }
 
-    /// Get the Discord role ID from database configuration
+    /// Get the Discord role ID from database configuration (legacy single role)
     pub async fn id(&self, db: &crate::Database, guild_id: u64) -> Option<RI> {
+        let ids = self.ids(db, guild_id).await;
+        ids.first().copied()
+    }
+
+    /// Get all Discord role IDs from database configuration (supports multiple roles)
+    pub async fn ids(&self, db: &crate::Database, guild_id: u64) -> Vec<RI> {
         if let Ok(Some(value)) = db.config.get_config_value(self.config_key(), guild_id).await {
-            if let Ok(role_id) = value.parse::<u64>() {
-                return Some(RI::new(role_id));
-            }
+            // Support comma-separated role IDs
+            value.split(',')
+                .filter_map(|s| s.trim().parse::<u64>().ok())
+                .map(RI::new)
+                .collect()
+        } else {
+            Vec::new()
         }
-        None
     }
 
     pub fn name(&self) -> &'static str {

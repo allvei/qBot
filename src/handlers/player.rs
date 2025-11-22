@@ -398,9 +398,11 @@ pub async fn check_role(
             }
         }
 
-        // Check configured role
-        if let Some(role_id) = role.id(&cc.db, guild_id.get()).await {
-            return Ok(member.roles.contains(&role_id));
+        // Check configured roles (supports multiple)
+        let role_ids = role.ids(&cc.db, guild_id.get()).await;
+        if !role_ids.is_empty() {
+            // User has the role if they have ANY of the configured roles
+            return Ok(role_ids.iter().any(|role_id| member.roles.contains(role_id)));
         } else {
             let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
             info!("[{}] Role {} not configured", guild_name, role.name());
@@ -453,9 +455,11 @@ pub async fn check_component_role(
             }
         }
 
-        // Check configured role
-        if let Some(role_id) = role.id(&cc.db, guild_id.get()).await {
-            return Ok(member.roles.contains(&role_id));
+        // Check configured roles (supports multiple)
+        let role_ids = role.ids(&cc.db, guild_id.get()).await;
+        if !role_ids.is_empty() {
+            // User has the role if they have ANY of the configured roles
+            return Ok(role_ids.iter().any(|role_id| member.roles.contains(role_id)));
         } else {
             let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
             info!("[{}] Role {} not configured", guild_name, role.name());

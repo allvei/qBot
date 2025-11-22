@@ -104,7 +104,7 @@ pub async fn cmd_role_add(cc: &CC<'_>) -> Result<()> {
     Ok(())
 }
 
-/// `/rolelink` - Link existing runner and admin roles
+/// `/rolelink` - Link existing runner and admin roles (supports multiple roles per type)
 pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role: Option<String>) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can link roles!").ephemeral(true));
@@ -119,6 +119,20 @@ pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role:
         let current_runner = cc.db.config.get_config_value("runner_role", guild_id.get()).await?;
         let current_admin = cc.db.config.get_config_value("admin_role", guild_id.get()).await?;
 
+        let runner_display = current_runner.map(|r| {
+            r.split(',')
+                .map(|id| format!("<@&{}>", id.trim()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        }).unwrap_or_else(|| "Not set".to_string());
+
+        let admin_display = current_admin.map(|r| {
+            r.split(',')
+                .map(|id| format!("<@&{}>", id.trim()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        }).unwrap_or_else(|| "Not set".to_string());
+
         let embed = CE::new()
             .title("Current Role Configuration")
             .description(format!(
@@ -126,9 +140,10 @@ pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role:
                 • Runner: {}\n\
                 • Admin: {}\n\n\
                 **Usage:**\n\
-                `/rolelink runner_role:@Runner admin_role:@Admin`",
-                current_runner.map(|r| format!("<@&{}>", r)).unwrap_or_else(|| "Not set".to_string()),
-                current_admin.map(|r| format!("<@&{}>", r)).unwrap_or_else(|| "Not set".to_string())
+                `/rolelink runner_role:@Role1 @Role2 admin_role:@AdminRole`\n\
+                Supports multiple roles per type (space or comma separated)",
+                runner_display,
+                admin_display
             ));
 
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
@@ -138,18 +153,28 @@ pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role:
 
     let mut updated_roles = Vec::new();
 
-    // Link runner role if provided
+    // Link runner roles if provided
     if let Some(role_str) = runner_role {
-        let role_id = parse_role_id(&role_str)?;
-        cc.db.config.set_config("runner_role", &role_id, guild_id.get()).await?;
-        updated_roles.push(format!("• Runner: <@&{}>", role_id));
+        let role_ids = parse_multiple_role_ids(&role_str)?;
+        let role_ids_str = role_ids.join(",");
+        cc.db.config.set_config("runner_role", &role_ids_str, guild_id.get()).await?;
+        let display = role_ids.iter()
+            .map(|id| format!("<@&{}>", id))
+            .collect::<Vec<_>>()
+            .join(", ");
+        updated_roles.push(format!("• Runner: {}", display));
     }
 
-    // Link admin role if provided
+    // Link admin roles if provided
     if let Some(role_str) = admin_role {
-        let role_id = parse_role_id(&role_str)?;
-        cc.db.config.set_config("admin_role", &role_id, guild_id.get()).await?;
-        updated_roles.push(format!("• Admin: <@&{}>", role_id));
+        let role_ids = parse_multiple_role_ids(&role_str)?;
+        let role_ids_str = role_ids.join(",");
+        cc.db.config.set_config("admin_role", &role_ids_str, guild_id.get()).await?;
+        let display = role_ids.iter()
+            .map(|id| format!("<@&{}>", id))
+            .collect::<Vec<_>>()
+            .join(", ");
+        updated_roles.push(format!("• Admin: {}", display));
     }
 
     let success_embed = CE::new()
@@ -222,7 +247,7 @@ pub async fn cmd_role_remove(cc: &CC<'_>, role_type: String) -> Result<()> {
 }
 
 /// `/rankroleadd` - Add Discord role(s) to a rank (supports multiple roles at once)
-pub async fn cmd_rank_role_add(cc: &CC<'_>, rank_name: String, role_mentions: String) -> Result<()> {
+pub async fn cmd_rank_add(cc: &CC<'_>, rank_name: String, role_mentions: String) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can configure rank roles!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -324,7 +349,7 @@ pub async fn cmd_rank_role_add(cc: &CC<'_>, rank_name: String, role_mentions: St
 }
 
 /// `/rankroleremove` - Remove Discord role(s) from a rank (supports multiple roles at once)
-pub async fn cmd_rank_role_remove(cc: &CC<'_>, rank_name: String, role_mentions: String) -> Result<()> {
+pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: String) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can configure rank roles!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -379,7 +404,7 @@ pub async fn cmd_rank_role_remove(cc: &CC<'_>, rank_name: String, role_mentions:
     for (role_id, role_name) in roles_to_remove {
         if existing_ids.contains(&role_id) {
             existing_ids.retain(|id| *id != role_id);
-            info!("Removed role '{}' (ID: {}) from rank {} for guild {}", role_name, role_id, rank.name(), guild_id);
+            log_rank_remove(&role_name, &rank.name());
             removed_roles.push(role_name);
         } else {
             not_found_roles.push(role_name);
@@ -420,7 +445,7 @@ pub async fn cmd_rank_role_remove(cc: &CC<'_>, rank_name: String, role_mentions:
 }
 
 /// `/rankrolelist` - List all role mappings for a rank
-pub async fn cmd_rank_role_list(cc: &CC<'_>, rank_name: Option<String>) -> Result<()> {
+pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<String>) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can view rank role configurations!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -506,7 +531,7 @@ pub async fn cmd_rank_role_list(cc: &CC<'_>, rank_name: Option<String>) -> Resul
 }
 
 /// Parse rank name to Rank enum
-fn parse_rank_name(rank_name: &str) -> Result<Option<crate::models::Rank>> {
+pub fn parse_rank_name(rank_name: &str) -> Result<Option<crate::models::Rank>> {
     use crate::models::Rank;
     let rank = match rank_name.to_lowercase().as_str() {
         "beginner"                     => Some(Rank::Beginner),
@@ -530,4 +555,27 @@ pub fn parse_role_id(role_str: &str) -> Result<String> {
     } else {
         Ok(role_str.to_string())
     }
+}
+
+/// Parse multiple role IDs from a string containing space or comma separated role mentions/IDs
+fn parse_multiple_role_ids(role_str: &str) -> Result<Vec<String>> {
+    let mut role_ids = Vec::new();
+    
+    // Split by both spaces and commas, then filter empty strings
+    for part in role_str.split(|c| c == ' ' || c == ',') {
+        let trimmed = part.trim();
+        if !trimmed.is_empty() {
+            role_ids.push(parse_role_id(trimmed)?);
+        }
+    }
+    
+    if role_ids.is_empty() {
+        return Err(anyhow!("No valid role IDs found"));
+    }
+    
+    Ok(role_ids)
+}
+
+fn log_rank_remove(rank_name: &str, role_name: &str) {
+    info!("- Removed role '{}' from rank {}", role_name, rank_name);
 }
