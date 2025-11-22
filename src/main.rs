@@ -747,7 +747,9 @@ impl EventHandler for Handler {
                 // which properly uses get_or_assign_player_rank
                 // This just ensures a session exists for them to join
                 if group.get_inactives().is_empty() {
-                    group.create_session();
+                    if let Err(e) = group.create_session() {
+                        warn!("Failed to create session on VC connect: {}", e);
+                    }
                 }
             },
             VoiceStateUpdate::Moved => {
@@ -842,9 +844,17 @@ impl EventHandler for Handler {
                             }
                         } else {
                             // Player not in session yet, add them
+                            // Ensure a session exists before trying to add player
                             if group.get_inactives().is_empty() {
-                                error!("No idle sessions present.");
-                            } else {
+                                warn!("No idle sessions present when player {} joined VC, creating one", discord_tag);
+                                if let Err(e) = group.create_session() {
+                                    error!("Failed to create session for player {}: {}", discord_tag, e);
+                                    return;
+                                }
+                            }
+                            
+                            // Now we're guaranteed to have a session
+                            {
                                 // Get or assign player rank (auto-creates ranks and assigns Apprentice if needed)
                                 use pf_pug_bot::handlers::player::get_or_assign_player_rank;
                                 match get_or_assign_player_rank(&ctx, &self.database, server, user_id).await {
