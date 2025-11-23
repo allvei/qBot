@@ -3,19 +3,30 @@
 //! This module defines the Server struct and its related functionality.
 //! A Server represents a Discord guild with associated groups and games.
 
+use std::sync::Arc;
+
+use tokio::sync::Mutex;
 use anyhow::{anyhow, Error, Result};
-use crate::models::constants::DEFAULT_TIMEOUT;
+use crate::{Database as DB, Manager, Rank, models::constants::DEFAULT_TIMEOUT};
 use serde::{Deserialize, Serialize};
-use serenity::all::{
+use serenity::{all::{
     ChannelId as CI, Context, CreateEmbed,
     CreateMessage as CM, GuildId as GI, MessageId as MI, RoleId as RI,
     UserId as UI,
-};
+}, };
 use tracing::{info, warn};
 
 use crate::models::{
     Player, SessionPlayer, Session, SessionStatus, TeamChannel,
 };
+
+/// Context parameters for queue operations
+pub struct QueueContext<'a> {
+    pub ctx: &'a Context,
+    pub guild_id: Option<GI>,
+    pub db: Option<&'a DB>,
+    pub manager: Option<Arc<Mutex<Manager>>>,
+}
 
 /// Helper function to calculate mean, median, and standard deviation for team ELOs
 fn calculate_stats(elos: &[f64]) -> (f64, f64, f64) {
@@ -198,7 +209,7 @@ impl Group {
         }
     }
 
-    pub async fn hot(&mut self, ctx: &Context, guild_id: Option<GI>, db: Option<&crate::Database>, manager: Option<std::sync::Arc<tokio::sync::Mutex<crate::Manager>>>) -> Result<(), Error> {
+    pub async fn hot(&mut self, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
         // Get session index before calling hot()
         let _session_idx = self.sessions.iter()
             .position(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)
@@ -385,7 +396,7 @@ impl Group {
 
     }
 
-    pub async fn pull(&mut self, ctx: &Context, guild_id: GI, db: &crate::Database, manager: Option<std::sync::Arc<tokio::sync::Mutex<crate::Manager>>>) -> Result<(), Error> {
+    pub async fn pull(&mut self, ctx: &Context, guild_id: GI, db: &DB, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
         // Extract queue vc channel ID
         let queue_vc = self.channels.queue_vc;
 
@@ -452,7 +463,7 @@ impl Group {
     }
 
     /// Update player ranks from Discord roles for all players in the session
-    pub async fn refresh_player_ranks(&mut self, ctx: &Context, guild_id: GI, db: &crate::Database) {
+    pub async fn refresh_player_ranks(&mut self, ctx: &Context, guild_id: GI, db: &DB) {
         use crate::handlers::player::get_player_rank;
 
         for session in &mut self.sessions {
@@ -504,7 +515,7 @@ impl Group {
         }
     }
 
-    pub async fn generate_teams(&mut self, ctx: &Context, guild_id: GI, db: Option<&crate::Database>) {
+    pub async fn generate_teams(&mut self, ctx: &Context, guild_id: GI, db: Option<&DB>) {
         use itertools::Itertools;
 
         let quota = self.quota as usize;
@@ -634,23 +645,24 @@ impl Group {
         self.queue_dash_update(ctx, guild_id.get()).await;
     }
 
-    pub async fn queue_player(&mut self, player: Player, rank: crate::models::Rank, ctx: &Context, guild_id: Option<GI>, db: Option<&crate::Database>, manager: Option<std::sync::Arc<tokio::sync::Mutex<crate::Manager>>>) -> Result<()> {
-        self.queue_player_with_vc_status(player, rank, ctx, guild_id, db, manager, false).await
+    pub async fn queue_player(&mut self, player: Player, rank: Rank, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>) -> Result<()> {
+        let queue_ctx = QueueContext { ctx, guild_id, db, manager };
+        self.queue_player_with_vc_status(player, rank, queue_ctx, false).await
     }
 
-    pub async fn queue_player_with_vc_status(&mut self, player: Player, rank: crate::models::Rank, ctx: &Context, guild_id: Option<GI>, db: Option<&crate::Database>, manager: Option<std::sync::Arc<tokio::sync::Mutex<crate::Manager>>>, in_vc: bool) -> Result<()> {
+    pub async fn queue_player_with_vc_status(&mut self, player: Player, rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
         let session = self.get_queue().await?;
         
         if in_vc {session.add_player_in_vc(player, rank);}
         else {session.add_player(player, rank);}
 
         if self.is_quota() {
-            self.hot(ctx, guild_id, db, manager).await?;
+            self.hot(queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager).await?;
         }
         Ok(())
     }
 
-    pub async fn add_player(&mut self, session: &mut Session, player: Player, rank: crate::models::Rank, ctx: &Context, guild_id: GI) {
+    pub async fn add_player(&mut self, session: &mut Session, player: Player, rank: Rank, ctx: &Context, guild_id: GI) {
         session.add_player(player, rank);
         self.queue_dash_update(ctx, guild_id.get()).await;
     }
@@ -761,13 +773,13 @@ impl Role {
     }
 
     /// Get the Discord role ID from database configuration (legacy single role)
-    pub async fn id(&self, db: &crate::Database, guild_id: u64) -> Option<RI> {
+    pub async fn id(&self, db: &DB, guild_id: u64) -> Option<RI> {
         let ids = self.ids(db, guild_id).await;
         ids.first().copied()
     }
 
     /// Get all Discord role IDs from database configuration (supports multiple roles)
-    pub async fn ids(&self, db: &crate::Database, guild_id: u64) -> Vec<RI> {
+    pub async fn ids(&self, db: &DB, guild_id: u64) -> Vec<RI> {
         if let Ok(Some(value)) = db.config.get_config_value(self.config_key(), guild_id).await {
             // Support comma-separated role IDs
             value.split(',')

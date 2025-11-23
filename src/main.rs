@@ -851,7 +851,13 @@ impl EventHandler for Handler {
                                 match get_or_assign_player_rank(&ctx, &self.database, server, user_id).await {
                                     Ok(rank) => {
                                         // Use queue_player_with_vc_status to set in_queue_vc BEFORE quota check/notification
-                                        if let Err(e) = group.queue_player_with_vc_status(player.clone(), rank, &ctx, Some(server), Some(&self.database), Some(self.manager.clone()), true).await {
+                                        let queue_ctx = pf_pug_bot::models::server::QueueContext {
+                                            ctx: &ctx,
+                                            guild_id: Some(server),
+                                            db: Some(&self.database),
+                                            manager: Some(self.manager.clone()),
+                                        };
+                                        if let Err(e) = group.queue_player_with_vc_status(player.clone(), rank, queue_ctx, true).await {
                                             error!("Failed to add player to queue: {e}");
                                         } else {
                                             // Log successful queue join via voice channel
