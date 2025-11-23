@@ -80,7 +80,7 @@ impl DatabaseMigrations {
                     discord_id                INTEGER NOT NULL UNIQUE,
                     steam_id                  INTEGER,
                     dm_enabled                INTEGER DEFAULT 1,
-                    auto_leave_minutes        INTEGER DEFAULT 0,
+                    auto_remove_minutes        INTEGER DEFAULT 30,
                     join_announcement         INTEGER DEFAULT 0,
                     vc_disconnect_on_leave    INTEGER DEFAULT 1,
                     announcement_color        INTEGER DEFAULT 3447003,
@@ -117,8 +117,8 @@ impl DatabaseMigrations {
 
             // Add new settings columns if missing
             if has_discord_id {
-                if !self.column_exists("users", "auto_leave_minutes").await? {
-                    sqlx::query("ALTER TABLE users ADD COLUMN auto_leave_minutes INTEGER DEFAULT 0")
+                if !self.column_exists("users", "auto_remove_minutes").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN auto_remove_minutes INTEGER DEFAULT 30")
                         .execute(&self.pool).await?;
                 }
                 if !self.column_exists("users", "join_announcement").await? {
@@ -207,7 +207,7 @@ impl DatabaseMigrations {
                         discord_id                INTEGER NOT NULL UNIQUE,
                         steam_id                  INTEGER,
                         dm_enabled                INTEGER DEFAULT 1,
-                        auto_leave_minutes        INTEGER DEFAULT 0,
+                        auto_remove_minutes        INTEGER DEFAULT 0,
                         join_announcement         INTEGER DEFAULT 0,
                         vc_disconnect_on_leave    INTEGER DEFAULT 1,
                         announcement_color        INTEGER DEFAULT 3447003,
@@ -223,7 +223,7 @@ impl DatabaseMigrations {
                     let discord_id: i64 = row.get("discord_id");
                     let steam_id: Option<i64> = row.try_get("steam_id").ok();
                     sqlx::query("INSERT OR IGNORE
-                                 INTO users (discord_id, steam_id, dm_enabled, auto_leave_minutes, join_announcement, vc_disconnect_on_leave, announcement_color, show_stats_in_announcement, notify_quota_threshold)
+                                 INTO users (discord_id, steam_id, dm_enabled, auto_remove_minutes, join_announcement, vc_disconnect_on_leave, announcement_color, show_stats_in_announcement, notify_quota_threshold)
                                  VALUES (?, ?, 1, 0, 0, 1, 3447003, 0, NULL)")
                         .bind(discord_id)
                         .bind(steam_id)
@@ -341,7 +341,7 @@ impl DatabaseMigrations {
     async fn validate_users_schema(&self) -> Result<()> {
         let required_columns = vec![
             "id", "discord_id", "steam_id", "dm_enabled",
-            "auto_leave_minutes", "join_announcement", "vc_disconnect_on_leave",
+            "auto_remove_minutes", "join_announcement", "vc_disconnect_on_leave",
             "announcement_color"
         ];
         self.validate_table_columns("users", &required_columns).await?;

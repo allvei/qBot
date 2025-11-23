@@ -50,8 +50,8 @@ pub async fn handle_settings_button(
             let modal = CreateModal::new("settings_modal_auto_leave", "Auto-remove timer")
                 .components(vec![
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Minutes", "auto_remove_minutes")
-                            .placeholder(format!("0 to disable, max 60 minutes"))
+                        CreateInputText::new(InputTextStyle::Short, "Minutes (1-60)", "auto_remove_minutes")
+                            .placeholder("Default: 30 minutes")
                             .min_length(1)
                             .max_length(2)
                             .required(true)
@@ -267,14 +267,10 @@ pub async fn handle_settings_modal(
                         if let Some(value) = &input.value {
                             if !value.is_empty() {
                         match value.parse::<i64>() {
-                            Ok(minutes) if minutes >= 0 && minutes <= 60 => {
+                            Ok(minutes) if minutes >= 1 && minutes <= 60 => {
                                 db.users.update_setting_field(user_id, "auto_remove_minutes", minutes).await?;
                                 
-                                let status_text = if minutes == 0 {
-                                    "disabled".to_string()
-                                } else {
-                                    format!("set to {} minute{}", minutes, if minutes == 1 { "" } else { "s" })
-                                };
+                                let status_text = format!("set to {} minute{}", minutes, if minutes == 1 { "" } else { "s" });
 
                                 let settings = db.users.get_settings(user_id).await?;
                                 let embed = build_settings_embed(&settings);
@@ -292,7 +288,7 @@ pub async fn handle_settings_modal(
                             _ => {
                                 let response = CIR::Message(
                                     CIRM::new()
-                                        .content("Invalid value! Please enter a number between 0 and 60.")
+                                        .content("Invalid value! Please enter a number between 1 and 60.")
                                         .ephemeral(true)
                                 );
                                 interaction.create_response(&ctx.http, response).await?;
@@ -402,15 +398,12 @@ pub fn build_settings_embed(settings: &crate::database::repositories::UserSettin
             "Configure your queue experience!\n\n\
             **Current Settings:**\n\
             **DM notifications:** {}\n\
-            **Auto-remove timer:** {}\n\
+            **Auto-remove timer:** {} minute{}\n\
             **Disconnect from VC on leave:** {}\n\n\
             Click the buttons below to change your settings.",
             if settings.dm_enabled { "🟢" } else { "🔴" },
-            if settings.auto_remove_minutes == 0 {
-                "🔴".to_string()
-            } else {
-                format!("{} minutes", settings.auto_remove_minutes)
-            },
+            settings.auto_remove_minutes,
+            if settings.auto_remove_minutes == 1 { "" } else { "s" },
             if settings.vc_disconnect_on_leave { "🟢" } else { "🔴" }
         ))
         .color(settings.announcement_color as u32)
