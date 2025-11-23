@@ -1,22 +1,18 @@
 // Combined game handlers
 use anyhow::{anyhow, Result};
 use rand::seq::SliceRandom;
-use serenity::all::{Context, GuildId};
+use serenity::all::{Member, Context as Ctx, GuildId as GI, UserId as UI};
 
 use tracing::{info, warn};
 
-use crate::{ComponentContext, Database};
+use crate::{ComponentContext as CC, Database as DB};
 use crate::models::{
-    CommandContext, SessionPlayer, Rank, Role, Server, SessionStatus, Team,
+    CommandContext as CmC, SessionPlayer as SP, Rank, Role, Server, SessionStatus as SS, Team,
     DEFAULT_RANK,
 };
 
 /// Helper: Get member with cache-first strategy
-async fn get_member_cached(
-    ctx: &Context,
-    guild_id: GuildId,
-    user_id: serenity::all::UserId,
-) -> Option<serenity::all::Member> {
+async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI) -> Option<Member> {
     // Try cache first (fast path, no API call)
     let member = if let Some(guild) = ctx.cache.guild(guild_id) {
         guild.members.get(&user_id).cloned()
@@ -32,12 +28,7 @@ async fn get_member_cached(
 }
 
 /// Get player's rank from their Discord roles
-pub async fn get_player_rank(
-    ctx: &Context,
-    db: &Database,
-    guild_id: GuildId,
-    user_id: serenity::all::UserId,
-) -> Option<Rank> {
+pub async fn get_player_rank(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<Rank> {
     let member = get_member_cached(ctx, guild_id, user_id).await?;
     
     // Check all member roles and find the highest matching rank
@@ -61,12 +52,7 @@ pub async fn get_player_rank(
 }
 
 /// Get or assign player rank - creates ranks if needed and assigns default rank if player has no rank
-pub async fn get_or_assign_player_rank(
-    ctx:      &Context,
-    db:       &Database,
-    guild_id: GuildId,
-    user_id:  serenity::all::UserId,
-) -> Result<Rank> {
+pub async fn get_or_assign_player_rank(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Result<Rank> {
     // First check if player already has a rank
     if let Some(rank) = get_player_rank(ctx, db, guild_id, user_id).await {
         return Ok(rank);
@@ -112,11 +98,7 @@ pub async fn get_or_assign_player_rank(
 }
 
 /// Validate that the server has rank roles configured
-pub async fn validate_rank_roles(
-    ctx: &Context,
-    db: &Database,
-    guild_id: GuildId,
-) -> Result<Vec<String>> {
+pub async fn validate_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec<String>> {
     let mut missing_roles = Vec::new();
 
     // Get all guild roles
@@ -190,11 +172,7 @@ pub async fn validate_rank_roles(
 }
 
 /// Create missing rank roles in the guild
-pub async fn create_rank_roles(
-    ctx: &Context,
-    db: &Database,
-    guild_id: GuildId,
-) -> Result<Vec<String>> {
+pub async fn create_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec<String>> {
     use serenity::all::Colour;
     use serenity::builder::EditRole;
     use std::collections::HashMap;
@@ -303,11 +281,7 @@ pub async fn create_rank_roles(
 }
 
 /// Validate that runner and admin roles are configured
-pub async fn validate_system_roles(
-    ctx: &Context,
-    db: &Database,
-    guild_id: GuildId,
-) -> Result<Vec<String>> {
+pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec<String>> {
     let mut missing_roles = Vec::new();
 
     // Get all guild roles
@@ -361,7 +335,7 @@ pub async fn validate_system_roles(
 
 /// Checks if a user has the specified role.
 /// Prioritizes Discord permissions (Administrator or Manage Server) over configured role.
-pub async fn check_role(cc: &CommandContext<'_>, role: &Role) -> Result<bool> {
+pub async fn check_role(cc: &CmC<'_>, role: &Role) -> Result<bool> {
     use serenity::all::Permissions;
 
     if let Some(guild_id) = cc.intax.guild_id {
@@ -397,7 +371,7 @@ pub async fn check_role(cc: &CommandContext<'_>, role: &Role) -> Result<bool> {
 
 /// Checks if a user has the specified role (for component interactions).
 /// Prioritizes Discord permissions (Administrator or Manage Server) over configured role.
-pub async fn check_component_role(cc: &ComponentContext<'_>, role: &Role) -> Result<bool> {
+pub async fn check_component_role(cc: &CC<'_>, role: &Role) -> Result<bool> {
     use serenity::all::Permissions;
 
     if let Some(guild_id) = cc.component.guild_id {
@@ -434,9 +408,9 @@ pub async fn check_component_role(cc: &ComponentContext<'_>, role: &Role) -> Res
 }
 
 /// Splits the players into two teams.
-pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<SessionPlayer>) {
+pub fn split_into_teams(players: &[SP]) -> (Vec<SP>, Vec<SP>) {
     let mut rng = rand::rng();
-    let mut player_list: Vec<SessionPlayer> = players.to_vec();
+    let mut player_list: Vec<SP> = players.to_vec();
     player_list.shuffle(&mut rng);
     let team_size = player_list.len() / 2;
     let team1 = player_list[0..team_size].to_vec();
@@ -449,7 +423,7 @@ pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<S
 //
 
 /// `/join` and `/leave`
-pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result<()> {
+pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     let user         = cc.intax.user.id;
     let channel      = cc.intax.channel_id;
     let command_name = &cc.intax.data.name;
@@ -463,7 +437,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
 
         // Find and remove player from any game
         for game in &mut group.sessions {
-            if game.status == SessionStatus::Idle {
+            if game.status == SS::Idle {
                 let initial_len = game.pool.len();
                 game.pool.retain(|p| p.player.discord_id != user);
                 if game.pool.len() < initial_len {
@@ -514,7 +488,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
     let group = guild.get_group(channel)?;
 
     // Check if we have an idle session
-    let idle_sessions = group.get_sessions_by_status(&SessionStatus::Idle);
+    let idle_sessions = group.get_sessions_by_status(&SS::Idle);
     if idle_sessions.is_empty() {
         cc.reply("No queue available. A match is currently in progress.").await?;
         return Ok(());
@@ -529,7 +503,7 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
         let group  = server.get_group(channel)?;
 
         // Check if we can add to idle session (not Hot/Live)
-        let idle_sessions = group.get_sessions_by_status(&SessionStatus::Idle);
+        let idle_sessions = group.get_sessions_by_status(&SS::Idle);
         if idle_sessions.is_empty() {
             // No idle session means match is in progress
             drop(manager);
@@ -561,13 +535,13 @@ pub async fn queue<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result
 }
 
 /// `/status`
-pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Result<()> {
+pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     let channel = cc.intax.channel_id;
 
     let (queue_count, queue_list, quota) = {
         let group = guild.get_group(channel)?;
 
-        let idle_games = group.get_sessions_by_status(&SessionStatus::Idle);
+        let idle_games = group.get_sessions_by_status(&SS::Idle);
 
         if idle_games.is_empty() {
             (0, "No active queue found.".to_string(), group.quota)
@@ -595,7 +569,7 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Resul
 }
 
 /// `/shuffle`
-pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
+pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
         cc.reply("Only runners can shuffle teams!").await?;
@@ -636,7 +610,7 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
     last_session.pool.clear();
     last_session.pool.extend(red_team.into_iter());
     last_session.pool.extend(blu_team.into_iter());
-    last_session.status = SessionStatus::Hot;
+    last_session.status = SS::Hot;
 
     let red_team_names: Vec<String> = last_session.pool.iter()
         .filter(|sp| sp.team == Some(Team::Red))
@@ -661,7 +635,7 @@ pub async fn shuffle(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> 
 }
 
 /// `/accept`
-pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
+pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
         cc.reply("Only runners can accept games!").await?;
@@ -673,7 +647,7 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     let group = guild.get_group(channel_id)?;
 
     // Check hot game count first
-    let hot_game_count = group.sessions.iter().filter(|g| g.status == SessionStatus::Hot).count();
+    let hot_game_count = group.sessions.iter().filter(|g| g.status == SS::Hot).count();
     match hot_game_count {
         0 => {
             cc.reply("No hot games found in this group.").await?;
@@ -689,7 +663,7 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
 
     // Now get mutable access to the hot game
     let hot_game = group.sessions.iter_mut()
-        .find(|g| g.status == SessionStatus::Hot)
+        .find(|g| g.status == SS::Hot)
         .ok_or_else(|| anyhow!("Hot game not found after verification"))?;
 
     hot_game.push();
@@ -704,7 +678,7 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     Ok(())
 }
 
-pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
+pub async fn end(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
         cc.reply("Only runners can end games!").await?;
@@ -716,7 +690,7 @@ pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     let group = guild.get_group(channel_id)?;
 
     // Check if there's an active game to end
-    let has_active = group.sessions.iter().any(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live);
+    let has_active = group.sessions.iter().any(|s| s.status == SS::Hot || s.status == SS::Live);
     
     if !has_active {
         cc.reply("No active game found to end.").await?;
