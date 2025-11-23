@@ -465,8 +465,6 @@ pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<S
     (team1, team2)
 }
 
-
-
 //
 // Queue functions
 //

@@ -162,24 +162,6 @@ impl GroupRepository {
         Ok(teams)
     }
 
-    /// Validate group data integrity
-    async fn validate_group_data(&self, group: &Group) -> Result<()> {
-        // Check for placeholder values that indicate incomplete configuration
-        if group.channels.dashboard.get() == 1 || group.dashboard_msg.get() == 1 {
-            warn!("Group {} has placeholder dashboard configuration", group.group_id);
-        }
-
-        if group.channels.queue_chat.get() == 1 || group.channels.queue_vc.get() == 1 {
-            warn!("Group {} has placeholder channel configuration", group.group_id);
-        }
-
-        if group.channels.teams.iter().any(|t| t.red_vc.get() == 1 || t.blu_vc.get() == 1) {
-            warn!("Group {} has placeholder team channel configuration", group.group_id);
-        }
-
-        Ok(())
-    }
-
     /// Check if a group exists for a guild
     pub async fn group_exists_for_guild(&self, guild_id: u64) -> Result<bool> {
         let count: i64 = sqlx::query_scalar(
