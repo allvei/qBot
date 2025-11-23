@@ -83,6 +83,7 @@ impl Database {
     }
 
     /// Creates a new group
+    #[allow(clippy::too_many_arguments)]
     pub async fn new_group(
         &self,
         guild_id:      u64,
@@ -94,10 +95,19 @@ impl Database {
         blu:           u64,
         quota:         u8,
     ) -> Result<Group> {
-        self.groups.create_group(guild_id, dashboard, chat, queue, dashboard_msg, red, blu, quota).await
+        let config = repositories::group::GroupConfig {
+            dashboard_channel_id: dashboard,
+            chat_channel_id: chat,
+            queue_vc_id: queue,
+            red_vc_id: red,
+            blu_vc_id: blu,
+            quota,
+        };
+        self.groups.create_group(guild_id, dashboard_msg, config).await
     }
 
     /// Updates a group
+    #[allow(clippy::too_many_arguments)]
     pub async fn set_group(
         &self,
         guild_id:      u64,
@@ -108,7 +118,15 @@ impl Database {
         blu:           u64,
         quota:         u8,
     ) -> Result<Group> {
-        self.groups.update_group(guild_id, queue_id, dashboard, chat, red, blu, quota).await
+        let config = repositories::group::GroupConfig {
+            dashboard_channel_id: dashboard,
+            chat_channel_id: chat,
+            queue_vc_id: queue_id,
+            red_vc_id: red,
+            blu_vc_id: blu,
+            quota,
+        };
+        self.groups.update_group(guild_id, config).await
     }
 
     /// Sets a configuration value

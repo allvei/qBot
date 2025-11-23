@@ -697,15 +697,18 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             let dashboard_msg_id = temp_group.dashboard_msg.get();
             
             // Step 7: Save group to database
+            let group_config = crate::database::repositories::group::GroupConfig {
+                dashboard_channel_id: dashboard_channel.get(),
+                chat_channel_id: queue_channel.get(),
+                queue_vc_id: queue_vc_channel.get(),
+                red_vc_id: red_channel.get(),
+                blu_vc_id: blue_channel.get(),
+                quota: crate::DEFAULT_QUOTA,
+            };
             match cc.db.groups.create_group(
                 guild_id.get(),
-                dashboard_channel.get(),
-                queue_channel.get(),
-                queue_vc_channel.get(),
                 dashboard_msg_id,
-                red_channel.get(),
-                blue_channel.get(),
-                crate::DEFAULT_QUOTA,
+                group_config,
             ).await {
                 Ok(db_group) => {
                     info!("[{}] Group {} saved to database", guild_name, db_group.group_id);

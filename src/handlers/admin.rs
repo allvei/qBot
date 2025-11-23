@@ -396,15 +396,18 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                     info!("[{}] Dashboard message created with ID {}", guild_name, dashboard_msg_id);
                     
                     // Now create the group in the database with the actual dashboard message ID
+                    let group_config = crate::database::repositories::group::GroupConfig {
+                        dashboard_channel_id: dashboard_channel.get(),
+                        chat_channel_id: queue_channel.get(),
+                        queue_vc_id: queue_vc_channel.get(),
+                        red_vc_id: red_channel.get(),
+                        blu_vc_id: blue_channel.get(),
+                        quota: crate::DEFAULT_QUOTA,
+                    };
                     match cc.db.groups.create_group(
                         guild_id.get(),
-                        dashboard_channel.get(),
-                        queue_channel.get(),
-                        queue_vc_channel.get(),
                         dashboard_msg_id,
-                        red_channel.get(),
-                        blue_channel.get(),
-                        crate::DEFAULT_QUOTA,
+                        group_config,
                     ).await {
                         Ok(db_group) => {
                             info!("[{}] Group {} saved to database", guild_name, db_group.group_id);
@@ -1207,15 +1210,18 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
     }
 
     // Create the group configuration in database
+    let group_config = crate::database::repositories::group::GroupConfig {
+        dashboard_channel_id: dashboard_channel,
+        chat_channel_id: queue_channel,
+        queue_vc_id: queue_vc_channel,
+        red_vc_id: red_channel,
+        blu_vc_id: blue_channel,
+        quota: crate::DEFAULT_QUOTA,
+    };
     match db.groups.create_group(
         guild_id.get(),
-        dashboard_channel,
-        queue_channel,
-        queue_vc_channel,
         dashboard_msg_id,
-        red_channel,
-        blue_channel,
-        crate::DEFAULT_QUOTA,
+        group_config,
     ).await {
         Ok(_) => {
             info!("[{}] Group configuration saved to database", guild_name);
@@ -1519,15 +1525,18 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
     }
 
     // Create the group configuration in database with actual dashboard message ID
+    let group_config = crate::database::repositories::group::GroupConfig {
+        dashboard_channel_id: dashboard_channel,
+        chat_channel_id: queue_channel,
+        queue_vc_id: queue_vc_channel,
+        red_vc_id: red_channel,
+        blu_vc_id: blue_channel,
+        quota: DEFAULT_QUOTA,
+    };
     match db.groups.create_group(
         guild_id.get(),
-        dashboard_channel,
-        queue_channel,
-        queue_vc_channel,
         dashboard_msg_id, // Real dashboard message ID from step 1
-        red_channel,
-        blue_channel,
-        DEFAULT_QUOTA,
+        group_config,
     ).await {
         Ok(_) => {
             info!("[{}] Group configuration saved to database", guild_name);
@@ -2206,15 +2215,18 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
             let dashboard_msg_id = temp_group.dashboard_msg.get();
             
             // Save to database
+            let group_config = crate::database::repositories::group::GroupConfig {
+                dashboard_channel_id: dashboard_channel.get(),
+                chat_channel_id: queue_channel.get(),
+                queue_vc_id: queue_vc_channel.get(),
+                red_vc_id: red_channel.get(),
+                blu_vc_id: blue_channel.get(),
+                quota: crate::DEFAULT_QUOTA,
+            };
             match db.groups.create_group(
                 guild_id.get(),
-                dashboard_channel.get(),
-                queue_channel.get(),
-                queue_vc_channel.get(),
                 dashboard_msg_id,
-                red_channel.get(),
-                blue_channel.get(),
-                crate::DEFAULT_QUOTA,
+                group_config,
             ).await {
                 Ok(db_group) => {
                     info!("[{}] Group {} created via grouplink", guild_name, db_group.group_id);

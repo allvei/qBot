@@ -957,14 +957,17 @@ impl ConsoleHandler {
                 }
 
                 // Update database
-                match self.database.groups.update_group(
-                    queue_id,
-                    guild_id,
-                    group.channels.dashboard.get(),
-                    0,
-                    group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
-                    group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
+                let config = pf_pug_bot::database::repositories::group::GroupConfig {
+                    dashboard_channel_id: group.channels.dashboard.get(),
+                    chat_channel_id: 0,
+                    queue_vc_id: queue_id,
+                    red_vc_id: group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
+                    blu_vc_id: group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
                     quota,
+                };
+                match self.database.groups.update_group(
+                    guild_id,
+                    config,
                 ).await {
                     Ok(_) => {
                         println!("Updated quota to {quota} for guild {guild_id} group {group_id}");
@@ -1007,14 +1010,17 @@ impl ConsoleHandler {
                 let dashboard_id: u64 = value.parse()
                     .map_err(|_| format!("Invalid dashboard channel ID: {value}"))?;
 
+                let config = pf_pug_bot::database::repositories::group::GroupConfig {
+                    dashboard_channel_id: dashboard_id,
+                    chat_channel_id: 0,
+                    queue_vc_id: queue_id,
+                    red_vc_id: group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
+                    blu_vc_id: group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
+                    quota: group.quota as u8,
+                };
                 match self.database.groups.update_group(
-                    queue_id,
                     guild_id,
-                    dashboard_id,
-                    0,
-                    group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
-                    group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
-                    group.quota as u8,
+                    config,
                 ).await {
                     Ok(_) => println!("Updated dashboard channel to {dashboard_id} for guild {guild_id}"),
                     Err(e) => println!("Failed to update dashboard: {e}"),
@@ -1024,14 +1030,17 @@ impl ConsoleHandler {
                 let red_id: u64 = value.parse()
                     .map_err(|_| format!("Invalid red team channel ID: {value}"))?;
 
+                let config = pf_pug_bot::database::repositories::group::GroupConfig {
+                    dashboard_channel_id: group.channels.dashboard.into(),
+                    chat_channel_id: 0,
+                    queue_vc_id: queue_id,
+                    red_vc_id: red_id,
+                    blu_vc_id: group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
+                    quota: group.quota as u8,
+                };
                 match self.database.groups.update_group(
-                    queue_id,
                     guild_id,
-                    group.channels.dashboard.into(),
-                    0,
-                    red_id,
-                    group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
-                    group.quota as u8,
+                    config,
                 ).await {
                     Ok(_)  => println!("Updated red team channel to {red_id} for guild {guild_id}"),
                     Err(e) => println!("Failed to update red team channel: {e}"),
@@ -1041,14 +1050,17 @@ impl ConsoleHandler {
                 let blue_id: u64 = value.parse()
                     .map_err(|_| format!("Invalid blue team channel ID: {value}"))?;
 
+                let config = pf_pug_bot::database::repositories::group::GroupConfig {
+                    dashboard_channel_id: group.channels.dashboard.into(),
+                    chat_channel_id: 0,
+                    queue_vc_id: queue_id,
+                    red_vc_id: group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
+                    blu_vc_id: blue_id,
+                    quota: group.quota as u8,
+                };
                 match self.database.groups.update_group(
-                    queue_id,
                     guild_id,
-                    group.channels.dashboard.into(),
-                    0,
-                    group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
-                    blue_id,
-                    group.quota as u8,
+                    config,
                 ).await {
                     Ok(_) => println!("Updated blue team channel to {blue_id} for guild {guild_id}"),
                     Err(e) => println!("Failed to update blue team channel: {e}"),
@@ -1097,14 +1109,17 @@ impl ConsoleHandler {
         }
 
         // Create new group configuration
-        match self.database.groups.update_group(
-            queue_id,
-            guild_id,
-            dashboard_id,
-            0,
-            red_id,
-            blue_id,
+        let config = pf_pug_bot::database::repositories::group::GroupConfig {
+            dashboard_channel_id: dashboard_id,
+            chat_channel_id: 0,
+            queue_vc_id: queue_id,
+            red_vc_id: red_id,
+            blu_vc_id: blue_id,
             quota,
+        };
+        match self.database.groups.update_group(
+            guild_id,
+            config,
         ).await {
             Ok(_) => {
                 println!("Created new group configuration for guild {guild_id}");

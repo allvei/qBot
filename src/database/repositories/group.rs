@@ -7,6 +7,16 @@ use tracing::{info, warn};
 use super::Repository;
 use crate::models::{Channels, Group, TeamChannel};
 
+/// Configuration for creating or updating a group
+pub struct GroupConfig {
+    pub dashboard_channel_id: u64,
+    pub chat_channel_id: u64,
+    pub queue_vc_id: u64,
+    pub red_vc_id: u64,
+    pub blu_vc_id: u64,
+    pub quota: u8,
+}
+
 #[derive(Clone)]
 pub struct GroupRepository {
     pool: SqlitePool,
@@ -21,30 +31,25 @@ impl GroupRepository {
 
     pub async fn create_group(
         &self,
-        guild_id:             u64,
-        dashboard_channel_id: u64,
-        chat_channel_id:      u64,
-        queue_vc_id:          u64,
-        dashboard_msg:        u64,
-        red_vc_id:            u64,
-        blu_vc_id:            u64,
-        quota:        u8,
+        guild_id: u64,
+        dashboard_msg: u64,
+        config: GroupConfig,
     ) -> Result<Group> {
-        info!("Creating new group with queue: {}", queue_vc_id);
+        info!("Creating new group with queue: {}", config.queue_vc_id);
 
         let result = sqlx::query(
             "INSERT INTO groups (guild_id, dashboard, chat, queue, dashboard_msg, red, blu, quota)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, quota"
         )
-        .bind(guild_id             as i64)
-        .bind(dashboard_channel_id as i64)
-        .bind(chat_channel_id      as i64)
-        .bind(queue_vc_id          as i64)
-        .bind(dashboard_msg        as i64)
-        .bind(red_vc_id            as i64)
-        .bind(blu_vc_id            as i64)
-        .bind(quota                as i64)
+        .bind(guild_id                    as i64)
+        .bind(config.dashboard_channel_id as i64)
+        .bind(config.chat_channel_id      as i64)
+        .bind(config.queue_vc_id          as i64)
+        .bind(dashboard_msg               as i64)
+        .bind(config.red_vc_id            as i64)
+        .bind(config.blu_vc_id            as i64)
+        .bind(config.quota                as i64)
         .fetch_one(&self.pool)
         .await?;
 
@@ -53,15 +58,10 @@ impl GroupRepository {
 
     pub async fn update_group(
         &self,
-        guild_id:             u64,
-        queue_vc_id:          u64,
-        dashboard_channel_id: u64,
-        chat_channel_id:      u64,
-        red_vc_id:            u64,
-        blu_vc_id:            u64,
-        quota:        u8,
+        guild_id: u64,
+        config: GroupConfig,
     ) -> Result<Group> {
-        info!("Updating group with queue_id: {}", queue_vc_id);
+        info!("Updating group with queue_id: {}", config.queue_vc_id);
 
         let result = sqlx::query(
             "UPDATE groups
@@ -69,13 +69,13 @@ impl GroupRepository {
              WHERE queue = ?
              RETURNING id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota"
         )
-        .bind(guild_id             as i64)
-        .bind(dashboard_channel_id as i64)
-        .bind(chat_channel_id      as i64)
-        .bind(red_vc_id            as i64)
-        .bind(blu_vc_id            as i64)
-        .bind(quota           as i64)
-        .bind(queue_vc_id          as i64)
+        .bind(guild_id                    as i64)
+        .bind(config.dashboard_channel_id as i64)
+        .bind(config.chat_channel_id      as i64)
+        .bind(config.red_vc_id            as i64)
+        .bind(config.blu_vc_id            as i64)
+        .bind(config.quota                as i64)
+        .bind(config.queue_vc_id          as i64)
         .fetch_one(&self.pool)
         .await?;
 
@@ -231,7 +231,15 @@ impl Repository<Group, u8> for GroupRepository {
         let red           = group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0);
         let blu           = group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0);
 
-        self.create_group(0, dashboard_ch, chat, queue, dashboard_msg, red, blu, group.quota).await
+        let config = GroupConfig {
+            dashboard_channel_id: dashboard_ch,
+            chat_channel_id: chat,
+            queue_vc_id: queue,
+            red_vc_id: red,
+            blu_vc_id: blu,
+            quota: group.quota,
+        };
+        self.create_group(0, dashboard_msg, config).await
     }
 
     async fn get_by_id(&self, group_id: u8) -> Result<Group> {
@@ -253,7 +261,15 @@ impl Repository<Group, u8> for GroupRepository {
         let red          = group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0);
         let blu          = group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0);
 
-        self.update_group(0, queue, dashboard_ch, chat, red, blu, group.quota).await
+        let config = GroupConfig {
+            dashboard_channel_id: dashboard_ch,
+            chat_channel_id: chat,
+            queue_vc_id: queue,
+            red_vc_id: red,
+            blu_vc_id: blu,
+            quota: group.quota,
+        };
+        self.update_group(0, config).await
     }
 
     async fn delete(&self, group_id: u8) -> Result<()> {
