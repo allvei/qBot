@@ -1241,7 +1241,7 @@ impl ConsoleHandler {
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
         println!("Testing notify method for guild {guild_id} group {group_id}...");
-        group.notify(ctx, serenity::model::id::GuildId::new(guild_id)).await;
+        group.notify(ctx, serenity::model::id::GuildId::new(guild_id), Some(&self.database)).await;
         println!("Notify method called successfully!");
         println!("   Check the queue chat channel for the notification message.");
 

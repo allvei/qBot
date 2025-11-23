@@ -1035,3 +1035,133 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
 
     Ok(())
 }
+
+/// `/toggledm` - Toggle DM notifications when a game is ready
+pub async fn cmd_toggle_dm(cc: &CC<'_>) -> Result<()> {
+    let user_id = cc.intax.user.id;
+    
+    // Toggle the DM preference
+    let new_state = cc.db.users.toggle_dm_enabled(user_id).await?;
+    
+    let (status_text, status_emoji) = if new_state {
+        ("enabled", "🔔")
+    } else {
+        ("disabled", "🔕")
+    };
+    
+    let embed = CE::new()
+        .title("DM Notifications Updated")
+        .description(format!(
+            "{status_emoji} DM notifications are now **{status_text}**\n\n\
+            You will {a} receive a DM when a game is ready.\n",
+            a = if new_state { "now" } else { "no longer" }
+        ))
+        .color(if new_state { 0x00ff00 } else { 0xff9900 });
+    
+    let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+    
+    Ok(())
+}
+
+/// `/settings` - Open personal settings menu in DMs
+pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
+    use serenity::all::{CreateButton as CB, CreateActionRow as CAR, ButtonStyle as BS, CreateMessage as CM};
+    
+    let user_id = cc.intax.user.id;
+    
+    // Acknowledge the command first
+    let response = CIR::Message(CIRM::new()
+        .content("Opening your settings in DMs...")
+        .ephemeral(true)
+    );
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+    
+    // Get current settings
+    let settings = cc.db.users.get_settings(user_id).await?;
+    
+    // Try to send DM
+    let user = cc.ctx.http.get_user(user_id).await?;
+    
+    let embed = CE::new()
+        .title("Your Personal Settings")
+        .description(format!(
+            "Configure your queue experience!\n\n\
+            **Current Settings:**\n\
+            **DM Notifications:** {}\n\
+            **Auto-Leave Timeout:** {}\n\
+            **Join Announcements:** {}\n\
+            **Leave Announcements:** {}\n\
+            **VC Disconnect on Leave:** {}\n\n\
+            Click the buttons below to change your settings.",
+            if settings.dm_enabled { "ON" } else { "OFF" },
+            if settings.auto_leave_minutes == 0 {
+                "OFF".to_string()
+            } else {
+                format!("{} minutes", settings.auto_leave_minutes)
+            },
+            if settings.join_announcement { "ON" } else { "OFF" },
+            if settings.leave_announcement { "ON" } else { "OFF" },
+            if settings.vc_disconnect_on_leave { "ON" } else { "OFF" }
+        ))
+        .footer(serenity::all::CreateEmbedFooter::new("Tip: All settings are saved automatically"));
+    
+    // Create buttons for settings
+    let buttons = vec![
+        CAR::Buttons(vec![
+            CB::new("settings_toggle_dm")
+                .label("Toggle DM Notifications")
+                .style(if settings.dm_enabled { BS::Success } else { BS::Secondary }),
+            CB::new("settings_auto_leave")
+                .label("Auto-Leave Timeout")
+                .style(BS::Primary),
+        ]),
+        CAR::Buttons(vec![
+            CB::new("settings_join_announcement")
+                .label("Toggle Join Announcements")
+                .style(if settings.join_announcement { BS::Success } else { BS::Secondary }),
+            CB::new("settings_leave_announcement")
+                .label("Toggle Leave Announcements")
+                .style(if settings.leave_announcement { BS::Success } else { BS::Secondary }),
+        ]),
+        CAR::Buttons(vec![
+            CB::new("settings_vc_disconnect")
+                .label("Toggle VC Disconnect")
+                .style(if settings.vc_disconnect_on_leave { BS::Success } else { BS::Secondary }),
+        ]),
+        CAR::Buttons(vec![
+            CB::new("settings_customize_announcement")
+                .label("Edit Join Announcement")
+                .style(BS::Primary),
+            CB::new("settings_customize_leave_announcement")
+                .label("Edit Leave Announcement")
+                .style(BS::Primary),
+        ]),
+    ];
+    
+    match user.direct_message(&cc.ctx.http, CM::new().embed(embed).components(buttons)).await {
+        Ok(_) => {
+            info!("Sent settings menu to user {}", user_id);
+        }
+        Err(e) => {
+            warn!("Failed to send settings DM to user {}: {}", user_id, e);
+            
+            // Update the ephemeral response with error
+            let error_embed = CE::new()
+                .title("Cannot Send DM")
+                .description(
+                    "I couldn't send you a DM! Please check that:\n\
+                    • You have DMs enabled in your Discord privacy settings\n\
+                    • You haven't blocked the bot\n\n\
+                    To enable DMs: User Settings → Privacy & Safety → Allow direct messages from server members"
+                )
+                .color(0xff0000);
+            
+            cc.intax.edit_response(&cc.ctx.http,
+                serenity::all::EditInteractionResponse::new().embed(error_embed)
+            ).await?;
+        }
+    }
+    
+    Ok(())
+}
