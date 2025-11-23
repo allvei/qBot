@@ -7,17 +7,14 @@ use anyhow::{anyhow, Error, Result};
 use crate::models::constants::DEFAULT_TIMEOUT;
 use serde::{Deserialize, Serialize};
 use serenity::all::{
-    ButtonStyle, ChannelId as CI, Context, CreateActionRow,
-    CreateButton, CreateEmbed, CreateEmbedFooter as CEF,
-    CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM,
-    CreateMessage as CM, GuildId as GI, Message, MessageId as MI, RoleId as RI,
+    ChannelId as CI, Context, CreateEmbed,
+    CreateMessage as CM, GuildId as GI, MessageId as MI, RoleId as RI,
     UserId as UI,
 };
 use tracing::{info, warn};
 
-use crate::handlers::player::check_role;
 use crate::models::{
-    CommandContext, Player, SessionPlayer, Session, SessionStatus, TeamChannel,
+    Player, SessionPlayer, Session, SessionStatus, TeamChannel,
 };
 
 /// Helper function to calculate mean, median, and standard deviation for team ELOs
@@ -65,11 +62,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(
-        guild_id:   GI,
-        guild_name: String,
-        roles:      Roles,
-    ) -> Self {
+    pub fn new(guild_id: GI, guild_name: String, roles: Roles) -> Self {
         Self {
             guild_id,
             guild_name,
@@ -78,13 +71,10 @@ impl Server {
         }
     }
 
-    pub fn add_group(
-        &mut self,
-        group: Group,
-    ) -> Result<()> {
+    pub fn add_group(&mut self, group: Group) -> Result<()> {
         self.groups.push(group);
         if let Some(group) = self.groups.last_mut() {
-            group.create_session();
+            let _ = group.create_session();
         }
         Ok(())
     }
@@ -98,10 +88,7 @@ impl Server {
         }
     }
 
-    pub fn get_group(
-        &mut self,
-        channel_id: CI,
-    ) -> Result<&mut Group> {
+    pub fn get_group(&mut self, channel_id: CI) -> Result<&mut Group> {
         match self.groups.iter_mut().find(|group| group.contains_channel(channel_id)) {
             Some(group) => Ok(group),
             None => Err(anyhow!("Group not found")),
@@ -147,17 +134,12 @@ impl Group {
             return Err(anyhow!("Cannot create new session: inactive session already exists"));
         }
 
-        self.sessions
-            .push(Session::new(SessionStatus::Idle, Vec::new()));
+        self.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
         self.sessions.last_mut().ok_or_else(|| anyhow!("Failed to create session"))
     }
 
     pub fn end_game(&mut self) -> bool {
-        if let Some(pos) = self
-            .sessions
-            .iter()
-            .position(|s| s.status == SessionStatus::Idle)
-        {
+        if let Some(pos) = self.sessions.iter().position(|s| s.status == SessionStatus::Idle) {
             self.sessions.remove(pos);
             true
         } else {
@@ -167,32 +149,25 @@ impl Group {
 
     pub async fn get_queue(&mut self) -> Result<&mut Session, Error> {
         // Get either Idle or Hot session (both are joinable)
-        self.sessions
-            .iter_mut()
+        self.sessions.iter_mut()
             .find(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)
             .ok_or(anyhow!("No joinable session found"))
     }
 
     pub fn get_inactives(&self) -> Vec<&Session> {
-        self.sessions
-            .iter()
+        self.sessions.iter()
             .filter(|s| !s.is_active())
             .collect()
     }
 
     pub fn get_actives(&self) -> Vec<&Session> {
-        self.sessions
-            .iter()
+        self.sessions.iter()
             .filter(|s| s.is_active())
             .collect()
     }
 
-    pub fn get_sessions_by_status(
-        &self,
-        status: &SessionStatus,
-    ) -> Vec<&Session> {
-        self.sessions
-            .iter()
+    pub fn get_sessions_by_status(&self, status: &SessionStatus) -> Vec<&Session> {
+        self.sessions.iter()
             .filter(|s| s.status == *status)
             .collect()
     }
@@ -203,49 +178,33 @@ impl Group {
         self.sessions.iter().position(|s| std::ptr::eq(s, session))
     }
 
-    pub fn get_games_by_status_mut(
-        &mut self,
-        status: &SessionStatus,
-    ) -> Vec<&mut Session> {
-        self.sessions
-            .iter_mut()
+    pub fn get_games_by_status_mut(&mut self, status: &SessionStatus) -> Vec<&mut Session> {
+        self.sessions.iter_mut()
             .filter(|s| s.status == *status)
             .collect()
     }
 
-    pub async fn get_user_session(
-        &mut self,
-        user_id: UI,
-    ) -> Result<&mut Session> {
+    pub async fn get_user_session(&mut self, user_id: UI) -> Result<&mut Session> {
         match self.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.discord_id == user_id)) {
             Some(game) => Ok(game),
-            None => Err(anyhow!("User not found in any game")),
+            None       => Err(anyhow!("User not found in any game")),
         }
     }
 
-    pub fn get_player(
-        &mut self,
-        user_id: UI,
-    ) -> Result<&mut SessionPlayer> {
+    pub fn get_player(&mut self, user_id: UI) -> Result<&mut SessionPlayer> {
         match self.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.discord_id == user_id)) {
             Some(game) => Ok(game.pool.iter_mut().find(|p| p.player.discord_id == user_id).unwrap()),
-            None => Err(anyhow!("User not found in any game")),
+            None       => Err(anyhow!("User not found in any game")),
         }
     }
 
-    pub async fn hot(&mut self, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>, manager: Option<std::sync::Arc<tokio::sync::Mutex<crate::Manager>>>) -> Result<(), Error> {
+    pub async fn hot(&mut self, ctx: &Context, guild_id: Option<GI>, db: Option<&crate::Database>, manager: Option<std::sync::Arc<tokio::sync::Mutex<crate::Manager>>>) -> Result<(), Error> {
         // Get session index before calling hot()
-        let session_idx = self.sessions
-            .iter()
+        let _session_idx = self.sessions.iter()
             .position(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)
             .unwrap_or(0);
 
-        self.get_queue().await?.hot();
-
-        // Log the hot status with session ID
-        if let Ok(session) = self.get_queue().await {
-            session.log_hot(session_idx);
-        }
+        let _ = self.get_queue().await?.hot();
 
         // Refresh player ranks from Discord roles before generating teams
         if let (Some(gid), Some(database)) = (guild_id, db) {
@@ -295,14 +254,12 @@ impl Group {
 
     /// Check hot sessions for timeout and handle accordingly
     /// Returns true if any changes were made that require dashboard update
-    pub async fn check_hot_timeout(&mut self, ctx: &Context, guild_id: serenity::all::GuildId) -> bool {
+    pub async fn check_hot_timeout(&mut self, ctx: &Context, guild_id: GI) -> bool {
         let mut changes_made = false;
         let quota = self.quota as usize;
 
         // Find hot sessions that have timed out
-        let hot_sessions: Vec<usize> = self.sessions
-            .iter()
-            .enumerate()
+        let hot_sessions: Vec<usize> = self.sessions.iter().enumerate()
             .filter_map(|(idx, s)| {
                 if s.is_hot_timeout(DEFAULT_TIMEOUT as u64) {
                     Some(idx)
@@ -316,17 +273,12 @@ impl Group {
             let session = &mut self.sessions[idx];
 
             // Get players who are not in VC (timed out)
-            let timed_out_players: Vec<_> = session.pool
-                .iter()
-                .take(quota)
+            let timed_out_players: Vec<_> = session.pool.iter().take(quota)
                 .filter(|p| !p.in_queue_vc)
                 .map(|p| p.player.discord_id)
                 .collect();
 
-            if timed_out_players.is_empty() {
-                // All players joined, no timeout action needed
-                continue;
-            }
+            if timed_out_players.is_empty() {continue;}
 
             info!("Removing {} timed-out players from hot session", timed_out_players.len());
             
@@ -348,31 +300,27 @@ impl Group {
         }
         
         // If changes were made and we still have a hot session with enough players, regenerate teams
-        if changes_made {
-            if self.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= quota) {
-                // Re-generate teams for the hot session
-                self.generate_teams(ctx, guild_id, None).await;
-            }
+        if changes_made && self.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= quota) {
+            // Re-generate teams for the hot session
+            self.generate_teams(ctx, guild_id, None).await;
         }
 
         changes_made
     }
 
-    pub async fn push(&mut self, ctx: &Context, guild_id: serenity::all::GuildId) -> Result<(), Error> {
+    pub async fn push(&mut self, ctx: &Context, guild_id: GI) -> Result<(), Error> {
         // Extract channel IDs first to avoid borrowing conflicts
         let red_vc = self.channels.teams[0].red_vc;
         let blu_vc = self.channels.teams[0].blu_vc;
 
         // Get the hot game (should be the most recent session that's hot)
-        let game = self.sessions
-            .iter_mut()
+        let game = self.sessions.iter_mut()
             .find(|s| s.status == SessionStatus::Hot)
             .ok_or(anyhow!("No hot session found for push"))?;
 
         // Set status to Push and extract player moves
         game.push();
-        let player_moves: Vec<(UI, CI, String)> = game.pool
-            .iter()
+        let player_moves: Vec<(UI, CI, String)> = game.pool.iter()
             .filter_map(|player| {
                 // Only move players who are actually in the queue VC
                 // This prevents disconnecting players who aren't in voice
@@ -404,8 +352,7 @@ impl Group {
         }
 
         // Set game status to Live and extract overflow players
-        let session_idx = self.sessions
-            .iter()
+        let session_idx = self.sessions.iter()
             .position(|s| s.status == SessionStatus::Push)
             .ok_or(anyhow!("Push session not found"))?;
         let game = &mut self.sessions[session_idx];
@@ -438,13 +385,12 @@ impl Group {
 
     }
 
-    pub async fn pull(&mut self, ctx: &Context, guild_id: serenity::all::GuildId, db: &crate::Database, manager: Option<std::sync::Arc<tokio::sync::Mutex<crate::Manager>>>) -> Result<(), Error> {
+    pub async fn pull(&mut self, ctx: &Context, guild_id: GI, db: &crate::Database, manager: Option<std::sync::Arc<tokio::sync::Mutex<crate::Manager>>>) -> Result<(), Error> {
         // Extract queue vc channel ID
         let queue_vc = self.channels.queue_vc;
 
         // Find the active game (Hot or Live status)
-        let active_session_idx = self.sessions
-            .iter()
+        let active_session_idx = self.sessions.iter()
             .position(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live)
             .ok_or(anyhow!("No active game to pull"))?;
         let game = &mut self.sessions[active_session_idx];
@@ -452,8 +398,7 @@ impl Group {
         game.pull();
 
         // Extract all players to move back to queue
-        let players_to_requeue: Vec<Player> = game.pool
-            .iter()
+        let players_to_requeue: Vec<Player> = game.pool.iter()
             .map(|p| p.player.clone())
             .collect();
 
@@ -507,7 +452,7 @@ impl Group {
     }
 
     /// Update player ranks from Discord roles for all players in the session
-    pub async fn refresh_player_ranks(&mut self, ctx: &Context, guild_id: serenity::all::GuildId, db: &crate::Database) {
+    pub async fn refresh_player_ranks(&mut self, ctx: &Context, guild_id: GI, db: &crate::Database) {
         use crate::handlers::player::get_player_rank;
 
         for session in &mut self.sessions {
@@ -521,11 +466,11 @@ impl Group {
 
     /// Validate and correct in_queue_vc flags against actual Discord voice states
     /// This prevents desync where cached flags don't match reality
-    pub async fn validate_vc_status(&mut self, ctx: &Context, guild_id: serenity::all::GuildId) {
+    pub async fn validate_vc_status(&mut self, ctx: &Context, guild_id: GI) {
         // Get actual voice states from Discord
         let guild = match ctx.cache.guild(guild_id) {
             Some(g) => g,
-            None => {
+            None    => {
                 warn!("[validate_vc_status] Guild {} not in cache", guild_id);
                 return;
             }
@@ -534,22 +479,18 @@ impl Group {
         let queue_vc_id = self.channels.queue_vc.get();
         
         // Get set of users actually in queue VC
-        let users_in_vc: std::collections::HashSet<u64> = guild
-            .voice_states
-            .iter()
+        let users_in_vc: std::collections::HashSet<u64> = guild.voice_states.iter()
             .filter_map(|(user_id, vs)| {
                 if vs.channel_id.map(|c| c.get()) == Some(queue_vc_id) {
                     Some(user_id.get())
-                } else {
-                    None
-                }
+                } else {None}
             })
             .collect();
 
         // Update flags for all players in all sessions
         for session in &mut self.sessions {
             for player in &mut session.pool {
-                let user_id = player.player.discord_id.get();
+                let user_id      = player.player.discord_id.get();
                 let actual_in_vc = users_in_vc.contains(&user_id);
                 
                 // Log if we're correcting a desync
@@ -563,17 +504,16 @@ impl Group {
         }
     }
 
-    pub async fn generate_teams(&mut self, ctx: &Context, guild_id: serenity::all::GuildId, db: Option<&crate::Database>) {
+    pub async fn generate_teams(&mut self, ctx: &Context, guild_id: GI, db: Option<&crate::Database>) {
         use itertools::Itertools;
 
         let quota = self.quota as usize;
 
         // Get the hot game (session was just set to hot before this is called)
-        let session_idx = match self.sessions
-            .iter()
+        let session_idx = match self.sessions.iter()
             .position(|s| s.status == SessionStatus::Hot) {
             Some(idx) => idx,
-            None => {
+            None      => {
                 warn!("No hot session found for team generation");
                 return;
             }
@@ -614,13 +554,11 @@ impl Group {
                 .collect();
 
             // Get ELOs for each team
-            let team_a_elos: Vec<f64> = team_a_indices
-                .iter()
+            let team_a_elos: Vec<f64> = team_a_indices.iter()
                 .map(|&i| players_to_balance[i].1 as f64)
                 .collect();
 
-            let team_b_elos: Vec<f64> = team_b_indices
-                .iter()
+            let team_b_elos: Vec<f64> = team_b_indices.iter()
                 .map(|&i| players_to_balance[i].1 as f64)
                 .collect();
 
@@ -651,7 +589,7 @@ impl Group {
             let mut elo_groups: HashMap<u32, Vec<usize>> = HashMap::new();
             for i in 0..pool_size {
                 let elo = players_to_balance[i].1;
-                elo_groups.entry(elo).or_insert_with(Vec::new).push(i);
+                elo_groups.entry(elo).or_default().push(i);
             }
             
             // Store original team assignments before shuffling
@@ -663,7 +601,7 @@ impl Group {
                 if indices.len() > 1 {
                     // Count how many of this ELO are on each team (using ORIGINAL assignments)
                     let red_count = indices.iter().filter(|&&i| original_red.contains(&i)).count();
-                    let blu_count = indices.len() - red_count;
+                    let blu_count = indices.iter().filter(|&&i| original_blu.contains(&i)).count();
                     
                     // Shuffle the indices with this ELO
                     indices.shuffle(&mut rng);
@@ -673,7 +611,7 @@ impl Group {
                     blu_indices.retain(|&i| !indices.contains(&i));
                     
                     red_indices.extend_from_slice(&indices[..red_count]);
-                    blu_indices.extend_from_slice(&indices[red_count..]);
+                    blu_indices.extend_from_slice(&indices[..blu_count]);
                     
                     info!("[Session {}] Shuffled {} players with ELO {}", session_idx, indices.len(), elo);
                 }
@@ -691,11 +629,6 @@ impl Group {
                 let pool_idx = players_to_balance[idx].0;
                 game.pool[pool_idx].team(crate::models::Team::Blu);
             }
-            
-            // DO NOT sort the pool by team assignment.
-            // The pool MUST remain sorted by join_time to ensure overflow players
-            // maintain their proper queue position (first-come-first-serve).
-            // Team assignment is stored in each player's team field and used during push/display.
         } else {
             warn!("Failed to generate balanced teams");
         }
@@ -704,19 +637,15 @@ impl Group {
         self.queue_dash_update(ctx, guild_id.get()).await;
     }
 
-    pub async fn queue_player(&mut self, player: Player, rank: crate::models::Rank, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>, manager: Option<std::sync::Arc<tokio::sync::Mutex<crate::Manager>>>) -> Result<()> {
+    pub async fn queue_player(&mut self, player: Player, rank: crate::models::Rank, ctx: &Context, guild_id: Option<GI>, db: Option<&crate::Database>, manager: Option<std::sync::Arc<tokio::sync::Mutex<crate::Manager>>>) -> Result<()> {
         self.queue_player_with_vc_status(player, rank, ctx, guild_id, db, manager, false).await
     }
 
-    pub async fn queue_player_with_vc_status(&mut self, player: Player, rank: crate::models::Rank, ctx: &Context, guild_id: Option<serenity::all::GuildId>, db: Option<&crate::Database>, manager: Option<std::sync::Arc<tokio::sync::Mutex<crate::Manager>>>, in_vc: bool) -> Result<()> {
+    pub async fn queue_player_with_vc_status(&mut self, player: Player, rank: crate::models::Rank, ctx: &Context, guild_id: Option<GI>, db: Option<&crate::Database>, manager: Option<std::sync::Arc<tokio::sync::Mutex<crate::Manager>>>, in_vc: bool) -> Result<()> {
         let session = self.get_queue().await?;
-        let user_id = player.discord_id;
         
-        if in_vc {
-            session.add_player_in_vc(player, rank);
-        } else {
-            session.add_player(player, rank);
-        }
+        if in_vc {session.add_player_in_vc(player, rank);}
+        else {session.add_player(player, rank);}
 
         if self.is_quota() {
             self.hot(ctx, guild_id, db, manager).await?;
@@ -724,16 +653,13 @@ impl Group {
         Ok(())
     }
 
-    pub async fn add_player(&mut self, session: &mut Session, player: Player, rank: crate::models::Rank, ctx: &Context, guild_id: serenity::all::GuildId) {
+    pub async fn add_player(&mut self, session: &mut Session, player: Player, rank: crate::models::Rank, ctx: &Context, guild_id: GI) {
         session.add_player(player, rank);
         self.queue_dash_update(ctx, guild_id.get()).await;
     }
 
     /// Checks if this group contains the given channel_id in any of its channels
-    pub fn contains_channel(
-        &self,
-        channel_id: CI,
-    ) -> bool {
+    pub fn contains_channel(&self, channel_id: CI) -> bool {
         self.channels.contains_channel(channel_id)
     }
 
@@ -749,8 +675,8 @@ impl Group {
         let l = g[0].pool.len();
         let q = self.quota as usize;
         match l.cmp(&q) {
-            std::cmp::Ordering::Less => false,
-            std::cmp::Ordering::Equal => true,
+            std::cmp::Ordering::Less    => false,
+            std::cmp::Ordering::Equal   => true,
             std::cmp::Ordering::Greater => {
                 warn!("Quota met late, more players than quota");
                 true
@@ -761,7 +687,7 @@ impl Group {
     /// Notifies the queue chat that quota has been met
     /// Only pings players who are NOT in the voice channel yet
     /// Only pings the first 'quota' players, not extras queued for next match
-    pub async fn notify(&mut self, ctx: &Context, guild_id: serenity::all::GuildId) {
+    pub async fn notify(&mut self, ctx: &Context, guild_id: GI) {
         // Validate VC status before sending notifications to prevent desync
         // This ensures we only ping players who are actually not in VC
         self.validate_vc_status(ctx, guild_id).await;
@@ -796,7 +722,7 @@ impl Group {
         queue_chat.send_message(&ctx.http, msg).await;
     }
 
-    pub async fn move_user(&self, guild_id: serenity::all::GuildId, user_id: UI, channel_id: CI, ctx: &Context) -> Result<(), Error> {
+    pub async fn move_user(&self, guild_id: GI, user_id: UI, channel_id: CI, ctx: &Context) -> Result<(), Error> {
         let member = guild_id.member(&ctx.http, user_id).await?;
         member.move_to_voice_channel(&ctx.http, channel_id).await?;
         Ok(())
@@ -805,16 +731,13 @@ impl Group {
 
 // Roles
 #[derive(Debug, Clone, Serialize, Deserialize)]
-                pub struct Roles {
+pub struct Roles {
     pub runner: RI,
     pub admin:  RI,
 }
 
 impl Roles {
-    pub fn new(
-        runner: RI,
-        admin: RI,
-    ) -> Self {
+    pub fn new(runner: RI, admin: RI) -> Self {
         Self { runner, admin }
     }
     pub fn empty() -> Self {
@@ -867,13 +790,6 @@ impl Role {
     }
 }
 
-// Divisons
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Divisons {
-    Newcomer,
-    Journey,
-}
-
 // Channels
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channels {
@@ -884,12 +800,7 @@ pub struct Channels {
 }
 
 impl Channels {
-    pub fn new(
-        queue_chat:     CI,
-        queue_vc:  CI,
-        teams:     Vec<TeamChannel>,
-        dashboard: CI,
-    ) -> Self {
+    pub fn new(queue_chat: CI, queue_vc: CI, teams: Vec<TeamChannel>, dashboard: CI) -> Self {
         Self {
             queue_chat,
             queue_vc,
@@ -899,29 +810,21 @@ impl Channels {
     }
 
     /// Pushs a red and blue channel to the vector
-    pub fn add_team_channel_pair(
-        &mut self,
-        red_vc: CI,
-        blu_vc: CI,
-    ) {
+    pub fn add_team_channel_pair(&mut self, red_vc: CI, blu_vc: CI) {
         self.teams.push(TeamChannel::new(red_vc, blu_vc));
     }
 
     pub fn empty() -> Self {
         Self {
-            queue_chat:     CI::new(1),
-            queue_vc:  CI::new(1),
-            teams:     Vec::new(),
-            dashboard: CI::new(1),
+            queue_chat: CI::new(1),
+            queue_vc:   CI::new(1),
+            teams:      Vec::new(),
+            dashboard:  CI::new(1),
         }
     }
 
-    /// Checks if this Channels struct contains the given channel_id
-    /// in any of its channel fields (queue, queue_vc, dashboard, or team channels)
-    pub fn contains_channel(
-        &self,
-        channel_id: CI,
-    ) -> bool {
+    /// Checks if this struct contains the given channel_id
+    pub fn contains_channel(&self, channel_id: CI) -> bool {
         self.queue_chat == channel_id
             || self.queue_vc  == channel_id
             || self.dashboard == channel_id

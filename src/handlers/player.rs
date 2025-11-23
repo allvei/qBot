@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 use crate::Database;
 use crate::models::{
-    CommandContext, SessionPlayer, Group, Rank, Role, Roles, Server, Session, SessionStatus, Team,
+    CommandContext, SessionPlayer, Group, Rank, Role, Server, Session, SessionStatus, Team,
     DEFAULT_RANK,
 };
 
@@ -265,7 +265,7 @@ pub async fn create_rank_roles(
                     created_roles.push(rank.name().to_string());
                     role_ids_for_rank.push(created_role.id.get());
                 },
-                Err(e) => {
+                Err(_e) => {
                     warn!("[{}] Failed to create rank: {}", guild_name, rank.name());
                 }
             }

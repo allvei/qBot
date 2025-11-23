@@ -5,9 +5,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use pf_pug_bot::commands;
-use pf_pug_bot::player::queue;
 use serenity::all::{
-    Client, Command, CommandOptionType as COT, Context, EventHandler, Guild, GuildId,
+    Client, Command, CommandOptionType as COT, Context, EventHandler, Guild,
     GatewayIntents, Interaction, Ready, VoiceState,
 };
 use serenity::prelude::TypeMapKey;
@@ -22,9 +21,8 @@ use tracing::{error, info, warn};
 
 use pf_pug_bot::database::migrations::DatabaseMigrations;
 use pf_pug_bot::database::repositories::GroupRepository;
-use pf_pug_bot::handlers::{admin, player};
+use pf_pug_bot::handlers::admin;
 use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database, Group, Manager, QueueToggleType::{self, *}, Roles, Server, SessionStatus, VoiceStateUpdate, log_queue_toggle};
-use pf_pug_bot::models::constants::VoiceStateUpdate::*;
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
     CC::new(name.into(),).description(desc.into(),)
@@ -58,8 +56,8 @@ struct Handler {
 #[async_trait]
 impl EventHandler for Handler {
     /// When the bot is ready
-    async fn ready(&self,ctx: Context,ready: Ready,) {
-        let guild_count = ctx.cache.guilds().len();
+    async fn ready(&self,ctx: Context, _ready: Ready,) {
+        let _guild_count = ctx.cache.guilds().len();
 
         // Initialize dashboard update queue (done once on ready)
         {
@@ -187,8 +185,8 @@ impl EventHandler for Handler {
                     db:      self.database.clone(),
                     manager: &self.manager.clone(),
                 };
-                let cd          = &itx.data;
-                let cdo         = &cd.options;
+                let cd  = &itx.data;
+                let cdo = &cd.options;
 
                 let info = || {
                     let guild_name = itx.guild_id.and_then(|gid| ctx.cache.guild(gid).map(|g| g.name.clone())).unwrap_or_else(|| "DM".to_string());
@@ -1026,7 +1024,7 @@ impl Handler {
                         }
                     };
                     session.add_player_in_vc(player, *rank);
-                    log_queue_toggle(&guild_name, &group_name, &discord_tag, QueueToggleType::VJ);
+                    log_queue_toggle(&guild_name, &group_name, discord_tag, QueueToggleType::VJ);
                 }
             }
 

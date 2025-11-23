@@ -7,11 +7,9 @@ use serenity::all::{
     ChannelId as CI, CreateEmbed as CE, CreateEmbedFooter as CEF, UserId,
 };
 use sqlx::FromRow;
-use tracing::info;
 
 use crate::models::Player;
 
-// Game
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub status:   SessionStatus,
@@ -49,10 +47,7 @@ impl Session {
 
 
     /// Create a new session
-    pub fn new(
-        status: SessionStatus,
-        pool: Vec<SessionPlayer>,
-    ) -> Self {
+    pub fn new(status: SessionStatus, pool: Vec<SessionPlayer>) -> Self {
         Self {
             status,
             pool,
@@ -77,8 +72,8 @@ impl Session {
 
     /// Set the session to idle and clear team assignments
     pub fn idle(&mut self) {
-        self.status = SessionStatus::Idle;
-        self.ready_at = None; // Clear ready timestamp
+        self.status   = SessionStatus::Idle;
+        self.ready_at = None;
         // Clear team assignments and VC join tracking when going back to idle
         for player in &mut self.pool {
             player.team = None;
@@ -87,7 +82,7 @@ impl Session {
 
     /// Set the session to hot and record the ready timestamp
     pub fn hot(&mut self) -> CE {
-        self.status = SessionStatus::Hot;
+        self.status   = SessionStatus::Hot;
         self.ready_at = Some(SystemTime::now());
         // Create an embed message for the game ready notification
 
@@ -96,31 +91,20 @@ impl Session {
                  .footer(CEF::new("Awaiting team generation..."))
     }
 
-    /// Log hot status with session ID for debugging
-    pub fn log_hot(&self, _session_id: usize) {
-        // Minimal logging - hot status change is visible via dashboard
-    }
-
     /// Set the session to push
-    pub fn push(&mut self) {
-        self.status = SessionStatus::Push;
-    }
+    pub fn push(&mut self) {self.status = SessionStatus::Push;}
 
     /// Set the session to live
-    pub fn live(&mut self) {
-        self.status = SessionStatus::Live;
-    }
+    pub fn live(&mut self) {self.status = SessionStatus::Live;}
 
     /// Set the session to pull
-    pub fn pull(&mut self) {
-        self.status = SessionStatus::Pull;
-    }
+    pub fn pull(&mut self) {self.status = SessionStatus::Pull;}
 
     /// Create an empty session
     pub fn empty() -> Self {
         Self {
-            status: SessionStatus::Idle,
-            pool: Vec::new(),
+            status:   SessionStatus::Idle,
+            pool:     Vec::new(),
             ready_at: None,
         }
     }
@@ -157,7 +141,6 @@ impl Session {
     }
 }
 
-// SessionStatus
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum SessionStatus {
     Idle, // Waiting for enough players to join
@@ -167,7 +150,6 @@ pub enum SessionStatus {
     Pull, // Moving players back to the queue
 }
 
-// SessionPlayer
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct SessionPlayer {
     pub player:       Player,
@@ -187,10 +169,7 @@ impl SessionPlayer {
         }
     }
 
-    pub fn team(
-        &mut self,
-        team: Team,
-    ) {
+    pub fn team(&mut self, team: Team) {
         self.team = Some(team);
     }
 
@@ -200,26 +179,17 @@ impl SessionPlayer {
 }
 
 trait Quota {
-    fn less(&self, quota: usize) -> bool;
+    fn less(&self,  quota: usize) -> bool;
     fn equal(&self, quota: usize) -> bool;
-    fn more(&self, quota: usize) -> bool;
+    fn more(&self,  quota: usize) -> bool;
 }
 
 impl Quota for Vec<SessionPlayer> {
-    fn less(&self, quota: usize) -> bool {
-        self.len() < quota
-    }
-
-    fn equal(&self, quota: usize) -> bool {
-        self.len() == quota
-    }
-
-    fn more(&self, quota: usize) -> bool {
-        self.len() > quota
-    }
+    fn less(&self,  quota: usize) -> bool {self.len() <  quota}
+    fn equal(&self, quota: usize) -> bool {self.len() == quota}
+    fn more(&self,  quota: usize) -> bool {self.len() >  quota}
 }
 
-// Teams
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamChannel {
     pub red_vc: CI,
@@ -227,10 +197,7 @@ pub struct TeamChannel {
 }
 
 impl TeamChannel {
-    pub fn new(
-        red_vc: CI,
-        blu_vc: CI,
-    ) -> Self {
+    pub fn new(red_vc: CI, blu_vc: CI) -> Self {
         Self { red_vc, blu_vc }
     }
 
@@ -243,15 +210,11 @@ impl TeamChannel {
 
     /// Checks if this TeamChannel contains the given channel_id
     /// in either red_vc or blu_vc
-    pub fn contains_channel(
-        &self,
-        channel_id: CI,
-    ) -> bool {
+    pub fn contains_channel(&self, channel_id: CI) -> bool {
         self.red_vc == channel_id || self.blu_vc == channel_id
     }
 }
 
-// Team
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum Team {
     Unassigned,

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use serenity::all::{
     CreateEmbed as CE, CreateInteractionResponse as CIR,
-    CreateInteractionResponseMessage as CIRM, GuildId, Permissions,
+    CreateInteractionResponseMessage as CIRM, Permissions,
 };
 use serenity::builder::EditRole;
 use tracing::{error, info, warn};
@@ -407,7 +407,7 @@ pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: Stri
     for (role_id, role_name) in roles_to_remove {
         if existing_ids.contains(&role_id) {
             existing_ids.retain(|id| *id != role_id);
-            log_rank_remove(&role_name, &rank.name());
+            log_rank_remove(&role_name, rank.name());
             removed_roles.push(role_name);
         } else {
             not_found_roles.push(role_name);
@@ -480,7 +480,7 @@ pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<String>) -> Result<()>
             description.push_str("  *No roles configured*\n");
         } else {
             for role_id in role_ids {
-                let role_name = guild_roles.iter()
+                let _role_name = guild_roles.iter()
                     .find(|r| r.id == role_id)
                     .map(|r| r.name.clone())
                     .unwrap_or_else(|| format!("Unknown ({})", role_id));
@@ -511,7 +511,7 @@ pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<String>) -> Result<()>
                 description.push_str("  *No roles configured*\n");
             } else {
                 for role_id in role_ids {
-                    let role_name = guild_roles.iter()
+                    let _role_name = guild_roles.iter()
                         .find(|r| r.id == role_id)
                         .map(|r| r.name.clone())
                         .unwrap_or_else(|| format!("Unknown ({})", role_id));
@@ -565,7 +565,7 @@ fn parse_multiple_role_ids(role_str: &str) -> Result<Vec<String>> {
     let mut role_ids = Vec::new();
     
     // Split by both spaces and commas, then filter empty strings
-    for part in role_str.split(|c| c == ' ' || c == ',') {
+    for part in role_str.split([' ', ',']) {
         let trimmed = part.trim();
         if !trimmed.is_empty() {
             role_ids.push(parse_role_id(trimmed)?);

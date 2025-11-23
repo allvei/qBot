@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 use sqlx::{Row, SqlitePool};
-use tracing::{error, info};
+use tracing::error;
 
 use super::Repository;
 use crate::models::ConfigFormat;

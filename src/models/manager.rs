@@ -5,7 +5,6 @@
 
 use anyhow::{anyhow, Result};
 use serenity::all::{Cache, ChannelId as CI, GuildId as GI};
-use tracing::info;
 
 use crate::models::{Group, Roles, Server, SessionStatus};
 

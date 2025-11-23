@@ -12,18 +12,18 @@ use serenity::all::UserId;
 use serenity::prelude::Context;
 use sqlx::Row;
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::error;
 
 use pf_pug_bot::Database;
 use pf_pug_bot::models::{Manager, Team};
 
 /// Command definition with all metadata for auto-generated documentation
 struct Command {
-    name: &'static str,
+    name:        &'static str,
     description: &'static str,
-    usage: Vec<&'static str>,
-    examples: Vec<&'static str>,
-    category: CommandCategory,
+    usage:       Vec<&'static str>,
+    examples:    Vec<&'static str>,
+    category:    CommandCategory,
 }
 
 #[derive(PartialEq, Eq, Hash)]
@@ -37,10 +37,10 @@ enum CommandCategory {
 impl CommandCategory {
     fn name(&self) -> &'static str {
         match self {
-            CommandCategory::Core => "Core Commands",
-            CommandCategory::Config => "Configuration",
+            CommandCategory::Core    => "Core Commands",
+            CommandCategory::Config  => "Configuration",
             CommandCategory::Testing => "Testing Commands",
-            CommandCategory::System => "System",
+            CommandCategory::System  => "System",
         }
     }
 }
@@ -55,32 +55,32 @@ impl CommandRegistry {
 
         // Core commands
         commands.insert("status", Command {
-            name: "status",
+            name:        "status",
             description: "Show bot status and statistics",
-            usage: vec!["status"],
-            examples: vec!["status"],
-            category: CommandCategory::Core,
+            usage:       vec!["status"],
+            examples:    vec!["status"],
+            category:    CommandCategory::Core,
         });
 
         commands.insert("guilds", Command {
-            name: "guilds",
+            name:        "guilds",
             description: "List all connected guilds and their configurations",
-            usage: vec!["guilds"],
-            examples: vec!["guilds"],
-            category: CommandCategory::Core,
+            usage:       vec!["guilds"],
+            examples:    vec!["guilds"],
+            category:    CommandCategory::Core,
         });
 
         commands.insert("games", Command {
-            name: "games",
+            name:        "games",
             description: "List all active games and players",
-            usage: vec!["games"],
-            examples: vec!["games"],
-            category: CommandCategory::Core,
+            usage:       vec!["games"],
+            examples:    vec!["games"],
+            category:    CommandCategory::Core,
         });
 
         // Config commands
         commands.insert("config", Command {
-            name: "config",
+            name:        "config",
             description: "View or modify guild and group configurations",
             usage: vec![
                 "config <guild_id>",
@@ -412,15 +412,6 @@ impl ConsoleHandler {
             manager,
             database,
             ctx: Some(ctx),
-            registry: CommandRegistry::new(),
-        }
-    }
-
-    pub fn new_without_context(manager: Arc<Mutex<Manager>>, database: Arc<Database>) -> Self {
-        Self {
-            manager,
-            database,
-            ctx: None,
             registry: CommandRegistry::new(),
         }
     }
@@ -1181,7 +1172,7 @@ impl ConsoleHandler {
 
             // Update dashboard if context is available
             if let Some(ctx) = &self.ctx {
-                group.queue_dash_update(&ctx, guild_id).await;
+                group.queue_dash_update(ctx, guild_id).await;
             }
         } else {
             println!("Failed to get queue for guild {} group {}", guild_id, group_id);
@@ -1304,7 +1295,7 @@ impl ConsoleHandler {
 
             // Update dashboard if context is available
             if let Some(ctx) = &self.ctx {
-                group.queue_dash_update(&ctx, guild_id).await;
+                group.queue_dash_update(ctx, guild_id).await;
             }
         } else {
             println!("No active queue found for guild {} group {}", guild_id, group_id);
@@ -1332,7 +1323,7 @@ impl ConsoleHandler {
 
                 // Update dashboard if context is available
                 if let Some(ctx) = &self.ctx {
-                    group.queue_dash_update(&ctx, guild_id).await;
+                    group.queue_dash_update(ctx, guild_id).await;
                 }
             }
         } else {
@@ -1433,7 +1424,7 @@ impl ConsoleHandler {
                 let quota = group.quota as usize;
 
                 if group.sessions.is_empty() {
-                    group.create_session();
+                    let _ = group.create_session();
                 }
 
                 if let Ok(session) = group.get_queue().await {

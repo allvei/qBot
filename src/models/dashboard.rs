@@ -1,15 +1,14 @@
 use anyhow::{anyhow, Error, Result};
 use std::time::SystemTime;
-use std::cmp::Ordering::*;
 use crate::{QueueToggleType, log_queue_toggle, models::constants::DEFAULT_TIMEOUT};
 use serenity::all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
-    CreateEmbed as CE, CreateEmbedFooter as CEF, CreateMessage as CM,
-    EditMessage, Message, Reaction,
+    CreateEmbed as CE, CreateMessage as CM,
+    EditMessage, Message,
 };
 use tracing::{error, info, warn};
 
-use crate::models::{ComponentContext as CC, DashboardQueueKey, Group, Session, SessionStatus};
+use crate::models::{ComponentContext as CC, DashboardQueueKey, Group, SessionStatus};
 
 macro_rules! list_players {
     ($desc:ident, $team:ident) => {
@@ -224,7 +223,7 @@ impl Group {
 
     /// Creates buttons for the dashboard
     pub async fn create_dashboard_buttons(&self) -> Result<Vec<CAR>> {
-        let quota = self.quota as usize;
+        let _quota = self.quota as usize;
 
         // Check if any session is hot AND still has enough players
         let is_hot  = self.sessions.iter().any(|s| s.is_hot());
@@ -365,7 +364,7 @@ impl Group {
                     description.push_str(&format!("**Queue ({}/{})**\n", queue_players, quota));
 
                     if queue_players > 0 {
-                        for (i, player) in current_session.pool.iter().enumerate() {
+                        for player in current_session.pool.iter() {
                             let elo_str = if let Some(rank) = player.player.rank {
                                 let elo = rank.elo_from_config(db, guild_id).await;
                                 format!("[**{}**] ", elo)
@@ -411,7 +410,7 @@ impl Group {
                 if current_session.is_hot() && queue_players > quota {
                     let overflow_count = queue_players - quota;
                     let mut fatkid = format!("**Waiting for next game ({}/{}):**\n", overflow_count, quota);
-                    for (i, player) in current_session.pool.iter().skip(quota).enumerate() {
+                    for player in current_session.pool.iter().skip(quota) {
                         let elo_str = if let Some(rank) = player.player.rank {
                             let elo = rank.elo_from_config(db, guild_id).await;
                             format!("[**{}**] ", elo)
@@ -439,7 +438,7 @@ impl Group {
             if let Some(next_session) = inactives.first() {
                 if !next_session.pool.is_empty() {
                     let mut fatkid = format!("**Waiting for next game ({}/{}):**\n", next_session.pool.len(), quota);
-                    for (i, player) in next_session.pool.iter().enumerate() {
+                    for player in next_session.pool.iter() {
                         let elo_str = if let Some(rank) = player.player.rank {
                             let elo = rank.elo_from_config(db, guild_id).await;
                             format!("[**{}**] ", elo)
@@ -547,7 +546,7 @@ impl Group {
     /// Updates a dashboard based on current group state
     /// Auto-recovers by creating a new dashboard if the current one is missing/deleted
     pub async fn dash_update(&mut self, ctx: &Context) -> Result<(), Error> {
-        let mut dash = match self.dash_get(ctx).await {
+        match self.dash_get(ctx).await {
             Ok(msg) => msg,
             Err(e) => {
                 warn!("Dashboard message not found (may have been deleted): {}", e);
@@ -573,7 +572,7 @@ impl Group {
         
         // Note: This function is deprecated and should not be called directly
         // Use the dashboard queue processor which has access to db and guild_id
-        return Err(anyhow!("dash_update requires db and guild_id - use dashboard queue"));
+        Err(anyhow!("dash_update requires db and guild_id - use dashboard queue"))
     }
     
     /// Queue a dashboard update (non-blocking, batched)
@@ -618,8 +617,6 @@ impl Group {
             if player_in_vc {
                 // Acknowledge button press before disconnecting
                 cc.defer_update().await?;
-                
-                let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
                 
                 // Disconnect player from voice channel
                 if let Some(guild_id) = cc.component.guild_id {
