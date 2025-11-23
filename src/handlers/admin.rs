@@ -2548,3 +2548,96 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     cc.intax.create_response(&cc.ctx.http, response).await?;
     Ok(())
 }
+
+/// `/fatkid`
+///
+/// * `user_id` - The user ID to fatkid (move to end of queue).
+/// * `server` - The server (already has manager lock held by caller)
+pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result<()> {
+    info!("Processing /fatkid command for user {}", user_id);
+    
+    if !check_role(cc, &Role::Admin).await? {
+        info!("User lacks admin permissions for /fatkid");
+        let response = CIR::Message(CIRM::new().content("Only admins can fatkid players!").ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+    
+    info!("[{}] Getting group from channel {}", guild_name, cc.intax.channel_id);
+    // Get the group from the current channel
+    let group = match server.get_group(cc.intax.channel_id) {
+        Ok(g) => g,
+        Err(e) => {
+            warn!("[{}] No group found in channel {}: {}", guild_name, cc.intax.channel_id, e);
+            let error_embed = CE::new()
+                .title("Group Not Found")
+                .description(format!("No queue group found in this channel: {e}"))
+                .color(0xff0000);
+
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+    
+    info!("[{}] Finding session for user {}", guild_name, user_id);
+    // Find the session containing the player
+    let session = match group.get_user_session(user_id).await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("[{}] User {} not found in any session: {}", guild_name, user_id, e);
+            let error_embed = CE::new()
+                .title("Player Not Found")
+                .description(format!("<@{user_id}> is not in any queue."))
+                .color(0xff0000);
+
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+    
+    // Find the player's index in the pool
+    let player_idx = match session.pool.iter().position(|p| p.player.discord_id == user_id) {
+        Some(idx) => idx,
+        None => {
+            error!("[{}] Player {} not found in pool despite being in session", guild_name, user_id);
+            let error_embed = CE::new()
+                .title("Player Not Found")
+                .description(format!("<@{user_id}> is not in the queue pool."))
+                .color(0xff0000);
+
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+    
+    // Remove the player from their current position
+    let player = session.pool.remove(player_idx);
+    
+    // Insert the player at the end of the queue
+    session.pool.push(player);
+    
+    let is_hot = session.is_hot();
+    
+    // If session is hot, regenerate teams with new order
+    if is_hot {
+        group.generate_teams(cc.ctx, guild_id, Some(&cc.db)).await;
+    }
+    
+    group.queue_dash_update(cc.ctx, guild_id.get()).await;
+
+    
+    let success_embed = CE::new()
+        .title("Player Fatkidded")
+        .description(format!("<@{user_id}> moved to end of queue."))
+        .color(0x00ff00);
+
+    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+    Ok(())
+}

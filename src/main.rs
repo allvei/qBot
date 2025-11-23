@@ -97,6 +97,8 @@ impl EventHandler for Handler {
             // Player commands
             cmd("buffer", "Buffer a player")
                 .op_user("user",  "User to buffer", true),
+            cmd("fatkid", "Move a player to end of queue")
+                .op_user("user",  "User to fatkid", true),
             
             cmd("setupadd",   "Create roles and group (full setup)"),
             cmd("setuplink",  "Guide to link existing roles and channels"),
@@ -379,6 +381,17 @@ impl EventHandler for Handler {
                                         admin::cmd_buffer(&cmd_ctx, server, user_id).await.expect("Failed to buffer player")
                                     } else {
                                         error!("Failed to parse user ID from buffer command");
+                                    }
+                                }
+                                Ok(())
+                            }
+                            "fatkid" => {
+                                info();
+                                if let Some(user_option) = cdo.first() {
+                                    if let Some(user_id) = user_option.value.as_user_id() {
+                                        admin::cmd_fatkid(&cmd_ctx, server, user_id).await.expect("Failed to fatkid player")
+                                    } else {
+                                        error!("Failed to parse user ID from fatkid command");
                                     }
                                 }
                                 Ok(())
