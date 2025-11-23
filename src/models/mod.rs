@@ -1,5 +1,6 @@
 pub mod constants;
 pub mod dashboard;
+pub mod dm_tracker;
 pub mod manager;
 pub mod server;
 pub mod session;
@@ -8,6 +9,7 @@ pub mod types;
 
 pub use constants::*;
 pub use dashboard::*;
+pub use dm_tracker::*;
 pub use manager::*;
 pub use server::*;
 pub use session::*;
@@ -21,4 +23,9 @@ use serenity::prelude::TypeMapKey;
 pub struct DashboardQueueKey;
 impl TypeMapKey for DashboardQueueKey {
     type Value = Arc<DashboardUpdateQueue>;
+}
+
+pub struct DmTrackerKey;
+impl TypeMapKey for DmTrackerKey {
+    type Value = Arc<DmMessageTracker>;
 }

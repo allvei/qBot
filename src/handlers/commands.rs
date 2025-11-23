@@ -1089,20 +1089,20 @@ pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
             "Configure your queue experience!\n\n\
             **Current Settings:**\n\
             **DM Notifications:** {}\n\
-            **Auto-Leave Timeout:** {}\n\
+            **Auto-remove timer:** {}\n\
             **Join Announcements:** {}\n\
             **Leave Announcements:** {}\n\
             **VC Disconnect on Leave:** {}\n\n\
             Click the buttons below to change your settings.",
-            if settings.dm_enabled { "ON" } else { "OFF" },
-            if settings.auto_leave_minutes == 0 {
-                "OFF".to_string()
+            if settings.dm_enabled { "🟢" } else { "🔴" },
+            if settings.auto_remove_minutes == 0 {
+                "🔴".to_string()
             } else {
-                format!("{} minutes", settings.auto_leave_minutes)
+                format!("{} minutes", settings.auto_remove_minutes)
             },
-            if settings.join_announcement { "ON" } else { "OFF" },
-            if settings.leave_announcement { "ON" } else { "OFF" },
-            if settings.vc_disconnect_on_leave { "ON" } else { "OFF" }
+            if settings.join_announcement { "🟢" } else { "🔴" },
+            if settings.leave_announcement { "🟢" } else { "🔴" },
+            if settings.vc_disconnect_on_leave { "🟢" } else { "🔴" }
         ))
         .footer(serenity::all::CreateEmbedFooter::new("Tip: All settings are saved automatically"));
     
@@ -1113,34 +1113,38 @@ pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
                 .label("Toggle DM Notifications")
                 .style(if settings.dm_enabled { BS::Success } else { BS::Secondary }),
             CB::new("settings_auto_leave")
-                .label("Auto-Leave Timeout")
+                .label("Auto-remove timer")
                 .style(BS::Primary),
         ]),
         CAR::Buttons(vec![
             CB::new("settings_join_announcement")
-                .label("Toggle Join Announcements")
+                .label("Toggle join announcements")
                 .style(if settings.join_announcement { BS::Success } else { BS::Secondary }),
             CB::new("settings_leave_announcement")
-                .label("Toggle Leave Announcements")
+                .label("Toggle leave announcements")
                 .style(if settings.leave_announcement { BS::Success } else { BS::Secondary }),
         ]),
         CAR::Buttons(vec![
             CB::new("settings_vc_disconnect")
-                .label("Toggle VC Disconnect")
+                .label("Toggle VC disconnect")
                 .style(if settings.vc_disconnect_on_leave { BS::Success } else { BS::Secondary }),
         ]),
         CAR::Buttons(vec![
             CB::new("settings_customize_announcement")
-                .label("Edit Join Announcement")
+                .label("Edit join announcement")
                 .style(BS::Primary),
             CB::new("settings_customize_leave_announcement")
-                .label("Edit Leave Announcement")
+                .label("Edit leave announcement")
                 .style(BS::Primary),
         ]),
     ];
     
     match user.direct_message(&cc.ctx.http, CM::new().embed(embed).components(buttons)).await {
-        Ok(_) => {
+        Ok(msg) => {
+            // Track this message for cleanup after 10 minutes of inactivity
+            if let Some(dm_tracker) = cc.ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
+                dm_tracker.track_message(user_id, msg.channel_id, msg.id).await;
+            }
             info!("Sent settings menu to user {}", user_id);
         }
         Err(e) => {

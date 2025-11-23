@@ -21,7 +21,7 @@ use tracing::{error, info, warn};
 use pf_pug_bot::database::migrations::DatabaseMigrations;
 use pf_pug_bot::database::repositories::GroupRepository;
 use pf_pug_bot::handlers::{self, admin};
-use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database, Manager, QueueToggleType::{self, *}, Roles, Server, SessionStatus, VoiceStateUpdate, log_queue_toggle};
+use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, DmMessageTracker, DmTrackerKey, Database, Manager, QueueToggleType::{self, *}, Roles, Server, SessionStatus, VoiceStateUpdate, log_queue_toggle};
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
     CC::new(name.into(),).description(desc.into(),)
@@ -69,6 +69,16 @@ impl EventHandler for Handler {
                 // Store in Context data for global access
                 ctx.data.write().await.insert::<DashboardQueueKey>(queue_arc);
             }
+        }
+
+        // Initialize DM message tracker and start cleanup task
+        {
+            let dm_tracker = Arc::new(DmMessageTracker::new());
+            ctx.data.write().await.insert::<DmTrackerKey>(dm_tracker.clone());
+            
+            // Start the cleanup background task
+            dm_tracker.start_cleanup_task(ctx.http.clone());
+            info!("DM message tracker initialized with 10-minute cleanup");
         }
 
         // Spawn console command handler in a separate task

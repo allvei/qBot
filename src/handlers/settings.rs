@@ -21,13 +21,18 @@ pub async fn handle_settings_button(
 
     info!("User {} clicked settings button: {}", user_id, button_id);
 
+    // Update activity timestamp for DM cleanup tracking
+    if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
+        dm_tracker.update_activity(user_id).await;
+    }
+
     match button_id.as_str() {
         "settings_toggle_dm" => {
             // Toggle DM notifications
             let new_state = db.users.toggle_dm_enabled(user_id).await?;
             
             let (status_text, emoji) = if new_state {
-                ("enabled", "✅")
+                ("enabled", "🟢")
             } else {
                 ("disabled", "❌")
             };
@@ -42,11 +47,11 @@ pub async fn handle_settings_button(
         }
         "settings_auto_leave" => {
             // Show modal for auto-leave timeout
-            let modal = CreateModal::new("settings_modal_auto_leave", "Auto-Leave Timeout")
+            let modal = CreateModal::new("settings_modal_auto_leave", "Auto-remove timer")
                 .components(vec![
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Minutes", "auto_leave_minutes")
-                            .placeholder("0 to disable, 1-60 for timeout in minutes")
+                        CreateInputText::new(InputTextStyle::Short, "Minutes", "auto_remove_minutes")
+                            .placeholder(format!("0 to disable, max 60 minutes"))
                             .min_length(1)
                             .max_length(2)
                             .required(true)
@@ -63,7 +68,7 @@ pub async fn handle_settings_button(
             db.users.update_settings(user_id, &settings).await?;
 
             let (status_text, emoji) = if settings.join_announcement {
-                ("enabled", "✅")
+                ("enabled", "🟢")
             } else {
                 ("disabled", "❌")
             };
@@ -83,7 +88,7 @@ pub async fn handle_settings_button(
             db.users.update_settings(user_id, &settings).await?;
 
             let (status_text, emoji) = if settings.leave_announcement {
-                ("enabled", "✅")
+                ("enabled", "🟢")
             } else {
                 ("disabled", "❌")
             };
@@ -103,7 +108,7 @@ pub async fn handle_settings_button(
             db.users.update_settings(user_id, &settings).await?;
 
             let (status_text, emoji) = if settings.vc_disconnect_on_leave {
-                ("Yes - Disconnect me", "✅")
+                ("Yes - Disconnect me", "🟢")
             } else {
                 ("No - Keep me in VC", "❌")
             };
@@ -225,6 +230,11 @@ pub async fn handle_settings_modal(
     let user_id = interaction.user.id;
     let modal_id = &interaction.data.custom_id;
 
+    // Update activity timestamp for DM cleanup tracking
+    if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
+        dm_tracker.update_activity(user_id).await;
+    }
+
     match modal_id.as_str() {
         "settings_modal_announcement" => {
             // Get all input values from the modal
@@ -280,8 +290,13 @@ pub async fn handle_settings_modal(
                     .content("**Preview of your join announcement:**")
                     .embed(preview_embed);
                     
-                let _ = user.direct_message(&ctx.http, preview_message).await;
-                info!("Sent announcement preview to user {}", user_id);
+                if let Ok(msg) = user.direct_message(&ctx.http, preview_message).await {
+                    // Track this message for cleanup
+                    if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
+                        dm_tracker.track_message(user_id, msg.channel_id, msg.id).await;
+                    }
+                    info!("Sent announcement preview to user {}", user_id);
+                }
             }
         }
         "settings_modal_auto_leave" => {
@@ -293,7 +308,7 @@ pub async fn handle_settings_modal(
                             if !value.is_empty() {
                         match value.parse::<i64>() {
                             Ok(minutes) if minutes >= 0 && minutes <= 60 => {
-                                db.users.update_setting_field(user_id, "auto_leave_minutes", minutes).await?;
+                                db.users.update_setting_field(user_id, "auto_remove_minutes", minutes).await?;
                                 
                                 let status_text = if minutes == 0 {
                                     "disabled".to_string()
@@ -307,7 +322,7 @@ pub async fn handle_settings_modal(
 
                                 let response = CIR::Message(
                                     CIRM::new()
-                                        .content(format!("Auto-Leave Timeout: {}", status_text))
+                                        .content(format!("Auto-remove timer: {}", status_text))
                                         .embed(embed)
                                         .components(buttons)
                                         .ephemeral(true)
@@ -383,8 +398,13 @@ pub async fn handle_settings_modal(
                     .content("**Preview of your leave announcement:**")
                     .embed(preview_embed);
                     
-                let _ = user.direct_message(&ctx.http, preview_message).await;
-                info!("Sent leave announcement preview to user {}", user_id);
+                if let Ok(msg) = user.direct_message(&ctx.http, preview_message).await {
+                    // Track this message for cleanup
+                    if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
+                        dm_tracker.track_message(user_id, msg.channel_id, msg.id).await;
+                    }
+                    info!("Sent leave announcement preview to user {}", user_id);
+                }
             }
         }
         _ => {
@@ -422,20 +442,20 @@ fn build_settings_embed(settings: &crate::database::repositories::UserSettings) 
             "Configure your queue experience!\n\n\
             **Current Settings:**\n\
             **DM Notifications:** {}\n\
-            **Auto-Leave Timeout:** {}\n\
+            **Auto-remove timer:** {}\n\
             **Join Announcements:** {}\n\
             **Leave Announcements:** {}\n\
             **VC Disconnect on Leave:** {}\n\n\
             Click the buttons below to change your settings.",
-            if settings.dm_enabled { "ON" } else { "OFF" },
-            if settings.auto_leave_minutes == 0 {
-                "OFF".to_string()
+            if settings.dm_enabled { "🟢" } else { "🔴" },
+            if settings.auto_remove_minutes == 0 {
+                "🔴".to_string()
             } else {
-                format!("{} minutes", settings.auto_leave_minutes)
+                format!("{} minutes", settings.auto_remove_minutes)
             },
-            if settings.join_announcement { "ON" } else { "OFF" },
-            if settings.leave_announcement { "ON" } else { "OFF" },
-            if settings.vc_disconnect_on_leave { "ON" } else { "OFF" }
+            if settings.join_announcement { "🟢" } else { "🔴" },
+            if settings.leave_announcement { "🟢" } else { "🔴" },
+            if settings.vc_disconnect_on_leave { "🟢" } else { "🔴" }
         ))
         .color(settings.announcement_color as u32)
         .footer(serenity::all::CreateEmbedFooter::new("Tip: All settings are saved automatically"))
@@ -449,20 +469,20 @@ fn build_settings_buttons(settings: &crate::database::repositories::UserSettings
                 .label("Toggle DM Notifications")
                 .style(if settings.dm_enabled { BS::Success } else { BS::Secondary }),
             CB::new("settings_auto_leave")
-                .label("Auto-Leave Timeout")
+                .label("Auto-remove timer")
                 .style(BS::Primary),
         ]),
         CAR::Buttons(vec![
             CB::new("settings_join_announcement")
-                .label("Toggle Join Announcements")
+                .label("Toggle join announcements")
                 .style(if settings.join_announcement { BS::Success } else { BS::Secondary }),
             CB::new("settings_leave_announcement")
-                .label("Toggle Leave Announcements")
+                .label("Toggle leave announcements")
                 .style(if settings.leave_announcement { BS::Success } else { BS::Secondary }),
         ]),
         CAR::Buttons(vec![
             CB::new("settings_vc_disconnect")
-                .label("Toggle VC Disconnect")
+                .label("Toggle VC disconnect")
                 .style(if settings.vc_disconnect_on_leave { BS::Success } else { BS::Secondary }),
         ]),
         CAR::Buttons(vec![
@@ -490,7 +510,7 @@ async fn build_announcement_preview(
     let avatar_url = ctx.cache.user(user_id).map(|u| u.face());
     
     // Use example rank for preview
-    let example_rank = "Advanced"; // Example rank name
+    let example_rank = "Journeyman"; // Example rank name
     
     // Build description with template support
     let description = if let Some(custom_desc) = &settings.announcement_description {
