@@ -9,3 +9,6 @@ pf_pug_bot.db-wal
 pf_pug_bot.db
 .pf_pug_bot_history
 bch.md
+AUTO_LEAVE_IMPLEMENTATION.md
+OPTIMIZATION_PLAN.md
+ANNOUNCEMENT_CUSTOMIZATION.md
