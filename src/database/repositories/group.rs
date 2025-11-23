@@ -192,7 +192,7 @@ impl GroupRepository {
                 Err(e) => {
                     let group_id: i64 = row.try_get("group_id").unwrap_or(0);
                     let queue_id: i64 = row.try_get("queue").unwrap_or(0);
-                    warn!("Skipping invalid group {} (queue {}) for guild {}: {}", 
+                    warn!("Skipping invalid group {} (queue {}) for guild {}: {}",
                         group_id, queue_id, guild_id, e);
                 }
             }
@@ -273,8 +273,8 @@ impl Repository<Group, u8> for GroupRepository {
     }
 
     async fn delete(&self, group_id: u8) -> Result<()> {
-        sqlx::query("DELETE 
-                     FROM groups 
+        sqlx::query("DELETE
+                     FROM groups
                      WHERE group_id = ?")
             .bind(group_id as i64)
             .execute(&self.pool)

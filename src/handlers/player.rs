@@ -19,7 +19,7 @@ async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI) -> Option<Membe
     } else {
         None
     };
-    
+
     // Fallback to HTTP if not in cache
     match member {
         Some(m) => Some(m),
@@ -30,7 +30,7 @@ async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI) -> Option<Membe
 /// Get player's rank from their Discord roles
 pub async fn get_player_rank(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<Rank> {
     let member = get_member_cached(ctx, guild_id, user_id).await?;
-    
+
     // Check all member roles and find the highest matching rank
     let mut highest_rank: Option<Rank> = None;
     for role_id in &member.roles {
@@ -79,13 +79,14 @@ pub async fn get_or_assign_player_rank(ctx: &Ctx, db: &DB, guild_id: GI, user_id
     // Assign default rank role to the player
     match guild_id.member(&ctx.http, user_id).await {
         Ok(member) => {
+            let username = member.user.tag();
             match member.add_role(&ctx.http, default_role_id).await {
                 Ok(_) => {
-                    info!("Assigned {} rank to user {}", DEFAULT_RANK.name(), user_id);
+                    info!("Assigned {} rank to user {}", DEFAULT_RANK.name(), username);
                     Ok(DEFAULT_RANK)
                 },
                 Err(e) => {
-                    warn!("Failed to assign {} role to user {}: {}", DEFAULT_RANK.name(), user_id, e);
+                    warn!("Failed to assign {} role to user {}: {}", DEFAULT_RANK.name(), username, e);
                     Err(anyhow!("Failed to assign {} rank: {}", DEFAULT_RANK.name(), e))
                 }
             }
@@ -148,7 +149,7 @@ pub async fn validate_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec
                 // Found one or more roles matching this rank! Auto-save all of them to config
                 let role_ids: Vec<String> = matching_roles.iter()
                     .map(|r| {
-                        info!("Found existing role '{}' matching {}, saving to config", 
+                        info!("Found existing role '{}' matching {}, saving to config",
                             r.name, rank.name());
                         r.id.get().to_string()
                     })
@@ -481,7 +482,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         Ok(player) => player,
         Err(_) => cc.db.new_user(user).await?,
     };
-    
+
     // Set discord tag from interaction user data (already available, no API call needed)
     player.discord_tag = Some(cc.intax.user.tag());
 
@@ -668,12 +669,10 @@ pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 
     hot_game.push();
 
-
     // Update dashboard
     group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
 
     cc.reply("Game accepted! Players moved to team channels.").await?;
-
 
     Ok(())
 }
@@ -691,7 +690,7 @@ pub async fn end(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 
     // Check if there's an active game to end
     let has_active = group.sessions.iter().any(|s| s.status == SS::Hot || s.status == SS::Live);
-    
+
     if !has_active {
         cc.reply("No active game found to end.").await?;
         return Ok(());

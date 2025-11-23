@@ -18,8 +18,9 @@ pub async fn handle_settings_button(
 ) -> Result<()> {
     let user_id = interaction.user.id;
     let button_id = &interaction.data.custom_id;
+    let username = &interaction.user.name;
 
-    info!("User {} clicked settings button: {}", user_id, button_id);
+    info!("User {} clicked settings button: {}", username, button_id);
 
     // Update activity timestamp for DM cleanup tracking
     if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
@@ -199,13 +200,13 @@ pub async fn handle_settings_modal(
         "settings_modal_announcement" => {
             // Get all input values from the modal
             let mut settings = db.users.get_settings(user_id).await?;
-            
+
             // Extract values from modal components
             for (idx, action_row) in interaction.data.components.iter().enumerate() {
                 if let Some(serenity::all::ActionRowComponent::InputText(input)) = action_row.components.first() {
                     if let Some(value) = &input.value {
                         let trimmed = value.trim();
-                        
+
                         match idx {
                             0 => {
                                 // Color field
@@ -227,10 +228,10 @@ pub async fn handle_settings_modal(
                     }
                 }
             }
-            
+
             // Update settings in database
             db.users.update_settings(user_id, &settings).await?;
-            
+
             let embed = build_settings_embed(&settings);
             let buttons = build_settings_buttons(&settings);
 
@@ -242,7 +243,7 @@ pub async fn handle_settings_modal(
                     .ephemeral(true)
             );
             interaction.create_response(&ctx.http, response).await?;
-            
+
             // Send preview of the announcement embed in DM
             if let Ok(user) = ctx.http.get_user(user_id).await {
                 // Use shared function with example rank for preview
@@ -250,13 +251,13 @@ pub async fn handle_settings_modal(
                 let preview_message = CreateMessage::new()
                     .content("**Preview of your join announcement:**")
                     .embed(preview_embed);
-                    
+
                 if let Ok(msg) = user.direct_message(&ctx.http, preview_message).await {
                     // Track this message for cleanup
                     if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
-                        dm_tracker.track_message(user_id, msg.channel_id, msg.id).await;
+                        dm_tracker.track_message(user_id, msg.channel_id, msg.id, user.name.clone()).await;
                     }
-                    info!("Sent announcement preview to user {}", user_id);
+                    info!("Sent announcement preview to user {}", user.name);
                 }
             }
         }
@@ -270,7 +271,7 @@ pub async fn handle_settings_modal(
                         match value.parse::<i64>() {
                             Ok(minutes) if minutes >= 1 && minutes <= 60 => {
                                 db.users.update_setting_field(user_id, "auto_remove_minutes", minutes).await?;
-                                
+
                                 let status_text = format!("set to {} minute{}", minutes, if minutes == 1 { "" } else { "s" });
 
                                 let settings = db.users.get_settings(user_id).await?;
@@ -304,13 +305,13 @@ pub async fn handle_settings_modal(
         "settings_modal_leave_announcement" => {
             // Get all input values from the modal
             let mut settings = db.users.get_settings(user_id).await?;
-            
+
             // Extract values from modal components
             for (idx, action_row) in interaction.data.components.iter().enumerate() {
                 if let Some(serenity::all::ActionRowComponent::InputText(input)) = action_row.components.first() {
                     if let Some(value) = &input.value {
                         let trimmed = value.trim();
-                        
+
                         match idx {
                             0 => {
                                 // Color field
@@ -332,10 +333,10 @@ pub async fn handle_settings_modal(
                     }
                 }
             }
-            
+
             // Update settings in database
             db.users.update_settings(user_id, &settings).await?;
-            
+
             let embed = build_settings_embed(&settings);
             let buttons = build_settings_buttons(&settings);
 
@@ -347,20 +348,20 @@ pub async fn handle_settings_modal(
                     .ephemeral(true)
             );
             interaction.create_response(&ctx.http, response).await?;
-            
+
             // Send preview of the leave announcement embed in DM
             if let Ok(user) = ctx.http.get_user(user_id).await {
                 let preview_embed = build_leave_announcement_embed(ctx, user_id, None, &settings).await;
                 let preview_message = CreateMessage::new()
                     .content("**Preview of your leave announcement:**")
                     .embed(preview_embed);
-                    
+
                 if let Ok(msg) = user.direct_message(&ctx.http, preview_message).await {
                     // Track this message for cleanup
                     if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
-                        dm_tracker.track_message(user_id, msg.channel_id, msg.id).await;
+                        dm_tracker.track_message(user_id, msg.channel_id, msg.id, user.name.clone()).await;
                     }
-                    info!("Sent leave announcement preview to user {}", user_id);
+                    info!("Sent leave announcement preview to user {}", user.name);
                 }
             }
         }
@@ -456,11 +457,11 @@ pub async fn build_join_announcement_embed(
         (display_name, avatar_url)
     } else {
         // For preview without guild context
-        let username = ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
+        let username   = ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
         let avatar_url = ctx.cache.user(user_id).map(|u| u.face());
         (username, avatar_url)
     };
-    
+
     // Build description with template support
     let description = if let Some(custom_desc) = &settings.announcement_description {
         // Replace template variables
@@ -472,7 +473,7 @@ pub async fn build_join_announcement_embed(
         // Default description
         format!("<@{}> joined the queue!", user_id)
     };
-    
+
     // Create embed with author showing nickname + "joined the queue"
     let mut embed = CE::new()
         .author({
@@ -484,13 +485,13 @@ pub async fn build_join_announcement_embed(
         })
         .description(description)
         .color(settings.announcement_color as u32);
-    
-    // Add custom title if provided
+
+    // Add custom title provided
     if let Some(title) = &settings.announcement_title {
         embed = embed.title(title);
     }
-    
-    // Add custom footer if provided
+
+    // Add custom footer
     if let Some(footer_text) = &settings.announcement_footer_text {
         let mut footer = CreateEmbedFooter::new(footer_text);
         if let Some(footer_icon) = &settings.announcement_footer_icon {
@@ -498,12 +499,12 @@ pub async fn build_join_announcement_embed(
         }
         embed = embed.footer(footer);
     }
-    
-    // Add custom thumbnail if provided
+
+    // Add thumbnail
     if let Some(thumbnail) = &settings.announcement_thumbnail {
         embed = embed.thumbnail(thumbnail);
     }
-    
+
     embed
 }
 
@@ -528,7 +529,7 @@ pub async fn build_leave_announcement_embed(
         let avatar_url = ctx.cache.user(user_id).map(|u| u.face());
         (username, avatar_url)
     };
-    
+
     // Build description with template support
     let description = if let Some(custom_desc) = &settings.leave_announcement_description {
         // Replace template variables (no rank for leave)
@@ -539,7 +540,7 @@ pub async fn build_leave_announcement_embed(
         // Default description
         format!("<@{}> left the queue!", user_id)
     };
-    
+
     // Create embed with author showing nickname + "left the queue"
     let mut embed = CE::new()
         .author({
@@ -551,12 +552,12 @@ pub async fn build_leave_announcement_embed(
         })
         .description(description)
         .color(settings.announcement_color as u32);
-    
+
     // Add custom title if provided
     if let Some(title) = &settings.leave_announcement_title {
         embed = embed.title(title);
     }
-    
+
     // Add custom footer if provided
     if let Some(footer_text) = &settings.leave_announcement_footer_text {
         let mut footer = CreateEmbedFooter::new(footer_text);
@@ -565,11 +566,11 @@ pub async fn build_leave_announcement_embed(
         }
         embed = embed.footer(footer);
     }
-    
+
     // Add custom thumbnail if provided
     if let Some(thumbnail) = &settings.leave_announcement_thumbnail {
         embed = embed.thumbnail(thumbnail);
     }
-    
+
     embed
 }

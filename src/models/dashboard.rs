@@ -34,23 +34,23 @@ fn get_sorted_teams(pool: &[crate::models::SessionPlayer], quota: usize) -> (Vec
         .filter(|p| p.team == Some(crate::models::Team::Red))
         .cloned()
         .collect();
-    
+
     let mut team_blu: Vec<_> = pool.iter()
         .take(quota)
         .filter(|p| p.team == Some(crate::models::Team::Blu))
         .cloned()
         .collect();
-    
+
     // Sort both teams by ELO descending
     let sort_by_elo = |a: &crate::models::SessionPlayer, b: &crate::models::SessionPlayer| {
         let elo_a = a.player.rank.map(|r| r.elo()).unwrap_or(0);
         let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
         elo_b.cmp(&elo_a)
     };
-    
+
     team_red.sort_by(sort_by_elo);
     team_blu.sort_by(sort_by_elo);
-    
+
     (team_red, team_blu)
 }
 
@@ -265,7 +265,7 @@ impl Group {
         let quota     = self.quota as usize;
         let inactives = self.get_inactives();
         let actives   = self.get_actives();
-        
+
         let mut embed = CE::new().title("PUG Dashboard");
         let mut description = String::new();
 
@@ -379,7 +379,7 @@ impl Group {
                 if !current_session.is_hot() && current_session.pool.len() > 0 && current_session.pool.len() < quota {
                     let mut players_field = String::new();
                     let mut timers_field = String::new();
-                    
+
                     for player in current_session.pool.iter() {
                         // Build player list with ELO
                         let elo_str = if let Some(rank) = player.player.rank {
@@ -389,7 +389,7 @@ impl Group {
                             String::new()
                         };
                         players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.discord_id));
-                        
+
                         // Build auto-remove timer list
                         if let Ok(settings) = db.users.get_settings(player.player.discord_id).await {
                             if settings.auto_remove_minutes > 0 {
@@ -407,7 +407,7 @@ impl Group {
                             timers_field.push_str("-\n");
                         }
                     }
-                    
+
                     embed = embed.field("Players",        players_field, true);
                     embed = embed.field("Auto-remove at", timers_field,  true);
                 }
@@ -417,13 +417,13 @@ impl Group {
         // Add connect info if available
         if let Some(ref connect_info) = self.connect_info {
             let mut field_value = format!("```{connect_info}```");
-            
+
             // Try to extract IP:PORT and create a Steam link
             // Discord doesn't support steam:// protocol links, so display as copyable text
             if let Some(steam_link) = Self::extract_steam_link(connect_info) {
                 field_value.push_str(&format!("\n**Steam Link:**\n```{steam_link}```"));
             }
-            
+
             embed = embed.field("Server connect info:", field_value, false);
         }
 
@@ -494,21 +494,21 @@ impl Group {
     /// - "1.1.1.1:27015; password mypass"
     fn extract_steam_link(connect_info: &str) -> Option<String> {
         // Manual parsing without regex crate dependency
-        
+
         // Find IP:PORT pattern
         let mut ip_start = None;
         let mut ip_end = None;
-        
+
         let chars: Vec<char> = connect_info.chars().collect();
         let mut i = 0;
-        
+
         while i < chars.len() {
             // Look for digit that could start an IP address
             if chars[i].is_ascii_digit() {
                 let start = i;
                 let mut dots = 0;
                 let mut has_port = false;
-                
+
                 // Try to match IP:PORT pattern
                 while i < chars.len() {
                     if chars[i].is_ascii_digit() {
@@ -528,7 +528,7 @@ impl Group {
                         break;
                     }
                 }
-                
+
                 if dots == 3 && has_port {
                     ip_start = Some(start);
                     ip_end = Some(i);
@@ -537,13 +537,13 @@ impl Group {
             }
             i += 1;
         }
-        
+
         let ip_port = if let (Some(start), Some(end)) = (ip_start, ip_end) {
             connect_info[start..end].to_string()
         } else {
             return None;
         };
-        
+
         // Look for password
         let password = if let Some(pwd_pos) = connect_info.to_lowercase().find("password") {
             let after_password = &connect_info[pwd_pos + 8..].trim_start();
@@ -556,7 +556,7 @@ impl Group {
         } else {
             None
         };
-        
+
         // Build Steam link
         if let Some(pwd) = password {
             Some(format!("steam://connect/{ip_port}/{pwd}"))
@@ -580,7 +580,7 @@ impl Group {
             Err(e) => {
                 warn!("Dashboard message not found (may have been deleted): {e}");
                 info!("Auto-recovering: creating new dashboard message");
-                
+
                 // Dashboard is missing - create a new one
                 // Note: We can't call dash_publish here because we don't have db and guild_id
                 // This path should not be hit since the queue processor handles recreation
@@ -598,21 +598,21 @@ impl Group {
                 } */
             }
         };
-        
+
         // Note: This function is deprecated and should not be called directly
         // Use the dashboard queue processor which has access to db and guild_id
         Err(anyhow!("dash_update requires db and guild_id - use dashboard queue"))
     }
-    
+
     /// Queue a dashboard update (non-blocking, batched)
     /// Requires guild_id to be passed since Group doesn't store it
     pub async fn queue_dash_update(&self, ctx: &Context, guild_id: u64) {
-        // info!("[QUEUE_DASH_UPDATE] Requesting dashboard update for guild {} group {}", guild_id, self.group_id);
+        //
         // Try to get queue from context data using the key from models module
         let data = ctx.data.read().await;
         if let Some(queue) = data.get::<DashboardQueueKey>() {
             queue.request_update(guild_id, self.group_id as u64);
-            // info!("[QUEUE_DASH_UPDATE] Dashboard update request queued for guild {} group {}", guild_id, self.group_id);
+            //
         } else {
             warn!("Dashboard queue not initialized in Context");
             // Note: Can't fallback to dash_update here because we'd need &mut self
@@ -623,14 +623,14 @@ impl Group {
     /// Handles the join queue button
     async fn dash_join_queue(&mut self, cc: &CC<'_>) -> Result<()> {
         let user_id = cc.component.user.id;
-        // info!("[JOIN_QUEUE] Starting join queue for user {}", user_id);
-        
+        //
+
         // Store channel IDs before any borrows
         let dashboard_channel = self.channels.dashboard;
 
         // Check if player is already in queue
         if self.get_user_session(user_id).await.is_ok() {
-            // info!("[JOIN_QUEUE] User {} already in queue, rejecting", user_id);
+            //
             cc.reply("You are already in the queue!").await?;
             return Ok(());
         }
@@ -639,22 +639,22 @@ impl Group {
         let has_joinable_session = self.sessions.iter().any(|s|
             s.status == SessionStatus::Idle || s.status == SessionStatus::Hot
         );
-        // info!("[JOIN_QUEUE] Has joinable session: {}", has_joinable_session);
+        //
 
         if !has_joinable_session {
             cc.reply("Cannot join - match is in progress. Please wait.").await?;
             return Ok(());
         }
-        
+
         // Defer update now that we know we'll succeed
-        // info!("[JOIN_QUEUE] Deferring interaction update for user {}", user_id);
+        //
         cc.defer_update().await?;
-        // info!("[JOIN_QUEUE] Interaction deferred successfully");
+        //
 
         // Get or assign player's rank (auto-creates ranks and assigns Apprentice if needed)
         use crate::handlers::player::get_or_assign_player_rank;
         if let Some(guild_id) = cc.component.guild_id {
-            // info!("[JOIN_QUEUE] Getting player data for user {} in guild {}", user_id, guild_id);
+            //
             // Get player object from database (without fetching discord tag for performance)
             let mut player = match cc.db.get_user(user_id).await {
                 Ok(p) => p,
@@ -666,24 +666,24 @@ impl Group {
                     }
                 }
             };
-            
+
             // Fetch discord tag from component user for performance (avoid extra API call)
             player.discord_tag = Some(cc.component.user.tag());
-            
+
             match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user_id).await {
                 Ok(rank) => {
-                    // info!("[JOIN_QUEUE] User {} has rank: {:?}", user_id, rank);
+                    //
                     // Refresh player rank from current Discord roles before queueing
                     player.rank = Some(rank);
-                    
+
                     // Save rank for announcement (player will be moved)
                     let player_rank = rank;
-                    
-                    // info!("[JOIN_QUEUE] Calling queue_player for user {}", user_id);
+
+                    //
                     if let Err(e) = self.queue_player(player, rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
                         warn!("Failed to queue player: {e}");
                     } else {
-                        // info!("[JOIN_QUEUE] Successfully queued user {}", user_id);
+                        //
                         // Log successful queue join via button
                         let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
                         let group_name = cc.ctx.cache.channel(dashboard_channel)
@@ -691,12 +691,12 @@ impl Group {
                             .unwrap_or_else(|| "Unknown".to_string());
                         let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
                         log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ);
-                        
+
                         // Send join announcement using shared function
                         if let Ok(settings) = cc.db.users.get_settings(user_id).await {
                             use serenity::all::CreateMessage;
                             use crate::handlers::settings::build_join_announcement_embed;
-                            
+
                             let embed = build_join_announcement_embed(
                                 cc.ctx,
                                 user_id,
@@ -704,7 +704,7 @@ impl Group {
                                 &settings,
                                 &player_rank.name()
                             ).await;
-                            
+
                             let queue_chat = self.channels.queue_chat;
                             let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
                         }
@@ -721,9 +721,9 @@ impl Group {
         }
 
         // Update dashboard to reflect changes
-        // info!("[JOIN_QUEUE] Queueing dashboard update for user {}", user_id);
+        //
         self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
-        // info!("[JOIN_QUEUE] Join queue flow completed for user {}", user_id);
+        //
 
         Ok(())
     }
@@ -731,9 +731,9 @@ impl Group {
     /// Handles the leave queue button
     async fn dash_leave_queue(&mut self, cc: &CC<'_>) -> Result<()> {
         let user_id = cc.component.user.id;
-        info!("[LEAVE_QUEUE] Starting leave queue for user {}", user_id);
+
         let quota = self.quota as usize;
-        
+
         // Store channel IDs before any borrows
         let dashboard_channel = self.channels.dashboard;
         let queue_chat = self.channels.queue_chat;
@@ -753,15 +753,15 @@ impl Group {
 
             // If player is in VC, check if they want to be disconnected
             if player_in_vc {
-                info!("[LEAVE_QUEUE] User {} is in VC, checking disconnect preference", user_id);
+
                 // Check user's VC disconnect preference
                 let settings = cc.db.users.get_settings(user_id).await.unwrap_or_default();
-                
+
                 if settings.vc_disconnect_on_leave {
-                    info!("[LEAVE_QUEUE] User {} wants to disconnect from VC", user_id);
+
                     // Acknowledge button press before disconnecting
                     cc.defer_update().await?;
-                    
+
                     // User wants to be disconnected from VC
                     if let Some(guild_id) = cc.component.guild_id {
                         use serenity::all::EditMember;
@@ -781,15 +781,14 @@ impl Group {
 
             // Player is in queue but not in VC (or wants to stay in VC), remove them manually
             // Defer update immediately
-            info!("[LEAVE_QUEUE] Deferring interaction update for user {}", user_id);
+
             cc.defer_update().await?;
-            info!("[LEAVE_QUEUE] Interaction deferred successfully");
-            
+
             let was_hot = session.is_hot();
             let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
             session.remove_player(user_id);
             let pool_len = session.pool.len();
-            
+
             // Log with server and group context
             let guild_id = cc.component.guild_id.unwrap();
             let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
@@ -802,14 +801,14 @@ impl Group {
             if let Ok(settings) = cc.db.users.get_settings(user_id).await {
                 use serenity::all::CreateMessage;
                 use crate::handlers::settings::build_leave_announcement_embed;
-                
+
                 let embed = build_leave_announcement_embed(
                     cc.ctx,
                     user_id,
                     Some(guild_id),
                     &settings
                 ).await;
-                
+
                 let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
             }
 
@@ -818,7 +817,7 @@ impl Group {
                 if pool_len < quota {
                     // Dropped below quota, transition back to idle
                     if let Some(idx) = session_idx {
-                        info!("[Session {}] Dropped below quota, transitioning from Hot to Idle", idx);
+
                     } else {
                         info!("Session dropped below quota, transitioning from Hot to Idle");
                     }
@@ -827,7 +826,7 @@ impl Group {
                 } else {
                     // Still at or above quota, need to regenerate teams
                     if let Some(idx) = session_idx {
-                        info!("[Session {}] Still meets quota after player left, will regenerate teams", idx);
+
                     } else {
                         info!("Session still meets quota after player left, will regenerate teams");
                     }
@@ -838,7 +837,7 @@ impl Group {
             }
         } else {
             // Player not in queue
-            info!("[LEAVE_QUEUE] User {} not in queue, rejecting", user_id);
+
             cc.reply("You are not in the queue!").await?;
             return Ok(());
         };
@@ -867,7 +866,7 @@ impl Group {
             cc.reply(&format!("No game ready for shuffling. Need at least {quota} players in queue.")).await?;
             return Ok(());
         }
-        
+
         // Defer update now that we know we have a game to shuffle
         cc.defer_update().await?;
 
@@ -879,7 +878,7 @@ impl Group {
         // Call the same team generation logic used by generate_teams
         // This ensures balanced teams using the BCH algorithm
         self.generate_teams(cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
-        
+
         // Update dashboard to show new teams
         self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
 
@@ -914,7 +913,7 @@ impl Group {
             cc.reply("No hot game ready to start.").await?;
             return Ok(());
         }
-        
+
         // Defer update now that we're going to start the match
         cc.defer_update().await?;
 
@@ -942,7 +941,7 @@ impl Group {
             cc.reply("No active match to end.").await?;
             return Ok(());
         }
-        
+
         // Defer update now that we're going to end the match
         cc.defer_update().await?;
 
@@ -1066,13 +1065,13 @@ impl DashboardUpdateQueue {
     /// Create a new dashboard update queue and spawn the batching task
     pub fn new(ctx: Context, manager: Arc<tokio::sync::Mutex<crate::models::Manager>>, database: Arc<crate::Database>) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
-        
+
         // Spawn the batching task
         tokio::spawn(Self::batch_processor(receiver, ctx, manager, database));
-        
+
         Self { sender }
     }
-    
+
     /// Request a dashboard update for a specific group
     pub fn request_update(&self, guild_id: u64, group_id: u64) {
         let request = DashboardUpdateRequest { guild_id, group_id };
@@ -1080,9 +1079,9 @@ impl DashboardUpdateQueue {
             warn!("Failed to queue dashboard update: {e}");
         }
     }
-    
+
     /// Background task that batches and processes dashboard updates
-    /// 
+    ///
     /// This uses a HashSet to automatically deduplicate update requests for the same group.
     /// Since dashboards show current state, only the latest update matters - all previous
     /// requests for the same group are redundant and automatically discarded.
@@ -1096,16 +1095,16 @@ impl DashboardUpdateQueue {
         // HashSet automatically deduplicates - if 10 updates come in for the same group,
         // we only keep one entry and process it once with the current state
         let mut pending_updates: HashSet<DashboardUpdateRequest> = HashSet::new();
-        
+
         loop {
             // Wait for the first update request
             match receiver.recv().await {
                 Some(request) => {
                     pending_updates.insert(request);
-                    
+
                     // Now wait for the batch window, collecting more updates
                     let deadline = tokio::time::Instant::now() + batch_window;
-                    
+
                     loop {
                         match tokio::time::timeout_at(deadline, receiver.recv()).await {
                             Ok(Some(request)) => {
@@ -1123,7 +1122,7 @@ impl DashboardUpdateQueue {
                             }
                         }
                     }
-                    
+
                     // Process the batched updates
                     if !pending_updates.is_empty() {
                         // info!("Processing batch of {} dashboard updates", pending_updates.len());
@@ -1138,7 +1137,7 @@ impl DashboardUpdateQueue {
             }
         }
     }
-    
+
     /// Process a batch of dashboard updates
     async fn process_batch(
         updates: &HashSet<DashboardUpdateRequest>,
@@ -1148,23 +1147,23 @@ impl DashboardUpdateQueue {
     ) {
         // Process updates concurrently (Discord allows multiple requests in parallel)
         let mut tasks = Vec::new();
-        
+
         for update in updates {
             let ctx = ctx.clone();
             let manager = manager.clone();
             let database = database.clone();
             let guild_id = update.guild_id;
             let group_id = update.group_id;
-            
+
             // Spawn a task for each dashboard update
             let task = tokio::spawn(async move {
-                // info!("[DASH_UPDATE] Processing dashboard update for guild {} group {}", guild_id, group_id);
+                //
                 // Acquire lock briefly to get CURRENT dashboard data
                 // This ensures we always show the latest state, regardless of how many
                 // update requests were queued - they all get collapsed into this one update
                 let (channel_id, dashboard_channel_id, message_id, embed, buttons, guild_name, pool_size) = {
                     let mut manager_lock = manager.lock().await;
-                    
+
                     let server = match manager_lock.get_server(serenity::all::GuildId::new(guild_id)) {
                         Ok(s) => s,
                         Err(e) => {
@@ -1172,9 +1171,9 @@ impl DashboardUpdateQueue {
                             return;
                         }
                     };
-                    
+
                     let guild_name = server.guild_name.clone();
-                    
+
                     let group = match server.groups.iter_mut().find(|g| g.group_id == group_id as u8) {
                         Some(g) => g,
                         None => {
@@ -1182,24 +1181,24 @@ impl DashboardUpdateQueue {
                             return;
                         }
                     };
-                    
+
                     // Log current session state
                     let pool_size = group.sessions.first().map(|s| s.pool.len()).unwrap_or(0);
-                    // info!("[DASH_UPDATE] Guild {} group {} has {} sessions, first session pool size: {}", guild_id, group_id, group.sessions.len(), pool_size);
-                    
+                    //
+
                     // Refresh player ranks from Discord to ensure dashboard shows current ranks
                     // This prevents desync when players are promoted while sitting in queue
                     group.refresh_player_ranks(&ctx, serenity::all::GuildId::new(guild_id), &database).await;
-                    
+
                     // Validate VC status to ensure accurate display of who is in voice chat
                     // This prevents desync where flags don't match Discord's actual voice states
                     group.validate_vc_status(&ctx, serenity::all::GuildId::new(guild_id)).await;
-                    
+
                     // Get dashboard message info
                     let channel_id = group.channels.dashboard;
                     let dashboard_channel_id = channel_id.get();
                     let message_id = group.dashboard_msg;
-                    
+
                     // Generate dashboard content
                     let (embed, buttons) = match group.build_dashboard_content(&database, guild_id).await {
                         Ok(content) => content,
@@ -1208,29 +1207,29 @@ impl DashboardUpdateQueue {
                             return;
                         }
                     };
-                    
+
                     (channel_id, dashboard_channel_id, message_id, embed, buttons, guild_name, pool_size)
                 }; // Release lock here
-                
+
                 // Update the dashboard message WITHOUT holding any locks
                 use serenity::all::EditMessage;
                 let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{channel_id}"));
-                // info!("[DASH_UPDATE] Sending dashboard update to Discord for guild {} group {} (pool size: {})", guild_id, group_id, pool_size);
+                //
                 match channel_id.edit_message(&ctx.http, message_id, EditMessage::new().embed(embed.clone()).components(buttons.clone())).await {
                     Ok(_) => {
-                        // info!("[DASH_UPDATE] Successfully updated dashboard in #{} for guild {} group {}", channel_name, guild_id, group_id);
+                        //
                     }
                     Err(e) => {
                         // Check if message was deleted (404 error)
                         if e.to_string().contains("404") || e.to_string().contains("Unknown Message") {
                             warn!("[{}] Dashboard message was deleted in #{}, recreating...", guild_name, channel_name);
-                            
+
                             // Recreate the dashboard message
                             use serenity::all::CreateMessage;
                             match channel_id.send_message(&ctx.http, CreateMessage::new().embed(embed).components(buttons)).await {
                                 Ok(new_msg) => {
                                     info!("[{}] Recreated dashboard in #{}", guild_name, channel_name);
-                                    
+
                                     // Update the stored message ID in memory
                                     let mut manager_lock = manager.lock().await;
                                     if let Ok(server) = manager_lock.get_server(serenity::all::GuildId::new(guild_id)) {
@@ -1239,7 +1238,7 @@ impl DashboardUpdateQueue {
                                         }
                                     }
                                     drop(manager_lock);
-                                    
+
                                     // Persist to database
                                     if let Err(e) = database.groups.update_dashboard_msg(guild_id, dashboard_channel_id, new_msg.id.get()).await {
                                         warn!("Failed to update dashboard message ID in database: {e}");
@@ -1255,10 +1254,10 @@ impl DashboardUpdateQueue {
                     }
                 }
             });
-            
+
             tasks.push(task);
         }
-        
+
         // Wait for all updates to complete
         for task in tasks {
             let _ = task.await;

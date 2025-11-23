@@ -14,6 +14,7 @@ struct UserDmSession {
     channel_id: ChannelId,
     message_ids: Vec<MessageId>,
     last_activity: SystemTime,
+    username: String,
 }
 
 /// Manages DM message tracking and cleanup
@@ -29,17 +30,19 @@ impl DmMessageTracker {
     }
 
     /// Track a new DM message
-    pub async fn track_message(&self, user_id: UserId, channel_id: ChannelId, message_id: MessageId) {
+    pub async fn track_message(&self, user_id: UserId, channel_id: ChannelId, message_id: MessageId, username: String) {
         let mut sessions = self.sessions.write().await;
-        
+
         if let Some(session) = sessions.get_mut(&user_id) {
             session.message_ids.push(message_id);
             session.last_activity = SystemTime::now();
+            session.username = username; // Update username in case it changed
         } else {
             sessions.insert(user_id, UserDmSession {
                 channel_id,
                 message_ids: vec![message_id],
                 last_activity: SystemTime::now(),
+                username,
             });
         }
     }
@@ -47,7 +50,7 @@ impl DmMessageTracker {
     /// Update activity timestamp for a user (e.g., when they interact with buttons)
     pub async fn update_activity(&self, user_id: UserId) {
         let mut sessions = self.sessions.write().await;
-        
+
         if let Some(session) = sessions.get_mut(&user_id) {
             session.last_activity = SystemTime::now();
         }
@@ -56,10 +59,10 @@ impl DmMessageTracker {
     /// Remove a specific message from tracking
     pub async fn remove_message(&self, user_id: UserId, message_id: MessageId) {
         let mut sessions = self.sessions.write().await;
-        
+
         if let Some(session) = sessions.get_mut(&user_id) {
             session.message_ids.retain(|&id| id != message_id);
-            
+
             // If no more messages, remove the session
             if session.message_ids.is_empty() {
                 sessions.remove(&user_id);
@@ -71,7 +74,7 @@ impl DmMessageTracker {
     pub fn start_cleanup_task(self: Arc<Self>, http: Arc<Http>) {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
-            
+
             loop {
                 interval.tick().await;
                 self.cleanup_inactive_sessions(&http).await;
@@ -88,21 +91,21 @@ impl DmMessageTracker {
         for (user_id, session) in sessions.iter() {
             if let Ok(elapsed) = now.duration_since(session.last_activity) {
                 if elapsed.as_secs() >= INACTIVITY_TIMEOUT_SECS {
-                    info!("Cleaning up {} DM messages for user {} (inactive for {} seconds)", 
-                          session.message_ids.len(), user_id, elapsed.as_secs());
-                    
+                    info!("Cleaning up {} DM messages for user {} (inactive for {} seconds)",
+                          session.message_ids.len(), session.username, elapsed.as_secs());
+
                     // Delete all tracked messages
                     for message_id in &session.message_ids {
                         match http.delete_message(session.channel_id, *message_id, None).await {
                             Ok(_) => {
-                                info!("Deleted DM message {} from user {}", message_id, user_id);
+                                info!("Deleted DM message {} from user {}", message_id, session.username);
                             }
                             Err(e) => {
-                                warn!("Failed to delete DM message {} from user {}: {}", message_id, user_id, e);
+                                warn!("Failed to delete DM message {} from user {}: {}", message_id, session.username, e);
                             }
                         }
                     }
-                    
+
                     users_to_remove.push(*user_id);
                 }
             }

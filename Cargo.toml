@@ -39,7 +39,6 @@ rustyline          = "17.0.2"
 # unused_variables   = "allow"
 deprecated = "allow"
 
-
 [lints.clippy]
 # pedantic = "warn"
 # uninlined_format_args = "warn"

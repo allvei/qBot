@@ -11,6 +11,7 @@ use crate::admin::create_group_channels;
 use crate::models::{CommandContext as CC, Role};
 use crate::repositories::Repository;
 use super::player::{check_role, create_rank_roles};
+use super::settings::{build_settings_embed, build_settings_buttons};
 
 /// Helper: Create a Discord role with error handling
 async fn create_role_with_error(
@@ -19,7 +20,7 @@ async fn create_role_with_error(
     name: &str,
     color: u32,
 ) -> Result<Option<serenity::all::Role>> {
-    match guild_id.create_role(&cc.ctx.http, 
+    match guild_id.create_role(&cc.ctx.http,
         EditRole::new()
             .name(name)
             .colour(color)
@@ -49,7 +50,7 @@ pub async fn cmd_role_add(cc: &CC<'_>) -> Result<()> {
     }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
-    
+
     let loading_embed = CE::new()
         .title("Creating Roles")
         .description("Creating Runner and Admin roles...")
@@ -242,7 +243,7 @@ pub async fn cmd_rank_add(cc: &CC<'_>, rank_name: String, role_mentions: String)
     }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
-    
+
     // Parse the rank
     let rank = parse_rank_name(&rank_name)?;
     if rank.is_none() {
@@ -257,7 +258,7 @@ pub async fn cmd_rank_add(cc: &CC<'_>, rank_name: String, role_mentions: String)
     // Parse multiple role mentions (space-separated)
     let role_mentions_vec: Vec<&str> = role_mentions.split_whitespace().collect();
     let guild_roles = cc.ctx.http.get_guild_roles(guild_id).await?;
-    
+
     let mut roles_to_add = Vec::new();
     for role_mention in role_mentions_vec {
         let role_id_str = parse_role_id(role_mention)?;
@@ -283,7 +284,7 @@ pub async fn cmd_rank_add(cc: &CC<'_>, rank_name: String, role_mentions: String)
                 return Ok(());
             }
         };
-        
+
         roles_to_add.push((role_id, role.name.clone()));
     }
 
@@ -291,7 +292,7 @@ pub async fn cmd_rank_add(cc: &CC<'_>, rank_name: String, role_mentions: String)
     let mut existing_ids = rank.role_ids(&cc.db, guild_id.get()).await;
     let mut added_roles = Vec::new();
     let mut skipped_roles = Vec::new();
-    
+
     for (role_id, role_name) in roles_to_add {
         if existing_ids.contains(&role_id) {
             skipped_roles.push(role_name);
@@ -344,7 +345,7 @@ pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: Stri
     }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
-    
+
     // Parse the rank
     let rank = parse_rank_name(&rank_name)?;
     if rank.is_none() {
@@ -359,7 +360,7 @@ pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: Stri
     // Parse multiple role mentions (space-separated)
     let role_mentions_vec: Vec<&str> = role_mentions.split_whitespace().collect();
     let guild_roles = cc.ctx.http.get_guild_roles(guild_id).await?;
-    
+
     let mut roles_to_remove = Vec::new();
     for role_mention in role_mentions_vec {
         let role_id_str = parse_role_id(role_mention)?;
@@ -379,7 +380,7 @@ pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: Stri
             .find(|r| r.id == role_id)
             .map(|r| r.name.clone())
             .unwrap_or_else(|| format!("Unknown ({role_id})"));
-        
+
         roles_to_remove.push((role_id, role_name));
     }
 
@@ -387,7 +388,7 @@ pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: Stri
     let mut existing_ids = rank.role_ids(&cc.db, guild_id.get()).await;
     let mut removed_roles = Vec::new();
     let mut not_found_roles = Vec::new();
-    
+
     for (role_id, role_name) in roles_to_remove {
         if existing_ids.contains(&role_id) {
             existing_ids.retain(|id| *id != role_id);
@@ -455,11 +456,11 @@ pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<String>) -> Result<()>
             return Ok(());
         }
         let rank = rank.unwrap();
-        
+
         let role_ids = rank.role_ids(&cc.db, guild_id.get()).await;
         let elo = rank.elo_from_config(&cc.db, guild_id.get()).await;
         description.push_str(&format!("**{elo} [ELO: {}]**:\n", rank.name()));
-        
+
         if role_ids.is_empty() {
             description.push_str("  *No roles configured*\n");
         } else {
@@ -490,7 +491,7 @@ pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<String>) -> Result<()>
             let role_ids = rank.role_ids(&cc.db, guild_id.get()).await;
             let elo = rank.elo_from_config(&cc.db, guild_id.get()).await;
             description.push_str(&format!("**{elo} [ELO: {}]**:\n", rank.name()));
-            
+
             if role_ids.is_empty() {
                 description.push_str("  *No roles configured*\n");
             } else {
@@ -557,7 +558,7 @@ fn format_role_mentions(role_ids_str: Option<String>) -> String {
 /// Parse multiple role IDs from a string containing space or comma separated role mentions/IDs
 fn parse_multiple_role_ids(role_str: &str) -> Result<Vec<String>> {
     let mut role_ids = Vec::new();
-    
+
     // Split by both spaces and commas, then filter empty strings
     for part in role_str.split([' ', ',']) {
         let trimmed = part.trim();
@@ -565,11 +566,11 @@ fn parse_multiple_role_ids(role_str: &str) -> Result<Vec<String>> {
             role_ids.push(parse_role_id(trimmed)?);
         }
     }
-    
+
     if role_ids.is_empty() {
         return Err(anyhow!("No valid role IDs found"));
     }
-    
+
     Ok(role_ids)
 }
 
@@ -587,7 +588,7 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-    
+
     let loading_embed = CE::new()
         .title("Setting Up PUG Bot")
         .description("Creating roles and group channels...\nThis may take a moment.")
@@ -597,7 +598,7 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
     // Step 1: Create Runner role
-    let runner_role = match guild_id.create_role(&cc.ctx.http, 
+    let runner_role = match guild_id.create_role(&cc.ctx.http,
         EditRole::new()
             .name("PUG Runner")
             .colour(0x3498db)
@@ -653,7 +654,7 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
     }
 
     // Step 5: Create group channels
-    let (category_id, dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel) = 
+    let (category_id, dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel) =
         match create_group_channels(cc.ctx, guild_id).await {
             Ok(channels) => channels,
             Err(e) => {
@@ -672,7 +673,7 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
     // Step 6: Create temporary Group and publish dashboard
     use crate::models::{Group, Channels, TeamChannel};
     use serenity::all::MessageId;
-    
+
     let mut temp_group = Group {
         group_id: 0,
         quota: crate::DEFAULT_QUOTA,
@@ -690,12 +691,12 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
         sessions: vec![],
         connect_info: None,
     };
-    
+
     // Publish the dashboard to get message ID
     match temp_group.dash_publish(cc.ctx, dashboard_channel, &cc.db, guild_id.get()).await {
         Ok(_) => {
             let dashboard_msg_id = temp_group.dashboard_msg.get();
-            
+
             // Step 7: Save group to database
             let group_config = crate::database::repositories::group::GroupConfig {
                 dashboard_channel_id: dashboard_channel.get(),
@@ -736,10 +737,10 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                             **Ready to use!** Players can join the queue now.",
                             runner_role.id,
                             admin_role.id,
-                            dashboard_channel.get(), 
-                            queue_channel.get(), 
-                            queue_vc_channel.get(), 
-                            red_channel.get(), 
+                            dashboard_channel.get(),
+                            queue_channel.get(),
+                            queue_vc_channel.get(),
+                            red_channel.get(),
                             blue_channel.get(),
                             category_id.get()
                         ))
@@ -759,7 +760,7 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                     let _ = red_channel.delete(&cc.ctx.http).await;
                     let _ = blue_channel.delete(&cc.ctx.http).await;
                     let _ = category_id.delete(&cc.ctx.http).await;
-                    
+
                     let error_embed = CE::new()
                         .title("Setup Failed")
                         .description(format!("Failed to save group to database: {e}\n\nChannels were cleaned up. Roles remain."))
@@ -780,7 +781,7 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             let _ = red_channel.delete(&cc.ctx.http).await;
             let _ = blue_channel.delete(&cc.ctx.http).await;
             let _ = category_id.delete(&cc.ctx.http).await;
-            
+
             let error_embed = CE::new()
                 .title("Setup Failed")
                 .description(format!("Failed to create dashboard: {e}\n\nChannels were cleaned up. Roles remain."))
@@ -853,7 +854,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
             let group = &server.groups[index];
             let actual_group_id = group.group_id;
             let channels = group.channels.clone();
-            
+
             // Send response immediately before deleting channels
             let loading_embed = CE::new()
                 .title("Removing Group")
@@ -864,18 +865,17 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
 
             let response = CIR::Message(CIRM::new().embed(loading_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
-            
+
             // Get user for DM
             let user = cc.intax.user.clone();
-            
+
             // Remove from database
             match cc.db.groups.delete(actual_group_id).await {
                 Ok(_) => {
-                    info!("[Guild: {}] Group {} removed from database", guild_id, actual_group_id);
-                    
+
                     // Remove from in-memory server
                     server.groups.remove(index);
-                    
+
                     // Get category ID from one of the channels before deleting them
                     let category_id = match channels.dashboard.to_channel(&cc.ctx.http).await {
                         Ok(channel) => {
@@ -890,11 +890,11 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                             None
                         }
                     };
-                    
+
                     // Delete Discord channels
                     let mut deleted_channels = Vec::new();
                     let mut failed_channels = Vec::new();
-                    
+
                     // Delete dashboard channel
                     if let Err(e) = channels.dashboard.delete(&cc.ctx.http).await {
                         warn!("Failed to delete dashboard channel: {e}");
@@ -902,7 +902,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                     } else {
                         deleted_channels.push("dashboard");
                     }
-                    
+
                     // Delete queue text channel
                     if let Err(e) = channels.queue_chat.delete(&cc.ctx.http).await {
                         warn!("Failed to delete queue text channel: {e}");
@@ -910,7 +910,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                     } else {
                         deleted_channels.push("queue text");
                     }
-                    
+
                     // Delete queue voice channel
                     if let Err(e) = channels.queue_vc.delete(&cc.ctx.http).await {
                         warn!("Failed to delete queue voice channel: {e}");
@@ -918,7 +918,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                     } else {
                         deleted_channels.push("queue voice");
                     }
-                    
+
                     // Delete team voice channels
                     for (i, team) in channels.teams.iter().enumerate() {
                         if let Err(e) = team.red_vc.delete(&cc.ctx.http).await {
@@ -927,7 +927,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                         } else {
                             deleted_channels.push("red team");
                         }
-                        
+
                         if let Err(e) = team.blu_vc.delete(&cc.ctx.http).await {
                             warn!("Failed to delete blue team channel {}: {}", i, e);
                             failed_channels.push("blue team");
@@ -935,7 +935,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                             deleted_channels.push("blue team");
                         }
                     }
-                    
+
                     // Delete the category after all channels are deleted
                     if let Some(cat_id) = category_id {
                         if let Err(e) = cat_id.delete(&cc.ctx.http).await {
@@ -943,12 +943,12 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                             failed_channels.push("category");
                         } else {
                             deleted_channels.push("category");
-                            info!("[Guild: {}] Deleted category {}", guild_id, cat_id);
+
                         }
                     }
-                    
+
                     let mut description = format!("Successfully removed group {actual_group_id}.");
-                    
+
                     if !deleted_channels.is_empty() {
                         description.push_str(&format!(
                             "\n\n**Deleted {} channel{}:**\n• {}",
@@ -957,7 +957,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                             deleted_channels.join("\n• ")
                         ));
                     }
-                    
+
                     if !failed_channels.is_empty() {
                         description.push_str(&format!(
                             "\n\n**Failed to delete {} channel{}:**\n• {}",
@@ -966,7 +966,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                             failed_channels.join("\n• ")
                         ));
                     }
-                    
+
                     let success_embed = CE::new()
                         .title("Group Removed")
                         .description(description)
@@ -977,12 +977,11 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                         serenity::all::EditInteractionResponse::new().embed(success_embed.clone())
                     ).await {
                         warn!("Failed to edit response (channel may be deleted): {e}");
-                        
+
                         // If that fails, send a DM to the user
-                        if let Err(dm_err) = user.direct_message(&cc.ctx.http, 
+                        if let Err(dm_err) = user.direct_message(&cc.ctx.http,
                             serenity::all::CreateMessage::new().embed(success_embed)
-                        ).await {
-                            warn!("Failed to send DM to user: {}", dm_err);
+                        ).await {warn!("Failed to send DM to user: {}", dm_err);
                         } else {
                             info!("Sent group removal confirmation via DM to user {}", user.id);
                         }
@@ -990,7 +989,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                 },
                 Err(e) => {
                     warn!("[Guild: {}] Failed to remove group {} from database: {}", guild_id, actual_group_id, e);
-                    
+
                     let error_embed = CE::new()
                         .title("Failed to Remove Group")
                         .description(format!("Error: {e}"))
@@ -1010,7 +1009,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
             } else {
                 "Group not found with the specified ID."
             };
-            
+
             let groups_list = if server.groups.is_empty() {
                 "No groups configured for this server.".to_string()
             } else {
@@ -1039,16 +1038,16 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
 /// `/toggledm` - Toggle DM notifications when a game is ready
 pub async fn cmd_toggle_dm(cc: &CC<'_>) -> Result<()> {
     let user_id = cc.intax.user.id;
-    
+
     // Toggle the DM preference
     let new_state = cc.db.users.toggle_dm_enabled(user_id).await?;
-    
+
     let (status_text, status_emoji) = if new_state {
         ("enabled", "🔔")
     } else {
         ("disabled", "🔕")
     };
-    
+
     let embed = CE::new()
         .title("DM Notifications Updated")
         .description(format!(
@@ -1057,47 +1056,46 @@ pub async fn cmd_toggle_dm(cc: &CC<'_>) -> Result<()> {
             a = if new_state { "now" } else { "no longer" }
         ))
         .color(if new_state { 0x00ff00 } else { 0xff9900 });
-    
+
     let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
-    
+
     Ok(())
 }
 
 /// `/settings` - Open personal settings menu in DMs
 pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
     use serenity::all::CreateMessage as CM;
-    
+
     let user_id = cc.intax.user.id;
-    
+
     // Acknowledge the command first
     let response = CIR::Message(CIRM::new()
         .content("Opening your settings in DMs...")
         .ephemeral(true)
     );
     cc.intax.create_response(&cc.ctx.http, response).await?;
-    
-    // Get current settings
+
+    // Get current settings and user structs
     let settings = cc.db.users.get_settings(user_id).await?;
-    
-    // Try to send DM
-    let user = cc.ctx.http.get_user(user_id).await?;
-    
+    let user     = cc.ctx.http.get_user(user_id).await?;
+
     // Use helper functions from settings module to build embed and buttons
-    let embed = crate::handlers::settings::build_settings_embed(&settings);
-    let buttons = crate::handlers::settings::build_settings_buttons(&settings);
-    
+    let embed   = build_settings_embed(&settings);
+    let buttons = build_settings_buttons(&settings);
+ 
+    // Try to send DM
     match user.direct_message(&cc.ctx.http, CM::new().embed(embed).components(buttons)).await {
         Ok(msg) => {
             // Track this message for cleanup after 10 minutes of inactivity
             if let Some(dm_tracker) = cc.ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
-                dm_tracker.track_message(user_id, msg.channel_id, msg.id).await;
+                dm_tracker.track_message(user_id, msg.channel_id, msg.id, user.tag()).await;
             }
-            info!("Sent settings menu to user {}", user_id);
+            info!("Sent settings menu to user {}", user.tag());
         }
         Err(e) => {
-            warn!("Failed to send settings DM to user {}: {}", user_id, e);
-            
+            warn!("Failed to send settings DM to user {}: {}", user.tag(), e);
+
             // Update the ephemeral response with error
             let error_embed = CE::new()
                 .title("Cannot Send DM")
@@ -1108,12 +1106,12 @@ pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
                     To enable DMs: User Settings → Privacy & Safety → Allow direct messages from server members"
                 )
                 .color(0xff0000);
-            
+
             cc.intax.edit_response(&cc.ctx.http,
                 serenity::all::EditInteractionResponse::new().embed(error_embed)
             ).await?;
         }
     }
-    
+
     Ok(())
 }

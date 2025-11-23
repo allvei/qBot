@@ -38,7 +38,7 @@ impl CmdOp for CC {
     fn op(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self {
         self.add_option(CCO::new(COT::String, name, desc).required(req))
     }
-    
+
     /// Adds a user option to the command
     fn op_user(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self {
         self.add_option(CCO::new(COT::User, name, desc).required(req))
@@ -65,7 +65,7 @@ impl EventHandler for Handler {
                 let queue = DashboardUpdateQueue::new(ctx.clone(), self.manager.clone(), self.database.clone());
                 let queue_arc = Arc::new(queue.clone());
                 *queue_lock = Some(queue);
-                
+
                 // Store in Context data for global access
                 ctx.data.write().await.insert::<DashboardQueueKey>(queue_arc);
             }
@@ -75,7 +75,7 @@ impl EventHandler for Handler {
         {
             let dm_tracker = Arc::new(DmMessageTracker::new());
             ctx.data.write().await.insert::<DmTrackerKey>(dm_tracker.clone());
-            
+
             // Start the cleanup background task
             dm_tracker.start_cleanup_task(ctx.http.clone());
             info!("DM message tracker initialized with 10-minute cleanup");
@@ -99,10 +99,10 @@ impl EventHandler for Handler {
                 .op_user("user",  "User to buffer", true),
             cmd("fatkid", "Move a player to end of queue")
                 .op_user("user",  "User to fatkid", true),
-            
+
             cmd("setupadd",   "Create roles and group (full setup)"),
             cmd("setuplink",  "Guide to link existing roles and channels"),
-            
+
             cmd("roleadd",    "Create runner and admin roles"),
             cmd("rolelink",   "Link existing runner and admin roles")
                 .op("runner_role", "Runner role to link", false)
@@ -110,13 +110,13 @@ impl EventHandler for Handler {
             cmd("roledel", "Remove role configuration")
                 .op("role_type",   "Role type: runner, admin, or both", true),
 
-            cmd("rankadd",    "Add Discord role(s) to a rank (supports multiple roles)")     
+            cmd("rankadd",    "Add Discord role(s) to a rank (supports multiple roles)")
                 .op("rank", "Rank name", true)
                 .op("role", "Discord roles to add", true),
             cmd("rankremove", "Remove Discord role(s) from a rank (supports multiple roles)")
                 .op("rank", "Rank name", true)
                 .op("role", "Discord roles to remove", true),
-            cmd("ranklist",   "List all role mappings for ranks")                            
+            cmd("ranklist",   "List all role mappings for ranks")
                 .op("rank", "Rank name to filter (optional)", false),
 
             cmd("groupadd",    "Create a new category with all group channels"),
@@ -124,9 +124,9 @@ impl EventHandler for Handler {
             cmd("groupremove", "Remove a group")
                 .op("group_id", "Group ID to remove (defaults to current channel's group)", false),
 
-            cmd("quotaset",    "Set the queue quota")            
+            cmd("quotaset",    "Set the queue quota")
                 .op("quota", "Number of players required (2-100)", true),
-            cmd("connectadd",  "Set server connection info")     
+            cmd("connectadd",  "Set server connection info")
                 .op("connect_info", "Server connect command (e.g., connect 192.168.10.10:27015)", true),
             cmd("clear",       "Clear all players from the queue"),
             cmd("ranksetelo",  "Set custom ELO value for a rank")
@@ -447,13 +447,13 @@ impl EventHandler for Handler {
                     } else {
                         None
                     };
-                    
+
                     // Fallback to HTTP if not in cache
                     let member = match member_opt {
                         Some(m) => Some(m),
                         None => guild_id.member(&ctx.http, user_id).await.ok()
                     };
-                    
+
                     let is_admin = match member {
                         Some(member) => {
                             // Get admin role from database config
@@ -660,7 +660,6 @@ impl EventHandler for Handler {
 
                 let button_id = &itx.data.custom_id;
                 let user_id = itx.user.id;
-                info!("[BUTTON] User {} clicked button '{}' in channel {}", user_id, button_id, channel_id);
 
                 let result = group.dash_handle_button_interaction(&comp_ctx).await;
 
@@ -701,13 +700,13 @@ impl EventHandler for Handler {
                 return;
             }
         };
-        
+
         // Get player discord_tag from database
         let discord_tag = match self.database.get_user(user_id).await {
             Ok(player) => player.discord_tag.unwrap_or_else(|| user.display_name().to_string()),
             Err(_) => user.display_name().to_string(),
         };
-        
+
         let server      = match new.guild_id {
             Some(s) => s,
             None => {return;}
@@ -761,10 +760,10 @@ impl EventHandler for Handler {
                 let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
                     if !sesh.is_active() {
                         let was_hot = sesh.is_hot();
-                        
+
                         // Remove player from session when they disconnect
                         sesh.remove_player(user_id);
-                        
+
                         // If session was hot and still has enough players, regenerate teams
                         if was_hot && sesh.pool.len() >= quota {
                             true
@@ -813,10 +812,10 @@ impl EventHandler for Handler {
                     let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
                         if !sesh.is_active() {
                             let was_hot = sesh.is_hot();
-                            
+
                             // Remove player from session when they move out of queue VC
                             sesh.remove_player(user_id);
-                            
+
                             // If session was hot and still has enough players, regenerate teams
                             if was_hot && sesh.pool.len() >= quota {
                                 true
@@ -880,7 +879,7 @@ impl EventHandler for Handler {
                             if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
                                 let was_missing = !player.in_queue_vc;
                                 player.in_queue_vc = true;
-                                
+
                                 // Update dashboard if player was missing in a hot session
                                 // This removes them from the "Missing players" list
                                 if was_hot && was_missing {
@@ -898,7 +897,7 @@ impl EventHandler for Handler {
                                     return;
                                 }
                             }
-                            
+
                             // Now we're guaranteed to have a session
                             {
                                 // Get or assign player rank (auto-creates ranks and assigns Apprentice if needed)
@@ -1152,17 +1151,17 @@ impl Handler {
                     }
                 }
             };
-            
+
             if !channel_exists {
                 continue;
             }
-            
+
             // Check if dashboard already exists
             if group.has_dashboard(ctx).await {
                 group.queue_dash_update(ctx, guild.id.get()).await;
                 continue;
             }
-            
+
             // Create dashboard for each group's dashboard channel
             let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
 
@@ -1170,7 +1169,7 @@ impl Handler {
             match group.dash_publish(ctx, channel_id, &self.database, guild.id.get()).await {
                 Ok(_) => {
                     info!("Dashboard created successfully for channel {}", channel_name);
-                    
+
                     // Persist the dashboard message ID to database
                     let dashboard_msg_id = group.dashboard_msg.get();
                     if let Err(e) = self.database.groups.update_dashboard_msg(

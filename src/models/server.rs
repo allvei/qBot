@@ -55,7 +55,6 @@ fn calculate_stats(elos: &[f64]) -> (f64, f64, f64) {
     (mean, median, std_dev)
 }
 
-
 /// Represents a game server with IP and name
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameServer {
@@ -228,25 +227,25 @@ impl Group {
         } else {
             warn!("Cannot notify: guild_id not provided");
         }
-        
+
         // Generate teams - guild_id is required for dashboard updates
         if let Some(gid) = guild_id {
             self.generate_teams(ctx, gid, db).await;
         } else {
             warn!("Cannot generate teams: guild_id not provided");
         }
-        
+
         // Spawn a targeted deadline timer for this hot session
         if let (Some(gid), Some(mgr)) = (guild_id, manager) {
             let group_id = self.group_id;
             let ctx_clone = ctx.clone();
-            
+
             tokio::spawn(async move {
                 use tokio::time::{sleep, Duration};
-                
+
                 // Wait for the deadline
                 sleep(Duration::from_secs(DEFAULT_TIMEOUT as u64)).await;
-                
+
                 // Check if players have joined, remove those who haven't
                 let mut manager_lock = mgr.lock().await;
                 if let Ok(server) = manager_lock.get_server(gid) {
@@ -259,7 +258,7 @@ impl Group {
                 }
             });
         }
-        
+
         Ok(())
     }
 
@@ -292,7 +291,7 @@ impl Group {
             if timed_out_players.is_empty() {continue;}
 
             info!("Removing {} timed-out players from hot session", timed_out_players.len());
-            
+
             // Remove timed out players - retain() preserves order of remaining elements
             session.pool.retain(|p| !timed_out_players.contains(&p.player.discord_id));
 
@@ -309,7 +308,7 @@ impl Group {
                 changes_made = true;
             }
         }
-        
+
         // If changes were made and we still have a hot session with enough players, regenerate teams
         if changes_made && self.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= quota) {
             // Re-generate teams for the hot session
@@ -412,7 +411,7 @@ impl Group {
         let mut players_to_requeue: Vec<Player> = game.pool.iter()
             .map(|p| p.player.clone())
             .collect();
-        
+
         // Shuffle the requeue order for variety
         {
             use rand::seq::SliceRandom;
@@ -495,7 +494,7 @@ impl Group {
         };
 
         let queue_vc_id = self.channels.queue_vc.get();
-        
+
         // Get set of users actually in queue VC
         let users_in_vc: std::collections::HashSet<u64> = guild.voice_states.iter()
             .filter_map(|(user_id, vs)| {
@@ -510,7 +509,7 @@ impl Group {
             for player in &mut session.pool {
                 let user_id      = player.player.discord_id.get();
                 let actual_in_vc = users_in_vc.contains(&user_id);
-                
+
                 // Log if we're correcting a desync
                 if player.in_queue_vc != actual_in_vc {
                     let username = player.player.discord_tag.as_deref().unwrap_or("Unknown");
@@ -594,41 +593,39 @@ impl Group {
         if let Some((mut red_indices, mut blu_indices)) = best_split {
             use std::collections::HashMap;
             use rand::seq::SliceRandom;
-            info!("[Session {}] Best team balance found with score: {:.2}", session_idx, best_score);
 
             // Randomize by swapping players with the same ELO
             // Group players by ELO, then shuffle within each ELO group
             let mut rng = rand::rng();
-            
+
             // Create map of ELO -> Vec<indices in players_to_balance>
             let mut elo_groups: HashMap<u32, Vec<usize>> = HashMap::new();
             for (i, player) in players_to_balance.iter().enumerate().take(pool_size) {
                 let elo = player.1;
                 elo_groups.entry(elo).or_default().push(i);
             }
-            
+
             // Store original team assignments before shuffling
             let original_red = red_indices.clone();
             let original_blu = blu_indices.clone();
-            
+
             // For each ELO group with multiple players, shuffle them across teams
             for (elo, indices) in &mut elo_groups {
                 if indices.len() > 1 {
                     // Count how many of this ELO are on each team (using ORIGINAL assignments)
                     let red_count = indices.iter().filter(|&&i| original_red.contains(&i)).count();
                     let blu_count = indices.iter().filter(|&&i| original_blu.contains(&i)).count();
-                    
+
                     // Shuffle the indices with this ELO
                     indices.shuffle(&mut rng);
-                    
+
                     // Reassign to teams with the same distribution
                     red_indices.retain(|&i| !indices.contains(&i));
                     blu_indices.retain(|&i| !indices.contains(&i));
-                    
+
                     red_indices.extend_from_slice(&indices[..red_count]);
                     blu_indices.extend_from_slice(&indices[red_count..]);
-                    
-                    info!("[Session {}] Shuffled {} players with ELO {}", session_idx, indices.len(), elo);
+
                 }
             }
 
@@ -661,7 +658,7 @@ impl Group {
         db: Option<&DB>,
         manager: Option<Arc<Mutex<Manager>>>,
     ) -> Result<()> {
-        info!("[QUEUE_PLAYER] Queueing player {} with rank {:?} to group {}", player.discord_id, rank, self.group_id);
+        //
         let queue_ctx = QueueContext { ctx, guild_id, db, manager };
         self.queue_player_with_vc_status(player, rank, queue_ctx, false).await
     }
@@ -670,15 +667,15 @@ impl Group {
         let player_id = player.discord_id;
         let quota = self.quota as usize;
         let session = self.get_queue().await?;
-        
-        info!("[QUEUE_PLAYER] Adding player {} to session (in_vc: {})", player_id, in_vc);
+
+        //
         if in_vc {session.add_player_in_vc(player, rank);}
         else {session.add_player(player, rank);}
 
         let current_count = session.pool.len();
-        info!("[QUEUE_PLAYER] Player {} added, session pool size is now {}/{}", player_id, current_count, quota);
+        //
 
-        info!("[QUEUE_PLAYER] Starting near-quota notification check");
+        //
         // Check for near-quota notifications
         if let Some(db) = queue_ctx.db {
             let slots_remaining = if current_count < quota {
@@ -702,7 +699,7 @@ impl Group {
                                 // Send DM notification
                                 if let Ok(user) = queue_ctx.ctx.http.get_user(session_player.player.discord_id).await {
                                     use serenity::all::{CreateEmbed, CreateMessage};
-                                    
+
                                     let embed = CreateEmbed::new()
                                         .title("Queue Almost Ready!")
                                         .description(format!(
@@ -713,7 +710,7 @@ impl Group {
                                             quota
                                         ))
                                         .color(0xffa500); // Orange
-                                    
+
                                     let _ = user.direct_message(&queue_ctx.ctx.http, CreateMessage::new().embed(embed)).await;
                                 }
                             }
@@ -722,48 +719,46 @@ impl Group {
                 }
             }
         }
-        info!("[QUEUE_PLAYER] Near-quota notifications completed");
+        //
         // Session borrow ends here
 
         // Queue count now only displayed in dashboard
 
-        info!("[QUEUE_PLAYER] Checking if quota is met (current: {}, quota: {})", current_count, quota);
+        //
         if self.is_quota() {
-            info!("[QUEUE_PLAYER] Quota met! Calling hot() transition");
+            //
             self.hot(queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager).await?;
-            info!("[QUEUE_PLAYER] hot() transition completed");
+            //
         } else {
-            info!("[QUEUE_PLAYER] Quota not yet met, staying idle");
+            //
         }
-        info!("[QUEUE_PLAYER] queue_player_with_vc_status completed for player {}", player_id);
+        //
         Ok(())
     }
 
     /// Update queue VC name to show current count
     /// Filters out existing " n/n" pattern to avoid stacking
-    /// 
+    ///
     /// Discord has a strict rate limit of 2 channel name changes per 10 minutes.
     /// To avoid hitting this limit, we parse the current name and skip updates if:
     /// - The displayed count hasn't changed
     /// This prevents rate limit issues while keeping the name accurate.
     pub async fn update_queue_vc_name(&self, ctx: &Context, _guild_id: GI) {
         use serenity::all::EditChannel;
-        
+
         let queue_vc = self.channels.queue_vc;
-        info!("[UPDATE_VC_NAME] Starting VC name update for channel {}", queue_vc);
-        
+
         // Get current queue count from idle sessions
         let current_count = self.sessions.iter()
             .find(|s| s.status == SessionStatus::Idle)
             .map(|s| s.pool.len())
             .unwrap_or(0);
-        info!("[UPDATE_VC_NAME] Current queue count: {}", current_count);
-        
+
         // Get current channel name
-        info!("[UPDATE_VC_NAME] Fetching current channel name from Discord API...");
+
         let current_name = match queue_vc.name(&ctx.http).await {
             Ok(name) => {
-                info!("[UPDATE_VC_NAME] Got current channel name: '{}'", name);
+
                 name
             },
             Err(e) => {
@@ -771,7 +766,7 @@ impl Group {
                 return;
             }
         };
-        
+
         // Parse existing count from " n/n" pattern to check if update is needed
         let (base_name, displayed_count) = if let Some(idx) = current_name.rfind(' ') {
             let potential_suffix = &current_name[idx + 1..];
@@ -794,30 +789,27 @@ impl Group {
         } else {
             (&current_name[..], None)
         };
-        
+
         // Check if displayed count matches current count
         if let Some(displayed) = displayed_count {
             if displayed == current_count {
-                info!("[UPDATE_VC_NAME] Count unchanged ({}), skipping update to avoid rate limit", current_count);
+
                 return;
             }
         }
-        
+
         // Build new name with count
         let new_name = format!("{} {}/{}", base_name, current_count, self.quota);
-        info!("[UPDATE_VC_NAME] New name will be: '{}' (count changed: {} -> {})", new_name, displayed_count.unwrap_or(0), current_count);
-        
+
         // Update the channel name
         if new_name != current_name {
-            info!("[UPDATE_VC_NAME] Name changed, sending edit request to Discord API...");
+
             match ctx.http.edit_channel(queue_vc, &EditChannel::new().name(&new_name), Some("Update queue count")).await {
-                Ok(_) => info!("[UPDATE_VC_NAME] Successfully updated channel name"),
+                Ok(_) => {},
                 Err(e) => warn!("[UPDATE_VC_NAME] Failed to update channel name: {}", e),
             }
-        } else {
-            info!("[UPDATE_VC_NAME] Name unchanged, skipping update");
         }
-        info!("[UPDATE_VC_NAME] VC name update completed");
+
     }
 
     pub async fn add_player(&mut self, session: &mut Session, player: Player, rank: Rank, ctx: &Context, guild_id: GI) {
@@ -859,7 +851,7 @@ impl Group {
         // Validate VC status before sending notifications to prevent desync
         // This ensures we only ping players who are actually not in VC
         self.validate_vc_status(ctx, guild_id).await;
-        
+
         let queue_chat = self.channels.queue_chat;
         let mut player_mentions = Vec::new();
         let mut players_to_dm = Vec::new();
@@ -906,8 +898,8 @@ impl Group {
                                     ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "the server".to_string())
                                 ))
                                 .color(0x00ff00);
-                            
-                            if let Err(e) = user.direct_message(&ctx.http, 
+
+                            if let Err(e) = user.direct_message(&ctx.http,
                                 serenity::all::CreateMessage::new().embed(dm_embed)
                             ).await {
                                 warn!("Failed to send DM to user {}: {}", user_id, e);
@@ -1042,7 +1034,7 @@ mod tests {
     #[test]
     fn test_group_meets_quota() {
         use crate::models::{Rank, Player};
-        
+
         let mut group = Group::new(
             1,
             4,

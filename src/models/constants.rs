@@ -10,7 +10,9 @@ use super::types::Rank;
 
 pub const DEFAULT_QUOTA:   u8   = 8;
 pub const DEFAULT_RANK:    Rank = Rank::Apprentice;
-pub const DEFAULT_TIMEOUT: u16  = 120;
+pub const DEFAULT_TIMEOUT: u16  = 30;
+pub const MAX_TIMEOUT:     u16  = 180;
+pub const MIN_TIMEOUT:     u16  = 1;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct ConfigFormat {

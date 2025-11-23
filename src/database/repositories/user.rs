@@ -37,12 +37,12 @@ impl UserRepository {
         .await?;
 
         let mut player = Self::get_player(result);
-        
+
         // Fetch discord tag from Discord API
         if let Ok(user) = ctx.http.get_user(discord_id).await {
             player.discord_tag = Some(user.tag());
         }
-        
+
         Ok(player)
     }
 
@@ -78,12 +78,12 @@ impl UserRepository {
         .await?;
 
         let mut player = Self::get_player(result);
-        
+
         // Fetch discord tag from Discord API
         if let Ok(user) = ctx.http.get_user(discord_id).await {
             player.discord_tag = Some(user.tag());
         }
-        
+
         Ok(player)
     }
 
@@ -145,7 +145,7 @@ impl UserRepository {
     /// Get user settings
     pub async fn get_settings(&self, discord_id: UserId) -> Result<UserSettings> {
         let result = sqlx::query(
-            "SELECT auto_remove_minutes, join_announcement, vc_disconnect_on_leave, 
+            "SELECT auto_remove_minutes, join_announcement, vc_disconnect_on_leave,
                     announcement_color, dm_enabled, notify_quota_threshold,
                     announcement_title, announcement_description, announcement_footer_text,
                     announcement_footer_icon, announcement_thumbnail,
@@ -193,7 +193,7 @@ impl UserRepository {
         let _ = self.create_or_update(discord_id, None).await?;
 
         sqlx::query(
-            "UPDATE users SET 
+            "UPDATE users SET
                 auto_remove_minutes = ?,
                 join_announcement = ?,
                 vc_disconnect_on_leave = ?,
@@ -243,7 +243,7 @@ impl UserRepository {
         let _ = self.create_or_update(discord_id, None).await?;
 
         // Validate field name to prevent SQL injection
-        let allowed_fields = ["auto_remove_minutes", "join_announcement", "vc_disconnect_on_leave", 
+        let allowed_fields = ["auto_remove_minutes", "join_announcement", "vc_disconnect_on_leave",
                                "announcement_color", "dm_enabled"];
         if !allowed_fields.contains(&field) {
             return Err(anyhow::anyhow!("Invalid setting field: {}", field));

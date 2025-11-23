@@ -846,7 +846,7 @@ impl ConsoleHandler {
     }
 
     /// Helper: Resolve both guild ID and group ID from string identifiers
-    async fn resolve_guild_and_group(&self, guild_identifier: &str, group_id_str: &str) 
+    async fn resolve_guild_and_group(&self, guild_identifier: &str, group_id_str: &str)
         -> Result<(u64, u8), Box<dyn std::error::Error + Send + Sync>> {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
         let group_id: u8 = group_id_str.parse()
@@ -855,7 +855,7 @@ impl ConsoleHandler {
     }
 
     /// Helper: Get mutable reference to a group by locking manager
-    async fn get_group_mut(&self, guild_id: u64, group_id: u8) 
+    async fn get_group_mut(&self, guild_id: u64, group_id: u8)
         -> Result<tokio::sync::MutexGuard<'_, Manager>, Box<dyn std::error::Error + Send + Sync>> {
         let manager = self.manager.lock().await;
         // Verify group exists before returning the guard
