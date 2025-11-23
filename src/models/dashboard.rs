@@ -318,7 +318,9 @@ impl Group {
                 }
             }
             description.push('\n');
-        } else {
+        }
+        // Show idle session
+        else {
             // No active games - show queue status or hot game info
             if let Some(current_session) = inactives.first() {
                 // If session is Hot, show missing players info
@@ -359,36 +361,7 @@ impl Group {
                     let queue_players = current_session.pool.len();
                     description.push_str(&format!("**Queue ({queue_players}/{quota})**\n"));
 
-                    if queue_players > 0 {
-                        for player in current_session.pool.iter() {
-                            let elo_str = if let Some(rank) = player.player.rank {
-                                let elo = rank.elo_from_config(db, guild_id).await;
-                                format!("[**{elo}**] ")
-                            } else {
-                                String::new()
-                            };
-                            
-                            // Get player's auto-leave timeout and calculate kick time
-                            let timeout_str = if let Ok(settings) = db.users.get_settings(player.player.discord_id).await {
-                                if settings.auto_leave_minutes > 0 {
-                                    // Calculate when player will be kicked
-                                    if let Ok(joined_duration) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
-                                        let joined_timestamp = joined_duration.as_secs();
-                                        let kick_timestamp = joined_timestamp + (settings.auto_leave_minutes as u64 * 60);
-                                        format!(" <t:{kick_timestamp}:R>")
-                                    } else {
-                                        String::new()
-                                    }
-                                } else {
-                                    String::new()
-                                }
-                            } else {
-                                String::new()
-                            };
-                            
-                            description.push_str(&format!("{elo_str}<@{}>{timeout_str}\n", player.player.discord_id));
-                        }
-                    } else {
+                    if queue_players == 0 {
                         description.push_str("*No players in queue. Join to get started!*\n");
                     }
                     description.push('\n');
@@ -399,6 +372,47 @@ impl Group {
         }
 
         embed = embed.description(description);
+
+        // Add queue fields for idle session (before quota is met)
+        if actives.is_empty() {
+            if let Some(current_session) = inactives.first() {
+                if !current_session.is_hot() && current_session.pool.len() > 0 && current_session.pool.len() < quota {
+                    let mut players_field = String::new();
+                    let mut timers_field = String::new();
+                    
+                    for player in current_session.pool.iter() {
+                        // Build player list with ELO
+                        let elo_str = if let Some(rank) = player.player.rank {
+                            let elo = rank.elo_from_config(db, guild_id).await;
+                            format!("[**{elo}**] ")
+                        } else {
+                            String::new()
+                        };
+                        players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.discord_id));
+                        
+                        // Build auto-remove timer list
+                        if let Ok(settings) = db.users.get_settings(player.player.discord_id).await {
+                            if settings.auto_remove_minutes > 0 {
+                                if let Ok(joined_duration) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
+                                    let joined_timestamp = joined_duration.as_secs();
+                                    let kick_timestamp = joined_timestamp + (settings.auto_remove_minutes as u64 * 60);
+                                    timers_field.push_str(&format!("<t:{kick_timestamp}:R>\n"));
+                                } else {
+                                    timers_field.push_str("-\n");
+                                }
+                            } else {
+                                timers_field.push_str("-\n");
+                            }
+                        } else {
+                            timers_field.push_str("-\n");
+                        }
+                    }
+                    
+                    embed = embed.field("Players", players_field, true);
+                    embed = embed.field("Auto-remove", timers_field, true);
+                }
+            }
+        }
 
         // Add connect info if available
         if let Some(ref connect_info) = self.connect_info {
