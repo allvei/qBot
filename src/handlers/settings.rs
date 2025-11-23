@@ -245,7 +245,8 @@ pub async fn handle_settings_modal(
             
             // Send preview of the announcement embed in DM
             if let Ok(user) = ctx.http.get_user(user_id).await {
-                let preview_embed = build_announcement_preview(ctx, user_id, &settings).await;
+                // Use shared function with example rank for preview
+                let preview_embed = build_join_announcement_embed(ctx, user_id, None, &settings, "Journeyman").await;
                 let preview_message = CreateMessage::new()
                     .content("**Preview of your join announcement:**")
                     .embed(preview_embed);
@@ -349,7 +350,7 @@ pub async fn handle_settings_modal(
             
             // Send preview of the leave announcement embed in DM
             if let Ok(user) = ctx.http.get_user(user_id).await {
-                let preview_embed = build_leave_announcement_preview(ctx, user_id, &settings).await;
+                let preview_embed = build_leave_announcement_embed(ctx, user_id, None, &settings).await;
                 let preview_message = CreateMessage::new()
                     .content("**Preview of your leave announcement:**")
                     .embed(preview_embed);
@@ -415,7 +416,7 @@ pub fn build_settings_buttons(settings: &crate::database::repositories::UserSett
     vec![
         CAR::Buttons(vec![
             CB::new("settings_toggle_dm")
-                .label("Toggle DM Notifications")
+                .label("DM notifications")
                 .style(if settings.dm_enabled { BS::Success } else { BS::Secondary }),
             CB::new("settings_auto_leave")
                 .label("Auto-remove timer")
@@ -423,43 +424,50 @@ pub fn build_settings_buttons(settings: &crate::database::repositories::UserSett
         ]),
         CAR::Buttons(vec![
             CB::new("settings_vc_disconnect")
-                .label("Toggle VC disconnect")
+                .label("Disconnect VC on leave")
                 .style(if settings.vc_disconnect_on_leave { BS::Success } else { BS::Secondary }),
         ]),
         CAR::Buttons(vec![
             CB::new("settings_customize_announcement")
-                .label("Customize join announcement")
+                .label("Edit join announcement")
                 .style(BS::Primary),
             CB::new("settings_customize_leave_announcement")
-                .label("Customize leave announcement")
+                .label("Edit leave announcement")
                 .style(BS::Primary),
         ]),
     ]
 }
 
-/// Build a preview of the join announcement embed
-async fn build_announcement_preview(
+/// Build a join announcement embed (used for both actual announcements and previews)
+pub async fn build_join_announcement_embed(
     ctx: &Context,
     user_id: serenity::all::UserId,
+    guild_id: Option<serenity::all::GuildId>,
     settings: &crate::database::repositories::UserSettings,
+    rank_name: &str,
 ) -> CE {
-    // Get user info for preview
-    let username = ctx.cache.user(user_id)
-        .map(|u| u.name.clone())
-        .unwrap_or_else(|| "YourName".to_string());
-    
-    let avatar_url = ctx.cache.user(user_id).map(|u| u.face());
-    
-    // Use example rank for preview
-    let example_rank = "Journeyman"; // Example rank name
+    // Get member to access nickname and avatar
+    let (display_name, avatar_url) = if let Some(gid) = guild_id {
+        let member = gid.member(&ctx.http, user_id).await.ok();
+        let display_name = member.as_ref()
+            .map(|m| m.display_name().to_string())
+            .unwrap_or_else(|| ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string()));
+        let avatar_url = ctx.cache.user(user_id).map(|u| u.face());
+        (display_name, avatar_url)
+    } else {
+        // For preview without guild context
+        let username = ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
+        let avatar_url = ctx.cache.user(user_id).map(|u| u.face());
+        (username, avatar_url)
+    };
     
     // Build description with template support
     let description = if let Some(custom_desc) = &settings.announcement_description {
-        // Replace template variables with example values
+        // Replace template variables
         custom_desc
             .replace("{user}", &format!("<@{}>", user_id))
-            .replace("{rank}", example_rank)
-            .replace("{name}", &username)
+            .replace("{rank}", rank_name)
+            .replace("{name}", &display_name)
     } else {
         // Default description
         format!("<@{}> joined the queue!", user_id)
@@ -468,7 +476,7 @@ async fn build_announcement_preview(
     // Create embed with author showing nickname + "joined the queue"
     let mut embed = CE::new()
         .author({
-            let mut author = CreateEmbedAuthor::new(format!("{} joined the queue", username));
+            let mut author = CreateEmbedAuthor::new(format!("{} joined the queue", display_name));
             if let Some(url) = avatar_url {
                 author = author.icon_url(url);
             }
@@ -499,25 +507,34 @@ async fn build_announcement_preview(
     embed
 }
 
-/// Build a preview of the leave announcement embed
-async fn build_leave_announcement_preview(
+/// Build a leave announcement embed (used for both actual announcements and previews)
+pub async fn build_leave_announcement_embed(
     ctx: &Context,
     user_id: serenity::all::UserId,
+    guild_id: Option<serenity::all::GuildId>,
     settings: &crate::database::repositories::UserSettings,
 ) -> CE {
-    // Get user info for preview
-    let username = ctx.cache.user(user_id)
-        .map(|u| u.name.clone())
-        .unwrap_or_else(|| "YourName".to_string());
-    
-    let avatar_url = ctx.cache.user(user_id).map(|u| u.face());
+    // Get member to access nickname and avatar
+    let (display_name, avatar_url) = if let Some(gid) = guild_id {
+        let member = gid.member(&ctx.http, user_id).await.ok();
+        let display_name = member.as_ref()
+            .map(|m| m.display_name().to_string())
+            .unwrap_or_else(|| ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string()));
+        let avatar_url = ctx.cache.user(user_id).map(|u| u.face());
+        (display_name, avatar_url)
+    } else {
+        // For preview without guild context
+        let username = ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
+        let avatar_url = ctx.cache.user(user_id).map(|u| u.face());
+        (username, avatar_url)
+    };
     
     // Build description with template support
     let description = if let Some(custom_desc) = &settings.leave_announcement_description {
-        // Replace template variables with example values (no rank for leave)
+        // Replace template variables (no rank for leave)
         custom_desc
             .replace("{user}", &format!("<@{}>", user_id))
-            .replace("{name}", &username)
+            .replace("{name}", &display_name)
     } else {
         // Default description
         format!("<@{}> left the queue!", user_id)
@@ -526,7 +543,7 @@ async fn build_leave_announcement_preview(
     // Create embed with author showing nickname + "left the queue"
     let mut embed = CE::new()
         .author({
-            let mut author = CreateEmbedAuthor::new(format!("{} left the queue", username));
+            let mut author = CreateEmbedAuthor::new(format!("{} left the queue", display_name));
             if let Some(url) = avatar_url {
                 author = author.icon_url(url);
             }
