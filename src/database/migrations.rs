@@ -76,9 +76,27 @@ impl DatabaseMigrations {
         if !self.table_exists("users").await? {
             sqlx::query(
                 "CREATE TABLE users (
-                    id         INTEGER PRIMARY KEY,
-                    discord_id INTEGER NOT NULL UNIQUE,
-                    steam_id   INTEGER
+                    id                        INTEGER PRIMARY KEY,
+                    discord_id                INTEGER NOT NULL UNIQUE,
+                    steam_id                  INTEGER,
+                    dm_enabled                INTEGER DEFAULT 1,
+                    auto_leave_minutes        INTEGER DEFAULT 0,
+                    join_announcement         INTEGER DEFAULT 0,
+                    vc_disconnect_on_leave    INTEGER DEFAULT 1,
+                    announcement_color        INTEGER DEFAULT 3447003,
+                    show_stats_in_announcement INTEGER DEFAULT 0,
+                    notify_quota_threshold    INTEGER DEFAULT NULL,
+                    announcement_title        TEXT DEFAULT NULL,
+                    announcement_description  TEXT DEFAULT NULL,
+                    announcement_footer_text  TEXT DEFAULT NULL,
+                    announcement_footer_icon  TEXT DEFAULT NULL,
+                    announcement_thumbnail    TEXT DEFAULT NULL,
+                    leave_announcement        INTEGER DEFAULT 0,
+                    leave_announcement_title        TEXT DEFAULT NULL,
+                    leave_announcement_description  TEXT DEFAULT NULL,
+                    leave_announcement_footer_text  TEXT DEFAULT NULL,
+                    leave_announcement_footer_icon  TEXT DEFAULT NULL,
+                    leave_announcement_thumbnail    TEXT DEFAULT NULL
                 )"
             )
             .execute(&self.pool)
@@ -88,6 +106,86 @@ impl DatabaseMigrations {
             let has_unique_constraint = self.check_unique_constraint("users", "discord_id").await?;
             let has_discord_id        = self.column_exists(          "users", "discord_id").await?;
             let has_steam_id          = self.column_exists(          "users", "steam_id").await?;
+            let has_dm_enabled        = self.column_exists(          "users", "dm_enabled").await?;
+
+            // Add dm_enabled column if missing
+            if has_discord_id && !has_dm_enabled {
+                sqlx::query("ALTER TABLE users ADD COLUMN dm_enabled INTEGER DEFAULT 1")
+                    .execute(&self.pool)
+                    .await?;
+            }
+
+            // Add new settings columns if missing
+            if has_discord_id {
+                if !self.column_exists("users", "auto_leave_minutes").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN auto_leave_minutes INTEGER DEFAULT 0")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "join_announcement").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN join_announcement INTEGER DEFAULT 0")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "vc_disconnect_on_leave").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN vc_disconnect_on_leave INTEGER DEFAULT 1")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "announcement_color").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN announcement_color INTEGER DEFAULT 3447003")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "show_stats_in_announcement").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN show_stats_in_announcement INTEGER DEFAULT 0")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "notify_quota_threshold").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN notify_quota_threshold INTEGER DEFAULT NULL")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "announcement_title").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN announcement_title TEXT DEFAULT NULL")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "announcement_description").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN announcement_description TEXT DEFAULT NULL")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "announcement_footer_text").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN announcement_footer_text TEXT DEFAULT NULL")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "announcement_footer_icon").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN announcement_footer_icon TEXT DEFAULT NULL")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "announcement_thumbnail").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN announcement_thumbnail TEXT DEFAULT NULL")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "leave_announcement").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN leave_announcement INTEGER DEFAULT 0")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "leave_announcement_title").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN leave_announcement_title TEXT DEFAULT NULL")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "leave_announcement_description").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN leave_announcement_description TEXT DEFAULT NULL")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "leave_announcement_footer_text").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN leave_announcement_footer_text TEXT DEFAULT NULL")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "leave_announcement_footer_icon").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN leave_announcement_footer_icon TEXT DEFAULT NULL")
+                        .execute(&self.pool).await?;
+                }
+                if !self.column_exists("users", "leave_announcement_thumbnail").await? {
+                    sqlx::query("ALTER TABLE users ADD COLUMN leave_announcement_thumbnail TEXT DEFAULT NULL")
+                        .execute(&self.pool).await?;
+                }
+            }
 
             if !has_discord_id || !has_steam_id || !has_unique_constraint {
 
@@ -105,9 +203,16 @@ impl DatabaseMigrations {
                 sqlx::query("DROP TABLE users").execute(&self.pool).await?;
                 sqlx::query(
                     "CREATE TABLE users (
-                        id         INTEGER PRIMARY KEY,
-                        discord_id INTEGER NOT NULL UNIQUE,
-                        steam_id   INTEGER
+                        id                        INTEGER PRIMARY KEY,
+                        discord_id                INTEGER NOT NULL UNIQUE,
+                        steam_id                  INTEGER,
+                        dm_enabled                INTEGER DEFAULT 1,
+                        auto_leave_minutes        INTEGER DEFAULT 0,
+                        join_announcement         INTEGER DEFAULT 0,
+                        vc_disconnect_on_leave    INTEGER DEFAULT 1,
+                        announcement_color        INTEGER DEFAULT 3447003,
+                        show_stats_in_announcement INTEGER DEFAULT 0,
+                        notify_quota_threshold    INTEGER DEFAULT NULL
                     )"
                 )
                 .execute(&self.pool)
@@ -118,8 +223,8 @@ impl DatabaseMigrations {
                     let discord_id: i64 = row.get("discord_id");
                     let steam_id: Option<i64> = row.try_get("steam_id").ok();
                     sqlx::query("INSERT OR IGNORE
-                                 INTO users (discord_id, steam_id)
-                                 VALUES (?, ?)")
+                                 INTO users (discord_id, steam_id, dm_enabled, auto_leave_minutes, join_announcement, vc_disconnect_on_leave, announcement_color, show_stats_in_announcement, notify_quota_threshold)
+                                 VALUES (?, ?, 1, 0, 0, 1, 3447003, 0, NULL)")
                         .bind(discord_id)
                         .bind(steam_id)
                         .execute(&self.pool)
@@ -234,7 +339,11 @@ impl DatabaseMigrations {
 
     /// Validate users table schema
     async fn validate_users_schema(&self) -> Result<()> {
-        let required_columns = vec!["id", "discord_id", "steam_id"];
+        let required_columns = vec![
+            "id", "discord_id", "steam_id", "dm_enabled",
+            "auto_leave_minutes", "join_announcement", "vc_disconnect_on_leave",
+            "announcement_color"
+        ];
         self.validate_table_columns("users", &required_columns).await?;
         Ok(())
     }
