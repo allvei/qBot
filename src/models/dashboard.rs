@@ -84,7 +84,8 @@ pub enum ButtonType {
     GroupLinkBlue,
 
     // Dashboard action buttons
-    DashboardToggleQueue,
+    DashboardJoin,
+    DashboardLeave,
     DashboardShuffle,
     DashboardStart,
     DashboardEnd,
@@ -131,7 +132,8 @@ impl ButtonType {
             "grouplink_blue"      => Self::GroupLinkBlue,
 
             // Dashboard buttons
-            "toggle_queue"    => Self::DashboardToggleQueue,
+            "join_queue"      => Self::DashboardJoin,
+            "leave_queue"     => Self::DashboardLeave,
             "shuffle_teams"   => Self::DashboardShuffle,
             "start_match"     => Self::DashboardStart,
             "end_match"       => Self::DashboardEnd,
@@ -179,7 +181,8 @@ impl ButtonType {
     pub fn is_dashboard_action(&self) -> bool {
         matches!(
             self,
-            Self::DashboardToggleQueue |
+            Self::DashboardJoin   |
+            Self::DashboardLeave  |
             Self::DashboardShuffle     |
             Self::DashboardStart       |
             Self::DashboardEnd
@@ -222,9 +225,10 @@ impl Group {
         let is_live = self.sessions.iter().any(|s| s.is_active());
 
         let buttons = vec![
-            ("toggle_queue", "Join/Leave", BS::Primary, true),
+            ("join_queue",    "Join",   BS::Success, true),
+            ("leave_queue",   "Leave",  BS::Danger, true),
             ("shuffle_teams", "Shuffle", BS::Secondary, is_hot),
-            ("start_match",   "Start",   BS::Success, is_hot),
+            ("start_match",   "Start",   BS::Primary, is_hot),
             ("end_match",     "End",     BS::Danger, is_live),
         ];
 
@@ -570,10 +574,12 @@ impl Group {
     /// Queue a dashboard update (non-blocking, batched)
     /// Requires guild_id to be passed since Group doesn't store it
     pub async fn queue_dash_update(&self, ctx: &Context, guild_id: u64) {
+        // info!("[QUEUE_DASH_UPDATE] Requesting dashboard update for guild {} group {}", guild_id, self.group_id);
         // Try to get queue from context data using the key from models module
         let data = ctx.data.read().await;
         if let Some(queue) = data.get::<DashboardQueueKey>() {
             queue.request_update(guild_id, self.group_id as u64);
+            // info!("[QUEUE_DASH_UPDATE] Dashboard update request queued for guild {} group {}", guild_id, self.group_id);
         } else {
             warn!("Dashboard queue not initialized in Context");
             // Note: Can't fallback to dash_update here because we'd need &mut self
@@ -581,22 +587,170 @@ impl Group {
         }
     }
 
-    /// Handles the toggle queue button (combines join/leave)
-    async fn dash_toggle_queue(&mut self, cc: &CC<'_>) -> Result<()> {
+    /// Handles the join queue button
+    async fn dash_join_queue(&mut self, cc: &CC<'_>) -> Result<()> {
         let user_id = cc.component.user.id;
+        info!("[JOIN_QUEUE] Starting join queue for user {}", user_id);
+        
+        // Store channel IDs before any borrows
+        let dashboard_channel = self.channels.dashboard;
+
+        // Check if player is already in queue
+        if self.get_user_session(user_id).await.is_ok() {
+            info!("[JOIN_QUEUE] User {} already in queue, rejecting", user_id);
+            cc.reply("You are already in the queue!").await?;
+            return Ok(());
+        }
+
+        // Check if we have an idle or hot session to join
+        let has_joinable_session = self.sessions.iter().any(|s|
+            s.status == SessionStatus::Idle || s.status == SessionStatus::Hot
+        );
+        info!("[JOIN_QUEUE] Has joinable session: {}", has_joinable_session);
+
+        if !has_joinable_session {
+            cc.reply("Cannot join - match is in progress. Please wait.").await?;
+            return Ok(());
+        }
+        
+        // Defer update now that we know we'll succeed
+        info!("[JOIN_QUEUE] Deferring interaction update for user {}", user_id);
+        cc.defer_update().await?;
+        info!("[JOIN_QUEUE] Interaction deferred successfully");
+
+        // Get or assign player's rank (auto-creates ranks and assigns Apprentice if needed)
+        use crate::handlers::player::get_or_assign_player_rank;
+        if let Some(guild_id) = cc.component.guild_id {
+            info!("[JOIN_QUEUE] Getting player data for user {} in guild {}", user_id, guild_id);
+            // Get player object from database (without fetching discord tag for performance)
+            let mut player = match cc.db.get_user(user_id).await {
+                Ok(p) => p,
+                Err(_) => match cc.db.new_user(user_id).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!("Failed to get or create player: {e}");
+                        return Ok(());
+                    }
+                }
+            };
+            
+            // Fetch discord tag from component user for performance (avoid extra API call)
+            player.discord_tag = Some(cc.component.user.tag());
+            
+            match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user_id).await {
+                Ok(rank) => {
+                    info!("[JOIN_QUEUE] User {} has rank: {:?}", user_id, rank);
+                    // Refresh player rank from current Discord roles before queueing
+                    player.rank = Some(rank);
+                    
+                    // Save rank for announcement (player will be moved)
+                    let player_rank = rank;
+                    
+                    info!("[JOIN_QUEUE] Calling queue_player for user {}", user_id);
+                    if let Err(e) = self.queue_player(player, rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
+                        warn!("Failed to queue player: {e}");
+                    } else {
+                        info!("[JOIN_QUEUE] Successfully queued user {}", user_id);
+                        // Log successful queue join via button
+                        let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                        let group_name = cc.ctx.cache.channel(dashboard_channel)
+                            .map(|ch| ch.name.clone())
+                            .unwrap_or_else(|| "Unknown".to_string());
+                        let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
+                        log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ);
+                        
+                        // Send join announcement if enabled
+                        if let Ok(settings) = cc.db.users.get_settings(user_id).await {
+                            if settings.join_announcement {
+                                use serenity::all::{CreateEmbed, CreateMessage, CreateEmbedAuthor, CreateEmbedFooter};
+                                
+                                // Get member to access nickname and avatar
+                                let member = cc.component.guild_id.unwrap().member(&cc.ctx.http, user_id).await.ok();
+                                let display_name = member.as_ref().map(|m| m.display_name().to_string()).unwrap_or_else(|| username.clone());
+                                let avatar_url = cc.ctx.cache.user(user_id).map(|u| u.face());
+                                
+                                // Build description with template support
+                                let description = if let Some(custom_desc) = &settings.announcement_description {
+                                    // Replace template variables
+                                    custom_desc
+                                        .replace("{user}", &format!("<@{}>", user_id))
+                                        .replace("{rank}", &player_rank.name())
+                                        .replace("{name}", &display_name)
+                                } else {
+                                    // Default description
+                                    format!("<@{}> joined the queue!", user_id)
+                                };
+                                
+                                // Create embed with author showing nickname + "joined the queue"
+                                let mut embed = CreateEmbed::new()
+                                    .author({
+                                        let mut author = CreateEmbedAuthor::new(format!("{} joined the queue", display_name));
+                                        if let Some(url) = avatar_url {
+                                            author = author.icon_url(url);
+                                        }
+                                        author
+                                    })
+                                    .description(description)
+                                    .color(settings.announcement_color as u32);
+                                
+                                // Add custom title if provided
+                                if let Some(title) = &settings.announcement_title {
+                                    embed = embed.title(title);
+                                }
+                                
+                                // Add custom footer if provided
+                                if let Some(footer_text) = &settings.announcement_footer_text {
+                                    let mut footer = CreateEmbedFooter::new(footer_text);
+                                    if let Some(footer_icon) = &settings.announcement_footer_icon {
+                                        footer = footer.icon_url(footer_icon);
+                                    }
+                                    embed = embed.footer(footer);
+                                }
+                                
+                                // Add custom thumbnail if provided
+                                if let Some(thumbnail) = &settings.announcement_thumbnail {
+                                    embed = embed.thumbnail(thumbnail);
+                                }
+                                
+                                let queue_chat = self.channels.queue_chat;
+                                let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
+                            }
+                        }
+                    }
+                },
+                Err(e) => {
+                    warn!("Failed to get/assign rank: {e}");
+                    return Ok(());
+                }
+            }
+        } else {
+            cc.reply("This command can only be used in a server.").await?;
+            return Ok(());
+        }
+
+        // Update dashboard to reflect changes
+        info!("[JOIN_QUEUE] Queueing dashboard update for user {}", user_id);
+        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
+        info!("[JOIN_QUEUE] Join queue flow completed for user {}", user_id);
+
+        Ok(())
+    }
+
+    /// Handles the leave queue button
+    async fn dash_leave_queue(&mut self, cc: &CC<'_>) -> Result<()> {
+        let user_id = cc.component.user.id;
+        info!("[LEAVE_QUEUE] Starting leave queue for user {}", user_id);
         let quota = self.quota as usize;
         
         // Store channel IDs before any borrows
         let dashboard_channel = self.channels.dashboard;
+        let queue_chat = self.channels.queue_chat;
 
         // Get session index before mutable borrow
         let session_idx = self.sessions.iter()
             .position(|s| s.pool.iter().any(|p| p.player.discord_id == user_id));
 
-        // Check if player is already in a game (this is the initial state check)
-        let player_was_in_queue = self.get_user_session(user_id).await.is_ok();
-        
-        // Check if player is already in a game
+        // Check if player is in queue
         let should_regenerate_teams = if let Ok(session) = self.get_user_session(user_id).await {
             // Check if player is physically in the queue VC
             let player_in_vc = if let Some(player) = session.pool.iter().find(|p| p.player.discord_id == user_id) {
@@ -605,28 +759,39 @@ impl Group {
                 false
             };
 
-            // If player is in VC, disconnect them from voice channel
+            // If player is in VC, check if they want to be disconnected
             if player_in_vc {
-                // Acknowledge button press before disconnecting
-                cc.defer_update().await?;
+                info!("[LEAVE_QUEUE] User {} is in VC, checking disconnect preference", user_id);
+                // Check user's VC disconnect preference
+                let settings = cc.db.users.get_settings(user_id).await.unwrap_or_default();
                 
-                // Disconnect player from voice channel
-                if let Some(guild_id) = cc.component.guild_id {
-                    use serenity::all::EditMember;
-                    let _ = cc.ctx.http.edit_member(
-                        guild_id,
-                        user_id,
-                        &EditMember::new().disconnect_member(),
-                        Some("Player left queue via dashboard button")
-                    ).await;
+                if settings.vc_disconnect_on_leave {
+                    info!("[LEAVE_QUEUE] User {} wants to disconnect from VC", user_id);
+                    // Acknowledge button press before disconnecting
+                    cc.defer_update().await?;
+                    
+                    // User wants to be disconnected from VC
+                    if let Some(guild_id) = cc.component.guild_id {
+                        use serenity::all::EditMember;
+                        let _ = cc.ctx.http.edit_member(
+                            guild_id,
+                            user_id,
+                            &EditMember::new().disconnect_member(),
+                            Some("Player left queue via dashboard button")
+                        ).await;
+                    }
+                    // The voice_state_update handler will handle removing them from the queue
+                    return Ok(());
                 }
-                // The voice_state_update handler will handle removing them from the queue
-                return Ok(());
+                // User wants to stay in VC, manually remove them from queue
+                // Fall through to remove them manually below
             }
 
-            // Player is in queue but not in VC, remove them
+            // Player is in queue but not in VC (or wants to stay in VC), remove them manually
             // Defer update immediately
+            info!("[LEAVE_QUEUE] Deferring interaction update for user {}", user_id);
             cc.defer_update().await?;
+            info!("[LEAVE_QUEUE] Interaction deferred successfully");
             
             let was_hot = session.is_hot();
             let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
@@ -640,6 +805,62 @@ impl Group {
                 .map(|ch| ch.name.clone())
                 .unwrap_or_else(|| "Unknown".to_string());
             log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BL);
+
+            // Send leave announcement if enabled
+            if let Ok(settings) = cc.db.users.get_settings(user_id).await {
+                if settings.leave_announcement {
+                    use serenity::all::{CreateEmbed, CreateMessage, CreateEmbedAuthor, CreateEmbedFooter};
+                    
+                    // Get member to access nickname and avatar
+                    let member = guild_id.member(&cc.ctx.http, user_id).await.ok();
+                    let display_name = member.as_ref().map(|m| m.display_name().to_string()).unwrap_or_else(|| username.clone());
+                    let avatar_url = cc.ctx.cache.user(user_id).map(|u| u.face());
+                    
+                    // Build description with template support
+                    let description = if let Some(custom_desc) = &settings.leave_announcement_description {
+                        // Replace template variables (no rank for leave)
+                        custom_desc
+                            .replace("{user}", &format!("<@{}>", user_id))
+                            .replace("{name}", &display_name)
+                    } else {
+                        // Default description
+                        format!("<@{}> left the queue!", user_id)
+                    };
+                    
+                    // Create embed with author showing nickname + "left the queue"
+                    let mut embed = CreateEmbed::new()
+                        .author({
+                            let mut author = CreateEmbedAuthor::new(format!("{} left the queue", display_name));
+                            if let Some(url) = avatar_url {
+                                author = author.icon_url(url);
+                            }
+                            author
+                        })
+                        .description(description)
+                        .color(settings.announcement_color as u32);
+                    
+                    // Add custom title if provided
+                    if let Some(title) = &settings.leave_announcement_title {
+                        embed = embed.title(title);
+                    }
+                    
+                    // Add custom footer if provided
+                    if let Some(footer_text) = &settings.leave_announcement_footer_text {
+                        let mut footer = CreateEmbedFooter::new(footer_text);
+                        if let Some(footer_icon) = &settings.leave_announcement_footer_icon {
+                            footer = footer.icon_url(footer_icon);
+                        }
+                        embed = embed.footer(footer);
+                    }
+                    
+                    // Add custom thumbnail if provided
+                    if let Some(thumbnail) = &settings.leave_announcement_thumbnail {
+                        embed = embed.thumbnail(thumbnail);
+                    }
+                    
+                    let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
+                }
+            }
 
             // If session was hot, check what to do next
             if was_hot {
@@ -665,7 +886,10 @@ impl Group {
                 false
             }
         } else {
-            false
+            // Player not in queue
+            info!("[LEAVE_QUEUE] User {} not in queue, rejecting", user_id);
+            cc.reply("You are not in the queue!").await?;
+            return Ok(());
         };
 
         // Regenerate teams if needed (outside the session borrow scope)
@@ -673,75 +897,7 @@ impl Group {
             self.generate_teams(cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
         }
 
-        // If player was in queue, we removed them above - update dashboard and return
-        if player_was_in_queue {
-            self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
-            return Ok(());
-        }
-
-        // Only add player if they were NOT originally in the queue
-        if !player_was_in_queue {
-            // Player is not in queue, add them
-
-            // Check if we have an idle or hot session to join
-            let has_joinable_session = self.sessions.iter().any(|s|
-                s.status == SessionStatus::Idle || s.status == SessionStatus::Hot
-            );
-
-            if !has_joinable_session {
-                cc.reply("Cannot join - match is in progress. Please wait.").await?;
-                return Ok(());
-            }
-            
-            // Defer update now that we know we'll succeed
-            cc.defer_update().await?;
-
-            // Get or assign player's rank (auto-creates ranks and assigns Apprentice if needed)
-            use crate::handlers::player::get_or_assign_player_rank;
-            if let Some(guild_id) = cc.component.guild_id {
-                // Get player object from database (without fetching discord tag for performance)
-                let mut player = match cc.db.get_user(user_id).await {
-                    Ok(p) => p,
-                    Err(_) => match cc.db.new_user(user_id).await {
-                        Ok(p) => p,
-                        Err(e) => {
-                            warn!("Failed to get or create player: {e}");
-                            return Ok(());
-                        }
-                    }
-                };
-                
-                // Fetch discord tag from component user for performance (avoid extra API call)
-                player.discord_tag = Some(cc.component.user.tag());
-                
-                match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user_id).await {
-                    Ok(rank) => {
-                        // Refresh player rank from current Discord roles before queueing
-                        player.rank = Some(rank);
-                        if let Err(e) = self.queue_player(player, rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
-                            warn!("Failed to queue player: {e}");
-                        } else {
-                            // Log successful queue join via button
-                            let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-                            let group_name = cc.ctx.cache.channel(dashboard_channel)
-                                .map(|ch| ch.name.clone())
-                                .unwrap_or_else(|| "Unknown".to_string());
-                            let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
-                            log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ);
-                        }
-                    },
-                    Err(e) => {
-                        warn!("Failed to get/assign rank: {e}");
-                        return Ok(());
-                    }
-                }
-            } else {
-                cc.reply("This command can only be used in a server.").await?;
-                return Ok(());
-            }
-        }
-
-        // Update dashboard to reflect changes
+        // Update dashboard to reflect changes (queue count now only shown in dashboard)
         self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
 
         Ok(())
@@ -876,9 +1032,13 @@ impl Group {
         let username = cc.ctx.cache.user(cc.component.user.id).map(|u| u.name.clone()).unwrap_or_else(|| cc.component.user.id.to_string());
 
         match action {
-            "toggle_queue"      => {
-                // Log will be done inside dash_toggle_queue with proper context
-                self.dash_toggle_queue(cc).await
+            "join_queue"        => {
+                // Log will be done inside dash_join_queue with proper context
+                self.dash_join_queue(cc).await
+            },
+            "leave_queue"       => {
+                // Log will be done inside dash_leave_queue with proper context
+                self.dash_leave_queue(cc).await
             },
             "shuffle_teams"     => {
                 info!("[{}][{}] {} used Shuffle", server_name, group_name, username);
@@ -1047,10 +1207,11 @@ impl DashboardUpdateQueue {
             
             // Spawn a task for each dashboard update
             let task = tokio::spawn(async move {
+                // info!("[DASH_UPDATE] Processing dashboard update for guild {} group {}", guild_id, group_id);
                 // Acquire lock briefly to get CURRENT dashboard data
                 // This ensures we always show the latest state, regardless of how many
                 // update requests were queued - they all get collapsed into this one update
-                let (channel_id, dashboard_channel_id, message_id, embed, buttons, guild_name) = {
+                let (channel_id, dashboard_channel_id, message_id, embed, buttons, guild_name, pool_size) = {
                     let mut manager_lock = manager.lock().await;
                     
                     let server = match manager_lock.get_server(serenity::all::GuildId::new(guild_id)) {
@@ -1070,6 +1231,10 @@ impl DashboardUpdateQueue {
                             return;
                         }
                     };
+                    
+                    // Log current session state
+                    let pool_size = group.sessions.first().map(|s| s.pool.len()).unwrap_or(0);
+                    // info!("[DASH_UPDATE] Guild {} group {} has {} sessions, first session pool size: {}", guild_id, group_id, group.sessions.len(), pool_size);
                     
                     // Refresh player ranks from Discord to ensure dashboard shows current ranks
                     // This prevents desync when players are promoted while sitting in queue
@@ -1093,15 +1258,16 @@ impl DashboardUpdateQueue {
                         }
                     };
                     
-                    (channel_id, dashboard_channel_id, message_id, embed, buttons, guild_name)
+                    (channel_id, dashboard_channel_id, message_id, embed, buttons, guild_name, pool_size)
                 }; // Release lock here
                 
                 // Update the dashboard message WITHOUT holding any locks
                 use serenity::all::EditMessage;
                 let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{channel_id}"));
+                // info!("[DASH_UPDATE] Sending dashboard update to Discord for guild {} group {} (pool size: {})", guild_id, group_id, pool_size);
                 match channel_id.edit_message(&ctx.http, message_id, EditMessage::new().embed(embed.clone()).components(buttons.clone())).await {
                     Ok(_) => {
-                        // info!("[{}] Updated dashboard in #{}", guild_name, channel_name);
+                        // info!("[DASH_UPDATE] Successfully updated dashboard in #{} for guild {} group {}", channel_name, guild_id, group_id);
                     }
                     Err(e) => {
                         // Check if message was deleted (404 error)
