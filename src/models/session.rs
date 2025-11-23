@@ -178,6 +178,7 @@ impl SessionPlayer {
     }
 }
 
+#[allow(dead_code)]
 trait Quota {
     fn less(&self,  quota: usize) -> bool;
     fn equal(&self, quota: usize) -> bool;

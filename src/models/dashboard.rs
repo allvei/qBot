@@ -10,15 +10,6 @@ use tracing::{error, info, warn};
 
 use crate::models::{ComponentContext as CC, DashboardQueueKey, Group, SessionStatus};
 
-macro_rules! list_players {
-    ($desc:ident, $team:ident) => {
-        for (i, player) in $team.iter().enumerate() {
-            let elo_str = player.player.rank.map(|r| format!("[**{}**] ", r.elo())).unwrap_or_default();
-            $desc.push_str(&format!("{}<@{}>\n", elo_str, player.player.discord_id));
-        }
-    };
-}
-
 /// Helper function to format team players as a string for embed fields
 async fn format_team_field(team: &[crate::models::SessionPlayer], db: &crate::Database, guild_id: u64) -> String {
     let mut lines = Vec::new();

@@ -37,6 +37,7 @@ rustyline          = "17.0.2"
 # dead_code          = "allow"
 # unused_must_use    = "allow"
 # unused_variables   = "allow"
+deprecated = "allow"
 
 
 [lints.clippy]

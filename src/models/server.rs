@@ -833,6 +833,7 @@ impl Channels {
 }
 
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
     #[test]
@@ -851,6 +852,7 @@ mod tests {
             Vec::new(),
         );
 
+        #[allow(unused_must_use)]
         group.create_session();
 
         // Add players one by one - each call borrows and immediately drops

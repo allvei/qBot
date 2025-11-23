@@ -1,15 +1,13 @@
 // Combined game handlers
-use std::sync::Arc;
-
 use anyhow::{anyhow, Result};
 use rand::seq::SliceRandom;
-use serenity::all::{Context, EditMember, GuildId};
+use serenity::all::{Context, GuildId};
 
 use tracing::{info, warn};
 
-use crate::Database;
+use crate::{ComponentContext, Database};
 use crate::models::{
-    CommandContext, SessionPlayer, Group, Rank, Role, Server, Session, SessionStatus, Team,
+    CommandContext, SessionPlayer, Rank, Role, Server, SessionStatus, Team,
     DEFAULT_RANK,
 };
 
@@ -357,13 +355,7 @@ pub async fn validate_system_roles(
 
 /// Checks if a user has the specified role.
 /// Prioritizes Discord permissions (Administrator or Manage Server) over configured role.
-///
-/// * `cc` - The command context.
-/// * `role` - The role to check for.
-pub async fn check_role(
-    cc: &CommandContext<'_>,
-    role: &Role,
-) -> Result<bool> {
+pub async fn check_role(cc: &CommandContext<'_>, role: &Role) -> Result<bool> {
     use serenity::all::Permissions;
 
     if let Some(guild_id) = cc.intax.guild_id {
@@ -413,13 +405,7 @@ pub async fn check_role(
 
 /// Checks if a user has the specified role (for component interactions).
 /// Prioritizes Discord permissions (Administrator or Manage Server) over configured role.
-///
-/// * `cc` - The component context.
-/// * `role` - The role to check for.
-pub async fn check_component_role(
-    cc: &crate::models::ComponentContext<'_>,
-    role: &Role,
-) -> Result<bool> {
+pub async fn check_component_role(cc: &ComponentContext<'_>, role: &Role) -> Result<bool> {
     use serenity::all::Permissions;
 
     if let Some(guild_id) = cc.component.guild_id {
@@ -469,8 +455,6 @@ pub async fn check_component_role(
 }
 
 /// Splits the players into two teams.
-///
-/// * `players` - The players to split into teams.
 pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<SessionPlayer>) {
     let mut rng = rand::rng();
     let mut player_list: Vec<SessionPlayer> = players.to_vec();
@@ -482,67 +466,6 @@ pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<S
 }
 
 
-/// Moves players back to the queue channel.
-async fn move_players_to_queue_channel(game: Session, group: Group, guild_id: GuildId, ctx: &Context) -> Result<()> {
-    // Check if queue channel is configured
-    if group.channels.queue_vc != 0 {
-        for player in &game.pool {
-            // Try to move the user back to queue
-            let _ = ctx.http.edit_member(
-                guild_id,
-                player.player.discord_id,
-                &EditMember::new().voice_channel(group.channels.queue_vc),
-                Some("Moving player back to queue voice channel")
-            ).await;
-        }
-    }
-    Ok(())
-}
-
-/// Moves players to their respective team channels.
-///
-/// * `ctx`      - Ref to the Serenity context.
-/// * `db`       - Ref to the database.
-/// * `group`    - The group containing team channel information.
-/// * `game`     - The game with assigned teams.
-/// * `guild_id` - The ID of the guild where the game is taking place.
-async fn move_players_to_team_channels(
-    ctx:      &Context,
-    _db:      &Arc<Database>,
-    group:    Group,
-    game:     &mut Session,
-    guild_id: GuildId
-) -> Result<()> {
-    // Get red/blue voice channel IDs from the first team in the group
-    if group.channels.teams.is_empty() {
-        return Err(anyhow!("No team channels configured for this group"));
-    }
-    let red_vc = group.channels.teams[0].red_vc;
-    let blu_vc = group.channels.teams[0].blu_vc;
-    if red_vc == 0 || blu_vc == 0 {
-        return Err(anyhow!("Voice channel IDs not configured for this group"));
-    }
-
-    // Move players to red/blu voice channels
-    for player in &game.pool {
-        if let Some(team) = &player.team {
-            let target_channel = match team {
-                Team::Unassigned => continue,
-                Team::Red        => red_vc,
-                Team::Blu        => blu_vc,
-            };
-            let user_id = player.player.discord_id;
-            if let Ok(mut member) = guild_id.member(&ctx.http, user_id).await {
-                let _ = member.edit(
-                    &ctx.http,
-                    EditMember::new().voice_channel(target_channel)
-                ).await;
-            }
-        }
-    }
-
-    Ok(())
-}
 
 //
 // Queue functions
@@ -675,11 +598,9 @@ pub async fn status<'a>(cc: &'a CommandContext<'a>, guild: &mut Server) -> Resul
             let game = &idle_games[0];
             let count = game.pool.len();
             let list = if count > 0 {
-                game.pool.iter()
-                    .enumerate()
+                game.pool.iter().enumerate()
                     .map(|(i, p)| format!("{}. <@{}>", i + 1, p.player.discord_id))
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                    .collect::<Vec<_>>().join("\n")
             } else {
                 "Queue is empty".to_string()
             };
@@ -790,8 +711,7 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     }
 
     // Now get mutable access to the hot game
-    let hot_game = group.sessions
-        .iter_mut()
+    let hot_game = group.sessions.iter_mut()
         .find(|g| g.status == SessionStatus::Hot)
         .ok_or_else(|| anyhow!("Hot game not found after verification"))?;
 
@@ -807,12 +727,6 @@ pub async fn accept(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     Ok(())
 }
 
-/// `/end`
-///
-/// * `ctx`         - Ref to the Serenity context.
-/// * `interaction` - Ref to the command interaction.
-/// * `db`          - Ref to the database.
-/// * `game_id`  - The ID of the game to end.
 pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     // Check permissions
     if !check_role(cc, &Role::Runner).await? {
@@ -824,29 +738,21 @@ pub async fn end(cc: &CommandContext<'_>, guild: &mut Server) -> Result<()> {
     let channel_id = cc.intax.channel_id;
     let group = guild.get_group(channel_id)?;
 
-    if let Ok(game) = group.get_user_session(cc.intax.user.id).await {
-        game.status = SessionStatus::Pull;
-
-        // TODO: Persist group changes to DB if needed (no update_group method exists)
-        // You may need to implement this in your database layer.
-
-        // Move players to queue channel if we're in a guild
-        if let Some(guild_id) = cc.intax.guild_id {
-            move_players_to_queue_channel(
-                game.clone(),
-                group.clone(),
-                guild_id,
-                cc.ctx
-            ).await?;
-        }
-
-        cc.reply("Game has been ended. Players will be moved back to queue.").await?;
-    } else {
+    // Check if there's an active game to end
+    let has_active = group.sessions.iter().any(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live);
+    
+    if !has_active {
         cc.reply("No active game found to end.").await?;
+        return Ok(());
     }
 
-    // Update dashboard
-    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
+    // Use Group::pull() to properly move players back and handle re-queueing
+    if let Some(guild_id) = cc.intax.guild_id {
+        group.pull(cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await?;
+        cc.reply("Game has been ended. Players moved back to queue.").await?;
+    } else {
+        cc.reply("This command can only be used in a server.").await?;
+    }
 
     Ok(())
 }

@@ -700,7 +700,7 @@ impl EventHandler for Handler {
 
                     let quota = group.quota as usize;
                     // Get session index before mutable borrow
-                    let session_idx = group.sessions.iter()
+                    let _ = group.sessions.iter()
                         .position(|s| s.pool.iter().any(|p| p.player.discord_id == user_id));
 
                     let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
@@ -753,7 +753,7 @@ impl EventHandler for Handler {
 
                     let quota = group.quota as usize;
                     // Get session index before mutable borrow
-                    let session_idx = group.sessions.iter()
+                    let _ = group.sessions.iter()
                         .position(|s| s.pool.iter().any(|p| p.player.discord_id == user_id));
 
                     let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
