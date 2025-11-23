@@ -12,9 +12,8 @@ use serenity::all::{
 use serenity::prelude::TypeMapKey;
 use serenity::async_trait;
 use serenity::builder::{
-    CreateCommand as CC, CreateCommandOption as CCO, CreateEmbed as CE,
-    CreateEmbedFooter as CEF, CreateInteractionResponse as CIR,
-    CreateInteractionResponseMessage as CIRM, CreateMessage as CM,
+    CreateCommand as CC, CreateCommandOption as CCO, CreateInteractionResponse as CIR,
+    CreateInteractionResponseMessage as CIRM,
 };
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
@@ -22,7 +21,7 @@ use tracing::{error, info, warn};
 use pf_pug_bot::database::migrations::DatabaseMigrations;
 use pf_pug_bot::database::repositories::GroupRepository;
 use pf_pug_bot::handlers::admin;
-use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database, Group, Manager, QueueToggleType::{self, *}, Roles, Server, SessionStatus, VoiceStateUpdate, log_queue_toggle};
+use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database, Manager, QueueToggleType::{self, *}, Roles, Server, SessionStatus, VoiceStateUpdate, log_queue_toggle};
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
     CC::new(name.into(),).description(desc.into(),)
@@ -402,14 +401,8 @@ impl EventHandler for Handler {
                 }
             },
             Interaction::Component(itx) => {
-                // Handle button interactions
-                let discord_tag = match self.database.get_user(itx.user.id).await {
-                    Ok(player) => player.discord_tag.unwrap_or_else(|| itx.user.name.clone()),
-                    Err(_) => itx.user.name.clone(),
-                };
                 let button_type = ButtonType::parse(&itx.data.custom_id);
 
-                // Handle permission confirmation button
                 if matches!(button_type, ButtonType::ConfirmPermissions) {
                     let guild_id = itx.guild_id.unwrap();
                     let user_id = itx.user.id;
@@ -510,7 +503,6 @@ impl EventHandler for Handler {
                     return;
                 }
 
-                // Handle rank role creation buttons
                 if matches!(button_type, ButtonType::CreateRankRolesYes | ButtonType::CreateRankRolesNo) {
                     let create = matches!(button_type, ButtonType::CreateRankRolesYes);
                     let result = admin::handle_create_rank_roles(&ctx, &self.database, &itx, create).await;
@@ -520,7 +512,6 @@ impl EventHandler for Handler {
                     return;
                 }
 
-                // Handle setup/init interactions first (no group needed)
                 if button_type.is_setup_button() {
                     let result = admin::handle_setup_interaction(&ctx, &itx, &self.database, &self.manager).await;
                     if let Err(e) = result {
@@ -529,12 +520,10 @@ impl EventHandler for Handler {
                     return;
                 }
 
-                // For dashboard button interactions, we need a group
                 let mut manager = self.manager.lock().await;
                 let guild_id = itx.guild_id.unwrap();
                 let channel_id = itx.channel_id;
 
-                // Try to get the group from the manager
                 let group = match manager.get_group_by_channel(guild_id, channel_id) {
                     Ok(group) => group,
                     Err(_) => {
@@ -620,7 +609,6 @@ impl EventHandler for Handler {
                     }
                 };
 
-                // Create component context similar to command context
                 let comp_ctx = ComponentContext {
                     ctx:       &ctx,
                     component: &itx,
@@ -628,7 +616,6 @@ impl EventHandler for Handler {
                     manager:   &self.manager,
                 };
 
-                // Handle different button actions based on custom_id
                 let result = group.dash_handle_button_interaction(&comp_ctx).await;
 
                 if let Err(e) = result {
@@ -1140,41 +1127,6 @@ impl Handler {
                     error!("Failed to create dashboard for channel {}: {}", channel_name, e);
                 }
             }
-        }
-    }
-
-    /// Sends a notification to the dashboard channel when a game is ready
-    async fn notify(&self,ctx: &Context,group: &Group,) {
-        let dashboard_channel = group.channels.dashboard;
-
-        // Ensure there are at least 8 players before slicing
-        let mut player_mentions = Vec::new();
-
-        // Get count from the latest game if available
-        let player_count = if let Some(game) = group.sessions.last() { game.pool.len() } else { 0 };
-        let players_to_mention = if player_count >= 8 { 8 } else { player_count };
-
-        // Access players in the latest game if available
-        if let Some(game) = group.sessions.last() {
-            for player in &game.pool[..players_to_mention] {
-                player_mentions.push(format!("<@{}>", player.player.discord_id));
-            }
-        }
-
-        let embed = CE::new()
-            .title("GAME READY!")
-            .description(format!(
-                "**{} players in queue channel!**\n\n{}\n\nUse `/shuffle` to generate teams.",
-                group.quota,
-                player_mentions.join(" ")
-            ))
-            .footer(CEF::new("Awaiting team generation..."));
-
-        // Send the message to the dashboard channel
-        if let Err(e) = dashboard_channel.send_message(&ctx.http, CM::new().embed(embed)).await {
-            error!("Failed to send game ready notification: {:?}", e);
-        } else {
-            info!("Sent ready notification to dashboard channel");
         }
     }
 }

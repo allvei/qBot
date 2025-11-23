@@ -180,11 +180,6 @@ impl GroupRepository {
         Ok(())
     }
 
-    /// Log available groups for debugging
-    async fn log_available_groups(&self) {
-        // Verbose logging removed - use database queries for debugging
-    }
-
     /// Check if a group exists for a guild
     pub async fn group_exists_for_guild(&self, guild_id: u64) -> Result<bool> {
         let count: i64 = sqlx::query_scalar(

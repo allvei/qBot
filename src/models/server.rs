@@ -587,8 +587,8 @@ impl Group {
             
             // Create map of ELO -> Vec<indices in players_to_balance>
             let mut elo_groups: HashMap<u32, Vec<usize>> = HashMap::new();
-            for i in 0..pool_size {
-                let elo = players_to_balance[i].1;
+            for (i, player) in players_to_balance.iter().enumerate().take(pool_size) {
+                let elo = player.1;
                 elo_groups.entry(elo).or_default().push(i);
             }
             
@@ -719,7 +719,7 @@ impl Group {
 
         let content = player_mentions.join(" ");
         let msg = CM::new().embed(embed).content(content);
-        queue_chat.send_message(&ctx.http, msg).await;
+        let _ = queue_chat.send_message(&ctx.http, msg).await;
     }
 
     pub async fn move_user(&self, guild_id: GI, user_id: UI, channel_id: CI, ctx: &Context) -> Result<(), Error> {

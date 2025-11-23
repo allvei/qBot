@@ -480,7 +480,7 @@ pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<String>) -> Result<()>
             description.push_str("  *No roles configured*\n");
         } else {
             for role_id in role_ids {
-                let _role_name = guild_roles.iter()
+                let _ = guild_roles.iter()
                     .find(|r| r.id == role_id)
                     .map(|r| r.name.clone())
                     .unwrap_or_else(|| format!("Unknown ({})", role_id));
@@ -511,7 +511,7 @@ pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<String>) -> Result<()>
                 description.push_str("  *No roles configured*\n");
             } else {
                 for role_id in role_ids {
-                    let _role_name = guild_roles.iter()
+                    let _ = guild_roles.iter()
                         .find(|r| r.id == role_id)
                         .map(|r| r.name.clone())
                         .unwrap_or_else(|| format!("Unknown ({})", role_id));
