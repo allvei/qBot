@@ -2,7 +2,7 @@ pub mod user;
 pub mod group;
 pub mod config;
 
-pub use user::UserRepository;
+pub use user::{UserRepository, UserSettings};
 pub use group::GroupRepository;
 pub use config::ConfigRepository;
 
