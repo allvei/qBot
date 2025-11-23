@@ -29,6 +29,8 @@ impl Session {
 
     /// Add a player to the session with their rank
     pub fn add_player(&mut self, player: Player, rank: crate::models::Rank) {
+        use tracing::info;
+        info!("[SESSION] Adding player {} to session pool (not in VC yet), pool size will be {}", player.discord_id, self.pool.len() + 1);
         let session_player = SessionPlayer::add(player, rank);
         self.pool.push(session_player);
     }
@@ -36,6 +38,8 @@ impl Session {
     /// Add a player to the session with their rank, marking them as already in queue VC
     /// Use this when re-adding players who were just moved to the queue channel
     pub fn add_player_in_vc(&mut self, player: Player, rank: crate::models::Rank) {
+        use tracing::info;
+        info!("[SESSION] Adding player {} to session pool (already in VC), pool size will be {}", player.discord_id, self.pool.len() + 1);
         let mut session_player = SessionPlayer::add(player, rank);
         session_player.in_queue_vc = true;
         self.pool.push(session_player);

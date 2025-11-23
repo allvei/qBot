@@ -20,7 +20,7 @@ use tracing::{error, info, warn};
 
 use pf_pug_bot::database::migrations::DatabaseMigrations;
 use pf_pug_bot::database::repositories::GroupRepository;
-use pf_pug_bot::handlers::admin;
+use pf_pug_bot::handlers::{self, admin};
 use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database, Manager, QueueToggleType::{self, *}, Roles, Server, SessionStatus, VoiceStateUpdate, log_queue_toggle};
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
@@ -120,6 +120,8 @@ impl EventHandler for Handler {
             cmd("ranksetelo",  "Set custom ELO value for a rank")
                 .op("rank_role", "The rank role (mention or ID)", true)
                 .op("elo", "ELO value (1-100)", true),
+            cmd("toggledm",    "Toggle DM notifications when a game is ready"),
+            cmd("settings",    "Open your personal settings menu in DMs"),
         ];
 
         if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
@@ -212,6 +214,14 @@ impl EventHandler for Handler {
                         info();
                         let role_type = cdo.iter().find(|opt| opt.name == "role_type").and_then(|opt| opt.value.as_str()).unwrap_or("both").to_string();
                         commands::cmd_role_remove(&cmd_ctx, role_type).await
+                    }
+                    "toggledm" => {
+                        info();
+                        commands::cmd_toggle_dm(&cmd_ctx).await
+                    }
+                    "settings" => {
+                        info();
+                        commands::cmd_settings(&cmd_ctx).await
                     }
                     "setupadd" => {
                         info();
@@ -396,7 +406,7 @@ impl EventHandler for Handler {
                     let error_response = CIR::Message(CIRM::new().content("An error occurred while processing your command").ephemeral(true));
 
                     if let Err(response_err) = itx.create_response(&ctx.http, error_response).await {
-                        error!("Failed to send error response: {}", response_err);
+                        error!("Failed to send error response: {response_err}");
                     }
                 }
             },
@@ -520,6 +530,15 @@ impl EventHandler for Handler {
                     return;
                 }
 
+                // Handle settings buttons (in DMs)
+                if itx.data.custom_id.starts_with("settings_") {
+                    let result = handlers::handle_settings_button(&ctx, &itx, &self.database).await;
+                    if let Err(e) = result {
+                        error!("Error handling settings interaction: {e}");
+                    }
+                    return;
+                }
+
                 let mut manager = self.manager.lock().await;
                 let guild_id = itx.guild_id.unwrap();
                 let channel_id = itx.channel_id;
@@ -616,6 +635,10 @@ impl EventHandler for Handler {
                     manager:   &self.manager,
                 };
 
+                let button_id = &itx.data.custom_id;
+                let user_id = itx.user.id;
+                info!("[BUTTON] User {} clicked button '{}' in channel {}", user_id, button_id, channel_id);
+
                 let result = group.dash_handle_button_interaction(&comp_ctx).await;
 
                 if let Err(e) = result {
@@ -625,7 +648,16 @@ impl EventHandler for Handler {
                     let error_response = CIR::Message(CIRM::new().content("An error occurred while processing your button click").ephemeral(true));
 
                     if let Err(response_err) = itx.create_response(&ctx.http, error_response).await {
-                        error!("Failed to send error response: {}", response_err);
+                        error!("Failed to send error response: {response_err}");
+                    }
+                }
+            },
+            Interaction::Modal(itx) => {
+                // Handle modal submissions for settings
+                if itx.data.custom_id.starts_with("settings_modal_") {
+                    let result = handlers::handle_settings_modal(&ctx, &itx, &self.database).await;
+                    if let Err(e) = result {
+                        error!("Error handling settings modal '{}': {}", itx.data.custom_id, e);
                     }
                 }
             },
@@ -691,47 +723,46 @@ impl EventHandler for Handler {
 
         match state {
             VoiceStateUpdate::Disconnected => {
-                if group.channels.queue_vc == lookup_channel {
-                    let guild_name = ctx.cache.guild(server).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-                    let group_name = ctx.cache.channel(group.channels.dashboard)
-                        .map(|ch| ch.name.clone())
-                        .unwrap_or_else(|| "Unknown".to_string());
-                    log_queue_toggle(&guild_name, &group_name, &discord_tag, VL);
+                // Player disconnected from queue VC (not moved, actually left)
+                let guild_name = ctx.cache.guild(server).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                let group_name = ctx.cache.channel(group.channels.dashboard)
+                    .map(|ch| ch.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                log_queue_toggle(&guild_name, &group_name, &discord_tag, VL);
 
-                    let quota = group.quota as usize;
-                    // Get session index before mutable borrow
-                    let _ = group.sessions.iter()
-                        .position(|s| s.pool.iter().any(|p| p.player.discord_id == user_id));
+                let quota = group.quota as usize;
+                // Get session index before mutable borrow
+                let _ = group.sessions.iter()
+                    .position(|s| s.pool.iter().any(|p| p.player.discord_id == user_id));
 
-                    let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
-                        if !sesh.is_active() {
-                            let was_hot = sesh.is_hot();
-                            
-                            // Remove player from session when they leave VC
-                            sesh.remove_player(user_id);
-                            
-                            // If session was hot and still has enough players, regenerate teams
-                            if was_hot && sesh.pool.len() >= quota {
-                                true
-                            } else if was_hot && sesh.pool.len() < quota {
-                                // Dropped below quota, transition to Idle
-                                sesh.idle();
-                                false
-                            } else {
-                                false
-                            }
+                let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
+                    if !sesh.is_active() {
+                        let was_hot = sesh.is_hot();
+                        
+                        // Remove player from session when they disconnect
+                        sesh.remove_player(user_id);
+                        
+                        // If session was hot and still has enough players, regenerate teams
+                        if was_hot && sesh.pool.len() >= quota {
+                            true
+                        } else if was_hot && sesh.pool.len() < quota {
+                            // Dropped below quota, transition to Idle
+                            sesh.idle();
+                            false
                         } else {
                             false
                         }
                     } else {
                         false
-                    };
-
-                    if should_regenerate {
-                        group.generate_teams(&ctx, server, Some(&self.database)).await;
                     }
-                    group.queue_dash_update(&ctx, server.get()).await;
+                } else {
+                    false
+                };
+
+                if should_regenerate {
+                    group.generate_teams(&ctx, server, Some(&self.database)).await;
                 }
+                group.queue_dash_update(&ctx, server.get()).await;
             },
             VoiceStateUpdate::Connected => {
                 // Player addition is handled in the later section (lines 680+)
@@ -783,6 +814,7 @@ impl EventHandler for Handler {
                     if should_regenerate {
                         group.generate_teams(&ctx, server, Some(&self.database)).await;
                     }
+                    // Queue count now only displayed in dashboard
                     group.queue_dash_update(&ctx, server.get()).await;
                 }
             },

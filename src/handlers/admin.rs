@@ -1247,7 +1247,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
                     • Admin Role: <@&{admin_role}>\n\
                     • Rank Roles: Created\n\n\
                     **The dashboard is ready!** Players can now:\n\
-                    • Click \"Join/Leave\" to queue up\n\
+                    • Click \"Join\" to queue up or \"Leave\" to exit the queue\n\
                     • Join the queue voice channel to auto-queue\n\n\
                     Runners can use the dashboard buttons to manage matches.",
                 ))

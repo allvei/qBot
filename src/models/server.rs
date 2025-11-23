@@ -224,7 +224,7 @@ impl Group {
 
         // Notify requires guild_id for VC validation
         if let Some(gid) = guild_id {
-            self.notify(ctx, gid).await;
+            self.notify(ctx, gid, db).await;
         } else {
             warn!("Cannot notify: guild_id not provided");
         }
@@ -645,21 +645,172 @@ impl Group {
         self.queue_dash_update(ctx, guild_id.get()).await;
     }
 
-    pub async fn queue_player(&mut self, player: Player, rank: Rank, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>) -> Result<()> {
+    pub async fn queue_player(
+        &mut self,
+        player: Player,
+        rank: Rank,
+        ctx: &Context,
+        guild_id: Option<GI>,
+        db: Option<&DB>,
+        manager: Option<Arc<Mutex<Manager>>>,
+    ) -> Result<()> {
+        info!("[QUEUE_PLAYER] Queueing player {} with rank {:?} to group {}", player.discord_id, rank, self.group_id);
         let queue_ctx = QueueContext { ctx, guild_id, db, manager };
         self.queue_player_with_vc_status(player, rank, queue_ctx, false).await
     }
 
     pub async fn queue_player_with_vc_status(&mut self, player: Player, rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
+        let player_id = player.discord_id;
+        let quota = self.quota as usize;
         let session = self.get_queue().await?;
         
+        info!("[QUEUE_PLAYER] Adding player {} to session (in_vc: {})", player_id, in_vc);
         if in_vc {session.add_player_in_vc(player, rank);}
         else {session.add_player(player, rank);}
 
-        if self.is_quota() {
-            self.hot(queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager).await?;
+        let current_count = session.pool.len();
+        info!("[QUEUE_PLAYER] Player {} added, session pool size is now {}/{}", player_id, current_count, quota);
+
+        info!("[QUEUE_PLAYER] Starting near-quota notification check");
+        // Check for near-quota notifications
+        if let Some(db) = queue_ctx.db {
+            let slots_remaining = if current_count < quota {
+                quota - current_count
+            } else {
+                0
+            };
+
+            // Send near-quota notifications to users who have the threshold set
+            if slots_remaining > 0 && slots_remaining <= 5 {
+                // Get all users with notification preferences
+                for session_player in &session.pool {
+                    // Skip the player who just joined
+                    if session_player.player.discord_id == player_id {
+                        continue;
+                    }
+
+                    if let Ok(settings) = db.users.get_settings(session_player.player.discord_id).await {
+                        if let Some(threshold) = settings.notify_quota_threshold {
+                            if slots_remaining <= threshold as usize {
+                                // Send DM notification
+                                if let Ok(user) = queue_ctx.ctx.http.get_user(session_player.player.discord_id).await {
+                                    use serenity::all::{CreateEmbed, CreateMessage};
+                                    
+                                    let embed = CreateEmbed::new()
+                                        .title("Queue Almost Ready!")
+                                        .description(format!(
+                                            "The queue is {} player{} away from starting!\nCurrent: {}/{}",
+                                            slots_remaining,
+                                            if slots_remaining == 1 { "" } else { "s" },
+                                            current_count,
+                                            quota
+                                        ))
+                                        .color(0xffa500); // Orange
+                                    
+                                    let _ = user.direct_message(&queue_ctx.ctx.http, CreateMessage::new().embed(embed)).await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
+        info!("[QUEUE_PLAYER] Near-quota notifications completed");
+        // Session borrow ends here
+
+        // Queue count now only displayed in dashboard
+
+        info!("[QUEUE_PLAYER] Checking if quota is met (current: {}, quota: {})", current_count, quota);
+        if self.is_quota() {
+            info!("[QUEUE_PLAYER] Quota met! Calling hot() transition");
+            self.hot(queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager).await?;
+            info!("[QUEUE_PLAYER] hot() transition completed");
+        } else {
+            info!("[QUEUE_PLAYER] Quota not yet met, staying idle");
+        }
+        info!("[QUEUE_PLAYER] queue_player_with_vc_status completed for player {}", player_id);
         Ok(())
+    }
+
+    /// Update queue VC name to show current count
+    /// Filters out existing " n/n" pattern to avoid stacking
+    /// 
+    /// Discord has a strict rate limit of 2 channel name changes per 10 minutes.
+    /// To avoid hitting this limit, we parse the current name and skip updates if:
+    /// - The displayed count hasn't changed
+    /// This prevents rate limit issues while keeping the name accurate.
+    pub async fn update_queue_vc_name(&self, ctx: &Context, _guild_id: GI) {
+        use serenity::all::EditChannel;
+        
+        let queue_vc = self.channels.queue_vc;
+        info!("[UPDATE_VC_NAME] Starting VC name update for channel {}", queue_vc);
+        
+        // Get current queue count from idle sessions
+        let current_count = self.sessions.iter()
+            .find(|s| s.status == SessionStatus::Idle)
+            .map(|s| s.pool.len())
+            .unwrap_or(0);
+        info!("[UPDATE_VC_NAME] Current queue count: {}", current_count);
+        
+        // Get current channel name
+        info!("[UPDATE_VC_NAME] Fetching current channel name from Discord API...");
+        let current_name = match queue_vc.name(&ctx.http).await {
+            Ok(name) => {
+                info!("[UPDATE_VC_NAME] Got current channel name: '{}'", name);
+                name
+            },
+            Err(e) => {
+                warn!("[UPDATE_VC_NAME] Failed to get channel name: {}", e);
+                return;
+            }
+        };
+        
+        // Parse existing count from " n/n" pattern to check if update is needed
+        let (base_name, displayed_count) = if let Some(idx) = current_name.rfind(' ') {
+            let potential_suffix = &current_name[idx + 1..];
+            // Check if it matches "n/n" pattern
+            if potential_suffix.contains('/') {
+                // Extract the first number (current count)
+                let parts: Vec<&str> = potential_suffix.split('/').collect();
+                if parts.len() == 2 {
+                    if let Ok(count) = parts[0].parse::<usize>() {
+                        (&current_name[..idx], Some(count))
+                    } else {
+                        (&current_name[..], None)
+                    }
+                } else {
+                    (&current_name[..], None)
+                }
+            } else {
+                (&current_name[..], None)
+            }
+        } else {
+            (&current_name[..], None)
+        };
+        
+        // Check if displayed count matches current count
+        if let Some(displayed) = displayed_count {
+            if displayed == current_count {
+                info!("[UPDATE_VC_NAME] Count unchanged ({}), skipping update to avoid rate limit", current_count);
+                return;
+            }
+        }
+        
+        // Build new name with count
+        let new_name = format!("{} {}/{}", base_name, current_count, self.quota);
+        info!("[UPDATE_VC_NAME] New name will be: '{}' (count changed: {} -> {})", new_name, displayed_count.unwrap_or(0), current_count);
+        
+        // Update the channel name
+        if new_name != current_name {
+            info!("[UPDATE_VC_NAME] Name changed, sending edit request to Discord API...");
+            match ctx.http.edit_channel(queue_vc, &EditChannel::new().name(&new_name), Some("Update queue count")).await {
+                Ok(_) => info!("[UPDATE_VC_NAME] Successfully updated channel name"),
+                Err(e) => warn!("[UPDATE_VC_NAME] Failed to update channel name: {}", e),
+            }
+        } else {
+            info!("[UPDATE_VC_NAME] Name unchanged, skipping update");
+        }
+        info!("[UPDATE_VC_NAME] VC name update completed");
     }
 
     pub async fn add_player(&mut self, session: &mut Session, player: Player, rank: Rank, ctx: &Context, guild_id: GI) {
@@ -696,13 +847,15 @@ impl Group {
     /// Notifies the queue chat that quota has been met
     /// Only pings players who are NOT in the voice channel yet
     /// Only pings the first 'quota' players, not extras queued for next match
-    pub async fn notify(&mut self, ctx: &Context, guild_id: GI) {
+    /// Also sends DMs to players who have dm_enabled=true
+    pub async fn notify(&mut self, ctx: &Context, guild_id: GI, db: Option<&DB>) {
         // Validate VC status before sending notifications to prevent desync
         // This ensures we only ping players who are actually not in VC
         self.validate_vc_status(ctx, guild_id).await;
         
         let queue_chat = self.channels.queue_chat;
         let mut player_mentions = Vec::new();
+        let mut players_to_dm = Vec::new();
         let quota = self.quota as usize;
 
         if let Some(game) = self.sessions.last() {
@@ -711,6 +864,7 @@ impl Group {
             for player in game.pool.iter().take(quota) {
                 if !player.in_queue_vc {
                     player_mentions.push(format!("<@{}>", player.player.discord_id));
+                    players_to_dm.push(player.player.discord_id);
                 }
             }
         }
@@ -729,6 +883,39 @@ impl Group {
         let content = player_mentions.join(" ");
         let msg = CM::new().embed(embed).content(content);
         let _ = queue_chat.send_message(&ctx.http, msg).await;
+
+        // Send DMs to users who have dm_enabled=true
+        if let Some(database) = db {
+            for user_id in players_to_dm {
+                // Check if user has DM notifications enabled
+                match database.users.get_dm_enabled(user_id).await {
+                    Ok(true) => {
+                        // Send DM
+                        if let Ok(user) = ctx.http.get_user(user_id).await {
+                            let dm_embed = CreateEmbed::new()
+                                .title("PUG Ready!")
+                                .description(format!(
+                                    "A game is ready in **{}**!\nPlease join the queue channel.",
+                                    ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "the server".to_string())
+                                ))
+                                .color(0x00ff00);
+                            
+                            if let Err(e) = user.direct_message(&ctx.http, 
+                                serenity::all::CreateMessage::new().embed(dm_embed)
+                            ).await {
+                                warn!("Failed to send DM to user {}: {}", user_id, e);
+                            }
+                        }
+                    }
+                    Ok(false) => {
+                        // User has DMs disabled, skip
+                    }
+                    Err(e) => {
+                        warn!("Failed to check DM status for user {}: {}", user_id, e);
+                    }
+                }
+            }
+        }
     }
 
     pub async fn move_user(&self, guild_id: GI, user_id: UI, channel_id: CI, ctx: &Context) -> Result<(), Error> {
