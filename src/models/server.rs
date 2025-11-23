@@ -619,7 +619,7 @@ impl Group {
                     blu_indices.retain(|&i| !indices.contains(&i));
                     
                     red_indices.extend_from_slice(&indices[..red_count]);
-                    blu_indices.extend_from_slice(&indices[..blu_count]);
+                    blu_indices.extend_from_slice(&indices[red_count..]);
                     
                     info!("[Session {}] Shuffled {} players with ELO {}", session_idx, indices.len(), elo);
                 }
