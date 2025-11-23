@@ -845,6 +845,59 @@ impl ConsoleHandler {
         }
     }
 
+    /// Helper: Resolve both guild ID and group ID from string identifiers
+    async fn resolve_guild_and_group(&self, guild_identifier: &str, group_id_str: &str) 
+        -> Result<(u64, u8), Box<dyn std::error::Error + Send + Sync>> {
+        let guild_id = self.resolve_guild_id(guild_identifier).await?;
+        let group_id: u8 = group_id_str.parse()
+            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        Ok((guild_id, group_id))
+    }
+
+    /// Helper: Get mutable reference to a group by locking manager
+    async fn get_group_mut(&self, guild_id: u64, group_id: u8) 
+        -> Result<tokio::sync::MutexGuard<'_, Manager>, Box<dyn std::error::Error + Send + Sync>> {
+        let manager = self.manager.lock().await;
+        // Verify group exists before returning the guard
+        if manager.servers.iter()
+            .find(|s| s.guild_id == guild_id)
+            .and_then(|s| s.groups.iter().find(|g| g.group_id == group_id))
+            .is_none() {
+            return Err(format!("Group {} not found for guild {}", group_id, guild_id).into());
+        }
+        Ok(manager)
+    }
+
+    /// Helper: Require context to be available
+    fn require_context(&self) -> Result<&Arc<Context>, Box<dyn std::error::Error + Send + Sync>> {
+        self.ctx.as_ref().ok_or_else(|| "Context not available".into())
+    }
+
+    /// Helper: Update dashboard if context is available
+    async fn update_dashboard_if_available(&self, manager: &mut tokio::sync::MutexGuard<'_, Manager>, guild_id: u64, group_id: u8) {
+        if let Some(ctx) = &self.ctx {
+            if let Ok(group) = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id) {
+                group.queue_dash_update(ctx, guild_id).await;
+            }
+        }
+    }
+
+    /// Helper: Print "no queue found" message
+    fn print_no_queue_message(guild_id: u64, group_id: u8) {
+        println!("No active queue found for guild {} group {}", guild_id, group_id);
+    }
+
+    /// Helper: Get team players from session
+    fn get_team_players(session: &pf_pug_bot::models::Session) -> (Vec<&pf_pug_bot::models::SessionPlayer>, Vec<&pf_pug_bot::models::SessionPlayer>) {
+        let red_players: Vec<_> = session.pool.iter()
+            .filter(|p| p.team == Some(Team::Red))
+            .collect();
+        let blu_players: Vec<_> = session.pool.iter()
+            .filter(|p| p.team == Some(Team::Blu))
+            .collect();
+        (red_players, blu_players)
+    }
+
     async fn cmd_print_config(&self, guild_identifier: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
 
@@ -1096,54 +1149,42 @@ impl ConsoleHandler {
     }
 
     async fn cmd_force_generate_teams(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let guild_id = self.resolve_guild_id(guild_identifier).await?;
-        let group_id: u8 = group_id_str.parse()
-            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
+        let ctx = self.require_context()?;
 
-        if let Some(ctx) = &self.ctx {
-            let mut manager = self.manager.lock().await;
-            let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+        let mut manager = self.get_group_mut(guild_id, group_id).await?;
+        let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
-            // Check if there's a session with enough players
+        // Check if there's a session with enough players
+        if let Ok(session) = group.get_queue().await {
+            println!("Forcing team generation for guild {} group {} with {} players...", guild_id, group_id, session.pool.len());
+            group.generate_teams(ctx, serenity::model::id::GuildId::new(guild_id), None).await;
+            println!("Teams generated successfully!");
+
+            // Show the teams
             if let Ok(session) = group.get_queue().await {
-                println!("Forcing team generation for guild {} group {} with {} players...", guild_id, group_id, session.pool.len());
-                group.generate_teams(ctx, serenity::model::id::GuildId::new(guild_id), None).await;
-                println!("Teams generated successfully!");
+                println!("\n=== Generated Teams ===");
+                let (red_players, blu_players) = Self::get_team_players(session);
 
-                // Show the teams
-                if let Ok(session) = group.get_queue().await {
-                    println!("\n=== Generated Teams ===");
-                    let red_players: Vec<_> = session.pool.iter()
-                        .filter(|p| p.team == Some(Team::Red))
-                        .collect();
-                    let blu_players: Vec<_> = session.pool.iter()
-                        .filter(|p| p.team == Some(Team::Blu))
-                        .collect();
-
-                    println!("Red Team ({} players):", red_players.len());
-                    for p in red_players {
-                        println!("  - {}", p.player.discord_id);
-                    }
-
-                    println!("\nBlue Team ({} players):", blu_players.len());
-                    for p in blu_players {
-                        println!("  - {}", p.player.discord_id);
-                    }
+                println!("Red Team ({} players):", red_players.len());
+                for p in red_players {
+                    println!("  - {}", p.player.discord_id);
                 }
-            } else {
-                println!("No active queue found for guild {} group {}", guild_id, group_id);
+
+                println!("\nBlue Team ({} players):", blu_players.len());
+                for p in blu_players {
+                    println!("  - {}", p.player.discord_id);
+                }
             }
         } else {
-            println!("Context not available. Cannot generate teams without Discord context.");
+            Self::print_no_queue_message(guild_id, group_id);
         }
 
         Ok(())
     }
 
     async fn cmd_add_fake_players(&self, guild_identifier: &str, group_id_str: &str, count_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let guild_id = self.resolve_guild_id(guild_identifier).await?;
-        let group_id: u8 = group_id_str.parse()
-            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
         let count: usize = count_str.parse()
             .map_err(|_| format!("Invalid player count: {}", count_str))?;
 
@@ -1152,7 +1193,7 @@ impl ConsoleHandler {
             return Ok(());
         }
 
-        let mut manager = self.manager.lock().await;
+        let mut manager = self.get_group_mut(guild_id, group_id).await?;
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
         // Get the idle session
@@ -1169,48 +1210,33 @@ impl ConsoleHandler {
             }
 
             println!("Added {} fake player(s). Total players in queue: {}", count, session.pool.len());
-
-            // Update dashboard if context is available
-            if let Some(ctx) = &self.ctx {
-                group.queue_dash_update(ctx, guild_id).await;
-            }
+            self.update_dashboard_if_available(&mut manager, guild_id, group_id).await;
         } else {
-            println!("Failed to get queue for guild {} group {}", guild_id, group_id);
+            Self::print_no_queue_message(guild_id, group_id);
         }
 
         Ok(())
     }
 
     async fn cmd_test_notify(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let guild_id = self.resolve_guild_id(guild_identifier).await?;
-        let group_id: u8 = group_id_str.parse()
-            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
+        let ctx = self.require_context()?;
 
-        if let Some(ctx) = &self.ctx {
-            let mut manager = self.manager.lock().await;
-            let server = manager.servers.iter_mut().find(|s| s.guild_id == guild_id)
-                .ok_or(format!("Server not found for guild ID: {}", guild_id))?;
+        let mut manager = self.get_group_mut(guild_id, group_id).await?;
+        let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
-            let group = server.groups.iter_mut().find(|g| g.group_id == group_id)
-                .ok_or(format!("Group {} not found for guild {}", group_id, guild_id))?;
-
-            println!("Testing notify method for guild {} group {}...", guild_id, group_id);
-            group.notify(ctx, serenity::model::id::GuildId::new(guild_id)).await;
-            println!("Notify method called successfully!");
-            println!("   Check the queue chat channel for the notification message.");
-        } else {
-            println!("Context not available. Cannot test notify without Discord context.");
-        }
+        println!("Testing notify method for guild {} group {}...", guild_id, group_id);
+        group.notify(ctx, serenity::model::id::GuildId::new(guild_id)).await;
+        println!("Notify method called successfully!");
+        println!("   Check the queue chat channel for the notification message.");
 
         Ok(())
     }
 
     async fn cmd_show_queue(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let guild_id = self.resolve_guild_id(guild_identifier).await?;
-        let group_id: u8 = group_id_str.parse()
-            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
 
-        let mut manager = self.manager.lock().await;
+        let mut manager = self.get_group_mut(guild_id, group_id).await?;
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
         let quota = group.quota;
 
@@ -1233,27 +1259,20 @@ impl ConsoleHandler {
                 }
             }
         } else {
-            println!("No active queue found for guild {} group {}", guild_id, group_id);
+            Self::print_no_queue_message(guild_id, group_id);
         }
 
         Ok(())
     }
 
     async fn cmd_show_teams(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let guild_id = self.resolve_guild_id(guild_identifier).await?;
-        let group_id: u8 = group_id_str.parse()
-            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
 
-        let mut manager = self.manager.lock().await;
+        let mut manager = self.get_group_mut(guild_id, group_id).await?;
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
         if let Ok(session) = group.get_queue().await {
-            let red_players: Vec<_> = session.pool.iter()
-                .filter(|p| p.team == Some(Team::Red))
-                .collect();
-            let blu_players: Vec<_> = session.pool.iter()
-                .filter(|p| p.team == Some(Team::Blu))
-                .collect();
+            let (red_players, blu_players) = Self::get_team_players(session);
 
             if red_players.is_empty() && blu_players.is_empty() {
                 println!("No teams have been generated yet.");
@@ -1274,44 +1293,36 @@ impl ConsoleHandler {
                 }
             }
         } else {
-            println!("No active queue found for guild {} group {}", guild_id, group_id);
+            Self::print_no_queue_message(guild_id, group_id);
         }
 
         Ok(())
     }
 
     async fn cmd_clear_queue(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let guild_id = self.resolve_guild_id(guild_identifier).await?;
-        let group_id: u8 = group_id_str.parse()
-            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
 
-        let mut manager = self.manager.lock().await;
+        let mut manager = self.get_group_mut(guild_id, group_id).await?;
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
         if let Ok(session) = group.get_queue().await {
             let player_count = session.pool.len();
             session.pool.clear();
             println!("Cleared {} player(s) from the queue", player_count);
-
-            // Update dashboard if context is available
-            if let Some(ctx) = &self.ctx {
-                group.queue_dash_update(ctx, guild_id).await;
-            }
+            self.update_dashboard_if_available(&mut manager, guild_id, group_id).await;
         } else {
-            println!("No active queue found for guild {} group {}", guild_id, group_id);
+            Self::print_no_queue_message(guild_id, group_id);
         }
 
         Ok(())
     }
 
     async fn cmd_remove_player(&self, guild_identifier: &str, group_id_str: &str, index_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let guild_id = self.resolve_guild_id(guild_identifier).await?;
-        let group_id: u8 = group_id_str.parse()
-            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
         let index: usize = index_str.parse()
             .map_err(|_| format!("Invalid index: {}", index_str))?;
 
-        let mut manager = self.manager.lock().await;
+        let mut manager = self.get_group_mut(guild_id, group_id).await?;
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
         if let Ok(session) = group.get_queue().await {
@@ -1320,101 +1331,79 @@ impl ConsoleHandler {
             } else {
                 let removed_player = session.pool.remove(index);
                 println!("Removed player {} from position {}", removed_player.player.discord_id, index);
-
-                // Update dashboard if context is available
-                if let Some(ctx) = &self.ctx {
-                    group.queue_dash_update(ctx, guild_id).await;
-                }
+                self.update_dashboard_if_available(&mut manager, guild_id, group_id).await;
             }
         } else {
-            println!("No active queue found for guild {} group {}", guild_id, group_id);
+            Self::print_no_queue_message(guild_id, group_id);
         }
 
         Ok(())
     }
 
     async fn cmd_force_hot(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let guild_id = self.resolve_guild_id(guild_identifier).await?;
-        let group_id: u8 = group_id_str.parse()
-            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
+        let ctx = self.require_context()?;
 
-        if let Some(ctx) = &self.ctx {
-            let mut manager = self.manager.lock().await;
-            let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+        let mut manager = self.get_group_mut(guild_id, group_id).await?;
+        let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
-            if let Ok(_session) = group.get_queue().await {
-                println!("Forcing session to Hot status...");
-                group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None, Some(self.manager.clone())).await?;
-                println!("Session is now Hot!");
-                println!("   Teams have been generated and players have been notified.");
-            } else {
-                println!("No active queue found for guild {} group {}", guild_id, group_id);
-            }
+        if let Ok(_session) = group.get_queue().await {
+            println!("Forcing session to Hot status...");
+            group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None, Some(self.manager.clone())).await?;
+            println!("Session is now Hot!");
+            println!("   Teams have been generated and players have been notified.");
         } else {
-            println!("Context not available. Cannot force hot without Discord context.");
+            Self::print_no_queue_message(guild_id, group_id);
         }
 
         Ok(())
     }
 
     async fn cmd_force_push(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let guild_id = self.resolve_guild_id(guild_identifier).await?;
-        let group_id: u8 = group_id_str.parse()
-            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
+        let ctx = self.require_context()?;
 
-        if let Some(ctx) = &self.ctx {
-            let mut manager = self.manager.lock().await;
-            let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+        let mut manager = self.get_group_mut(guild_id, group_id).await?;
+        let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
-            println!("Forcing push to team channels...");
-            match group.push(ctx, serenity::model::id::GuildId::new(guild_id)).await {
-                Ok(_) => {
-                    println!("Players pushed to team channels!");
-                    println!("   Session is now Live.");
-                },
-                Err(e) => {
-                    println!("Failed to push players: {}", e);
-                }
+        println!("Forcing push to team channels...");
+        match group.push(ctx, serenity::model::id::GuildId::new(guild_id)).await {
+            Ok(_) => {
+                println!("Players pushed to team channels!");
+                println!("   Session is now Live.");
+            },
+            Err(e) => {
+                println!("Failed to push players: {}", e);
             }
-        } else {
-            println!("Context not available. Cannot force push without Discord context.");
         }
 
         Ok(())
     }
 
     async fn cmd_force_pull(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let guild_id = self.resolve_guild_id(guild_identifier).await?;
-        let group_id: u8 = group_id_str.parse()
-            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+        let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
+        let ctx = self.require_context()?;
 
-        if let Some(ctx) = &self.ctx {
-            let mut manager = self.manager.lock().await;
-            let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
+        let mut manager = self.get_group_mut(guild_id, group_id).await?;
+        let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
-            println!("Forcing pull back to queue...");
-            match group.pull(ctx, serenity::model::id::GuildId::new(guild_id), &self.database, Some(self.manager.clone())).await {
-                Ok(_) => {
-                    println!("Players pulled back to queue!");
-                    println!("   Session reset to Idle.");
-                },
-                Err(e) => {
-                    println!("Failed to pull players: {}", e);
-                }
+        println!("Forcing pull back to queue...");
+        match group.pull(ctx, serenity::model::id::GuildId::new(guild_id), &self.database, Some(self.manager.clone())).await {
+            Ok(_) => {
+                println!("Players pulled back to queue!");
+                println!("   Session reset to Idle.");
+            },
+            Err(e) => {
+                println!("Failed to pull players: {}", e);
             }
-        } else {
-            println!("Context not available. Cannot force pull without Discord context.");
         }
 
         Ok(())
     }
 
     async fn cmd_simulate_cycle(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let guild_id = self.resolve_guild_id(guild_identifier).await?;
-        let group_id: u8 = group_id_str.parse()
-            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
-
-        if let Some(ctx) = &self.ctx {
+        let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
+        let ctx = self.require_context()?;
             println!("\nStarting complete game cycle simulation...\n");
 
             // Step 1: Add fake players to fill quota
@@ -1483,9 +1472,6 @@ impl ConsoleHandler {
             }
 
             println!("Complete game cycle simulation finished!\n");
-        } else {
-            println!("Context not available. Cannot simulate cycle without Discord context.");
-        }
 
         Ok(())
     }
