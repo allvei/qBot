@@ -1,6 +1,5 @@
 pub mod constants;
 pub mod dashboard;
-pub mod dashboard_queue;
 pub mod manager;
 pub mod server;
 pub mod session;
@@ -9,7 +8,6 @@ pub mod types;
 
 pub use constants::*;
 pub use dashboard::*;
-pub use dashboard_queue::*;
 pub use manager::*;
 pub use server::*;
 pub use session::*;
