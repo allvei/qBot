@@ -160,6 +160,7 @@ pub struct SessionPlayer {
     pub team:         Option<Team>,
     pub in_queue_vc:  bool,
     pub in_queue_cmd: bool,
+    pub joined_at:    SystemTime,
 }
 
 impl SessionPlayer {
@@ -170,6 +171,7 @@ impl SessionPlayer {
             team:         None,
             in_queue_vc:  false,
             in_queue_cmd: false,
+            joined_at:    SystemTime::now(),
         }
     }
 

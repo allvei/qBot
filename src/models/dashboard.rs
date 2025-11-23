@@ -367,7 +367,26 @@ impl Group {
                             } else {
                                 String::new()
                             };
-                            description.push_str(&format!("{elo_str}<@{}>\n", player.player.discord_id));
+                            
+                            // Get player's auto-leave timeout and calculate kick time
+                            let timeout_str = if let Ok(settings) = db.users.get_settings(player.player.discord_id).await {
+                                if settings.auto_leave_minutes > 0 {
+                                    // Calculate when player will be kicked
+                                    if let Ok(joined_duration) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
+                                        let joined_timestamp = joined_duration.as_secs();
+                                        let kick_timestamp = joined_timestamp + (settings.auto_leave_minutes as u64 * 60);
+                                        format!(" <t:{kick_timestamp}:R>")
+                                    } else {
+                                        String::new()
+                                    }
+                                } else {
+                                    String::new()
+                                }
+                            } else {
+                                String::new()
+                            };
+                            
+                            description.push_str(&format!("{elo_str}<@{}>{timeout_str}\n", player.player.discord_id));
                         }
                     } else {
                         description.push_str("*No players in queue. Join to get started!*\n");
@@ -590,14 +609,14 @@ impl Group {
     /// Handles the join queue button
     async fn dash_join_queue(&mut self, cc: &CC<'_>) -> Result<()> {
         let user_id = cc.component.user.id;
-        info!("[JOIN_QUEUE] Starting join queue for user {}", user_id);
+        // info!("[JOIN_QUEUE] Starting join queue for user {}", user_id);
         
         // Store channel IDs before any borrows
         let dashboard_channel = self.channels.dashboard;
 
         // Check if player is already in queue
         if self.get_user_session(user_id).await.is_ok() {
-            info!("[JOIN_QUEUE] User {} already in queue, rejecting", user_id);
+            // info!("[JOIN_QUEUE] User {} already in queue, rejecting", user_id);
             cc.reply("You are already in the queue!").await?;
             return Ok(());
         }
@@ -606,7 +625,7 @@ impl Group {
         let has_joinable_session = self.sessions.iter().any(|s|
             s.status == SessionStatus::Idle || s.status == SessionStatus::Hot
         );
-        info!("[JOIN_QUEUE] Has joinable session: {}", has_joinable_session);
+        // info!("[JOIN_QUEUE] Has joinable session: {}", has_joinable_session);
 
         if !has_joinable_session {
             cc.reply("Cannot join - match is in progress. Please wait.").await?;
@@ -614,14 +633,14 @@ impl Group {
         }
         
         // Defer update now that we know we'll succeed
-        info!("[JOIN_QUEUE] Deferring interaction update for user {}", user_id);
+        // info!("[JOIN_QUEUE] Deferring interaction update for user {}", user_id);
         cc.defer_update().await?;
-        info!("[JOIN_QUEUE] Interaction deferred successfully");
+        // info!("[JOIN_QUEUE] Interaction deferred successfully");
 
         // Get or assign player's rank (auto-creates ranks and assigns Apprentice if needed)
         use crate::handlers::player::get_or_assign_player_rank;
         if let Some(guild_id) = cc.component.guild_id {
-            info!("[JOIN_QUEUE] Getting player data for user {} in guild {}", user_id, guild_id);
+            // info!("[JOIN_QUEUE] Getting player data for user {} in guild {}", user_id, guild_id);
             // Get player object from database (without fetching discord tag for performance)
             let mut player = match cc.db.get_user(user_id).await {
                 Ok(p) => p,
@@ -639,18 +658,18 @@ impl Group {
             
             match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user_id).await {
                 Ok(rank) => {
-                    info!("[JOIN_QUEUE] User {} has rank: {:?}", user_id, rank);
+                    // info!("[JOIN_QUEUE] User {} has rank: {:?}", user_id, rank);
                     // Refresh player rank from current Discord roles before queueing
                     player.rank = Some(rank);
                     
                     // Save rank for announcement (player will be moved)
                     let player_rank = rank;
                     
-                    info!("[JOIN_QUEUE] Calling queue_player for user {}", user_id);
+                    // info!("[JOIN_QUEUE] Calling queue_player for user {}", user_id);
                     if let Err(e) = self.queue_player(player, rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
                         warn!("Failed to queue player: {e}");
                     } else {
-                        info!("[JOIN_QUEUE] Successfully queued user {}", user_id);
+                        // info!("[JOIN_QUEUE] Successfully queued user {}", user_id);
                         // Log successful queue join via button
                         let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
                         let group_name = cc.ctx.cache.channel(dashboard_channel)
@@ -684,7 +703,7 @@ impl Group {
                                 // Create embed with author showing nickname + "joined the queue"
                                 let mut embed = CreateEmbed::new()
                                     .author({
-                                        let mut author = CreateEmbedAuthor::new(format!("{} joined the queue", display_name));
+                                        let mut author = CreateEmbedAuthor::new(format!("{display_name} joined the queue"));
                                         if let Some(url) = avatar_url {
                                             author = author.icon_url(url);
                                         }
@@ -729,9 +748,9 @@ impl Group {
         }
 
         // Update dashboard to reflect changes
-        info!("[JOIN_QUEUE] Queueing dashboard update for user {}", user_id);
+        // info!("[JOIN_QUEUE] Queueing dashboard update for user {}", user_id);
         self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
-        info!("[JOIN_QUEUE] Join queue flow completed for user {}", user_id);
+        // info!("[JOIN_QUEUE] Join queue flow completed for user {}", user_id);
 
         Ok(())
     }
