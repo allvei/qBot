@@ -396,7 +396,7 @@ impl Group {
                                 if let Ok(joined_duration) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
                                     let joined_timestamp = joined_duration.as_secs();
                                     let kick_timestamp = joined_timestamp + (settings.auto_remove_minutes as u64 * 60);
-                                    timers_field.push_str(&format!("<t:{kick_timestamp}:R>\n"));
+                                    timers_field.push_str(&format!("<t:{kick_timestamp}:t>\n"));
                                 } else {
                                     timers_field.push_str("-\n");
                                 }
@@ -408,8 +408,8 @@ impl Group {
                         }
                     }
                     
-                    embed = embed.field("Players", players_field, true);
-                    embed = embed.field("Auto-remove", timers_field, true);
+                    embed = embed.field("Players",          players_field, true);
+                    embed = embed.field("Auto-remove time", timers_field,  true);
                 }
             }
         }
@@ -692,62 +692,60 @@ impl Group {
                         let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
                         log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ);
                         
-                        // Send join announcement if enabled
+                        // Send join announcement
                         if let Ok(settings) = cc.db.users.get_settings(user_id).await {
-                            if settings.join_announcement {
-                                use serenity::all::{CreateEmbed, CreateMessage, CreateEmbedAuthor, CreateEmbedFooter};
-                                
-                                // Get member to access nickname and avatar
-                                let member = cc.component.guild_id.unwrap().member(&cc.ctx.http, user_id).await.ok();
-                                let display_name = member.as_ref().map(|m| m.display_name().to_string()).unwrap_or_else(|| username.clone());
-                                let avatar_url = cc.ctx.cache.user(user_id).map(|u| u.face());
-                                
-                                // Build description with template support
-                                let description = if let Some(custom_desc) = &settings.announcement_description {
-                                    // Replace template variables
-                                    custom_desc
-                                        .replace("{user}", &format!("<@{}>", user_id))
-                                        .replace("{rank}", &player_rank.name())
-                                        .replace("{name}", &display_name)
-                                } else {
-                                    // Default description
-                                    format!("<@{}> joined the queue!", user_id)
-                                };
-                                
-                                // Create embed with author showing nickname + "joined the queue"
-                                let mut embed = CreateEmbed::new()
-                                    .author({
-                                        let mut author = CreateEmbedAuthor::new(format!("{display_name} joined the queue"));
-                                        if let Some(url) = avatar_url {
-                                            author = author.icon_url(url);
-                                        }
-                                        author
-                                    })
-                                    .description(description)
-                                    .color(settings.announcement_color as u32);
-                                
-                                // Add custom title if provided
-                                if let Some(title) = &settings.announcement_title {
-                                    embed = embed.title(title);
-                                }
-                                
-                                // Add custom footer if provided
-                                if let Some(footer_text) = &settings.announcement_footer_text {
-                                    let mut footer = CreateEmbedFooter::new(footer_text);
-                                    if let Some(footer_icon) = &settings.announcement_footer_icon {
-                                        footer = footer.icon_url(footer_icon);
+                            use serenity::all::{CreateEmbed, CreateMessage, CreateEmbedAuthor, CreateEmbedFooter};
+                            
+                            // Get member to access nickname and avatar
+                            let member = cc.component.guild_id.unwrap().member(&cc.ctx.http, user_id).await.ok();
+                            let display_name = member.as_ref().map(|m| m.display_name().to_string()).unwrap_or_else(|| username.clone());
+                            let avatar_url = cc.ctx.cache.user(user_id).map(|u| u.face());
+                            
+                            // Build description with template support
+                            let description = if let Some(custom_desc) = &settings.announcement_description {
+                                // Replace template variables
+                                custom_desc
+                                    .replace("{user}", &format!("<@{}>", user_id))
+                                    .replace("{rank}", &player_rank.name())
+                                    .replace("{name}", &display_name)
+                            } else {
+                                // Default description
+                                format!("<@{}> joined the queue!", user_id)
+                            };
+                            
+                            // Create embed with author showing nickname + "joined the queue"
+                            let mut embed = CreateEmbed::new()
+                                .author({
+                                    let mut author = CreateEmbedAuthor::new(format!("{display_name} joined the queue"));
+                                    if let Some(url) = avatar_url {
+                                        author = author.icon_url(url);
                                     }
-                                    embed = embed.footer(footer);
-                                }
-                                
-                                // Add custom thumbnail if provided
-                                if let Some(thumbnail) = &settings.announcement_thumbnail {
-                                    embed = embed.thumbnail(thumbnail);
-                                }
-                                
-                                let queue_chat = self.channels.queue_chat;
-                                let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
+                                    author
+                                })
+                                .description(description)
+                                .color(settings.announcement_color as u32);
+                            
+                            // Add custom title if provided
+                            if let Some(title) = &settings.announcement_title {
+                                embed = embed.title(title);
                             }
+                            
+                            // Add custom footer if provided
+                            if let Some(footer_text) = &settings.announcement_footer_text {
+                                let mut footer = CreateEmbedFooter::new(footer_text);
+                                if let Some(footer_icon) = &settings.announcement_footer_icon {
+                                    footer = footer.icon_url(footer_icon);
+                                }
+                                embed = embed.footer(footer);
+                            }
+                            
+                            // Add custom thumbnail if provided
+                            if let Some(thumbnail) = &settings.announcement_thumbnail {
+                                embed = embed.thumbnail(thumbnail);
+                            }
+                            
+                            let queue_chat = self.channels.queue_chat;
+                            let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
                         }
                     }
                 },
@@ -839,60 +837,58 @@ impl Group {
                 .unwrap_or_else(|| "Unknown".to_string());
             log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BL);
 
-            // Send leave announcement if enabled
+            // Send leave announcement
             if let Ok(settings) = cc.db.users.get_settings(user_id).await {
-                if settings.leave_announcement {
-                    use serenity::all::{CreateEmbed, CreateMessage, CreateEmbedAuthor, CreateEmbedFooter};
-                    
-                    // Get member to access nickname and avatar
-                    let member = guild_id.member(&cc.ctx.http, user_id).await.ok();
-                    let display_name = member.as_ref().map(|m| m.display_name().to_string()).unwrap_or_else(|| username.clone());
-                    let avatar_url = cc.ctx.cache.user(user_id).map(|u| u.face());
-                    
-                    // Build description with template support
-                    let description = if let Some(custom_desc) = &settings.leave_announcement_description {
-                        // Replace template variables (no rank for leave)
-                        custom_desc
-                            .replace("{user}", &format!("<@{}>", user_id))
-                            .replace("{name}", &display_name)
-                    } else {
-                        // Default description
-                        format!("<@{}> left the queue!", user_id)
-                    };
-                    
-                    // Create embed with author showing nickname + "left the queue"
-                    let mut embed = CreateEmbed::new()
-                        .author({
-                            let mut author = CreateEmbedAuthor::new(format!("{} left the queue", display_name));
-                            if let Some(url) = avatar_url {
-                                author = author.icon_url(url);
-                            }
-                            author
-                        })
-                        .description(description)
-                        .color(settings.announcement_color as u32);
-                    
-                    // Add custom title if provided
-                    if let Some(title) = &settings.leave_announcement_title {
-                        embed = embed.title(title);
-                    }
-                    
-                    // Add custom footer if provided
-                    if let Some(footer_text) = &settings.leave_announcement_footer_text {
-                        let mut footer = CreateEmbedFooter::new(footer_text);
-                        if let Some(footer_icon) = &settings.leave_announcement_footer_icon {
-                            footer = footer.icon_url(footer_icon);
+                use serenity::all::{CreateEmbed, CreateMessage, CreateEmbedAuthor, CreateEmbedFooter};
+                
+                // Get member to access nickname and avatar
+                let member = guild_id.member(&cc.ctx.http, user_id).await.ok();
+                let display_name = member.as_ref().map(|m| m.display_name().to_string()).unwrap_or_else(|| username.clone());
+                let avatar_url = cc.ctx.cache.user(user_id).map(|u| u.face());
+                
+                // Build description with template support
+                let description = if let Some(custom_desc) = &settings.leave_announcement_description {
+                    // Replace template variables (no rank for leave)
+                    custom_desc
+                        .replace("{user}", &format!("<@{}>", user_id))
+                        .replace("{name}", &display_name)
+                } else {
+                    // Default description
+                    format!("<@{}> left the queue!", user_id)
+                };
+                
+                // Create embed with author showing nickname + "left the queue"
+                let mut embed = CreateEmbed::new()
+                    .author({
+                        let mut author = CreateEmbedAuthor::new(format!("{} left the queue", display_name));
+                        if let Some(url) = avatar_url {
+                            author = author.icon_url(url);
                         }
-                        embed = embed.footer(footer);
-                    }
-                    
-                    // Add custom thumbnail if provided
-                    if let Some(thumbnail) = &settings.leave_announcement_thumbnail {
-                        embed = embed.thumbnail(thumbnail);
-                    }
-                    
-                    let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
+                        author
+                    })
+                    .description(description)
+                    .color(settings.announcement_color as u32);
+                
+                // Add custom title if provided
+                if let Some(title) = &settings.leave_announcement_title {
+                    embed = embed.title(title);
                 }
+                
+                // Add custom footer if provided
+                if let Some(footer_text) = &settings.leave_announcement_footer_text {
+                    let mut footer = CreateEmbedFooter::new(footer_text);
+                    if let Some(footer_icon) = &settings.leave_announcement_footer_icon {
+                        footer = footer.icon_url(footer_icon);
+                    }
+                    embed = embed.footer(footer);
+                }
+                
+                // Add custom thumbnail if provided
+                if let Some(thumbnail) = &settings.leave_announcement_thumbnail {
+                    embed = embed.thumbnail(thumbnail);
+                }
+                
+                let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
             }
 
             // If session was hot, check what to do next

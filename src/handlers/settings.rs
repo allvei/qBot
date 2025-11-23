@@ -61,46 +61,6 @@ pub async fn handle_settings_button(
             let response = CIR::Modal(modal);
             interaction.create_response(&ctx.http, response).await?;
         }
-        "settings_join_announcement" => {
-            // Toggle join announcements
-            let mut settings = db.users.get_settings(user_id).await?;
-            settings.join_announcement = !settings.join_announcement;
-            db.users.update_settings(user_id, &settings).await?;
-
-            let (status_text, emoji) = if settings.join_announcement {
-                ("enabled", "🟢")
-            } else {
-                ("disabled", "❌")
-            };
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().content(format!("Join Announcements: {emoji} {status_text}"))
-            );
-            interaction.create_response(&ctx.http, response).await?;
-
-            // Update the settings menu
-            update_settings_menu(ctx, interaction, db).await?;
-        }
-        "settings_leave_announcement" => {
-            // Toggle leave announcements
-            let mut settings = db.users.get_settings(user_id).await?;
-            settings.leave_announcement = !settings.leave_announcement;
-            db.users.update_settings(user_id, &settings).await?;
-
-            let (status_text, emoji) = if settings.leave_announcement {
-                ("enabled", "🟢")
-            } else {
-                ("disabled", "❌")
-            };
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().content(format!("Leave Announcements: {emoji} {status_text}"))
-            );
-            interaction.create_response(&ctx.http, response).await?;
-
-            // Update the settings menu
-            update_settings_menu(ctx, interaction, db).await?;
-        }
         "settings_vc_disconnect" => {
             // Toggle VC disconnect preference
             let mut settings = db.users.get_settings(user_id).await?;
@@ -441,11 +401,9 @@ pub fn build_settings_embed(settings: &crate::database::repositories::UserSettin
         .description(format!(
             "Configure your queue experience!\n\n\
             **Current Settings:**\n\
-            **DM Notifications:** {}\n\
+            **DM notifications:** {}\n\
             **Auto-remove timer:** {}\n\
-            **Join Announcements:** {}\n\
-            **Leave Announcements:** {}\n\
-            **VC Disconnect on Leave:** {}\n\n\
+            **Disconnect from VC on leave:** {}\n\n\
             Click the buttons below to change your settings.",
             if settings.dm_enabled { "🟢" } else { "🔴" },
             if settings.auto_remove_minutes == 0 {
@@ -453,8 +411,6 @@ pub fn build_settings_embed(settings: &crate::database::repositories::UserSettin
             } else {
                 format!("{} minutes", settings.auto_remove_minutes)
             },
-            if settings.join_announcement { "🟢" } else { "🔴" },
-            if settings.leave_announcement { "🟢" } else { "🔴" },
             if settings.vc_disconnect_on_leave { "🟢" } else { "🔴" }
         ))
         .color(settings.announcement_color as u32)
@@ -471,14 +427,6 @@ pub fn build_settings_buttons(settings: &crate::database::repositories::UserSett
             CB::new("settings_auto_leave")
                 .label("Auto-remove timer")
                 .style(BS::Primary),
-        ]),
-        CAR::Buttons(vec![
-            CB::new("settings_join_announcement")
-                .label("Toggle join announcements")
-                .style(if settings.join_announcement { BS::Success } else { BS::Secondary }),
-            CB::new("settings_leave_announcement")
-                .label("Toggle leave announcements")
-                .style(if settings.leave_announcement { BS::Success } else { BS::Secondary }),
         ]),
         CAR::Buttons(vec![
             CB::new("settings_vc_disconnect")
