@@ -41,11 +41,5 @@ deprecated = "allow"
 
 
 [lints.clippy]
-# missing_docs_in_private_items = "warn"
-# arbitrary_source_item_ordering = "warn"
-# unused_imports     = "allow"
-# dead_code          = "allow"
-too_many_arguments = "allow"
-# unused_variables   = "allow"
-# unused_must_use    = "allow"
-# unused_methods     = "allow"
+# pedantic = "warn"
+# uninlined_format_args = "warn"

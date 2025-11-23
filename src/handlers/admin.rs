@@ -31,7 +31,7 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
     if let Some(val,) = value {
         cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found").get()).await?;
 
-        let embed = CE::new().title("Config Updated").description(format!("Set `{}` = `{}`", key, val));
+        let embed = CE::new().title("Config Updated").description(format!("Set `{key}` = `{val}`"));
 
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
 
@@ -89,8 +89,8 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
             "**Current Role Configuration:**\n\
              Runner Role: {}\n\
              Admin Role: {}",
-            runner_role.map(|r| format!("<@&{}>", r)).unwrap_or_else(|| "Not set".to_string()),
-            admin_role.map(|r| format!("<@&{}>", r)).unwrap_or_else(|| "Not set".to_string())
+            runner_role.map(|r| format!("<@&{r}>")).unwrap_or_else(|| "Not set".to_string()),
+            admin_role.map(|r| format!("<@&{r}>")).unwrap_or_else(|| "Not set".to_string())
         );
 
         let embed = CE::new()
@@ -150,11 +150,11 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
         let current_role = cc.db.config.get_config_value(role_key, guild_id).await?;
 
         let embed = CE::new()
-            .title(format!("{} Role", role_type))
+            .title(format!("{role_type} Role"))
             .description(format!(
                 "Current {} role: {}",
                 role_type.to_lowercase(),
-                current_role.map(|r| format!("<@&{}>", r)).unwrap_or_else(|| "Not set".to_string())
+                current_role.map(|r| format!("<@&{r}>")).unwrap_or_else(|| "Not set".to_string())
             ));
 
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
@@ -237,7 +237,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
         Err(e) => {
             let error_embed = CE::new()
                 .title("Error")
-                .description(format!("Failed to check roles: {}", e))
+                .description(format!("Failed to check roles: {e}"))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -252,7 +252,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
         Err(e) => {
             let error_embed = CE::new()
                 .title("Error")
-                .description(format!("Failed to check rank roles: {}", e))
+                .description(format!("Failed to check rank roles: {e}"))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -302,7 +302,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                 ).await {
                     Ok(role) => {
                         if let Err(e) = cc.db.config.set_config("runner_role", &role.id.to_string(), guild_id.get()).await {
-                            warn!("Failed to save runner_role config: {}", e);
+                            warn!("Failed to save runner_role config: {e}");
                         }
                         info!("[{}] Created PUG Runner role", guild_name);
                     },
@@ -321,7 +321,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                 ).await {
                     Ok(role) => {
                         if let Err(e) = cc.db.config.set_config("admin_role", &role.id.to_string(), guild_id.get()).await {
-                            warn!("Failed to save admin_role config: {}", e);
+                            warn!("Failed to save admin_role config: {e}");
                         }
                         info!("[{}] Created PUG Admin role", guild_name);
                     },
@@ -411,7 +411,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 
                             // Add group to in-memory server and create initial session
                             if let Err(e) = server.add_group(db_group.clone()) {
-                                error!("Failed to add group to server: {}", e);
+                                error!("Failed to add group to server: {e}");
                             }
 
                             let success_embed = CE::new()
@@ -451,7 +451,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                             
                             let error_embed = CE::new()
                                 .title("Failed to Save Group")
-                                .description(format!("Failed to save group to database: {}\n\nChannels were cleaned up.", e))
+                                .description(format!("Failed to save group to database: {e}\n\nChannels were cleaned up."))
                                 .color(0xff0000);
 
                             cc.intax.edit_response(&cc.ctx.http,
@@ -472,7 +472,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                     
                     let error_embed = CE::new()
                         .title("Dashboard Creation Failed")
-                        .description(format!("Failed to create dashboard: {}\n\nChannels were cleaned up.", e))
+                        .description(format!("Failed to create dashboard: {e}\n\nChannels were cleaned up."))
                         .color(0xff0000);
 
                     cc.intax.edit_response(&cc.ctx.http,
@@ -484,7 +484,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
         Err(e) => {
             let error_embed = CE::new()
                 .title("Channel Creation Failed")
-                .description(format!("Failed to create channels: {}\n\nMake sure the bot has proper permissions.", e))
+                .description(format!("Failed to create channels: {e}\n\nMake sure the bot has proper permissions."))
                 .color(0xff0000);
 
             cc.intax.edit_response(&cc.ctx.http,
@@ -519,7 +519,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
         Ok(cat) => cat,
         Err(e) => {
             error!("[{}] Failed to create category: {}", guild_name, e);
-            return Err(anyhow!("Failed to create category: {}", e));
+            return Err(anyhow!("Failed to create category: {e}"));
         }
     };
     
@@ -562,7 +562,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
             error!("[{}] Failed to create dashboard channel: {}", guild_name, e);
             // Clean up category
             let _ = category_id.delete(&ctx.http).await;
-            return Err(anyhow!("Failed to create dashboard channel: {}", e));
+            return Err(anyhow!("Failed to create dashboard channel: {e}"));
         }
     };
     
@@ -582,7 +582,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
         info!("[{}] Cleaning up dashboard channel and category", guild_name);
         let _ = dashboard_channel.id.delete(&ctx.http).await;
         let _ = category_id.delete(&ctx.http).await;
-        return Err(anyhow!("Failed to send dashboard message (bot may lack permissions): {}", e));
+        return Err(anyhow!("Failed to send dashboard message (bot may lack permissions): {e}"));
     }
     
     // Delete the test message - we'll create the real one later
@@ -604,7 +604,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
             error!("[{}] Failed to create queue text channel: {}", guild_name, e);
             let _ = dashboard_channel.id.delete(&ctx.http).await;
             let _ = category_id.delete(&ctx.http).await;
-            return Err(anyhow!("Failed to create queue text channel: {}", e));
+            return Err(anyhow!("Failed to create queue text channel: {e}"));
         }
     };
     
@@ -619,7 +619,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
             let _ = queue_channel.id.delete(&ctx.http).await;
             let _ = dashboard_channel.id.delete(&ctx.http).await;
             let _ = category_id.delete(&ctx.http).await;
-            return Err(anyhow!("Failed to create queue voice channel: {}", e));
+            return Err(anyhow!("Failed to create queue voice channel: {e}"));
         }
     };
     
@@ -635,7 +635,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
             let _ = queue_channel.id.delete(&ctx.http).await;
             let _ = dashboard_channel.id.delete(&ctx.http).await;
             let _ = category_id.delete(&ctx.http).await;
-            return Err(anyhow!("Failed to create red team channel: {}", e));
+            return Err(anyhow!("Failed to create red team channel: {e}"));
         }
     };
     
@@ -652,7 +652,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
             let _ = queue_channel.id.delete(&ctx.http).await;
             let _ = dashboard_channel.id.delete(&ctx.http).await;
             let _ = category_id.delete(&ctx.http).await;
-            return Err(anyhow!("Failed to create blue team channel: {}", e));
+            return Err(anyhow!("Failed to create blue team channel: {e}"));
         }
     };
     
@@ -815,7 +815,7 @@ fn create_channel_options(channels: &[(CI, String)], prefix: &str) -> Vec<CSMO> 
     channels.iter()
         .take(25) // Discord limit
         .map(|(id, name)| {
-            CSMO::new(name.clone(), format!("{}_{}", prefix, id.get()))
+            CSMO::new(name.clone(), format!("{prefix}_{}", id.get()))
                 .description(format!("Channel ID: {}", id.get()))
         })
         .collect()
@@ -826,7 +826,7 @@ fn create_role_options(roles: &[(RI, String)], prefix: &str) -> Vec<CSMO> {
     roles.iter()
         .take(25) // Discord limit
         .map(|(id, name)| {
-            CSMO::new(name.clone(), format!("{}_{}", prefix, id.get()))
+            CSMO::new(name.clone(), format!("{prefix}_{}", id.get()))
                 .description(format!("Role ID: {}", id.get()))
         })
         .collect()
@@ -906,10 +906,9 @@ async fn handle_dashboard_selection(ctx: &Context, interaction: &CX, channel_id:
     let embed = CE::new()
         .title("Dashboard Channel Selected")
         .description(format!(
-            "Dashboard channel: <#{}>\n\n\
+            "Dashboard channel: <#{channel_id}>\n\n\
             **Step 2/7: Queue Text Channel**\n\
             Select the text channel where players will use queue commands:",
-            channel_id
         ))
         .color(0x00ff00);
 
@@ -946,10 +945,9 @@ async fn handle_queue_selection(ctx: &Context, interaction: &CX, channel_id: u64
     let embed = CE::new()
         .title("Queue Text Channel Selected")
         .description(format!(
-            "Queue text channel: <#{}>\n\n\
+            "Queue text channel: <#{channel_id}>\n\n\
             **Step 3/7: Queue Voice Channel**\n\
             Select the voice channel where players will wait in queue:",
-            channel_id
         ))
         .color(0x00ff00);
 
@@ -986,10 +984,9 @@ async fn handle_queue_vc_selection(ctx: &Context, interaction: &CX, channel_id: 
     let embed = CE::new()
         .title("Queue Voice Channel Selected")
         .description(format!(
-            "Queue voice channel: <#{}>\n\n\
+            "Queue voice channel: <#{channel_id}>\n\n\
             **Step 4/7: Red Team Voice Channel**\n\
             Select the voice channel for the Red team:",
-            channel_id
         ))
         .color(0x00ff00);
 
@@ -1026,10 +1023,9 @@ async fn handle_red_selection(ctx: &Context, interaction: &CX, channel_id: u64) 
     let embed = CE::new()
         .title("Red Team Channel Selected")
         .description(format!(
-            "Red team channel: <#{}>\n\n\
+            "Red team channel: <#{channel_id}>\n\n\
             **Step 5/7: Blue Team Voice Channel**\n\
             Select the voice channel for the Blue team:",
-            channel_id
         ))
         .color(0x00ff00);
 
@@ -1066,10 +1062,9 @@ async fn handle_blue_selection(ctx: &Context, interaction: &CX, channel_id: u64)
     let embed = CE::new()
         .title("Blue Team Channel Selected")
         .description(format!(
-            "Blue team channel: <#{}>\n\n\
+            "Blue team channel: <#{channel_id}>\n\n\
             **Step 6/7: Runner Role**\n\
             Select the role that can manage PUG games:",
-            channel_id
         ))
         .color(0x00ff00);
 
@@ -1106,10 +1101,9 @@ async fn handle_runner_selection(ctx: &Context, interaction: &CX, role_id: u64) 
     let embed = CE::new()
         .title("Runner Role Selected")
         .description(format!(
-            "Runner role: <@&{}>\n\n\
+            "Runner role: <@&{role_id}>\n\n\
             **Step 7/7: Admin Role**\n\
-            Select the role that can configure the bot:",
-            role_id
+            Select the role that can configure the bot:"
         ))
         .color(0x00ff00);
 
@@ -1181,7 +1175,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
         Err(e) => {
             let error_embed = CE::new()
                 .title("Setup Failed")
-                .description(format!("Failed to create dashboard message: {}", e))
+                .description(format!("Failed to create dashboard message: {e}"))
                 .color(0xff0000);
 
             let response = CIR::UpdateMessage(
@@ -1199,10 +1193,10 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
 
     // Save role configurations to database
     if let Err(e) = db.config.set_config("runner_role", &runner_role.to_string(), guild_id.get()).await {
-        warn!("Failed to save runner_role config: {}", e);
+        warn!("Failed to save runner_role config: {e}");
     }
     if let Err(e) = db.config.set_config("admin_role", &admin_role.to_string(), guild_id.get()).await {
-        warn!("Failed to save admin_role config: {}", e);
+        warn!("Failed to save admin_role config: {e}");
     }
 
     // Create/validate rank roles
@@ -1238,19 +1232,18 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
                 .description(format!(
                     "Your PUG bot is now fully configured and ready to use!\n\n\
                     **Configuration Summary:**\n\
-                    • Dashboard: <#{}>\n\
-                    • Queue Text: <#{}>\n\
-                    • Queue Voice: <#{}>\n\
-                    • Red Team: <#{}>\n\
-                    • Blue Team: <#{}>\n\
-                    • Runner Role: <@&{}>\n\
-                    • Admin Role: <@&{}>\n\
+                    • Dashboard: <#{dashboard_channel}>\n\
+                    • Queue Text: <#{queue_channel}>\n\
+                    • Queue Voice: <#{queue_vc_channel}>\n\
+                    • Red Team: <#{red_channel}>\n\
+                    • Blue Team: <#{blue_channel}>\n\
+                    • Runner Role: <@&{runner_role}>\n\
+                    • Admin Role: <@&{admin_role}>\n\
                     • Rank Roles: Created\n\n\
                     **The dashboard is ready!** Players can now:\n\
                     • Click \"Join/Leave\" to queue up\n\
                     • Join the queue voice channel to auto-queue\n\n\
                     Runners can use the dashboard buttons to manage matches.",
-                    dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel, runner_role, admin_role
                 ))
                 .color(0x00ff00);
 
@@ -1261,7 +1254,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
         Err(e) => {
             let error_embed = CE::new()
                 .title("Setup Failed")
-                .description(format!("Failed to save configuration: {}", e))
+                .description(format!("Failed to save configuration: {e}"))
                 .color(0xff0000);
 
             let response = CIR::UpdateMessage(CIRM::new().embed(error_embed).components(vec![]));
@@ -1292,10 +1285,9 @@ async fn handle_init_queue_selection(ctx: &Context, interaction: &CX, channel_id
     let embed = CE::new()
         .title("Queue Text Channel Selected")
         .description(format!(
-            "Queue text channel: <#{}>\n\n\
+            "Queue text channel: <#{channel_id}>\n\n\
             **Step 3/5: Queue Voice Channel**\n\
             Select the voice channel players will join for the queue:",
-            channel_id
         ))
         .color(0x00ff00);
 
@@ -1331,10 +1323,9 @@ async fn handle_init_queue_vc_selection(ctx: &Context, interaction: &CX, channel
     let embed = CE::new()
         .title("Queue Voice Channel Selected")
         .description(format!(
-            "Queue voice channel: <#{}>\n\n\
+            "Queue voice channel: <#{channel_id}>\n\n\
             **Step 4/5: Red Team Voice Channel**\n\
             Select the voice channel for the Red team:",
-            channel_id
         ))
         .color(0x00ff00);
 
@@ -1370,10 +1361,9 @@ async fn handle_init_red_selection(ctx: &Context, interaction: &CX, channel_id: 
     let embed = CE::new()
         .title("Red Team Channel Selected")
         .description(format!(
-            "Red team channel: <#{}>\n\n\
+            "Red team channel: <#{channel_id}>\n\n\
             **Step 5/5: Blue Team Voice Channel**\n\
             Select the voice channel for the Blue team:",
-            channel_id
         ))
         .color(0x00ff00);
 
@@ -1409,10 +1399,9 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &CX, channel_id:
     let embed = CE::new()
         .title("Blue Team Channel Selected")
         .description(format!(
-            "Blue team channel: <#{}>\n\n\
+            "Blue team channel: <#{channel_id}>\n\n\
             **Step 2/2: Admin Role**\n\
             Select the role for bot administrators:",
-            channel_id
         ))
         .color(0x00ff00);
 
@@ -1448,10 +1437,9 @@ async fn handle_init_runner_selection(ctx: &Context, interaction: &CX, role_id: 
     let embed = CE::new()
         .title("Runner Role Selected")
         .description(format!(
-            "Runner role: <@&{}>\n\n\
+            "Runner role: <@&{role_id}>\n\n\
             **Step 2/2: Admin Role**\n\
             Select the role for bot administrators:",
-            role_id
         ))
         .color(0x00ff00);
 
@@ -1517,10 +1505,10 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
 
     // Save role configurations to database
     if let Err(e) = db.config.set_config("runner_role", &runner_role.to_string(), guild_id.get()).await {
-        warn!("Failed to save runner_role config: {}", e);
+        warn!("Failed to save runner_role config: {e}");
     }
     if let Err(e) = db.config.set_config("admin_role", &admin_role.to_string(), guild_id.get()).await {
-        warn!("Failed to save admin_role config: {}", e);
+        warn!("Failed to save admin_role config: {e}");
     }
 
     // Create/validate rank roles
@@ -1554,7 +1542,7 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
         Err(e) => {
             let error_embed = CE::new()
                 .title("Setup Failed")
-                .description(format!("Failed to create group configuration: {}", e))
+                .description(format!("Failed to create group configuration: {e}"))
                 .color(0xff0000);
 
             let response = CIR::UpdateMessage(CIRM::new().embed(error_embed).components(vec![]));
@@ -1571,13 +1559,12 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
         .description(format!(
             "Group configuration has been saved successfully!\n\n\
             **Configuration Summary:**\n\
-            • Dashboard: <#{}>\n\
-            • Queue Text: <#{}>\n\
-            • Queue Voice: <#{}>\n\
-            • Red Team: <#{}>\n\
-            • Blue Team: <#{}>\n\n\
-            The dashboard has been initialized in <#{}> with the interactive queue interface!",
-            dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel, dashboard_channel
+            • Dashboard: <#{dashboard_channel}>\n\
+            • Queue Text: <#{queue_channel}>\n\
+            • Queue Voice: <#{queue_vc_channel}>\n\
+            • Red Team: <#{red_channel}>\n\
+            • Blue Team: <#{blue_channel}>\n\n\
+            The dashboard has been initialized in <#{dashboard_channel}> with the interactive queue interface!",
         ))
         .color(0x00ff00);
 
@@ -1611,7 +1598,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
         Err(e) => {
             let error_embed = CE::new()
                 .title("Error")
-                .description(format!("Failed to check system roles: {}", e))
+                .description(format!("Failed to check system roles: {e}"))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -1626,7 +1613,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
         Err(e) => {
             let error_embed = CE::new()
                 .title("Error")
-                .description(format!("Failed to check rank roles: {}", e))
+                .description(format!("Failed to check rank roles: {e}"))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -1652,19 +1639,17 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
         if !missing_system_roles.is_empty() {
             let system_list = missing_system_roles.join(", ");
             description.push_str(&format!(
-                "**Missing System Roles:**\n{}\n\n\
+                "**Missing System Roles:**\n{system_list}\n\n\
                  System roles should be created manually and assigned appropriate permissions.\n\n",
-                system_list
             ));
         }
 
         if !missing_rank_roles.is_empty() {
             let rank_list = missing_rank_roles.join(", ");
             description.push_str(&format!(
-                "**Missing Rank Roles:**\n{}\n\n\
+                "**Missing Rank Roles:**\n{rank_list}\n\n\
                 Would you like me to create these rank roles automatically?\n\n\
                  Note: The roles will be created but you may need to adjust their permissions and position in the role hierarchy.",
-                rank_list
             ));
         }
 
@@ -1734,7 +1719,7 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
         Err(e) => {
             let error_embed = CE::new()
                 .title("Error")
-                .description(format!("Failed to create rank roles: {}", e))
+                .description(format!("Failed to create rank roles: {e}"))
                 .color(0xff0000);
 
             let response = CIR::UpdateMessage(
@@ -1766,12 +1751,11 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
         let success_embed = CE::new()
             .title("Rank Roles Created")
             .description(format!(
-                "Successfully created the following rank roles:\n**{}**\n\n\
+                "Successfully created the following rank roles:\n**{created_list}**\n\n\
                 You may want to:\n\
                 • Adjust role positions in Server Settings\n\
                 • Configure role permissions\n\
                 • Assign roles to existing members",
-                created_list
             ))
             .color(0x00ff00);
 
@@ -1821,7 +1805,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
         Err(e) => {
             let error_embed = CE::new()
                 .title("Server Not Found")
-                .description(format!("Server not configured: {}", e))
+                .description(format!("Server not configured: {e}"))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -1835,7 +1819,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
         Err(e) => {
             let error_embed = CE::new()
                 .title("Group Not Found")
-                .description(format!("No queue group found in this channel: {}", e))
+                .description(format!("No queue group found in this channel: {e}"))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -1866,9 +1850,8 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
             let success_embed = CE::new()
                 .title("Quota Updated")
                 .description(format!(
-                    "Queue quota has been changed from **{}** to **{}** players.\n\n\
-                    The queue will now require {} players before a game can start.",
-                    old_quota, quota, quota
+                    "Queue quota has been changed from **{old_quota}** to **{quota}** players.\n\n\
+                    The queue will now require {quota} players before a game can start.",
                 ))
                 .color(0x00ff00);
 
@@ -1881,7 +1864,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
         Err(e) => {
             let error_embed = CE::new()
                 .title("Failed to Update Quota")
-                .description(format!("Failed to save quota to database: {}", e))
+                .description(format!("Failed to save quota to database: {e}"))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -1914,7 +1897,7 @@ pub async fn cmd_add_connect(cc: &CC<'_>, connect_info: String) -> Result<()> {
         Err(e) => {
             let error_embed = CE::new()
                 .title("Server Not Found")
-                .description(format!("Server not configured: {}", e))
+                .description(format!("Server not configured: {e}"))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -1928,7 +1911,7 @@ pub async fn cmd_add_connect(cc: &CC<'_>, connect_info: String) -> Result<()> {
         Err(e) => {
             let error_embed = CE::new()
                 .title("Group Not Found")
-                .description(format!("No queue group found in this channel: {}", e))
+                .description(format!("No queue group found in this channel: {e}"))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -1946,9 +1929,8 @@ pub async fn cmd_add_connect(cc: &CC<'_>, connect_info: String) -> Result<()> {
     let success_embed = CE::new()
         .title("Server Connect Info Updated")
         .description(format!(
-            "Server connection command has been set:\n\n```{}```\n\n\
+            "Server connection command has been set:\n\n```{connect_info}```\n\n\
             This will now appear on the dashboard when players are ready to join.",
-            connect_info
         ))
         .color(0x00ff00);
 
@@ -2021,10 +2003,9 @@ async fn handle_grouplink_dashboard_selection(ctx: &Context, interaction: &CX, c
     let embed = CE::new()
         .title("Dashboard Channel Selected")
         .description(format!(
-            "Dashboard: <#{}>\n\n\
+            "Dashboard: <#{channel_id}>\n\n\
             **Step 2/5: Queue Text Channel**\n\
             Select the text channel for queue commands:",
-            channel_id
         ))
         .color(0x00ff00);
 
@@ -2055,10 +2036,9 @@ async fn handle_grouplink_queue_selection(ctx: &Context, interaction: &CX, chann
     let embed = CE::new()
         .title("Queue Text Channel Selected")
         .description(format!(
-            "Queue text: <#{}>\n\n\
+            "Queue text: <#{channel_id}>\n\n\
             **Step 3/5: Queue Voice Channel**\n\
             Select the voice channel where players wait:",
-            channel_id
         ))
         .color(0x00ff00);
 
@@ -2089,10 +2069,9 @@ async fn handle_grouplink_queuevc_selection(ctx: &Context, interaction: &CX, cha
     let embed = CE::new()
         .title("Queue Voice Channel Selected")
         .description(format!(
-            "Queue voice: <#{}>\n\n\
+            "Queue voice: <#{channel_id}>\n\n\
             **Step 4/5: Red Team Voice Channel**\n\
             Select the Red team voice channel:",
-            channel_id
         ))
         .color(0x00ff00);
 
@@ -2123,10 +2102,9 @@ async fn handle_grouplink_red_selection(ctx: &Context, interaction: &CX, channel
     let embed = CE::new()
         .title("Red Team Channel Selected")
         .description(format!(
-            "Red team: <#{}>\n\n\
+            "Red team: <#{channel_id}>\n\n\
             **Step 5/5: Blue Team Voice Channel**\n\
             Select the Blue team voice channel:",
-            channel_id
         ))
         .color(0x00ff00);
 
@@ -2282,7 +2260,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
                     
                     let error_embed = CE::new()
                         .title("Failed to Save Group")
-                        .description(format!("Error saving to database: {}", e))
+                        .description(format!("Error saving to database: {e}"))
                         .color(0xff0000);
 
                     interaction.edit_response(&ctx.http,
@@ -2294,7 +2272,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
         Err(e) => {
             let error_embed = CE::new()
                 .title("Dashboard Creation Failed")
-                .description(format!("Failed to create dashboard: {}", e))
+                .description(format!("Failed to create dashboard: {e}"))
                 .color(0xff0000);
 
             interaction.edit_response(&ctx.http,
@@ -2325,7 +2303,7 @@ pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
         Err(e) => {
             let error_embed = CE::new()
                 .title("Group Not Found")
-                .description(format!("No queue group found in this channel: {}", e))
+                .description(format!("No queue group found in this channel: {e}"))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -2349,7 +2327,7 @@ pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 
     let success_embed = CE::new()
         .title("Queue Cleared")
-        .description(format!("Removed {} player(s) from the queue.", player_count))
+        .description(format!("Removed {player_count} player(s) from the queue."))
         .color(0x00ff00);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
@@ -2394,7 +2372,7 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
                 error!("[{}] - Invalid rank name: {}", guild_name, rank_role);
                 let error_embed = CE::new()
                     .title("Rank Not Configured")
-                    .description(format!("Rank '{}' is not configured.\nUse `/check_ranks` to set up rank roles first.", rank_role))
+                    .description(format!("Rank '{rank_role}' is not configured.\nUse `/check_ranks` to set up rank roles first."))
                     .color(0xff0000);
                 let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
                 cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2412,7 +2390,7 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
                     error!("[{}] - Invalid role ID: {}", guild_name, rank_role);
                     let error_embed = CE::new()
                         .title("Not a Rank Role")
-                        .description(format!("Role <@&{}> is not configured as a rank role.\nUse `/check_ranks` to set up rank roles first.", role_id))
+                        .description(format!("Role <@&{role_id}> is not configured as a rank role.\nUse `/check_ranks` to set up rank roles first."))
                         .color(0xff0000);
                     let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
                     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2424,7 +2402,7 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
                 error!("[{}] - Invalid role ID: {}", guild_name, rank_role);
                 let error_embed = CE::new()
                     .title("Invalid Input")
-                    .description(format!("'{}' is not a valid rank name or role ID.", rank_role))
+                    .description(format!("'{rank_role}' is not a valid rank name or role ID."))
                     .color(0xff0000);
                 let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
                 cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2491,7 +2469,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
             warn!("[{}] No group found in channel {}: {}", guild_name, cc.intax.channel_id, e);
             let error_embed = CE::new()
                 .title("Group Not Found")
-                .description(format!("No queue group found in this channel: {}", e))
+                .description(format!("No queue group found in this channel: {e}"))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -2508,7 +2486,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
             warn!("[{}] User {} not found in any session: {}", guild_name, user_id, e);
             let error_embed = CE::new()
                 .title("Player Not Found")
-                .description(format!("<@{}> is not in any queue.", user_id))
+                .description(format!("<@{user_id}> is not in any queue."))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -2524,7 +2502,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
             error!("[{}] Player {} not found in pool despite being in session", guild_name, user_id);
             let error_embed = CE::new()
                 .title("Player Not Found")
-                .description(format!("<@{}> is not in the queue pool.", user_id))
+                .description(format!("<@{user_id}> is not in the queue pool."))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -2551,7 +2529,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     
     let success_embed = CE::new()
         .title("Player Buffered")
-        .description(format!("<@{}> moved to front of queue.", user_id))
+        .description(format!("<@{user_id}> moved to front of queue."))
         .color(0x00ff00);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));

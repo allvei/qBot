@@ -92,7 +92,7 @@ pub async fn get_or_assign_player_rank(ctx: &Ctx, db: &DB, guild_id: GI, user_id
         },
         Err(e) => {
             warn!("Failed to fetch member {} in guild {}: {}", user_id, guild_id, e);
-            Err(anyhow!("Failed to fetch member: {}", e))
+            Err(anyhow!("Failed to fetch member: {e}"))
         }
     }
 }
@@ -105,7 +105,7 @@ pub async fn validate_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec
     let guild_roles = match ctx.http.get_guild_roles(guild_id).await {
         Ok(roles) => roles,
         Err(e) => {
-            warn!("Failed to fetch guild roles: {}", e);
+            warn!("Failed to fetch guild roles: {e}");
             return Err(anyhow!("Failed to fetch guild roles"));
         }
     };
@@ -288,7 +288,7 @@ pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<V
     let guild_roles = match ctx.http.get_guild_roles(guild_id).await {
         Ok(roles) => roles,
         Err(e) => {
-            warn!("Failed to fetch guild roles: {}", e);
+            warn!("Failed to fetch guild roles: {e}");
             return Err(anyhow!("Failed to fetch guild roles"));
         }
     };
@@ -449,7 +449,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         }
 
         if found {
-            cc.reply(&format!("Left the queue! ({}/{} players)", queue_count, group.quota)).await?;
+            cc.reply(&format!("Left the queue! ({queue_count}/{} players)", group.quota)).await?;
         }
 
         group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
@@ -471,7 +471,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     let rank = match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user).await {
         Ok(rank) => rank,
         Err(e) => {
-            cc.reply(&format!("Failed to get or assign rank: {}. Please contact an admin.", e)).await?;
+            cc.reply(&format!("Failed to get or assign rank: {e}. Please contact an admin.")).await?;
             return Ok(());
         }
     };
@@ -526,7 +526,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         Ok(session) => session.pool.len(),
         Err(_) => 0
     };
-    cc.reply(&format!("Joined the queue! ({}/{} players)", current_queue, group.quota)).await?;
+    cc.reply(&format!("Joined the queue! ({current_queue}/{} players)", group.quota)).await?;
 
     // Update dashboard
     group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
@@ -562,7 +562,7 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     if queue_count == 0 && queue_list == "No active queue found." {
         cc.reply("No active queue found.").await?;
     } else {
-        cc.reply(&format!("**Queue Status ({}/{} players)**\n{}", queue_count, quota, queue_list)).await?;
+        cc.reply(&format!("**Queue Status ({queue_count}/{quota} players)**\n{queue_list}")).await?;
     }
 
     Ok(())

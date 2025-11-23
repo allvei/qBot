@@ -273,13 +273,13 @@ impl CommandRegistry {
                     println!();
                     println!("    Usage:");
                     for usage in &cmd.usage {
-                        println!("      {}", usage);
+                        println!("      {usage}");
                     }
                     if !cmd.examples.is_empty() {
                         println!();
                         println!("    Examples:");
                         for example in &cmd.examples {
-                            println!("      {}", example);
+                            println!("      {example}");
                         }
                     }
                     println!();
@@ -453,7 +453,7 @@ impl ConsoleHandler {
                             }
                         },
                         Err(e) => {
-                            error!("Command error: {}", e);
+                            error!("Command error: {e}");
                         }
                     }
                 },
@@ -498,12 +498,12 @@ impl ConsoleHandler {
                         if let Some(cmd) = self.registry.commands.get("config") {
                             println!("Usage:");
                             for usage in &cmd.usage {
-                                println!("  {}", usage);
+                                println!("  {usage}");
                             }
                             if !cmd.examples.is_empty() {
                                 println!("Examples:");
                                 for example in &cmd.examples {
-                                    println!("  {}", example);
+                                    println!("  {example}");
                                 }
                             }
                         }
@@ -515,12 +515,12 @@ impl ConsoleHandler {
                     if let Some(cmd) = self.registry.commands.get("create") {
                         println!("Usage:");
                         for usage in &cmd.usage {
-                            println!("  {}", usage);
+                            println!("  {usage}");
                         }
                         if !cmd.examples.is_empty() {
                             println!("Examples:");
                             for example in &cmd.examples {
-                                println!("  {}", example);
+                                println!("  {example}");
                             }
                         }
                     }
@@ -533,12 +533,12 @@ impl ConsoleHandler {
                     if let Some(cmd) = self.registry.commands.get("query") {
                         println!("Usage:");
                         for usage in &cmd.usage {
-                            println!("  {}", usage);
+                            println!("  {usage}");
                         }
                         if !cmd.examples.is_empty() {
                             println!("Examples:");
                             for example in &cmd.examples {
-                                println!("  {}", example);
+                                println!("  {example}");
                             }
                         }
                     }
@@ -552,12 +552,12 @@ impl ConsoleHandler {
                     if let Some(cmd) = self.registry.commands.get("forcegen") {
                         println!("Usage:");
                         for usage in &cmd.usage {
-                            println!("  {}", usage);
+                            println!("  {usage}");
                         }
                         if !cmd.examples.is_empty() {
                             println!("Examples:");
                             for example in &cmd.examples {
-                                println!("  {}", example);
+                                println!("  {example}");
                             }
                         }
                     }
@@ -579,12 +579,12 @@ impl ConsoleHandler {
                         if let Some(cmd) = self.registry.commands.get("fakeplayer") {
                             println!("Usage:");
                             for usage in &cmd.usage {
-                                println!("  {}", usage);
+                                println!("  {usage}");
                             }
                             if !cmd.examples.is_empty() {
                                 println!("Examples:");
                                 for example in &cmd.examples {
-                                    println!("  {}", example);
+                                    println!("  {example}");
                                 }
                             }
                         }
@@ -596,12 +596,12 @@ impl ConsoleHandler {
                     if let Some(cmd) = self.registry.commands.get("testnotify") {
                         println!("Usage:");
                         for usage in &cmd.usage {
-                            println!("  {}", usage);
+                            println!("  {usage}");
                         }
                         if !cmd.examples.is_empty() {
                             println!("Examples:");
                             for example in &cmd.examples {
-                                println!("  {}", example);
+                                println!("  {example}");
                             }
                         }
                     }
@@ -614,7 +614,7 @@ impl ConsoleHandler {
                     if let Some(cmd) = self.registry.commands.get("showqueue") {
                         println!("Usage:");
                         for usage in &cmd.usage {
-                            println!("  {}", usage);
+                            println!("  {usage}");
                         }
                     }
                 } else {
@@ -626,7 +626,7 @@ impl ConsoleHandler {
                     if let Some(cmd) = self.registry.commands.get("showteams") {
                         println!("Usage:");
                         for usage in &cmd.usage {
-                            println!("  {}", usage);
+                            println!("  {usage}");
                         }
                     }
                 } else {
@@ -638,7 +638,7 @@ impl ConsoleHandler {
                     if let Some(cmd) = self.registry.commands.get("clearqueue") {
                         println!("Usage:");
                         for usage in &cmd.usage {
-                            println!("  {}", usage);
+                            println!("  {usage}");
                         }
                     }
                 } else {
@@ -650,7 +650,7 @@ impl ConsoleHandler {
                     if let Some(cmd) = self.registry.commands.get("removeplayer") {
                         println!("Usage:");
                         for usage in &cmd.usage {
-                            println!("  {}", usage);
+                            println!("  {usage}");
                         }
                     }
                 } else {
@@ -662,7 +662,7 @@ impl ConsoleHandler {
                     if let Some(cmd) = self.registry.commands.get("forcehot") {
                         println!("Usage:");
                         for usage in &cmd.usage {
-                            println!("  {}", usage);
+                            println!("  {usage}");
                         }
                     }
                 } else {
@@ -674,7 +674,7 @@ impl ConsoleHandler {
                     if let Some(cmd) = self.registry.commands.get("forcepush") {
                         println!("Usage:");
                         for usage in &cmd.usage {
-                            println!("  {}", usage);
+                            println!("  {usage}");
                         }
                     }
                 } else {
@@ -686,7 +686,7 @@ impl ConsoleHandler {
                     if let Some(cmd) = self.registry.commands.get("forcepull") {
                         println!("Usage:");
                         for usage in &cmd.usage {
-                            println!("  {}", usage);
+                            println!("  {usage}");
                         }
                     }
                 } else {
@@ -698,7 +698,7 @@ impl ConsoleHandler {
                     if let Some(cmd) = self.registry.commands.get("simulate") {
                         println!("Usage:");
                         for usage in &cmd.usage {
-                            println!("  {}", usage);
+                            println!("  {usage}");
                         }
                     }
                 } else {
@@ -741,10 +741,10 @@ impl ConsoleHandler {
         }
 
         println!("=== Bot Status ===");
-        println!("Connected Guilds: {}", total_servers);
-        println!("Total Games: {}", total_games);
-        println!("Active Games: {}", active_games);
-        println!("Total Players in Queue: {}", total_players);
+        println!("Connected Guilds: {total_servers}");
+        println!("Total Games: {total_games}");
+        println!("Active Games: {active_games}");
+        println!("Total Players in Queue: {total_players}");
 
         if let Some(ctx) = &self.ctx {
             println!("Bot User: {}", ctx.cache.current_user().name);
@@ -763,7 +763,7 @@ impl ConsoleHandler {
             Ok(rows) => {
                 for row in rows {
                     if let Ok(guild_id) = row.try_get::<i64, _>("guild_id") {
-                        println!("Guild ID: {}", guild_id);
+                        println!("Guild ID: {guild_id}");
 
                         match self.database.groups.get_groups_for_guild(guild_id as u64).await {
                             Ok(groups) => {
@@ -773,14 +773,14 @@ impl ConsoleHandler {
                                 }
                             },
                             Err(e) => {
-                                println!("  Error checking groups: {}", e);
+                                println!("  Error checking groups: {e}");
                             }
                         }
                     }
                 }
             },
             Err(e) => {
-                println!("Error querying database: {}", e);
+                println!("Error querying database: {e}");
             }
         }
 
@@ -839,9 +839,9 @@ impl ConsoleHandler {
                         }
                     }
                 }
-                Err(format!("Guild '{}' not found", guild_identifier).into())
+                Err(format!("Guild '{guild_identifier}' not found").into())
             },
-            Err(e) => Err(format!("Database error: {}", e).into())
+            Err(e) => Err(format!("Database error: {e}").into())
         }
     }
 
@@ -850,7 +850,7 @@ impl ConsoleHandler {
         -> Result<(u64, u8), Box<dyn std::error::Error + Send + Sync>> {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
         let group_id: u8 = group_id_str.parse()
-            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+            .map_err(|_| format!("Invalid group ID: {group_id_str}"))?;
         Ok((guild_id, group_id))
     }
 
@@ -863,7 +863,7 @@ impl ConsoleHandler {
             .find(|s| s.guild_id == guild_id)
             .and_then(|s| s.groups.iter().find(|g| g.group_id == group_id))
             .is_none() {
-            return Err(format!("Group {} not found for guild {}", group_id, guild_id).into());
+            return Err(format!("Group {group_id} not found for guild {guild_id}").into());
         }
         Ok(manager)
     }
@@ -884,7 +884,7 @@ impl ConsoleHandler {
 
     /// Helper: Print "no queue found" message
     fn print_no_queue_message(guild_id: u64, group_id: u8) {
-        println!("No active queue found for guild {} group {}", guild_id, group_id);
+        println!("No active queue found for guild {guild_id} group {group_id}");
     }
 
     /// Helper: Get team players from session
@@ -904,9 +904,9 @@ impl ConsoleHandler {
         match self.database.groups.get_groups_for_guild(guild_id).await {
             Ok(groups) => {
                 if groups.is_empty() {
-                    println!("No configuration found for guild ID: {}", guild_id);
+                    println!("No configuration found for guild ID: {guild_id}");
                 } else {
-                    println!("=== Configuration for Guild {} ===", guild_id);
+                    println!("=== Configuration for Guild {guild_id} ===");
                     for group in groups {
                         println!("Group ID: {}"              , group.group_id);
                         println!("  Dashboard Channel: {}"   , group.channels.dashboard);
@@ -927,7 +927,7 @@ impl ConsoleHandler {
                 }
             },
             Err(e) => {
-                println!("Error retrieving configuration: {}", e);
+                println!("Error retrieving configuration: {e}");
             }
         }
 
@@ -937,19 +937,19 @@ impl ConsoleHandler {
     async fn cmd_set_config(&self, guild_identifier: &str, group_id_str: &str, key: &str, value: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let guild_id = self.resolve_guild_id(guild_identifier).await?;
         let group_id: u8 = group_id_str.parse()
-            .map_err(|_| format!("Invalid group ID: {}", group_id_str))?;
+            .map_err(|_| format!("Invalid group ID: {group_id_str}"))?;
 
         let groups = self.database.groups.get_groups_for_guild(guild_id).await?;
 
         let group = groups.iter().find(|g| g.group_id == group_id)
-            .ok_or(format!("Group {} not found for guild {}", group_id, guild_id))?;
+            .ok_or(format!("Group {group_id} not found for guild {guild_id}"))?;
 
         let queue_id = group.channels.queue_chat.get();
 
         match key.to_lowercase().as_str() {
             "quota" | "game_quota" => {
                 let quota: u8 = value.parse()
-                    .map_err(|_| format!("Invalid quota value: {}", value))?;
+                    .map_err(|_| format!("Invalid quota value: {value}"))?;
 
                 if quota == 0 || quota > 20 {
                     println!("Quota must be between 1 and 20");
@@ -967,7 +967,7 @@ impl ConsoleHandler {
                     quota,
                 ).await {
                     Ok(_) => {
-                        println!("Updated quota to {} for guild {} group {}", quota, guild_id, group_id);
+                        println!("Updated quota to {quota} for guild {guild_id} group {group_id}");
 
                         // Update in-memory manager and dashboard
                         if let Some(ctx) = &self.ctx {
@@ -982,19 +982,19 @@ impl ConsoleHandler {
                             println!("  Context not available, dashboard not updated");
                         }
                     },
-                    Err(e) => println!("Failed to update quota: {}", e),
+                    Err(e) => println!("Failed to update quota: {e}"),
                 }
             },
             "timeout" => {
                 let timeout: u16 = value.parse()
-                    .map_err(|_| format!("Invalid timeout value: {}", value))?;
+                    .map_err(|_| format!("Invalid timeout value: {value}"))?;
 
                 // Update in-memory manager
                 if let Some(ctx) = &self.ctx {
                     let mut manager = self.manager.lock().await;
                     if let Ok(group) = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id) {
                         group.timeout = timeout;
-                        println!("Updated timeout to {} minutes for guild {} group {}", timeout, guild_id, group_id);
+                        println!("Updated timeout to {timeout} minutes for guild {guild_id} group {group_id}");
 
                         // Update dashboard
                         group.queue_dash_update(ctx, guild_id).await;
@@ -1005,7 +1005,7 @@ impl ConsoleHandler {
             },
             "dashboard" => {
                 let dashboard_id: u64 = value.parse()
-                    .map_err(|_| format!("Invalid dashboard channel ID: {}", value))?;
+                    .map_err(|_| format!("Invalid dashboard channel ID: {value}"))?;
 
                 match self.database.groups.update_group(
                     queue_id,
@@ -1016,13 +1016,13 @@ impl ConsoleHandler {
                     group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
                     group.quota as u8,
                 ).await {
-                    Ok(_) => println!("Updated dashboard channel to {} for guild {}", dashboard_id, guild_id),
-                    Err(e) => println!("Failed to update dashboard: {}", e),
+                    Ok(_) => println!("Updated dashboard channel to {dashboard_id} for guild {guild_id}"),
+                    Err(e) => println!("Failed to update dashboard: {e}"),
                 }
             },
             "red" | "red_team" => {
                 let red_id: u64 = value.parse()
-                    .map_err(|_| format!("Invalid red team channel ID: {}", value))?;
+                    .map_err(|_| format!("Invalid red team channel ID: {value}"))?;
 
                 match self.database.groups.update_group(
                     queue_id,
@@ -1033,13 +1033,13 @@ impl ConsoleHandler {
                     group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0),
                     group.quota as u8,
                 ).await {
-                    Ok(_)  => println!("Updated red team channel to {} for guild {}", red_id, guild_id),
-                    Err(e) => println!("Failed to update red team channel: {}", e),
+                    Ok(_)  => println!("Updated red team channel to {red_id} for guild {guild_id}"),
+                    Err(e) => println!("Failed to update red team channel: {e}"),
                 }
             },
             "blue" | "blu" | "blue_team" => {
                 let blue_id: u64 = value.parse()
-                    .map_err(|_| format!("Invalid blue team channel ID: {}", value))?;
+                    .map_err(|_| format!("Invalid blue team channel ID: {value}"))?;
 
                 match self.database.groups.update_group(
                     queue_id,
@@ -1050,12 +1050,12 @@ impl ConsoleHandler {
                     blue_id,
                     group.quota as u8,
                 ).await {
-                    Ok(_) => println!("Updated blue team channel to {} for guild {}", blue_id, guild_id),
-                    Err(e) => println!("Failed to update blue team channel: {}", e),
+                    Ok(_) => println!("Updated blue team channel to {blue_id} for guild {guild_id}"),
+                    Err(e) => println!("Failed to update blue team channel: {e}"),
                 }
             },
             _ => {
-                println!("Unknown configuration key: {}", key);
+                println!("Unknown configuration key: {key}");
                 println!("Available keys: quota, timeout, dashboard, red, blue");
             }
         }
@@ -1065,17 +1065,17 @@ impl ConsoleHandler {
 
     async fn cmd_create_config(&self, guild_id_str: &str, queue_channel: &str, dashboard_channel: &str, red_channel: &str, blue_channel: &str, quota_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let guild_id: u64 = guild_id_str.parse()
-            .map_err(|_| format!("Invalid guild ID: {}", guild_id_str))?;
+            .map_err(|_| format!("Invalid guild ID: {guild_id_str}"))?;
         let queue_id: u64 = queue_channel.parse()
-            .map_err(|_| format!("Invalid queue channel ID: {}", queue_channel))?;
+            .map_err(|_| format!("Invalid queue channel ID: {queue_channel}"))?;
         let dashboard_id: u64 = dashboard_channel.parse()
-            .map_err(|_| format!("Invalid dashboard channel ID: {}", dashboard_channel))?;
+            .map_err(|_| format!("Invalid dashboard channel ID: {dashboard_channel}"))?;
         let red_id: u64 = red_channel.parse()
-            .map_err(|_| format!("Invalid red channel ID: {}", red_channel))?;
+            .map_err(|_| format!("Invalid red channel ID: {red_channel}"))?;
         let blue_id: u64 = blue_channel.parse()
-            .map_err(|_| format!("Invalid blue channel ID: {}", blue_channel))?;
+            .map_err(|_| format!("Invalid blue channel ID: {blue_channel}"))?;
         let quota: u8 = quota_str.parse()
-            .map_err(|_| format!("Invalid quota: {}", quota_str))?;
+            .map_err(|_| format!("Invalid quota: {quota_str}"))?;
 
         if quota == 0 || quota > 20 {
             println!("Game quota must be between 1 and 20");
@@ -1092,7 +1092,7 @@ impl ConsoleHandler {
                 }
             },
             Err(e) => {
-                println!("  Error checking existing groups: {}", e);
+                println!("  Error checking existing groups: {e}");
             }
         }
 
@@ -1107,15 +1107,15 @@ impl ConsoleHandler {
             quota,
         ).await {
             Ok(_) => {
-                println!("Created new group configuration for guild {}", guild_id);
-                println!("   Queue Channel: {}",     queue_id);
-                println!("   Dashboard Channel: {}", dashboard_id);
-                println!("   Red Team Channel: {}",  red_id);
-                println!("   Blue Team Channel: {}", blue_id);
-                println!("   Game Quota: {}",        quota);
+                println!("Created new group configuration for guild {guild_id}");
+                println!("   Queue Channel: {queue_id}");
+                println!("   Dashboard Channel: {dashboard_id}");
+                println!("   Red Team Channel: {red_id}");
+                println!("   Blue Team Channel: {blue_id}");
+                println!("   Game Quota: {quota}");
             },
             Err(e) => {
-                println!("Failed to create group configuration: {}", e);
+                println!("Failed to create group configuration: {e}");
             }
         }
 
@@ -1131,17 +1131,17 @@ impl ConsoleHandler {
                     // Print column values if possible
                     for col_idx in 0..row.len() {
                         if let Ok(value) = row.try_get::<String, _>(col_idx) {
-                            println!("  Column {}: {}", col_idx, value);
+                            println!("  Column {col_idx}: {value}");
                         } else if let Ok(value) = row.try_get::<i64, _>(col_idx) {
-                            println!("  Column {}: {}", col_idx, value);
+                            println!("  Column {col_idx}: {value}");
                         } else {
-                            println!("  Column {}: <unprintable>", col_idx);
+                            println!("  Column {col_idx}: <unprintable>");
                         }
                     }
                 }
             },
             Err(e) => {
-                println!("Query error: {}", e);
+                println!("Query error: {e}");
             }
         }
 
@@ -1157,7 +1157,7 @@ impl ConsoleHandler {
 
         // Check if there's a session with enough players
         if let Ok(session) = group.get_queue().await {
-            println!("Forcing team generation for guild {} group {} with {} players...", guild_id, group_id, session.pool.len());
+            println!("Forcing team generation for guild {guild_id} group {group_id} with {} players...", session.pool.len());
             group.generate_teams(ctx, serenity::model::id::GuildId::new(guild_id), None).await;
             println!("Teams generated successfully!");
 
@@ -1186,7 +1186,7 @@ impl ConsoleHandler {
     async fn cmd_add_fake_players(&self, guild_identifier: &str, group_id_str: &str, count_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
         let count: usize = count_str.parse()
-            .map_err(|_| format!("Invalid player count: {}", count_str))?;
+            .map_err(|_| format!("Invalid player count: {count_str}"))?;
 
         if count == 0 || count > 20 {
             println!("Player count must be between 1 and 20");
@@ -1198,14 +1198,14 @@ impl ConsoleHandler {
 
         // Get the idle session
         if let Ok(session) = group.get_queue().await {
-            println!("Adding {} fake player(s) to guild {} group {}...", count, guild_id, group_id);
+            println!("Adding {count} fake player(s) to guild {guild_id} group {group_id}...");
 
             // Generate fake player IDs starting from a high number to avoid conflicts
             let base_id = 9000000000000000000_u64;
             for i in 0..count {
                 let fake_id = UserId::new(base_id + i as u64);
                 // Use Novice rank as default for test players
-                let fake_player = pf_pug_bot::Player::add(fake_id, Some(format!("FakePlayer{}", i)), None);
+                let fake_player = pf_pug_bot::Player::add(fake_id, Some(format!("FakePlayer{i}")), None);
                 session.add_player(fake_player, pf_pug_bot::Rank::Novice);
             }
 
@@ -1225,7 +1225,7 @@ impl ConsoleHandler {
         let mut manager = self.get_group_mut(guild_id, group_id).await?;
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
-        println!("Testing notify method for guild {} group {}...", guild_id, group_id);
+        println!("Testing notify method for guild {guild_id} group {group_id}...");
         group.notify(ctx, serenity::model::id::GuildId::new(guild_id)).await;
         println!("Notify method called successfully!");
         println!("   Check the queue chat channel for the notification message.");
@@ -1241,7 +1241,7 @@ impl ConsoleHandler {
         let quota = group.quota;
 
         if let Ok(session) = group.get_queue().await {
-            println!("\n=== Queue for Guild {} Group {} ===", guild_id, group_id);
+            println!("\n=== Queue for Guild {guild_id} Group {group_id} ===");
             println!("Status: {:?}", session.status);
             println!("Players in queue: {}/{}", session.pool.len(), quota);
 
@@ -1278,7 +1278,7 @@ impl ConsoleHandler {
                 println!("No teams have been generated yet.");
                 println!("   Use 'forcegen' to generate teams.");
             } else {
-                println!("\n=== Teams for Guild {} Group {} ===", guild_id, group_id);
+                println!("\n=== Teams for Guild {guild_id} Group {group_id} ===");
 
                 println!("\nRed Team ({} players):", red_players.len());
                 for p in red_players {
@@ -1308,7 +1308,7 @@ impl ConsoleHandler {
         if let Ok(session) = group.get_queue().await {
             let player_count = session.pool.len();
             session.pool.clear();
-            println!("Cleared {} player(s) from the queue", player_count);
+            println!("Cleared {player_count} player(s) from the queue");
             self.update_dashboard_if_available(&mut manager, guild_id, group_id).await;
         } else {
             Self::print_no_queue_message(guild_id, group_id);
@@ -1320,14 +1320,14 @@ impl ConsoleHandler {
     async fn cmd_remove_player(&self, guild_identifier: &str, group_id_str: &str, index_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
         let index: usize = index_str.parse()
-            .map_err(|_| format!("Invalid index: {}", index_str))?;
+            .map_err(|_| format!("Invalid index: {index_str}"))?;
 
         let mut manager = self.get_group_mut(guild_id, group_id).await?;
         let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
 
         if let Ok(session) = group.get_queue().await {
             if index >= session.pool.len() {
-                println!("Index {} is out of bounds. Queue has {} player(s)", index, session.pool.len());
+                println!("Index {index} is out of bounds. Queue has {len} player(s)", len = session.pool.len());
             } else {
                 let removed_player = session.pool.remove(index);
                 println!("Removed player {} from position {}", removed_player.player.discord_id, index);
@@ -1373,7 +1373,7 @@ impl ConsoleHandler {
                 println!("   Session is now Live.");
             },
             Err(e) => {
-                println!("Failed to push players: {}", e);
+                println!("Failed to push players: {e}");
             }
         }
 
@@ -1394,7 +1394,7 @@ impl ConsoleHandler {
                 println!("   Session reset to Idle.");
             },
             Err(e) => {
-                println!("Failed to pull players: {}", e);
+                println!("Failed to pull players: {e}");
             }
         }
 
@@ -1420,18 +1420,18 @@ impl ConsoleHandler {
                     let current_count = session.pool.len();
                     if current_count < quota {
                         let needed = quota - current_count;
-                        println!("1️⃣  Adding {} fake player(s) to reach quota ({})...", needed, quota);
+                        println!("1️⃣  Adding {needed} fake player(s) to reach quota ({quota})...");
 
                         let base_id = 9000000000000000000_u64;
                         for i in 0..needed {
                             let fake_id = UserId::new(base_id + i as u64);
                             // Use Novice rank as default for test players
-                            let fake_player = pf_pug_bot::Player::add(fake_id, Some(format!("FakePlayer{}", i)), None);
+                            let fake_player = pf_pug_bot::Player::add(fake_id, Some(format!("FakePlayer{i}")), None);
                             session.add_player(fake_player, pf_pug_bot::Rank::Novice);
                         }
                         println!("   Queue now has {} players\n", session.pool.len());
                     } else {
-                        println!("1️⃣  Queue already has {} players (quota: {})\n", current_count, quota);
+                        println!("1️⃣  Queue already has {current_count} players (quota: {quota})\n");
                     }
                 }
             }
@@ -1454,7 +1454,7 @@ impl ConsoleHandler {
                 let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
                 match group.push(ctx, serenity::model::id::GuildId::new(guild_id)).await {
                     Ok(_) => println!("   Players pushed, session is Live\n"),
-                    Err(e) => println!("     Push failed: {}\n", e),
+                    Err(e) => println!("     Push failed: {e}\n"),
                 }
             }
 
@@ -1467,7 +1467,7 @@ impl ConsoleHandler {
                 let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
                 match group.pull(ctx, serenity::model::id::GuildId::new(guild_id), &self.database, Some(self.manager.clone())).await {
                     Ok(_) => println!("   Players pulled back, session reset to Idle\n"),
-                    Err(e) => println!("     Pull failed: {}\n", e),
+                    Err(e) => println!("     Pull failed: {e}\n"),
                 }
             }
 

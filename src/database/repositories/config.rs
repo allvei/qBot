@@ -49,7 +49,7 @@ impl ConfigRepository {
         match query_result {
             Ok(_) => Ok(()),
             Err(e) => {
-                error!("Failed to set config: {}", e);
+                error!("Failed to set config: {e}");
                 Err(e.into())
             }
         }

@@ -35,8 +35,8 @@ impl DatabaseValidator {
             },
             Err(e) => {
                 report.schema_valid = false;
-                report.errors.push(format!("Schema validation failed: {}", e));
-                error!("Schema validation failed: {}", e);
+                report.errors.push(format!("Schema validation failed: {e}"));
+                error!("Schema validation failed: {e}");
             }
         }
 
@@ -71,7 +71,7 @@ impl DatabaseValidator {
         .await?;
 
         if orphaned_configs > 0 {
-            report.warnings.push(format!("{} config entries have no corresponding groups", orphaned_configs));
+            report.warnings.push(format!("{orphaned_configs} config entries have no corresponding groups"));
             warn!("Found {} orphaned config entries", orphaned_configs);
         }
 
@@ -88,7 +88,7 @@ impl DatabaseValidator {
         .await?;
 
         if placeholder_groups > 0 {
-            report.warnings.push(format!("{} groups have placeholder Discord IDs", placeholder_groups));
+            report.warnings.push(format!("{placeholder_groups} groups have placeholder Discord IDs"));
             warn!("Found {} groups with placeholder Discord IDs", placeholder_groups);
         }
 
@@ -105,7 +105,7 @@ impl DatabaseValidator {
         .await?;
 
         if duplicate_users > 0 {
-            report.errors.push(format!("{} duplicate user records found", duplicate_users));
+            report.errors.push(format!("{duplicate_users} duplicate user records found"));
             error!("Found {} duplicate user records", duplicate_users);
         }
 
@@ -128,14 +128,14 @@ impl DatabaseValidator {
             match self.group_repo.get_groups_for_guild(guild_id_u64).await {
                 Ok(groups) => {
                     if groups.is_empty() {
-                        report.warnings.push(format!("Guild {} has no groups configured", guild_id));
+                        report.warnings.push(format!("Guild {guild_id} has no groups configured"));
                     } else {
                         report.guild_groups.insert(guild_id_u64, groups.len());
-                        info!("Guild {} has {} group(s) configured", guild_id, groups.len());
+                        info!("Guild {guild_id} has {} group(s) configured", groups.len());
                     }
                 },
                 Err(e) => {
-                    report.errors.push(format!("Failed to validate guild {}: {}", guild_id, e));
+                    report.errors.push(format!("Failed to validate guild {guild_id}: {e}"));
                 }
             }
         }
@@ -152,15 +152,14 @@ impl DatabaseValidator {
         // Remove duplicate users
         let removed_duplicates = self.remove_duplicate_users().await?;
         if removed_duplicates > 0 {
-            report.actions.push(format!("Removed {} duplicate user records", removed_duplicates));
+            report.actions.push(format!("Removed {removed_duplicates} duplicate user records"));
         }
 
         // Update placeholder Discord IDs (this requires manual intervention)
         let placeholder_count = self.count_placeholder_ids().await?;
         if placeholder_count > 0 {
             report.manual_actions.push(format!(
-                "Found {} groups with placeholder Discord IDs. These require manual configuration.",
-                placeholder_count
+                "Found {placeholder_count} groups with placeholder Discord IDs. These require manual configuration.",
             ));
         }
 

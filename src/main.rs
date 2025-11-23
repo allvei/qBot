@@ -141,7 +141,7 @@ impl EventHandler for Handler {
                             let mut server = Server::new(guild.id, guild.name.clone(), Roles::empty());
                             for group in groups {
                                 if let Err(e) = server.add_group(group) {
-                                    error!("Failed to add group: {}", e);
+                                    error!("Failed to add group: {e}");
                                 }
                             }
                             let groups_len = server.groups.len();
@@ -330,7 +330,7 @@ impl EventHandler for Handler {
                         let server = match manager.get_server(itx.guild_id.unwrap()) {
                             Ok(s) => s,
                             Err(e) => {
-                                error!("Server not found: {}", e);
+                                error!("Server not found: {e}");
                                 let response = CIR::Message(CIRM::new().content("No groups found. Please create one with `/groupadd` first.").ephemeral(true));
                                 let _ = itx.create_response(&ctx.http, response).await;
                                 return;
@@ -344,7 +344,7 @@ impl EventHandler for Handler {
                         let server = match manager.get_server(itx.guild_id.unwrap()) {
                             Ok(s) => s,
                             Err(e) => {
-                                error!("Server not found: {}", e);
+                                error!("Server not found: {e}");
                                 let response = CIR::Message(CIRM::new().content("Server not configured. Please run `/setupadd` or `/groupadd` first.").ephemeral(true));
                                 let _ = itx.create_response(&ctx.http, response).await;
                                 return;
@@ -454,7 +454,7 @@ impl EventHandler for Handler {
                                 .ephemeral(true)
                         );
                         if let Err(e) = itx.create_response(&ctx.http, error_response).await {
-                            error!("Failed to send error response: {}", e);
+                            error!("Failed to send error response: {e}");
                         }
                         return;
                     }
@@ -475,16 +475,16 @@ impl EventHandler for Handler {
                         // Still missing permissions
                         let error_response = serenity::all::CreateInteractionResponse::Message(
                             serenity::all::CreateInteractionResponseMessage::new()
-                                .content(format!("Still missing permissions: {}", missing_perms))
+                                .content(format!("Still missing permissions: {missing_perms}"))
                                 .ephemeral(true)
                         );
                         if let Err(e) = itx.create_response(&ctx.http, error_response).await {
-                            error!("Failed to send error response: {}", e);
+                            error!("Failed to send error response: {e}");
                         }
                     } else {
                         // Permissions granted! Delete the warning message and create dashboard
                         if let Err(e) = itx.message.delete(&ctx.http).await {
-                            error!("Failed to delete permission warning: {}", e);
+                            error!("Failed to delete permission warning: {e}");
                         }
 
                         let success_response = serenity::all::CreateInteractionResponse::Message(
@@ -493,7 +493,7 @@ impl EventHandler for Handler {
                                 .ephemeral(true)
                         );
                         if let Err(e) = itx.create_response(&ctx.http, success_response).await {
-                            error!("Failed to send success response: {}", e);
+                            error!("Failed to send success response: {e}");
                         }
 
                         // Now create the dashboard
@@ -507,7 +507,7 @@ impl EventHandler for Handler {
                     let create = matches!(button_type, ButtonType::CreateRankRolesYes);
                     let result = admin::handle_create_rank_roles(&ctx, &self.database, &itx, create).await;
                     if let Err(e) = result {
-                        error!("Error handling rank role creation: {}", e);
+                        error!("Error handling rank role creation: {e}");
                     }
                     return;
                 }
@@ -515,7 +515,7 @@ impl EventHandler for Handler {
                 if button_type.is_setup_button() {
                     let result = admin::handle_setup_interaction(&ctx, &itx, &self.database, &self.manager).await;
                     if let Err(e) = result {
-                        error!("Error handling setup interaction: {}", e);
+                        error!("Error handling setup interaction: {e}");
                     }
                     return;
                 }
@@ -529,7 +529,7 @@ impl EventHandler for Handler {
                     Err(_) => {
                         // Group not in manager - try to recover from database
                         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-                        let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", channel_id));
+                        let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{channel_id}"));
                         info!("[{}] Group not found in manager for #{}, attempting recovery from database", guild_name, channel_name);
 
                         // Get the message ID from the interaction
@@ -576,7 +576,7 @@ impl EventHandler for Handler {
                                                 .ephemeral(true)
                                         );
                                         if let Err(e) = itx.create_response(&ctx.http, error_response).await {
-                                            error!("Failed to send error response: {}", e);
+                                            error!("Failed to send error response: {e}");
                                         }
                                         return;
                                     }
@@ -588,20 +588,20 @@ impl EventHandler for Handler {
                                             .ephemeral(true)
                                     );
                                     if let Err(e) = itx.create_response(&ctx.http, error_response).await {
-                                        error!("Failed to send error response: {}", e);
+                                        error!("Failed to send error response: {e}");
                                     }
                                     return;
                                 }
                             },
                             Err(e) => {
-                                error!("Failed to load groups from database: {}", e);
+                                error!("Failed to load groups from database: {e}");
                                 let error_response = CIR::Message(
                                     CIRM::new()
                                         .content("Failed to access database. Please contact an administrator.")
                                         .ephemeral(true)
                                 );
                                 if let Err(e) = itx.create_response(&ctx.http, error_response).await {
-                                    error!("Failed to send error response: {}", e);
+                                    error!("Failed to send error response: {e}");
                                 }
                                 return;
                             }
@@ -739,7 +739,7 @@ impl EventHandler for Handler {
                 // This just ensures a session exists for them to join
                 if group.get_inactives().is_empty() {
                     if let Err(e) = group.create_session() {
-                        warn!("Failed to create session on VC connect: {}", e);
+                        warn!("Failed to create session on VC connect: {e}");
                     }
                 }
             },
@@ -805,7 +805,7 @@ impl EventHandler for Handler {
             Err(_) => match self.database.new_user_with_tag(user_id, &ctx).await {
                     Ok(new_user) => new_user,
                     Err(e) => {
-                        error!("Failed to create new user: {}", e);
+                        error!("Failed to create new user: {e}");
                         return;
                     }
             },
@@ -852,7 +852,7 @@ impl EventHandler for Handler {
                                     Ok(rank) => {
                                         // Use queue_player_with_vc_status to set in_queue_vc BEFORE quota check/notification
                                         if let Err(e) = group.queue_player_with_vc_status(player.clone(), rank, &ctx, Some(server), Some(&self.database), Some(self.manager.clone()), true).await {
-                                            error!("Failed to add player to queue: {}", e);
+                                            error!("Failed to add player to queue: {e}");
                                         } else {
                                             // Log successful queue join via voice channel
                                             let guild_name = ctx.cache.guild(server).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
@@ -897,7 +897,7 @@ impl Handler {
         let bot_member = match guild.id.member(&ctx.http, bot_user_id).await {
             Ok(member) => member,
             Err(e) => {
-                error!("Failed to get bot member: {}", e);
+                error!("Failed to get bot member: {e}");
                 return (false, "Unable to check bot permissions".to_string());
             }
         };
@@ -935,7 +935,7 @@ impl Handler {
         let server = match manager.get_server(guild.id) {
             Ok(s) => s,
             Err(e) => {
-                error!("Failed to get server from manager: {}", e);
+                error!("Failed to get server from manager: {e}");
                 return;
             }
         };
@@ -1021,7 +1021,7 @@ impl Handler {
                 // NOW check quota once after all players added
                 if group.is_quota() {
                     if let Err(e) = group.hot(ctx, Some(guild.id), Some(&self.database), Some(self.manager.clone())).await {
-                        error!("Failed to transition to hot: {}", e);
+                        error!("Failed to transition to hot: {e}");
                     }
                 }
 
@@ -1045,9 +1045,8 @@ impl Handler {
                     .title("Missing Bot Permissions")
                     .description(format!(
                         "The bot is missing required permissions to function properly.\n\n\
-                        **Missing Permissions:**\n{}\n\n\
+                        **Missing Permissions:**\n{missing_perms}\n\n\
                         Please grant these permissions to the bot and click the button below to confirm.",
-                        missing_perms
                     ))
                     .color(0xFF0000);
 
@@ -1062,7 +1061,7 @@ impl Handler {
                     .components(vec![action_row]);
 
                 if let Err(e) = channel.id.send_message(&ctx.http, msg).await {
-                    error!("Failed to send permission warning: {}", e);
+                    error!("Failed to send permission warning: {e}");
                 }
             }
             return;
@@ -1072,7 +1071,7 @@ impl Handler {
         let server = match manager.get_server(guild.id) {
             Ok(s) => s,
             Err(e) => {
-                error!("Failed to get server from manager: {}", e);
+                error!("Failed to get server from manager: {e}");
                 return;
             }
         };
@@ -1118,7 +1117,7 @@ impl Handler {
                         channel_id.get(),
                         dashboard_msg_id
                     ).await {
-                        warn!("Failed to persist dashboard message ID to database: {}", e);
+                        warn!("Failed to persist dashboard message ID to database: {e}");
                     } else {
                         info!("Persisted dashboard message ID {} to database", dashboard_msg_id);
                     }
@@ -1152,7 +1151,7 @@ async fn main(
     dotenvy::dotenv().ok();
     let token        = env::var("DISCORD_TOKEN").expect("Expected a Discord token in the environment");
     let db_file      = env::var("DATABASE_URL").unwrap_or_else(|_| "./pf_pug_bot.db".to_string());
-    let database_url = format!("sqlite:{}",db_file);
+    let database_url = format!("sqlite:{db_file}");
 
     // Initialize database connection
     let db = Arc::new(Database::new(&database_url).await?);

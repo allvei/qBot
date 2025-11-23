@@ -510,13 +510,10 @@ impl Group {
         let quota = self.quota as usize;
 
         // Get the hot game (session was just set to hot before this is called)
-        let session_idx = match self.sessions.iter()
-            .position(|s| s.status == SessionStatus::Hot) {
-            Some(idx) => idx,
-            None      => {
-                warn!("No hot session found for team generation");
-                return;
-            }
+        let Some(session_idx) = self.sessions.iter()
+            .position(|s| s.status == SessionStatus::Hot) else {
+            warn!("No hot session found for team generation");
+            return;
         };
 
         let game = &mut self.sessions[session_idx];
@@ -577,12 +574,12 @@ impl Group {
         }
 
         if let Some((mut red_indices, mut blu_indices)) = best_split {
+            use std::collections::HashMap;
+            use rand::seq::SliceRandom;
             info!("[Session {}] Best team balance found with score: {:.2}", session_idx, best_score);
 
             // Randomize by swapping players with the same ELO
             // Group players by ELO, then shuffle within each ELO group
-            use std::collections::HashMap;
-            use rand::seq::SliceRandom;
             let mut rng = rand::rng();
             
             // Create map of ELO -> Vec<indices in players_to_balance>
@@ -597,7 +594,7 @@ impl Group {
             let original_blu = blu_indices.clone();
             
             // For each ELO group with multiple players, shuffle them across teams
-            for (elo, indices) in elo_groups.iter_mut() {
+            for (elo, indices) in &mut elo_groups {
                 if indices.len() > 1 {
                     // Count how many of this ELO are on each team (using ORIGINAL assignments)
                     let red_count = indices.iter().filter(|&&i| original_red.contains(&i)).count();
@@ -838,6 +835,8 @@ mod tests {
 
     #[test]
     fn test_group_meets_quota() {
+        use crate::models::{Rank, Player};
+        
         let mut group = Group::new(
             1,
             4,
@@ -856,7 +855,6 @@ mod tests {
         group.create_session();
 
         // Add players one by one - each call borrows and immediately drops
-        use crate::models::{Rank, Player};
         group.sessions.last_mut().unwrap().add_player(Player::add(UI::new(1), None, None), Rank::Novice);
         group.sessions.last_mut().unwrap().add_player(Player::add(UI::new(2), None, None), Rank::Novice);
         group.sessions.last_mut().unwrap().add_player(Player::add(UI::new(3), None, None), Rank::Novice);

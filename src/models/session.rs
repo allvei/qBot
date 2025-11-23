@@ -231,7 +231,7 @@ impl FromStr for Team {
             "UNASSIGNED" => Ok(Team::Unassigned),
             "RED"        => Ok(Team::Red),
             "BLU"        => Ok(Team::Blu),
-            _            => Err(Error::msg(format!("Unknown : {}", s))),
+            _            => Err(Error::msg(format!("Unknown : {s}"))),
         }
     }
 }

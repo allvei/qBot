@@ -17,11 +17,11 @@ async fn format_team_field(team: &[crate::models::SessionPlayer], db: &crate::Da
     for player in team {
         let elo_str = if let Some(rank) = player.player.rank {
             let elo = rank.elo_from_config(db, guild_id).await;
-            format!("[**{}**] ", elo)
+            format!("[**{elo}**] ")
         } else {
             String::new()
         };
-        lines.push(format!("{}<@{}>", elo_str, player.player.discord_id));
+        lines.push(format!("{elo_str}<@{}>", player.player.discord_id));
     }
     lines.join("\n")
 }
@@ -209,7 +209,7 @@ impl Group {
         let msg = ch.message(&ctx.http, self.dashboard_msg).await;
         match msg {
             Ok(msg) => Ok(msg),
-            Err(e)  => Err(anyhow!("Failed to get dashboard message: {}", e)),
+            Err(e)  => Err(anyhow!("Failed to get dashboard message: {e}")),
         }
     }
 
@@ -250,7 +250,7 @@ impl Group {
             self.dashboard_msg = msg.id;
             Ok(())
         } else {
-            let channel_name = channel.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", channel));
+            let channel_name = channel.name(&ctx.http).await.unwrap_or_else(|_| format!("#{channel}"));
             error!("Failed to send dashboard message in #{}", channel_name);
             Err(anyhow!("Failed to send dashboard message in #{}: {}", channel_name, msg.unwrap_err()))
         }
@@ -285,7 +285,7 @@ impl Group {
                             if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
                                 let ready_timestamp = duration_since_epoch.as_secs();
                                 let deadline_timestamp = ready_timestamp + DEFAULT_TIMEOUT as u64;
-                                description.push_str(&format!("Join deadline: <t:{}:R>\n", deadline_timestamp));
+                                description.push_str(&format!("Join deadline: <t:{deadline_timestamp}:R>\n"));
                                 description.push_str("Missing players will be removed. Overflow players will take their spots.\n\n");
                             }
                         }
@@ -294,11 +294,11 @@ impl Group {
                         for player in players_never_joined {
                             let elo_str = if let Some(rank) = player.player.rank {
                                 let elo = rank.elo_from_config(db, guild_id).await;
-                                format!("[**{}**] ", elo)
+                                format!("[**{elo}**] ")
                             } else {
                                 String::new()
                             };
-                            description.push_str(&format!("  • {}<@{}>\n", elo_str, player.player.discord_id));
+                            description.push_str(&format!("  • {elo_str}<@{}>\n", player.player.discord_id));
                         }
                         description.push_str("\n\n");
                     }
@@ -310,7 +310,7 @@ impl Group {
                         SessionStatus::Pull => "Moving players back to queue...",
                         _ => "Match active"
                     };
-                    description.push_str(&format!("• {} ({} players)\n", status_text, session.pool.len()));
+                    description.push_str(&format!("• {status_text} ({} players)\n", session.pool.len()));
                 }
             }
             description.push('\n');
@@ -332,7 +332,7 @@ impl Group {
                             if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
                                 let ready_timestamp = duration_since_epoch.as_secs();
                                 let deadline_timestamp = ready_timestamp + DEFAULT_TIMEOUT as u64;
-                                description.push_str(&format!("Join deadline: <t:{}:R>\n", deadline_timestamp));
+                                description.push_str(&format!("Join deadline: <t:{deadline_timestamp}:R>\n"));
                                 description.push_str("Missing players will be removed. Overflow players will take their spots.\n\n");
                             }
                         }
@@ -341,11 +341,11 @@ impl Group {
                         for player in players_never_joined {
                             let elo_str = if let Some(rank) = player.player.rank {
                                 let elo = rank.elo_from_config(db, guild_id).await;
-                                format!("[**{}**] ", elo)
+                                format!("[**{elo}**] ")
                             } else {
                                 String::new()
                             };
-                            description.push_str(&format!("  • {}<@{}>\n", elo_str, player.player.discord_id));
+                            description.push_str(&format!("  • {elo_str}<@{}>\n", player.player.discord_id));
                         }
                         description.push_str("\n\n");
                     }
@@ -353,17 +353,17 @@ impl Group {
                 } else {
                     // Session is Idle - show normal queue
                     let queue_players = current_session.pool.len();
-                    description.push_str(&format!("**Queue ({}/{})**\n", queue_players, quota));
+                    description.push_str(&format!("**Queue ({queue_players}/{quota})**\n"));
 
                     if queue_players > 0 {
                         for player in current_session.pool.iter() {
                             let elo_str = if let Some(rank) = player.player.rank {
                                 let elo = rank.elo_from_config(db, guild_id).await;
-                                format!("[**{}**] ", elo)
+                                format!("[**{elo}**] ")
                             } else {
                                 String::new()
                             };
-                            description.push_str(&format!("{}<@{}>\n", elo_str, player.player.discord_id));
+                            description.push_str(&format!("{elo_str}<@{}>\n", player.player.discord_id));
                         }
                     } else {
                         description.push_str("*No players in queue. Join to get started!*\n");
@@ -379,12 +379,12 @@ impl Group {
 
         // Add connect info if available
         if let Some(ref connect_info) = self.connect_info {
-            let mut field_value = format!("```{}```", connect_info);
+            let mut field_value = format!("```{connect_info}```");
             
             // Try to extract IP:PORT and create a Steam link
             // Discord doesn't support steam:// protocol links, so display as copyable text
             if let Some(steam_link) = Self::extract_steam_link(connect_info) {
-                field_value.push_str(&format!("\n**Steam Link:**\n```{}```", steam_link));
+                field_value.push_str(&format!("\n**Steam Link:**\n```{steam_link}```"));
             }
             
             embed = embed.field("Server connect info:", field_value, false);
@@ -401,15 +401,15 @@ impl Group {
                 // Show fatkidded players AFTER teams if there are overflow players
                 if current_session.is_hot() && queue_players > quota {
                     let overflow_count = queue_players - quota;
-                    let mut fatkid = format!("**Waiting for next game ({}/{}):**\n", overflow_count, quota);
+                    let mut fatkid = format!("**Waiting for next game ({overflow_count}/{quota}):**\n");
                     for player in current_session.pool.iter().skip(quota) {
                         let elo_str = if let Some(rank) = player.player.rank {
                             let elo = rank.elo_from_config(db, guild_id).await;
-                            format!("[**{}**] ", elo)
+                            format!("[**{elo}**] ")
                         } else {
                             String::new()
                         };
-                        fatkid.push_str(&format!("{}<@{}>\n", elo_str, player.player.discord_id));
+                        fatkid.push_str(&format!("{elo_str}<@{}>\n", player.player.discord_id));
                     }
                     embed = embed.field("\u{200B}", fatkid, false); // Full-width field
                 }
@@ -429,15 +429,15 @@ impl Group {
         if !actives.is_empty() {
             if let Some(next_session) = inactives.first() {
                 if !next_session.pool.is_empty() {
-                    let mut fatkid = format!("**Waiting for next game ({}/{}):**\n", next_session.pool.len(), quota);
+                    let mut fatkid = format!("**Waiting for next game ({quota}/{}):**\n", next_session.pool.len());
                     for player in next_session.pool.iter() {
                         let elo_str = if let Some(rank) = player.player.rank {
                             let elo = rank.elo_from_config(db, guild_id).await;
-                            format!("[**{}**] ", elo)
+                            format!("[**{elo}**] ")
                         } else {
                             String::new()
                         };
-                        fatkid.push_str(&format!("{}<@{}>\n", elo_str, player.player.discord_id));
+                        fatkid.push_str(&format!("{elo_str}<@{}>\n", player.player.discord_id));
                     }
                     embed = embed.field("\u{200B}", fatkid, false); // Full-width field
                 }
@@ -522,9 +522,9 @@ impl Group {
         
         // Build Steam link
         if let Some(pwd) = password {
-            Some(format!("steam://connect/{}/{}", ip_port, pwd))
+            Some(format!("steam://connect/{ip_port}/{pwd}"))
         } else {
-            Some(format!("steam://connect/{}", ip_port))
+            Some(format!("steam://connect/{ip_port}"))
         }
     }
 
@@ -541,7 +541,7 @@ impl Group {
         match self.dash_get(ctx).await {
             Ok(msg) => msg,
             Err(e) => {
-                warn!("Dashboard message not found (may have been deleted): {}", e);
+                warn!("Dashboard message not found (may have been deleted): {e}");
                 info!("Auto-recovering: creating new dashboard message");
                 
                 // Dashboard is missing - create a new one
@@ -705,7 +705,7 @@ impl Group {
                     Err(_) => match cc.db.new_user(user_id).await {
                         Ok(p) => p,
                         Err(e) => {
-                            warn!("Failed to get or create player: {}", e);
+                            warn!("Failed to get or create player: {e}");
                             return Ok(());
                         }
                     }
@@ -719,7 +719,7 @@ impl Group {
                         // Refresh player rank from current Discord roles before queueing
                         player.rank = Some(rank);
                         if let Err(e) = self.queue_player(player, rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
-                            warn!("Failed to queue player: {}", e);
+                            warn!("Failed to queue player: {e}");
                         } else {
                             // Log successful queue join via button
                             let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
@@ -731,7 +731,7 @@ impl Group {
                         }
                     },
                     Err(e) => {
-                        warn!("Failed to get/assign rank: {}", e);
+                        warn!("Failed to get/assign rank: {e}");
                         return Ok(());
                     }
                 }
@@ -757,7 +757,7 @@ impl Group {
         );
 
         if session.is_none() {
-            cc.reply(&format!("No game ready for shuffling. Need at least {} players in queue.", quota)).await?;
+            cc.reply(&format!("No game ready for shuffling. Need at least {quota} players in queue.")).await?;
             return Ok(());
         }
         
@@ -794,7 +794,7 @@ impl Group {
                 return Ok(());
             },
             Err(e) => {
-                warn!("Failed to check runner role: {}", e);
+                warn!("Failed to check runner role: {e}");
                 cc.reply("Failed to verify permissions.").await?;
                 return Ok(());
             }
@@ -820,7 +820,7 @@ impl Group {
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to start match: {}", e);
+                error!("Failed to start match: {e}");
                 Ok(())
             }
         }
@@ -848,7 +848,7 @@ impl Group {
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to end match: {}", e);
+                error!("Failed to end match: {e}");
                 Ok(())
             }
         }
@@ -893,7 +893,7 @@ impl Group {
                 self.dash_end(cc,     game_id).await
             },
             _ => {
-                cc.reply(&format!("Unknown button action: {}", action))
+                cc.reply(&format!("Unknown button action: {action}"))
                     .await?;
                 Ok(())
             }
@@ -904,7 +904,7 @@ impl Group {
         let mut dash = match self.dash_get(cc.ctx).await {
             Ok(msg) => msg,
             Err(e) => {
-                warn!("Failed to get dashboard message for lock_button: {}", e);
+                warn!("Failed to get dashboard message for lock_button: {e}");
                 return Err(e);
             }
         };
@@ -917,7 +917,7 @@ impl Group {
         let mut dash = match self.dash_get(cc.ctx).await {
             Ok(msg) => msg,
             Err(e) => {
-                warn!("Failed to get dashboard message for unlock_button: {}", e);
+                warn!("Failed to get dashboard message for unlock_button: {e}");
                 return Err(e);
             }
         };
@@ -966,7 +966,7 @@ impl DashboardUpdateQueue {
     pub fn request_update(&self, guild_id: u64, group_id: u64) {
         let request = DashboardUpdateRequest { guild_id, group_id };
         if let Err(e) = self.sender.send(request) {
-            warn!("Failed to queue dashboard update: {}", e);
+            warn!("Failed to queue dashboard update: {e}");
         }
     }
     
@@ -1056,7 +1056,7 @@ impl DashboardUpdateQueue {
                     let server = match manager_lock.get_server(serenity::all::GuildId::new(guild_id)) {
                         Ok(s) => s,
                         Err(e) => {
-                            warn!("Failed to get server for dashboard update: {}", e);
+                            warn!("Failed to get server for dashboard update: {e}");
                             return;
                         }
                     };
@@ -1098,7 +1098,7 @@ impl DashboardUpdateQueue {
                 
                 // Update the dashboard message WITHOUT holding any locks
                 use serenity::all::EditMessage;
-                let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{}", channel_id));
+                let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{channel_id}"));
                 match channel_id.edit_message(&ctx.http, message_id, EditMessage::new().embed(embed.clone()).components(buttons.clone())).await {
                     Ok(_) => {
                         // info!("[{}] Updated dashboard in #{}", guild_name, channel_name);
@@ -1125,7 +1125,7 @@ impl DashboardUpdateQueue {
                                     
                                     // Persist to database
                                     if let Err(e) = database.groups.update_dashboard_msg(guild_id, dashboard_channel_id, new_msg.id.get()).await {
-                                        warn!("Failed to update dashboard message ID in database: {}", e);
+                                        warn!("Failed to update dashboard message ID in database: {e}");
                                     }
                                 }
                                 Err(create_err) => {

@@ -38,7 +38,7 @@ impl DatabaseMigrations {
 
     /// Check if column exists in table
     async fn column_exists(&self, table_name: &str, column_name: &str) -> Result<bool> {
-        let existing_cols: Vec<String> = sqlx::query(&format!("PRAGMA table_info({})", table_name))
+        let existing_cols: Vec<String> = sqlx::query(&format!("PRAGMA table_info({table_name})"))
             .fetch_all(&self.pool)
             .await?
             .into_iter()
@@ -135,11 +135,10 @@ impl DatabaseMigrations {
         use crate::DEFAULT_QUOTA;
 
         if !self.table_exists("groups").await? {
-            sqlx::query(&format!(
-                "CREATE TABLE groups (
+            sqlx::query(&format!("CREATE TABLE groups (
                     id                INTEGER PRIMARY KEY,
                     group_id          INTEGER DEFAULT 0,
-                    timeout           INTEGER DEFAULT {},
+                    timeout           INTEGER DEFAULT {DEFAULT_TIMEOUT},
                     guild_id          INTEGER NOT NULL,
                     dashboard         INTEGER NOT NULL,
                     chat              INTEGER NOT NULL,
@@ -149,8 +148,8 @@ impl DatabaseMigrations {
                     blu               INTEGER NOT NULL,
                     game              INTEGER DEFAULT 0,
                     game_increment    INTEGER DEFAULT 0,
-                    quota             INTEGER DEFAULT {}
-                )", DEFAULT_TIMEOUT, DEFAULT_QUOTA
+                    quota             INTEGER DEFAULT {DEFAULT_QUOTA}
+                )"
             ))
             .execute(&self.pool)
             .await?;
@@ -164,7 +163,7 @@ impl DatabaseMigrations {
                     "CREATE TABLE groups (
                         id                INTEGER PRIMARY KEY,
                         group_id          INTEGER DEFAULT 0,
-                        timeout           INTEGER DEFAULT {},
+                        timeout           INTEGER DEFAULT {DEFAULT_TIMEOUT},
                         guild_id          INTEGER NOT NULL,
                         dashboard         INTEGER NOT NULL,
                         chat              INTEGER NOT NULL,
@@ -174,8 +173,8 @@ impl DatabaseMigrations {
                         blu               INTEGER NOT NULL,
                         game              INTEGER DEFAULT 0,
                         game_increment    INTEGER DEFAULT 0,
-                        quota             INTEGER DEFAULT {}
-                    )", DEFAULT_TIMEOUT, DEFAULT_QUOTA
+                        quota             INTEGER DEFAULT {DEFAULT_QUOTA}
+                    )"
                 ))
                 .execute(&self.pool)
                 .await?;
@@ -203,7 +202,7 @@ impl DatabaseMigrations {
 
     /// Check if a unique constraint exists on a column
     async fn check_unique_constraint(&self, table: &str, _column: &str) -> Result<bool> {
-        let index_info = sqlx::query(&format!("PRAGMA index_list({})", table))
+        let index_info = sqlx::query(&format!("PRAGMA index_list({table})"))
             .fetch_all(&self.pool)
             .await?;
 
@@ -253,7 +252,7 @@ impl DatabaseMigrations {
 
     /// Validate that a table has all required columns
     async fn validate_table_columns(&self, table_name: &str, required_columns: &[&str]) -> Result<()> {
-        let existing_cols: Vec<String> = sqlx::query(&format!("PRAGMA table_info({})", table_name))
+        let existing_cols: Vec<String> = sqlx::query(&format!("PRAGMA table_info({table_name})"))
             .fetch_all(&self.pool)
             .await?
             .into_iter()
