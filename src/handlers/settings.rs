@@ -30,7 +30,7 @@ pub async fn handle_settings_button(
         "settings_toggle_dm" => {
             // Toggle DM notifications
             let new_state = db.users.toggle_dm_enabled(user_id).await?;
-            
+
             let (status_text, emoji) = if new_state {
                 ("enabled", "🟢")
             } else {
@@ -124,7 +124,7 @@ pub async fn handle_settings_button(
         "settings_customize_announcement" => {
             // Show modal for customizing join announcement embed
             let settings = db.users.get_settings(user_id).await?;
-            let modal = CreateModal::new("settings_modal_announcement", "Customize Join Announcement")
+            let modal = CreateModal::new("settings_modal_announcement", "Customize join announcement")
                 .components(vec![
                     CreateActionRow::InputText(
                         CreateInputText::new(InputTextStyle::Short, "Color (hex, optional)", "announcement_color")
@@ -170,7 +170,7 @@ pub async fn handle_settings_button(
         "settings_customize_leave_announcement" => {
             // Show modal for customizing leave announcement embed
             let settings = db.users.get_settings(user_id).await?;
-            let modal = CreateModal::new("settings_modal_leave_announcement", "Customize Leave Announcement")
+            let modal = CreateModal::new("settings_modal_leave_announcement", "Customize leave announcement")
                 .components(vec![
                     CreateActionRow::InputText(
                         CreateInputText::new(InputTextStyle::Short, "Color (hex, optional)", "leave_announcement_color")
@@ -435,7 +435,7 @@ async fn update_settings_menu(
 }
 
 /// Build settings embed
-fn build_settings_embed(settings: &crate::database::repositories::UserSettings) -> CE {
+pub fn build_settings_embed(settings: &crate::database::repositories::UserSettings) -> CE {
     CE::new()
         .title("Your Personal Settings")
         .description(format!(
@@ -462,7 +462,7 @@ fn build_settings_embed(settings: &crate::database::repositories::UserSettings) 
 }
 
 /// Build settings buttons
-fn build_settings_buttons(settings: &crate::database::repositories::UserSettings) -> Vec<CAR> {
+pub fn build_settings_buttons(settings: &crate::database::repositories::UserSettings) -> Vec<CAR> {
     vec![
         CAR::Buttons(vec![
             CB::new("settings_toggle_dm")
@@ -487,10 +487,10 @@ fn build_settings_buttons(settings: &crate::database::repositories::UserSettings
         ]),
         CAR::Buttons(vec![
             CB::new("settings_customize_announcement")
-                .label("Customize Join Announcement")
+                .label("Customize join announcement")
                 .style(BS::Primary),
             CB::new("settings_customize_leave_announcement")
-                .label("Customize Leave Announcement")
+                .label("Customize leave announcement")
                 .style(BS::Primary),
         ]),
     ]

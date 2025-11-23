@@ -1066,7 +1066,7 @@ pub async fn cmd_toggle_dm(cc: &CC<'_>) -> Result<()> {
 
 /// `/settings` - Open personal settings menu in DMs
 pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
-    use serenity::all::{CreateButton as CB, CreateActionRow as CAR, ButtonStyle as BS, CreateMessage as CM};
+    use serenity::all::CreateMessage as CM;
     
     let user_id = cc.intax.user.id;
     
@@ -1083,61 +1083,9 @@ pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
     // Try to send DM
     let user = cc.ctx.http.get_user(user_id).await?;
     
-    let embed = CE::new()
-        .title("Your Personal Settings")
-        .description(format!(
-            "Configure your queue experience!\n\n\
-            **Current Settings:**\n\
-            **DM Notifications:** {}\n\
-            **Auto-remove timer:** {}\n\
-            **Join Announcements:** {}\n\
-            **Leave Announcements:** {}\n\
-            **VC Disconnect on Leave:** {}\n\n\
-            Click the buttons below to change your settings.",
-            if settings.dm_enabled { "🟢" } else { "🔴" },
-            if settings.auto_remove_minutes == 0 {
-                "🔴".to_string()
-            } else {
-                format!("{} minutes", settings.auto_remove_minutes)
-            },
-            if settings.join_announcement { "🟢" } else { "🔴" },
-            if settings.leave_announcement { "🟢" } else { "🔴" },
-            if settings.vc_disconnect_on_leave { "🟢" } else { "🔴" }
-        ))
-        .footer(serenity::all::CreateEmbedFooter::new("Tip: All settings are saved automatically"));
-    
-    // Create buttons for settings
-    let buttons = vec![
-        CAR::Buttons(vec![
-            CB::new("settings_toggle_dm")
-                .label("Toggle DM Notifications")
-                .style(if settings.dm_enabled { BS::Success } else { BS::Secondary }),
-            CB::new("settings_auto_leave")
-                .label("Auto-remove timer")
-                .style(BS::Primary),
-        ]),
-        CAR::Buttons(vec![
-            CB::new("settings_join_announcement")
-                .label("Toggle join announcements")
-                .style(if settings.join_announcement { BS::Success } else { BS::Secondary }),
-            CB::new("settings_leave_announcement")
-                .label("Toggle leave announcements")
-                .style(if settings.leave_announcement { BS::Success } else { BS::Secondary }),
-        ]),
-        CAR::Buttons(vec![
-            CB::new("settings_vc_disconnect")
-                .label("Toggle VC disconnect")
-                .style(if settings.vc_disconnect_on_leave { BS::Success } else { BS::Secondary }),
-        ]),
-        CAR::Buttons(vec![
-            CB::new("settings_customize_announcement")
-                .label("Edit join announcement")
-                .style(BS::Primary),
-            CB::new("settings_customize_leave_announcement")
-                .label("Edit leave announcement")
-                .style(BS::Primary),
-        ]),
-    ];
+    // Use helper functions from settings module to build embed and buttons
+    let embed = crate::handlers::settings::build_settings_embed(&settings);
+    let buttons = crate::handlers::settings::build_settings_buttons(&settings);
     
     match user.direct_message(&cc.ctx.http, CM::new().embed(embed).components(buttons)).await {
         Ok(msg) => {

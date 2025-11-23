@@ -409,9 +409,16 @@ impl Group {
         game.pull();
 
         // Extract all players to move back to queue
-        let players_to_requeue: Vec<Player> = game.pool.iter()
+        let mut players_to_requeue: Vec<Player> = game.pool.iter()
             .map(|p| p.player.clone())
             .collect();
+        
+        // Shuffle the requeue order for variety
+        {
+            use rand::seq::SliceRandom;
+            let mut rng = rand::rng();
+            players_to_requeue.shuffle(&mut rng);
+        } // RNG dropped here before async operations
 
         // Move all players back to queue voice channel and track who successfully moved
         let mut successfully_moved = std::collections::HashSet::new();
