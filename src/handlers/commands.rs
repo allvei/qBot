@@ -12,6 +12,34 @@ use crate::models::{CommandContext as CC, Role};
 use crate::repositories::Repository;
 use super::player::{check_role, create_rank_roles};
 
+/// Helper: Create a Discord role with error handling
+async fn create_role_with_error(
+    cc: &CC<'_>,
+    guild_id: serenity::all::GuildId,
+    name: &str,
+    color: u32,
+) -> Result<Option<serenity::all::Role>> {
+    match guild_id.create_role(&cc.ctx.http, 
+        EditRole::new()
+            .name(name)
+            .colour(color)
+            .permissions(Permissions::empty())
+    ).await {
+        Ok(role) => Ok(Some(role)),
+        Err(e) => {
+            let error_embed = CE::new()
+                .title(format!("Failed to Create {} Role", name))
+                .description(format!("Error: {}", e))
+                .color(0xff0000);
+
+            cc.intax.edit_response(&cc.ctx.http,
+                serenity::all::EditInteractionResponse::new().embed(error_embed)
+            ).await?;
+            Ok(None)
+        }
+    }
+}
+
 /// `/roleadd` - Create runner and admin roles for the bot
 pub async fn cmd_role_add(cc: &CC<'_>) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
@@ -31,45 +59,15 @@ pub async fn cmd_role_add(cc: &CC<'_>) -> Result<()> {
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
     // Create Runner role
-    let runner_role = match guild_id.create_role(&cc.ctx.http, 
-        EditRole::new()
-            .name("PUG Runner")
-            .colour(0x3498db)
-            .permissions(Permissions::empty())
-    ).await {
-        Ok(role) => role,
-        Err(e) => {
-            let error_embed = CE::new()
-                .title("Failed to Create Runner Role")
-                .description(format!("Error: {}", e))
-                .color(0xff0000);
-
-            cc.intax.edit_response(&cc.ctx.http,
-                serenity::all::EditInteractionResponse::new().embed(error_embed)
-            ).await?;
-            return Ok(());
-        }
+    let runner_role = match create_role_with_error(cc, guild_id, "PUG Runner", 0x3498db).await? {
+        Some(role) => role,
+        None => return Ok(()), // Error already handled
     };
 
     // Create Admin role
-    let admin_role = match guild_id.create_role(&cc.ctx.http,
-        EditRole::new()
-            .name("PUG Admin")
-            .colour(0xe74c3c)
-            .permissions(Permissions::empty())
-    ).await {
-        Ok(role) => role,
-        Err(e) => {
-            let error_embed = CE::new()
-                .title("Failed to Create Admin Role")
-                .description(format!("Error: {}", e))
-                .color(0xff0000);
-
-            cc.intax.edit_response(&cc.ctx.http,
-                serenity::all::EditInteractionResponse::new().embed(error_embed)
-            ).await?;
-            return Ok(());
-        }
+    let admin_role = match create_role_with_error(cc, guild_id, "PUG Admin", 0xe74c3c).await? {
+        Some(role) => role,
+        None => return Ok(()), // Error already handled
     };
 
     // Save to database
@@ -122,19 +120,8 @@ pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role:
         let current_runner = cc.db.config.get_config_value("runner_role", guild_id.get()).await?;
         let current_admin = cc.db.config.get_config_value("admin_role", guild_id.get()).await?;
 
-        let runner_display = current_runner.map(|r| {
-            r.split(',')
-                .map(|id| format!("<@&{}>", id.trim()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        }).unwrap_or_else(|| "Not set".to_string());
-
-        let admin_display = current_admin.map(|r| {
-            r.split(',')
-                .map(|id| format!("<@&{}>", id.trim()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        }).unwrap_or_else(|| "Not set".to_string());
+        let runner_display = format_role_mentions(current_runner);
+        let admin_display = format_role_mentions(current_admin);
 
         let embed = CE::new()
             .title("Current Role Configuration")
@@ -558,6 +545,16 @@ pub fn parse_role_id(role_str: &str) -> Result<String> {
     } else {
         Ok(role_str.to_string())
     }
+}
+
+/// Format role IDs as Discord mentions for display
+fn format_role_mentions(role_ids_str: Option<String>) -> String {
+    role_ids_str.map(|r| {
+        r.split(',')
+            .map(|id| format!("<@&{}>", id.trim()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }).unwrap_or_else(|| "Not set".to_string())
 }
 
 /// Parse multiple role IDs from a string containing space or comma separated role mentions/IDs

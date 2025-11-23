@@ -11,13 +11,12 @@ use crate::models::{
     DEFAULT_RANK,
 };
 
-/// Get player's rank from their Discord roles
-pub async fn get_player_rank(
+/// Helper: Get member with cache-first strategy
+async fn get_member_cached(
     ctx: &Context,
-    db: &Database,
     guild_id: GuildId,
     user_id: serenity::all::UserId,
-) -> Option<Rank> {
+) -> Option<serenity::all::Member> {
     // Try cache first (fast path, no API call)
     let member = if let Some(guild) = ctx.cache.guild(guild_id) {
         guild.members.get(&user_id).cloned()
@@ -26,13 +25,20 @@ pub async fn get_player_rank(
     };
     
     // Fallback to HTTP if not in cache
-    let member = match member {
-        Some(m) => m,
-        None => match guild_id.member(&ctx.http, user_id).await {
-            Ok(m) => m,
-            Err(_) => return None,
-        }
-    };
+    match member {
+        Some(m) => Some(m),
+        None => guild_id.member(&ctx.http, user_id).await.ok(),
+    }
+}
+
+/// Get player's rank from their Discord roles
+pub async fn get_player_rank(
+    ctx: &Context,
+    db: &Database,
+    guild_id: GuildId,
+    user_id: serenity::all::UserId,
+) -> Option<Rank> {
+    let member = get_member_cached(ctx, guild_id, user_id).await?;
     
     // Check all member roles and find the highest matching rank
     let mut highest_rank: Option<Rank> = None;
@@ -359,24 +365,11 @@ pub async fn check_role(cc: &CommandContext<'_>, role: &Role) -> Result<bool> {
     use serenity::all::Permissions;
 
     if let Some(guild_id) = cc.intax.guild_id {
-        // Try cache first (fast path)
-        let member = if let Some(guild) = cc.ctx.cache.guild(guild_id) {
-            guild.members.get(&cc.intax.user.id).cloned()
-        } else {
-            None
-        };
-        
-        // Fallback to HTTP if not in cache
-        let member = match member {
+        let member = match get_member_cached(cc.ctx, guild_id, cc.intax.user.id).await {
             Some(m) => m,
-            None => match guild_id.member(&cc.ctx.http, cc.intax.user.id).await {
-                Ok(m) => m,
-                Err(e) => {
-                    let username = &cc.intax.user.name;
-                    let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-                    warn!("[{}] Failed to fetch member for user {}: {:?}", guild_name, username, e);
-                    return Ok(false);
-                }
+            None => {
+                warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), cc.intax.user.name);
+                return Ok(false);
             }
         };
 
@@ -396,8 +389,7 @@ pub async fn check_role(cc: &CommandContext<'_>, role: &Role) -> Result<bool> {
             // User has the role if they have ANY of the configured roles
             return Ok(role_ids.iter().any(|role_id| member.roles.contains(role_id)));
         } else {
-            let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-            info!("[{}] Role {} not configured", guild_name, role.name());
+            info!("[{}] Role {} not configured", cc.guild_name(), role.name());
         }
     }
     Ok(false)
@@ -409,24 +401,11 @@ pub async fn check_component_role(cc: &ComponentContext<'_>, role: &Role) -> Res
     use serenity::all::Permissions;
 
     if let Some(guild_id) = cc.component.guild_id {
-        // Try cache first (fast path)
-        let member = if let Some(guild) = cc.ctx.cache.guild(guild_id) {
-            guild.members.get(&cc.component.user.id).cloned()
-        } else {
-            None
-        };
-        
-        // Fallback to HTTP if not in cache
-        let member = match member {
+        let member = match get_member_cached(cc.ctx, guild_id, cc.component.user.id).await {
             Some(m) => m,
-            None => match guild_id.member(&cc.ctx.http, cc.component.user.id).await {
-                Ok(m) => m,
-                Err(e) => {
-                    let username = &cc.component.user.name;
-                    let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-                    warn!("[{}] Failed to fetch member for user {}: {:?}", guild_name, username, e);
-                    return Ok(false);
-                }
+            None => {
+                warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), cc.component.user.name);
+                return Ok(false);
             }
         };
 
@@ -435,7 +414,7 @@ pub async fn check_component_role(cc: &ComponentContext<'_>, role: &Role) -> Res
             if let Some(guild_ref) = guild_id.to_guild_cached(&cc.ctx.cache) {
                 let perms = guild_ref.member_permissions(&member);
                 if perms.contains(Permissions::ADMINISTRATOR) || perms.contains(Permissions::MANAGE_GUILD) {
-                    info!("User {} has Discord admin/manage permissions", &cc.component.user.name);
+                    info!("User {} has Discord admin/manage permissions", cc.component.user.name);
                     return Ok(true);
                 }
             }

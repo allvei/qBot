@@ -40,6 +40,30 @@ impl CommandContext<'_> {
         self.intax.create_response(&self.ctx.http, response).await?;
         Ok(())
     }
+
+    pub async fn reply_embed(&self, embed: serenity::all::CreateEmbed) -> Result<(), anyhow::Error> {
+        let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
+        self.intax.create_response(&self.ctx.http, response).await?;
+        Ok(())
+    }
+
+    pub async fn reply_error(&self, title: &str, description: &str) -> Result<(), anyhow::Error> {
+        let embed = serenity::all::CreateEmbed::new()
+            .title(title)
+            .description(description)
+            .color(0xff0000);
+        self.reply_embed(embed).await
+    }
+
+    pub fn guild_id(&self) -> Result<serenity::all::GuildId, anyhow::Error> {
+        self.intax.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))
+    }
+
+    pub fn guild_name(&self) -> String {
+        self.intax.guild_id
+            .and_then(|gid| self.ctx.cache.guild(gid).map(|g| g.name.clone()))
+            .unwrap_or_else(|| "Unknown".to_string())
+    }
 }
 
 impl ComponentContext<'_> {
@@ -48,15 +72,27 @@ impl ComponentContext<'_> {
         self.component.create_response(&self.ctx.http, response).await?;
         Ok(())
     }
+
     pub async fn acknowledge(&self) -> Result<(), anyhow::Error> {
         let response = CIR::Acknowledge;
         self.component.create_response(&self.ctx.http, response).await?;
         Ok(())
     }
+
     pub async fn defer_update(&self) -> Result<(), anyhow::Error> {
         let response = CIR::UpdateMessage(CIRM::new());
         self.component.create_response(&self.ctx.http, response).await?;
         Ok(())
+    }
+
+    pub fn guild_id(&self) -> Result<serenity::all::GuildId, anyhow::Error> {
+        self.component.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))
+    }
+
+    pub fn guild_name(&self) -> String {
+        self.component.guild_id
+            .and_then(|gid| self.ctx.cache.guild(gid).map(|g| g.name.clone()))
+            .unwrap_or_else(|| "Unknown".to_string())
     }
 }
 
