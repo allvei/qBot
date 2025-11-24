@@ -86,13 +86,11 @@ impl DatabaseMigrations {
                     announcement_color        INTEGER DEFAULT 3447003,
                     show_stats_in_announcement INTEGER DEFAULT 0,
                     notify_quota_threshold    INTEGER DEFAULT NULL,
-                    announcement_title        TEXT DEFAULT NULL,
                     announcement_description  TEXT DEFAULT NULL,
                     announcement_footer_text  TEXT DEFAULT NULL,
                     announcement_footer_icon  TEXT DEFAULT NULL,
                     announcement_thumbnail    TEXT DEFAULT NULL,
                     leave_announcement        INTEGER DEFAULT 0,
-                    leave_announcement_title        TEXT DEFAULT NULL,
                     leave_announcement_description  TEXT DEFAULT NULL,
                     leave_announcement_footer_text  TEXT DEFAULT NULL,
                     leave_announcement_footer_icon  TEXT DEFAULT NULL,
@@ -141,10 +139,6 @@ impl DatabaseMigrations {
                     sqlx::query("ALTER TABLE users ADD COLUMN notify_quota_threshold INTEGER DEFAULT NULL")
                         .execute(&self.pool).await?;
                 }
-                if !self.column_exists("users", "announcement_title").await? {
-                    sqlx::query("ALTER TABLE users ADD COLUMN announcement_title TEXT DEFAULT NULL")
-                        .execute(&self.pool).await?;
-                }
                 if !self.column_exists("users", "announcement_description").await? {
                     sqlx::query("ALTER TABLE users ADD COLUMN announcement_description TEXT DEFAULT NULL")
                         .execute(&self.pool).await?;
@@ -163,10 +157,6 @@ impl DatabaseMigrations {
                 }
                 if !self.column_exists("users", "leave_announcement").await? {
                     sqlx::query("ALTER TABLE users ADD COLUMN leave_announcement INTEGER DEFAULT 0")
-                        .execute(&self.pool).await?;
-                }
-                if !self.column_exists("users", "leave_announcement_title").await? {
-                    sqlx::query("ALTER TABLE users ADD COLUMN leave_announcement_title TEXT DEFAULT NULL")
                         .execute(&self.pool).await?;
                 }
                 if !self.column_exists("users", "leave_announcement_description").await? {
