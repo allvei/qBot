@@ -4,10 +4,11 @@
 //! A Server represents a Discord guild with associated groups and games.
 
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use tokio::sync::Mutex;
 use anyhow::{anyhow, Error, Result};
-use crate::{Database as DB, Manager, Rank, models::constants::DEFAULT_TIMEOUT};
+use crate::{Database as DB, Manager, Rank, models::constants::{DEFAULT_TIMEOUT, MIN_TIMEOUT, MAX_TIMEOUT}};
 use serde::{Deserialize, Serialize};
 use serenity::{all::{
     ChannelId as CI, Context, CreateEmbed,
@@ -313,6 +314,75 @@ impl Group {
         if changes_made && self.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= quota) {
             // Re-generate teams for the hot session
             self.generate_teams(ctx, guild_id, None).await;
+        }
+
+        changes_made
+    }
+
+    /// Check idle sessions for auto-remove timeouts and handle accordingly
+    /// Returns true if any changes were made that require dashboard update
+    pub async fn check_auto_remove_timeout(&mut self, db: &DB, ctx: &Context, guild_id: GI) -> bool {
+        let mut changes_made = false;
+
+        // Only check idle sessions (not hot/push/live)
+        for session in self.sessions.iter_mut() {
+            if !session.is_idle() {
+                continue;
+            }
+
+            let mut players_to_remove = Vec::new();
+
+            for player in &session.pool {
+                // Get user's auto-remove setting
+                let auto_remove_minutes = match db.users.get_settings(player.player.discord_id).await {
+                    Ok(settings) => {
+                        // Clamp to valid range (MIN_TIMEOUT to MAX_TIMEOUT)
+                        settings.auto_remove_time.clamp(MIN_TIMEOUT as i64, MAX_TIMEOUT as i64)
+                    }
+                    Err(_) => {
+                        // If we can't get settings, skip this player
+                        continue;
+                    }
+                };
+
+                // Skip if auto-remove is disabled (0 or below MIN_TIMEOUT)
+                if auto_remove_minutes < MIN_TIMEOUT as i64 {
+                    continue;
+                }
+
+                // Check if player has exceeded their auto-remove time
+                if let Ok(elapsed) = SystemTime::now().duration_since(player.joined_at) {
+                    let elapsed_minutes = elapsed.as_secs() / 60;
+                    if elapsed_minutes >= auto_remove_minutes as u64 {
+                        info!("Auto-removing player {} after {} minutes (limit: {})",
+                            player.player.discord_tag.as_deref().unwrap_or("Unknown"),
+                            elapsed_minutes,
+                            auto_remove_minutes
+                        );
+                        players_to_remove.push(player.player.discord_id);
+                    }
+                }
+            }
+
+            if !players_to_remove.is_empty() {
+                // Remove the timed-out players
+                for user_id in &players_to_remove {
+                    session.remove_player(*user_id);
+                    
+                    // Optionally: disconnect from VC if vc_kick is enabled
+                    if let Ok(settings) = db.users.get_settings(*user_id).await {
+                        if settings.vc_kick {
+                            if let Ok(member) = guild_id.member(&ctx.http, *user_id).await {
+                                if let Err(e) = member.disconnect_from_voice(&ctx.http).await {
+                                    warn!("Failed to disconnect auto-removed player from VC: {e}");
+                                }
+                            }
+                        }
+                    }
+                }
+                changes_made = true;
+                info!("Auto-removed {} player(s) from queue", players_to_remove.len());
+            }
         }
 
         changes_made

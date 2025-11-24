@@ -83,6 +83,36 @@ impl EventHandler for Handler {
             info!("DM message tracker initialized with 10-minute cleanup");
         }
 
+        // Start auto-remove background task
+        {
+            let manager = self.manager.clone();
+            let database = self.database.clone();
+            let ctx_clone = ctx.clone();
+
+            tokio::spawn(async move {
+                use tokio::time::{interval, Duration};
+                let mut check_interval = interval(Duration::from_secs(60)); // Check every minute
+
+                loop {
+                    check_interval.tick().await;
+
+                    let mut manager_lock = manager.lock().await;
+                    
+                    // Check all groups in all servers
+                    for server in manager_lock.servers.iter_mut() {
+                        let guild_id = server.guild_id;
+                        for group in server.groups.iter_mut() {
+                            if group.check_auto_remove_timeout(&database, &ctx_clone, guild_id).await {
+                                // Players were removed, update dashboard
+                                group.queue_dash_update(&ctx_clone, guild_id.get()).await;
+                            }
+                        }
+                    }
+                }
+            });
+            info!("Auto-remove background task started (checks every 60 seconds)");
+        }
+
         // Spawn console command handler in a separate task
         //let console_handler = command::ConsoleHandler::new(
         //    self.manager.clone(),
