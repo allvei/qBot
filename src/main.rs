@@ -3,6 +3,8 @@ mod command;
 use std::env;
 use std::sync::Arc;
 
+use time::macros::format_description;
+use tracing_subscriber::fmt::time::UtcTime;
 use anyhow::Result;
 use pf_pug_bot::commands;
 use serenity::all::{
@@ -82,41 +84,40 @@ impl EventHandler for Handler {
         }
 
         // Spawn console command handler in a separate task
-        let console_handler = command::ConsoleHandler::new(
-            self.manager.clone(),
-            self.database.clone(),
-            Arc::new(ctx.clone()),
-        );
+        //let console_handler = command::ConsoleHandler::new(
+        //    self.manager.clone(),
+        //    self.database.clone(),
+        //    Arc::new(ctx.clone()),
+        //);
 
-        tokio::spawn(async move {
-            console_handler.start_console_loop().await;
-        });
+        //tokio::spawn(async move {
+        //    console_handler.start_console_loop().await;
+        //});
 
         // Register slash commands globally or for specific guild
         let cmds = vec![
             // Player commands
-            cmd("buffer", "Buffer a player")
+            cmd("buffer",      "Move a player to the start of the queue")
                 .op_user("user",  "User to buffer", true),
-            cmd("fatkid", "Move a player to end of queue")
+            cmd("fatkid",      "Move a player to the end of the queue")
                 .op_user("user",  "User to fatkid", true),
 
-            cmd("setupadd",   "Create roles and group (full setup)"),
-            cmd("setuplink",  "Guide to link existing roles and channels"),
-
-            cmd("roleadd",    "Create runner and admin roles"),
-            cmd("rolelink",   "Link existing runner and admin roles")
+            cmd("setupadd",    "Create roles and group (full setup)"),
+            cmd("setuplink",   "Guide to link existing roles and channels"),
+            cmd("roleadd",     "Create runner and admin roles"),
+            cmd("rolelink",    "Link existing runner and admin roles")
                 .op("runner_role", "Runner role to link", false)
                 .op("admin_role",  "Admin role to link",  false),
-            cmd("roledel", "Remove role configuration")
+            cmd("roledel",     "Remove role configuration")
                 .op("role_type",   "Role type: runner, admin, or both", true),
 
-            cmd("rankadd",    "Add Discord role(s) to a rank (supports multiple roles)")
+            cmd("rankadd",     "Add Discord role(s) to a rank (supports multiple roles)")
                 .op("rank", "Rank name", true)
                 .op("role", "Discord roles to add", true),
-            cmd("rankremove", "Remove Discord role(s) from a rank (supports multiple roles)")
+            cmd("rankremove",  "Remove Discord role(s) from a rank (supports multiple roles)")
                 .op("rank", "Rank name", true)
                 .op("role", "Discord roles to remove", true),
-            cmd("ranklist",   "List all role mappings for ranks")
+            cmd("ranklist",    "List all role mappings for ranks")
                 .op("rank", "Rank name to filter (optional)", false),
 
             cmd("groupadd",    "Create a new category with all group channels"),
@@ -1197,12 +1198,15 @@ impl Handler {
 async fn main(
 ) -> Result<()> {
     // Initialize tracing with minimal, colored format
+    let timer = UtcTime::new(format_description!("[hour]:[minute]:[second].[subsecond digits:4]"));
     tracing_subscriber::fmt()
+        .with_ansi(true)
         .with_target(false)
+        .with_timer(timer)
         .with_thread_ids(false)
         .with_thread_names(false)
-        .with_file(false)
-        .with_line_number(false)
+        .with_file(true)
+        .with_line_number(true)
         .with_level(true)
         .compact()
         .init();
