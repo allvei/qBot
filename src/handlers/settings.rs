@@ -3,7 +3,7 @@ use serenity::all::{
     ComponentInteraction, ModalInteraction, Context, CreateEmbed as CE, CreateInteractionResponse as CIR,
     CreateInteractionResponseMessage as CIRM, CreateActionRow as CAR, CreateButton as CB,
     ButtonStyle as BS, EditMessage, CreateInputText, InputTextStyle, CreateActionRow,
-    CreateModal, CreateEmbedAuthor, CreateEmbedFooter, CreateMessage,
+    CreateModal, CreateEmbedFooter,
 };
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -217,34 +217,20 @@ pub async fn handle_settings_modal(
             // Update settings in database
             db.users.update_settings(user_id, &settings).await?;
 
-            let embed = build_settings_embed(&settings);
-            let buttons = build_settings_buttons(&settings);
+            // Build preview embed
+            let preview_embed = build_join_announcement_embed(ctx, user_id, None, &settings, "Journeyman").await;
 
+            // Send ephemeral preview as interaction response (dismissible)
             let response = CIR::Message(
                 CIRM::new()
-                    .content("Join announcement customized! Your settings are shown below.")
-                    .embed(embed)
-                    .components(buttons)
+                    .content("**Preview of your join announcement:**")
+                    .embed(preview_embed)
                     .ephemeral(true)
             );
             interaction.create_response(&ctx.http, response).await?;
 
-            // Send preview of the announcement embed in DM
-            if let Ok(user) = ctx.http.get_user(user_id).await {
-                // Use shared function with example rank for preview
-                let preview_embed = build_join_announcement_embed(ctx, user_id, None, &settings, "Journeyman").await;
-                let preview_message = CreateMessage::new()
-                    .content("**Preview of your join announcement:**")
-                    .embed(preview_embed);
-
-                if let Ok(msg) = user.direct_message(&ctx.http, preview_message).await {
-                    // Track this message for cleanup
-                    if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
-                        dm_tracker.track_message(user_id, msg.channel_id, msg.id, user.name.clone()).await;
-                    }
-                    info!("Sent announcement preview to user {}", user.name);
-                }
-            }
+            // Update the original settings menu
+            update_settings_menu_from_modal(ctx, interaction, db).await?;
         }
         "settings_modal_auto_leave" => {
             // Get the value from the modal
@@ -259,18 +245,15 @@ pub async fn handle_settings_modal(
 
                                 let status_text = format!("set to {} minute{}", minutes, if minutes == 1 { "" } else { "s" });
 
-                                let settings = db.users.get_settings(user_id).await?;
-                                let embed = build_settings_embed(&settings);
-                                let buttons = build_settings_buttons(&settings);
-
                                 let response = CIR::Message(
                                     CIRM::new()
                                         .content(format!("Auto-remove timer: {}", status_text))
-                                        .embed(embed)
-                                        .components(buttons)
                                         .ephemeral(true)
                                 );
                                 interaction.create_response(&ctx.http, response).await?;
+
+                                // Update the original settings menu
+                                update_settings_menu_from_modal(ctx, interaction, db).await?;
                             }
                             _ => {
                                 let response = CIR::Message(
@@ -321,33 +304,20 @@ pub async fn handle_settings_modal(
             // Update settings in database
             db.users.update_settings(user_id, &settings).await?;
 
-            let embed = build_settings_embed(&settings);
-            let buttons = build_settings_buttons(&settings);
+            // Build preview embed
+            let preview_embed = build_leave_announcement_embed(ctx, user_id, None, &settings).await;
 
+            // Send ephemeral preview as interaction response (dismissible)
             let response = CIR::Message(
                 CIRM::new()
-                    .content("Leave announcement customized! Your settings are shown below.")
-                    .embed(embed)
-                    .components(buttons)
+                    .content("**Preview of your leave announcement:**")
+                    .embed(preview_embed)
                     .ephemeral(true)
             );
             interaction.create_response(&ctx.http, response).await?;
 
-            // Send preview of the leave announcement embed in DM
-            if let Ok(user) = ctx.http.get_user(user_id).await {
-                let preview_embed = build_leave_announcement_embed(ctx, user_id, None, &settings).await;
-                let preview_message = CreateMessage::new()
-                    .content("**Preview of your leave announcement:**")
-                    .embed(preview_embed);
-
-                if let Ok(msg) = user.direct_message(&ctx.http, preview_message).await {
-                    // Track this message for cleanup
-                    if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
-                        dm_tracker.track_message(user_id, msg.channel_id, msg.id, user.name.clone()).await;
-                    }
-                    info!("Sent leave announcement preview to user {}", user.name);
-                }
-            }
+            // Update the original settings menu
+            update_settings_menu_from_modal(ctx, interaction, db).await?;
         }
         _ => {
             warn!("Unknown settings modal: {}", modal_id);
@@ -357,7 +327,7 @@ pub async fn handle_settings_modal(
     Ok(())
 }
 
-/// Update the settings menu embed
+/// Update the settings menu embed (for button interactions)
 async fn update_settings_menu(
     ctx: &Context,
     interaction: &ComponentInteraction,
@@ -372,6 +342,37 @@ async fn update_settings_menu(
     // Get a mutable reference to the message
     let mut message = interaction.message.clone();
     message.edit(&ctx.http, EditMessage::new().embed(embed).components(buttons)).await?;
+
+    Ok(())
+}
+
+/// Update the settings menu embed (for modal interactions)
+async fn update_settings_menu_from_modal(
+    ctx: &Context,
+    interaction: &ModalInteraction,
+    db: &Arc<Database>,
+) -> Result<()> {
+    let user_id = interaction.user.id;
+    let settings = db.users.get_settings(user_id).await?;
+
+    let embed = build_settings_embed(&settings);
+    let buttons = build_settings_buttons(&settings);
+
+    // Find the settings menu message in the DM channel and update it
+    if let Ok(channel) = user_id.create_dm_channel(&ctx.http).await {
+        // Get recent messages to find the settings menu
+        if let Ok(messages) = channel.messages(&ctx.http, serenity::all::GetMessages::new().limit(10)).await {
+            // Find the most recent message from the bot with the settings embed
+            for msg in messages {
+                if msg.author.id == ctx.cache.current_user().id && msg.embeds.iter().any(|e| e.title.as_deref() == Some("qBot user settings")) {
+                    // Update this message
+                    let mut message = msg.clone();
+                    message.edit(&ctx.http, EditMessage::new().embed(embed).components(buttons)).await?;
+                    break;
+                }
+            }
+        }
+    }
 
     Ok(())
 }
@@ -424,15 +425,23 @@ pub async fn build_join_announcement_embed(
     settings: &crate::database::repositories::UserSettings,
     rank_name: &str,
 ) -> CE {
-    // Get member to access nickname and avatar
+    // Get display name - try member nickname first, then user name, then user ID
     let display_name = if let Some(gid) = guild_id {
+        // With guild context - try to get member for nickname
         let member = gid.member(&ctx.http, user_id).await.ok();
-        member.as_ref()
-            .map(|m| m.display_name().to_string())
-            .unwrap_or_else(|| ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string()))
+        if let Some(m) = member {
+            m.display_name().to_string()
+        } else {
+            // Fallback to fetching user directly
+            ctx.http.get_user(user_id).await
+                .map(|u| u.name.clone())
+                .unwrap_or_else(|_| user_id.to_string())
+        }
     } else {
-        // For preview without guild context
-        ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string())
+        // For preview without guild context, fetch from HTTP API
+        ctx.http.get_user(user_id).await
+            .map(|u| u.name.clone())
+            .unwrap_or_else(|_| user_id.to_string())
     };
 
     // Build description with template support
@@ -477,13 +486,23 @@ pub async fn build_leave_announcement_embed(
     guild_id: Option<serenity::all::GuildId>,
     settings: &crate::database::repositories::UserSettings,
 ) -> CE {
-    // Get member to access nickname and avatar
+    // Get display name - try member nickname first, then user name, then user ID
     let display_name = if let Some(gid) = guild_id {
+        // With guild context - try to get member for nickname
         let member = gid.member(&ctx.http, user_id).await.ok();
-        member.as_ref().map(|m| m.display_name().to_string())
-            .unwrap_or_else(|| ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string()))
+        if let Some(m) = member {
+            m.display_name().to_string()
+        } else {
+            // Fallback to fetching user directly
+            ctx.http.get_user(user_id).await
+                .map(|u| u.name.clone())
+                .unwrap_or_else(|_| user_id.to_string())
+        }
     } else {
-        ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string())
+        // For preview without guild context, fetch from HTTP API
+        ctx.http.get_user(user_id).await
+            .map(|u| u.name.clone())
+            .unwrap_or_else(|_| user_id.to_string())
     };
 
     // Build description with template support
