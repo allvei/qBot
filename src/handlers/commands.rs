@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result};
 use serenity::all::{
-    CreateEmbed as CE, CreateInteractionResponse as CIR,
-    CreateInteractionResponseMessage as CIRM, Permissions,
+    CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, EditInteractionResponse, Permissions
 };
 use serenity::builder::EditRole;
 use tracing::{error, info, warn};
@@ -191,8 +190,8 @@ pub async fn cmd_role_remove(cc: &CC<'_>, role_type: String) -> Result<()> {
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
     let role_key = match role_type.to_lowercase().as_str() {
-        "runner" => "runner_role",
-        "admin" => "admin_role",
+        "runner"       => "runner_role",
+        "admin"        => "admin_role",
         "both" | "all" => {
             // Remove both
             cc.db.config.delete_config("runner_role", guild_id.get()).await?;
@@ -1071,7 +1070,7 @@ pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
 
     // Acknowledge the command first
     let response = CIR::Message(CIRM::new()
-        .content("Opening your settings in DMs...")
+        .content("Sending you the settings menu...")
         .ephemeral(true)
     );
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1087,6 +1086,8 @@ pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
     // Try to send DM
     match user.direct_message(&cc.ctx.http, CM::new().embed(embed).components(buttons)).await {
         Ok(msg) => {
+            let success_response = EditInteractionResponse::new().content("Settings menu sent successfully!");
+            cc.intax.edit_response(&cc.ctx.http, success_response).await?;
             // Track this message for cleanup after 10 minutes of inactivity
             if let Some(dm_tracker) = cc.ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
                 dm_tracker.track_message(user_id, msg.channel_id, msg.id, user.tag()).await;
@@ -1097,19 +1098,14 @@ pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
             warn!("Failed to send settings DM to user {}: {}", user.tag(), e);
 
             // Update the ephemeral response with error
-            let error_embed = CE::new()
-                .title("Cannot Send DM")
-                .description(
+            let error_embed = EditInteractionResponse::new().content(
                     "I couldn't send you a DM! Please check that:\n\
-                    • You have DMs enabled in your Discord privacy settings\n\
-                    • You haven't blocked the bot\n\n\
+                    - You have DMs enabled in your Discord privacy settings\n\
+                    - You haven't blocked the bot\n\n\
                     To enable DMs: User Settings → Privacy & Safety → Allow direct messages from server members"
-                )
-                .color(0xff0000);
+                );
 
-            cc.intax.edit_response(&cc.ctx.http,
-                serenity::all::EditInteractionResponse::new().embed(error_embed)
-            ).await?;
+            cc.intax.edit_response(&cc.ctx.http, error_embed).await?;
         }
     }
 
