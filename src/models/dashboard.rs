@@ -225,14 +225,25 @@ impl Group {
         let is_live = self.sessions.iter().any(|s| s.is_active());
 
         let buttons = vec![
-            ("join_queue",    "Join",   BS::Success, true),
-            ("leave_queue",   "Leave",  BS::Danger, true),
-            ("shuffle_teams", "Shuffle", BS::Secondary, is_hot),
-            ("start_match",   "Start",   BS::Primary, is_hot),
-            ("end_match",     "End",     BS::Danger, is_live),
+            CAR::Buttons(vec![
+                Self::gen_button(("join_queue", "Join", BS::Success, true)),
+                Self::gen_button(("leave_queue", "Leave", BS::Danger, true)),
+            ]),
+            CAR::Buttons(vec![
+                Self::gen_button(("shuffle_teams", "Shuffle", BS::Secondary, is_hot)),
+                Self::gen_button(("start_match", "Start", BS::Primary, is_hot)),
+            ]),
+            CAR::Buttons(vec![
+                Self::gen_button(("end_match", "End", BS::Danger, is_live)),
+            ]),
         ];
 
-        Ok(vec![CAR::Buttons(Self::gen_buttons(buttons))])
+        Ok(buttons)
+    }
+
+    fn gen_button(config: (&'static str, &'static str, BS, bool)) -> CB {
+        let (action, label, style, enabled) = config;
+        CB::new(action).label(label).style(style).disabled(!enabled)
     }
 
     fn gen_buttons(button_configs: Vec<(&'static str, &'static str, BS, bool)>) -> Vec<CB> {
