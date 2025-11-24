@@ -5,8 +5,7 @@ use serenity::all::{ChannelId, MessageId, UserId, Http};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-const CLEANUP_INTERVAL_SECS: u64 = 60; // Check every minute
-const INACTIVITY_TIMEOUT_SECS: u64 = 600; // 10 minutes
+use crate::{CLEANUP_INTERVAL_SECS, INACTIVITY_TIMEOUT_SECS};
 
 /// Tracks DM messages for automatic cleanup
 #[derive(Debug)]
@@ -91,21 +90,17 @@ impl DmMessageTracker {
         for (user_id, session) in sessions.iter() {
             if let Ok(elapsed) = now.duration_since(session.last_activity) {
                 if elapsed.as_secs() >= INACTIVITY_TIMEOUT_SECS {
-                    info!("Cleaning up {} DM messages for user {} (inactive for {} seconds)",
-                          session.message_ids.len(), session.username, elapsed.as_secs());
-
                     // Delete all tracked messages
                     for message_id in &session.message_ids {
                         match http.delete_message(session.channel_id, *message_id, None).await {
                             Ok(_) => {
-                                info!("Deleted DM message {} from user {}", message_id, session.username);
+                                info!("[DM/{}] Deleted message", session.username);
                             }
                             Err(e) => {
-                                warn!("Failed to delete DM message {} from user {}: {}", message_id, session.username, e);
+                                warn!("[DM/{}] Failed to delete message ID {}: {e}", session.username, message_id);
                             }
                         }
                     }
-
                     users_to_remove.push(*user_id);
                 }
             }

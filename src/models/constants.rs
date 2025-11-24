@@ -14,6 +14,9 @@ pub const DEFAULT_TIMEOUT: u16  = 30;
 pub const MAX_TIMEOUT:     u16  = 180;
 pub const MIN_TIMEOUT:     u16  = 1;
 
+pub const CLEANUP_INTERVAL_SECS:   u64 = 60; // Check every minute
+pub const INACTIVITY_TIMEOUT_SECS: u64 = 600; // 10 minutes
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct ConfigFormat {
     pub key: String,
