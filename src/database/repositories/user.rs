@@ -147,9 +147,9 @@ impl UserRepository {
         let result = sqlx::query(
             "SELECT auto_remove_minutes, join_announcement, vc_disconnect_on_leave,
                     announcement_color, dm_enabled, notify_quota_threshold,
-                    announcement_title, announcement_description, announcement_footer_text,
+                    announcement_description, announcement_footer_text,
                     announcement_footer_icon, announcement_thumbnail,
-                    leave_announcement, leave_announcement_title, leave_announcement_description,
+                    leave_announcement, leave_announcement_description,
                     leave_announcement_footer_text, leave_announcement_footer_icon, leave_announcement_thumbnail
              FROM users WHERE discord_id = ?"
         )
@@ -161,19 +161,17 @@ impl UserRepository {
             Some(row) => {
                 let auto_remove = row.try_get("auto_remove_minutes").unwrap_or(30);
                 Ok(UserSettings {
-                auto_remove_minutes: if auto_remove == 0 { 30 } else { auto_remove },
+                auto_remove_time: if auto_remove == 0 { 30 } else { auto_remove },
                 join_announcement: row.try_get::<i64, _>("join_announcement").unwrap_or(0) != 0,
-                vc_disconnect_on_leave: row.try_get::<i64, _>("vc_disconnect_on_leave").unwrap_or(1) != 0,
+                vc_kick: row.try_get::<i64, _>("vc_disconnect_on_leave").unwrap_or(1) != 0,
                 announcement_color: row.try_get("announcement_color").unwrap_or(3447003),
-                dm_enabled: row.try_get::<i64, _>("dm_enabled").unwrap_or(1) != 0,
+                dm_alerts: row.try_get::<i64, _>("dm_enabled").unwrap_or(1) != 0,
                 notify_quota_threshold: row.try_get::<i64, _>("notify_quota_threshold").ok().map(|v| v as u8),
-                announcement_title: row.try_get("announcement_title").ok(),
                 announcement_description: row.try_get("announcement_description").ok(),
                 announcement_footer_text: row.try_get("announcement_footer_text").ok(),
                 announcement_footer_icon: row.try_get("announcement_footer_icon").ok(),
                 announcement_thumbnail: row.try_get("announcement_thumbnail").ok(),
                 leave_announcement: row.try_get::<i64, _>("leave_announcement").unwrap_or(0) != 0,
-                leave_announcement_title: row.try_get("leave_announcement_title").ok(),
                 leave_announcement_description: row.try_get("leave_announcement_description").ok(),
                 leave_announcement_footer_text: row.try_get("leave_announcement_footer_text").ok(),
                 leave_announcement_footer_icon: row.try_get("leave_announcement_footer_icon").ok(),
@@ -200,32 +198,28 @@ impl UserRepository {
                 announcement_color = ?,
                 dm_enabled = ?,
                 notify_quota_threshold = ?,
-                announcement_title = ?,
                 announcement_description = ?,
                 announcement_footer_text = ?,
                 announcement_footer_icon = ?,
                 announcement_thumbnail = ?,
                 leave_announcement = ?,
-                leave_announcement_title = ?,
                 leave_announcement_description = ?,
                 leave_announcement_footer_text = ?,
                 leave_announcement_footer_icon = ?,
                 leave_announcement_thumbnail = ?
              WHERE discord_id = ?"
         )
-        .bind(settings.auto_remove_minutes)
+        .bind(settings.auto_remove_time)
         .bind(if settings.join_announcement { 1 } else { 0 })
-        .bind(if settings.vc_disconnect_on_leave { 1 } else { 0 })
+        .bind(if settings.vc_kick { 1 } else { 0 })
         .bind(settings.announcement_color)
-        .bind(if settings.dm_enabled { 1 } else { 0 })
+        .bind(if settings.dm_alerts { 1 } else { 0 })
         .bind(settings.notify_quota_threshold.map(|v| v as i64))
-        .bind(&settings.announcement_title)
         .bind(&settings.announcement_description)
         .bind(&settings.announcement_footer_text)
         .bind(&settings.announcement_footer_icon)
         .bind(&settings.announcement_thumbnail)
         .bind(if settings.leave_announcement { 1 } else { 0 })
-        .bind(&settings.leave_announcement_title)
         .bind(&settings.leave_announcement_description)
         .bind(&settings.leave_announcement_footer_text)
         .bind(&settings.leave_announcement_footer_icon)
@@ -263,45 +257,41 @@ impl UserRepository {
 /// User settings structure
 #[derive(Debug, Clone)]
 pub struct UserSettings {
-    pub auto_remove_minutes: i64,
-    pub join_announcement: bool,
-    pub vc_disconnect_on_leave: bool,
-    pub announcement_color: i64,
-    pub dm_enabled: bool,
-    pub notify_quota_threshold: Option<u8>,
-    pub announcement_title: Option<String>,
-    pub announcement_description: Option<String>,
-    pub announcement_footer_text: Option<String>,
-    pub announcement_footer_icon: Option<String>,
-    pub announcement_thumbnail: Option<String>,
-    pub leave_announcement: bool,
-    pub leave_announcement_title: Option<String>,
+    pub auto_remove_time:               i64,
+    pub join_announcement:              bool,
+    pub vc_kick:                        bool,
+    pub announcement_color:             i64,
+    pub dm_alerts:                      bool,
+    pub notify_quota_threshold:         Option<u8>,
+    pub announcement_description:       Option<String>,
+    pub announcement_footer_text:       Option<String>,
+    pub announcement_footer_icon:       Option<String>,
+    pub announcement_thumbnail:         Option<String>,
+    pub leave_announcement:             bool,
     pub leave_announcement_description: Option<String>,
     pub leave_announcement_footer_text: Option<String>,
     pub leave_announcement_footer_icon: Option<String>,
-    pub leave_announcement_thumbnail: Option<String>,
+    pub leave_announcement_thumbnail:   Option<String>,
 }
 
 impl Default for UserSettings {
     fn default() -> Self {
         Self {
-            auto_remove_minutes: 30, // Default 30 minutes, enforced 1-60 range
-            join_announcement: false,
-            vc_disconnect_on_leave: true,
-            announcement_color: 3447003, // Discord blurple
-            dm_enabled: true,
-            notify_quota_threshold: None,
-            announcement_title: None,
-            announcement_description: None,
-            announcement_footer_text: None,
-            announcement_footer_icon: None,
-            announcement_thumbnail: None,
-            leave_announcement: false,
-            leave_announcement_title: None,
+            auto_remove_time:               30, // Default 30 minutes, enforced 1-60 range
+            join_announcement:              false,
+            vc_kick:                        true,
+            announcement_color:             3447003, // Discord blurple
+            dm_alerts:                      true,
+            notify_quota_threshold:         None,
+            announcement_description:       None,
+            announcement_footer_text:       None,
+            announcement_footer_icon:       None,
+            announcement_thumbnail:         None,
+            leave_announcement:             false,
             leave_announcement_description: None,
             leave_announcement_footer_text: None,
             leave_announcement_footer_icon: None,
-            leave_announcement_thumbnail: None,
+            leave_announcement_thumbnail:   None,
         }
     }
 }

@@ -392,10 +392,10 @@ impl Group {
 
                         // Build auto-remove timer list
                         if let Ok(settings) = db.users.get_settings(player.player.discord_id).await {
-                            if settings.auto_remove_minutes > 0 {
+                            if settings.auto_remove_time > 0 {
                                 if let Ok(joined_duration) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
                                     let joined_timestamp = joined_duration.as_secs();
-                                    let kick_timestamp = joined_timestamp + (settings.auto_remove_minutes as u64 * 60);
+                                    let kick_timestamp = joined_timestamp + (settings.auto_remove_time as u64 * 60);
                                     timers_field.push_str(&format!("<t:{kick_timestamp}:t>\n"));
                                 } else {
                                     timers_field.push_str("-\n");
@@ -757,7 +757,7 @@ impl Group {
                 // Check user's VC disconnect preference
                 let settings = cc.db.users.get_settings(user_id).await.unwrap_or_default();
 
-                if settings.vc_disconnect_on_leave {
+                if settings.vc_kick {
 
                     // Acknowledge button press before disconnecting
                     cc.defer_update().await?;
