@@ -1086,7 +1086,10 @@ pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
     // Try to send DM
     match user.direct_message(&cc.ctx.http, CM::new().embed(embed).components(buttons)).await {
         Ok(msg) => {
-            let success_response = EditInteractionResponse::new().content("Settings menu sent successfully!");
+            // Create message link for easy access
+            let message_link = format!("https://discord.com/channels/@me/{}/{}", msg.channel_id.get(), msg.id.get());
+            let success_response = EditInteractionResponse::new()
+                .content(format!("Settings menu sent successfully!\n[Click here to view]({message_link})"));
             cc.intax.edit_response(&cc.ctx.http, success_response).await?;
             // Track this message for cleanup after 10 minutes of inactivity
             if let Some(dm_tracker) = cc.ctx.data.read().await.get::<crate::models::DmTrackerKey>() {

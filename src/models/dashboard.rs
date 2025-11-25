@@ -3,8 +3,8 @@ use std::{collections::HashSet, sync::Arc, time::{Duration, SystemTime}};
 use crate::{QueueToggleType, log_queue_toggle, models::constants::DEFAULT_TIMEOUT};
 use serenity::{all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
-    CreateEmbed as CE, CreateMessage as CM,
-    EditMessage, Message,
+    CreateEmbed as CE, CreateMessage as CM, CreateInteractionResponse as CIR,
+    CreateInteractionResponseMessage as CIRM, EditMessage, Message,
 }};
 use tracing::{error, info, warn};
 use tokio::sync::mpsc;
@@ -231,7 +231,8 @@ impl Group {
                 Self::gen_button(("change_expiry",  "Change expiry time", BS::Secondary, true)),
             ]),
             CAR::Buttons(vec![
-                Self::gen_button(("shuffle_teams", "Shuffle", BS::Secondary, is_hot)),
+                Self::gen_button(("show_settings",  "Settings",          BS::Secondary, true)),
+                Self::gen_button(("shuffle_teams",  "Shuffle",           BS::Secondary, is_hot)),
             ]),
             CAR::Buttons(vec![
                 Self::gen_button(("start_match", "Start", BS::Primary, is_hot)),
@@ -1012,7 +1013,11 @@ impl Group {
             },
             "set_expiry"        => {
                 info!("[{}][{}] {} changed expiry time", server_name, group_name, username);
-                self.dash_set_expiry(cc, parts.get(1)).await
+                self.dash_set_expiry(cc, parts.get(1).copied()).await
+            },
+            "show_settings"     => {
+                info!("[{}][{}] {} requested settings", server_name, group_name, username);
+                self.dash_show_settings(cc).await
             },
             "shuffle_teams"     => {
                 info!("[{}][{}] {} used Shuffle", server_name, group_name, username);
@@ -1044,17 +1049,17 @@ impl Group {
             .any(|s| s.pool.iter().any(|p| p.player.discord_id == user_id));
 
         if !is_in_queue {
-            cc.reply_ephemeral("You must be in the queue to change your expiry time.").await?;
+            cc.reply("You must be in the queue to change your expiry time.").await?;
             return Ok(());
         }
 
         // Create buttons for time options: 30m, 1h, 2h, 3h, 4h
         let time_buttons = vec![
             CB::new("set_expiry:30m").label("30 minutes").style(BS::Secondary),
-            CB::new("set_expiry:1h").label("1 hour").style(BS::Secondary),
-            CB::new("set_expiry:2h").label("2 hours").style(BS::Secondary),
-            CB::new("set_expiry:3h").label("3 hours").style(BS::Secondary),
-            CB::new("set_expiry:4h").label("4 hours").style(BS::Secondary),
+            CB::new("set_expiry:1h") .label("1 hour")    .style(BS::Secondary),
+            CB::new("set_expiry:2h") .label("2 hours")   .style(BS::Secondary),
+            CB::new("set_expiry:3h") .label("3 hours")   .style(BS::Secondary),
+            CB::new("set_expiry:4h") .label("4 hours")   .style(BS::Secondary),
         ];
 
         let response = CIR::Message(
@@ -1080,7 +1085,7 @@ impl Group {
             Some("3h")  => std::time::Duration::from_secs(3 * 60 * 60),
             Some("4h")  => std::time::Duration::from_secs(4 * 60 * 60),
             _ => {
-                cc.reply_ephemeral("Invalid expiry duration.").await?;
+                cc.reply("Invalid expiry duration.").await?;
                 return Ok(());
             }
         };
@@ -1096,7 +1101,7 @@ impl Group {
         }
 
         if !found {
-            cc.reply_ephemeral("You are not in the queue.").await?;
+            cc.reply("You are not in the queue.").await?;
             return Ok(());
         }
 
@@ -1111,6 +1116,36 @@ impl Group {
         // Update the dashboard
         self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
 
+        Ok(())
+    }
+
+    /// Show user settings as ephemeral embed in dashboard channel
+    async fn dash_show_settings(&mut self, cc: &CC<'_>) -> Result<()> {
+        use crate::handlers::settings::build_settings_embed;
+        
+        let user_id = cc.component.user.id;
+        
+        // Get user's settings
+        let settings = match cc.db.users.get_settings(user_id).await {
+            Ok(s) => s,
+            Err(e) => {
+                cc.reply(&format!("Failed to load settings: {}", e)).await?;
+                return Ok(());
+            }
+        };
+
+        // Build settings embed (without buttons for read-only view)
+        let embed = build_settings_embed(&settings);
+
+        // Send ephemeral message with settings embed
+        let response = CIR::Message(
+            CIRM::new()
+                .content("**Your current settings:**\nUse `/settings` in DMs to modify these settings.")
+                .embed(embed)
+                .ephemeral(true)
+        );
+
+        cc.component.create_response(&cc.ctx.http, response).await?;
         Ok(())
     }
 
