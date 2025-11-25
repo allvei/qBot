@@ -8,7 +8,7 @@ use std::time::SystemTime;
 
 use tokio::sync::Mutex;
 use anyhow::{anyhow, Error, Result};
-use crate::{Database as DB, Manager, Rank, models::constants::{DEFAULT_TIMEOUT, MIN_TIMEOUT, MAX_TIMEOUT}};
+use crate::{Database as DB, Manager, Rank, models::constants::{DEFAULT_TIMEOUT, EXPIRY_MIN, EXPIRY_MAX}};
 use serde::{Deserialize, Serialize};
 use serenity::{all::{
     ChannelId as CI, Context, CreateEmbed,
@@ -333,31 +333,34 @@ impl Group {
             let mut players_to_remove = Vec::new();
 
             for player in &session.pool {
-                // Get user's auto-remove setting
-                let auto_remove_minutes = match db.users.get_settings(player.player.discord_id).await {
-                    Ok(settings) => {
-                        // Clamp to valid range (MIN_TIMEOUT to MAX_TIMEOUT)
-                        settings.auto_remove_time.clamp(MIN_TIMEOUT as i64, MAX_TIMEOUT as i64)
-                    }
-                    Err(_) => {
-                        // If we can't get settings, skip this player
-                        continue;
+                // Use per-instance expiry_duration if set, otherwise get user's setting
+                let expiry_duration = if let Some(duration) = player.expiry_duration {
+                    duration
+                } else {
+                    match db.users.get_settings(player.player.discord_id).await {
+                        Ok(settings) => settings.expiry_duration,
+                        Err(_) => {
+                            // If we can't get settings, skip this player
+                            continue;
+                        }
                     }
                 };
 
-                // Skip if auto-remove is disabled (0 or below MIN_TIMEOUT)
-                if auto_remove_minutes < MIN_TIMEOUT as i64 {
+                // Clamp to valid range (EXPIRY_MIN to EXPIRY_MAX)
+                let expiry_secs = expiry_duration.as_secs().clamp(EXPIRY_MIN.as_secs(), EXPIRY_MAX.as_secs());
+
+                // Skip if auto-remove is disabled (below EXPIRY_MIN)
+                if expiry_secs < EXPIRY_MIN.as_secs() {
                     continue;
                 }
 
                 // Check if player has exceeded their auto-remove time
                 if let Ok(elapsed) = SystemTime::now().duration_since(player.joined_at) {
-                    let elapsed_minutes = elapsed.as_secs() / 60;
-                    if elapsed_minutes >= auto_remove_minutes as u64 {
-                        info!("Auto-removing player {} after {} minutes (limit: {})",
+                    if elapsed.as_secs() >= expiry_secs {
+                        info!("Auto-removing player {} after {} seconds (limit: {})",
                             player.player.discord_tag.as_deref().unwrap_or("Unknown"),
-                            elapsed_minutes,
-                            auto_remove_minutes
+                            elapsed.as_secs(),
+                            expiry_secs
                         );
                         players_to_remove.push(player.player.discord_id);
                     }

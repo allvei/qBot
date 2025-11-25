@@ -226,15 +226,16 @@ impl Group {
 
         let buttons = vec![
             CAR::Buttons(vec![
-                Self::gen_button(("join_queue", "Join", BS::Success, true)),
-                Self::gen_button(("leave_queue", "Leave", BS::Danger, true)),
+                Self::gen_button(("join_queue",     "Join",              BS::Success,   true)),
+                Self::gen_button(("leave_queue",    "Leave",             BS::Danger,    true)),
+                Self::gen_button(("change_expiry",  "Change expiry time", BS::Secondary, true)),
             ]),
             CAR::Buttons(vec![
                 Self::gen_button(("shuffle_teams", "Shuffle", BS::Secondary, is_hot)),
-                Self::gen_button(("start_match", "Start", BS::Primary, is_hot)),
             ]),
             CAR::Buttons(vec![
-                Self::gen_button(("end_match", "End", BS::Danger, is_live)),
+                Self::gen_button(("start_match", "Start", BS::Primary, is_hot)),
+                Self::gen_button(("end_match",   "End",   BS::Danger,  is_live)),
             ]),
         ];
 
@@ -389,7 +390,7 @@ impl Group {
             if let Some(current_session) = inactives.first() {
                 if !current_session.is_hot() && current_session.pool.len() > 0 && current_session.pool.len() < quota {
                     let mut players_field = String::new();
-                    let mut timers_field = String::new();
+                    let mut timers_field  = String::new();
 
                     for player in current_session.pool.iter() {
                         // Build player list with ELO
@@ -402,15 +403,19 @@ impl Group {
                         players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.discord_id));
 
                         // Build auto-remove timer list
-                        if let Ok(settings) = db.users.get_settings(player.player.discord_id).await {
-                            if settings.auto_remove_time > 0 {
-                                if let Ok(joined_duration) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
-                                    let joined_timestamp = joined_duration.as_secs();
-                                    let kick_timestamp = joined_timestamp + (settings.auto_remove_time as u64 * 60);
-                                    timers_field.push_str(&format!("<t:{kick_timestamp}:t>\n"));
-                                } else {
-                                    timers_field.push_str("-\n");
-                                }
+                        // Use per-instance expiry_duration if set, otherwise get user's setting
+                        let expiry_duration = if let Some(duration) = player.expiry_duration {
+                            duration
+                        } else if let Ok(settings) = db.users.get_settings(player.player.discord_id).await {
+                            settings.expiry_duration
+                        } else {
+                            std::time::Duration::ZERO
+                        };
+
+                        if expiry_duration.as_secs() > 0 {
+                            if let Ok(join_time) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
+                                let expiry_timestamp = join_time.as_secs() + expiry_duration.as_secs();
+                                timers_field.push_str(&format!("<t:{}:R>\n", expiry_timestamp));
                             } else {
                                 timers_field.push_str("-\n");
                             }
@@ -1001,6 +1006,14 @@ impl Group {
                 // Log will be done inside dash_leave_queue with proper context
                 self.dash_leave_queue(cc).await
             },
+            "change_expiry"     => {
+                info!("[{}][{}] {} requested expiry time change", server_name, group_name, username);
+                self.dash_change_expiry(cc).await
+            },
+            "set_expiry"        => {
+                info!("[{}][{}] {} changed expiry time", server_name, group_name, username);
+                self.dash_set_expiry(cc, parts.get(1)).await
+            },
             "shuffle_teams"     => {
                 info!("[{}][{}] {} used Shuffle", server_name, group_name, username);
                 self.dash_shuffle(cc, game_id).await
@@ -1019,6 +1032,86 @@ impl Group {
                 Ok(())
             }
         }
+    }
+
+    /// Show expiry time options
+    async fn dash_change_expiry(&mut self, cc: &CC<'_>) -> Result<()> {
+        use serenity::all::{CreateButton as CB, ButtonStyle as BS};
+
+        // Check if user is in queue
+        let user_id = cc.component.user.id;
+        let is_in_queue = self.sessions.iter()
+            .any(|s| s.pool.iter().any(|p| p.player.discord_id == user_id));
+
+        if !is_in_queue {
+            cc.reply_ephemeral("You must be in the queue to change your expiry time.").await?;
+            return Ok(());
+        }
+
+        // Create buttons for time options: 30m, 1h, 2h, 3h, 4h
+        let time_buttons = vec![
+            CB::new("set_expiry:30m").label("30 minutes").style(BS::Secondary),
+            CB::new("set_expiry:1h").label("1 hour").style(BS::Secondary),
+            CB::new("set_expiry:2h").label("2 hours").style(BS::Secondary),
+            CB::new("set_expiry:3h").label("3 hours").style(BS::Secondary),
+            CB::new("set_expiry:4h").label("4 hours").style(BS::Secondary),
+        ];
+
+        let response = CIR::Message(
+            CIRM::new()
+                .content("Select your expiry time for this queue instance:")
+                .components(vec![CAR::Buttons(time_buttons)])
+                .ephemeral(true)
+        );
+
+        cc.component.create_response(&cc.ctx.http, response).await?;
+        Ok(())
+    }
+
+    /// Set expiry duration for user in current queue
+    async fn dash_set_expiry(&mut self, cc: &CC<'_>, duration_str: Option<&str>) -> Result<()> {
+        let user_id = cc.component.user.id;
+        
+        // Parse duration string
+        let duration = match duration_str {
+            Some("30m") => std::time::Duration::from_secs(30 * 60),
+            Some("1h")  => std::time::Duration::from_secs(60 * 60),
+            Some("2h")  => std::time::Duration::from_secs(2 * 60 * 60),
+            Some("3h")  => std::time::Duration::from_secs(3 * 60 * 60),
+            Some("4h")  => std::time::Duration::from_secs(4 * 60 * 60),
+            _ => {
+                cc.reply_ephemeral("Invalid expiry duration.").await?;
+                return Ok(());
+            }
+        };
+
+        // Find and update the player's expiry duration in any session they're in
+        let mut found = false;
+        for session in self.sessions.iter_mut() {
+            if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
+                player.expiry_duration = Some(duration);
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            cc.reply_ephemeral("You are not in the queue.").await?;
+            return Ok(());
+        }
+
+        // Delete the ephemeral message by updating it
+        let response = CIR::UpdateMessage(
+            CIRM::new()
+                .content(format!("Expiry time set to {} for this queue instance.", duration_str.unwrap_or("unknown")))
+                .components(vec![]) // Remove buttons
+        );
+        cc.component.create_response(&cc.ctx.http, response).await?;
+
+        // Update the dashboard
+        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
+
+        Ok(())
     }
 
     pub async fn lock_button(&mut self, cc: &CC<'_>) -> Result<()> {

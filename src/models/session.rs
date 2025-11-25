@@ -155,11 +155,12 @@ pub enum SessionStatus {
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct SessionPlayer {
-    pub player:       Player,
-    pub team:         Option<Team>,
-    pub in_queue_vc:  bool,
-    pub in_queue_cmd: bool,
-    pub joined_at:    SystemTime,
+    pub player:          Player,
+    pub team:            Option<Team>,
+    pub in_queue_vc:     bool,
+    pub in_queue_cmd:    bool,
+    pub joined_at:       SystemTime,
+    pub expiry_duration: Option<std::time::Duration>, // Per-instance expiry override
 }
 
 impl SessionPlayer {
@@ -167,10 +168,11 @@ impl SessionPlayer {
         player.set_rank(Some(rank));
         Self {
             player,
-            team:         None,
-            in_queue_vc:  false,
-            in_queue_cmd: false,
-            joined_at:    SystemTime::now(),
+            team:            None,
+            in_queue_vc:     false,
+            in_queue_cmd:    false,
+            joined_at:       SystemTime::now(),
+            expiry_duration: None, // Use user's default setting initially
         }
     }
 

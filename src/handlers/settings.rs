@@ -381,11 +381,14 @@ async fn update_settings_menu_from_modal(
 pub fn build_settings_embed(settings: &crate::database::repositories::UserSettings) -> CE {
     CE::new()
         .title("qBot user settings")
-        .description(format!(
-            "**Auto-remove timer:** {} minute{}\n",
-            settings.auto_remove_time,
-            if settings.auto_remove_time == 1 { "" } else { "s" }
-        ))
+        .description({
+            let minutes = settings.expiry_duration.as_secs() / 60;
+            format!(
+                "**Auto-remove timer:** {} minute{}\n",
+                minutes,
+                if minutes == 1 { "" } else { "s" }
+            )
+        })
         .color(settings.announcement_color as u32)
         .footer(CreateEmbedFooter::new("¹Kicks you from the voice channel when you are not in the queue."))
 }

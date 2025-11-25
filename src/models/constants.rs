@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -9,10 +10,10 @@ use sqlx::FromRow;
 use super::types::Rank;
 
 pub const DEFAULT_QUOTA:   u8   = 8;
-pub const DEFAULT_RANK:    Rank = Rank::Apprentice;
+pub const DEFAULT_RANK:    Rank = Rank::Newcomer;
 pub const DEFAULT_TIMEOUT: u16  = 30;
-pub const MAX_TIMEOUT:     u16  = 180;
-pub const MIN_TIMEOUT:     u16  = 1;
+pub const EXPIRY_MAX: Duration = Duration::from_secs(4 * 60 * 60);  // 4 hours
+pub const EXPIRY_MIN: Duration = Duration::from_secs(30 * 60);      // 30 minutes
 
 pub const CLEANUP_INTERVAL_SECS:   u64 = 60; // Check every minute
 pub const INACTIVITY_TIMEOUT_SECS: u64 = 600; // 10 minutes

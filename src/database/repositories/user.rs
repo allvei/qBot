@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use serenity::all::{Context, UserId};
@@ -159,9 +161,10 @@ impl UserRepository {
 
         match result {
             Some(row) => {
-                let auto_remove = row.try_get("auto_remove_minutes").unwrap_or(30);
+                let auto_remove_minutes: i64 = row.try_get("auto_remove_minutes").unwrap_or(30);
+                let minutes = if auto_remove_minutes == 0 { 30 } else { auto_remove_minutes };
                 Ok(UserSettings {
-                auto_remove_time: if auto_remove == 0 { 30 } else { auto_remove },
+                expiry_duration: Duration::from_secs((minutes as u64) * 60),
                 join_announcement: row.try_get::<i64, _>("join_announcement").unwrap_or(0) != 0,
                 vc_kick: row.try_get::<i64, _>("vc_disconnect_on_leave").unwrap_or(1) != 0,
                 announcement_color: row.try_get("announcement_color").unwrap_or(3447003),
@@ -190,6 +193,8 @@ impl UserRepository {
         // Ensure user exists
         let _ = self.create_or_update(discord_id, None).await?;
 
+        let auto_remove_minutes = (settings.expiry_duration.as_secs() / 60) as i64;
+        
         sqlx::query(
             "UPDATE users SET
                 auto_remove_minutes = ?,
@@ -209,7 +214,7 @@ impl UserRepository {
                 leave_announcement_thumbnail = ?
              WHERE discord_id = ?"
         )
-        .bind(settings.auto_remove_time)
+        .bind(auto_remove_minutes)
         .bind(if settings.join_announcement { 1 } else { 0 })
         .bind(if settings.vc_kick { 1 } else { 0 })
         .bind(settings.announcement_color)
@@ -257,7 +262,7 @@ impl UserRepository {
 /// User settings structure
 #[derive(Debug, Clone)]
 pub struct UserSettings {
-    pub auto_remove_time:               i64,
+    pub expiry_duration:                Duration,
     pub join_announcement:              bool,
     pub vc_kick:                        bool,
     pub announcement_color:             i64,
@@ -277,7 +282,7 @@ pub struct UserSettings {
 impl Default for UserSettings {
     fn default() -> Self {
         Self {
-            auto_remove_time:               30, // Default 30 minutes, enforced 1-60 range
+            expiry_duration:               Duration::from_secs(30 * 60), // Default 30 minutes
             join_announcement:              false,
             vc_kick:                        true,
             announcement_color:             3447003, // Discord blurple

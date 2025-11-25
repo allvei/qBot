@@ -85,8 +85,8 @@ impl EventHandler for Handler {
 
         // Start auto-remove background task
         {
-            let manager = self.manager.clone();
-            let database = self.database.clone();
+            let manager   = self.manager.clone();
+            let database  = self.database.clone();
             let ctx_clone = ctx.clone();
 
             tokio::spawn(async move {
