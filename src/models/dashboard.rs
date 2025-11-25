@@ -226,17 +226,17 @@ impl Group {
 
         let buttons = vec![
             CAR::Buttons(vec![
-                Self::gen_button(("join_queue",     "Join",              BS::Success,   true)),
-                Self::gen_button(("leave_queue",    "Leave",             BS::Danger,    true)),
-                Self::gen_button(("change_expiry",  "Change expiry time", BS::Secondary, true)),
+                Self::gen_button(("join_queue",    "Join",               BS::Success,   true)),
+                Self::gen_button(("leave_queue",   "Leave",              BS::Danger,    true)),
+                Self::gen_button(("change_expiry", "Change expiry time", BS::Secondary, true)),
             ]),
             CAR::Buttons(vec![
-                Self::gen_button(("show_settings",  "Settings",          BS::Secondary, true)),
-                Self::gen_button(("shuffle_teams",  "Shuffle",           BS::Secondary, is_hot)),
+                Self::gen_button(("show_settings",  "Settings", BS::Secondary, true)),
             ]),
             CAR::Buttons(vec![
-                Self::gen_button(("start_match", "Start", BS::Primary, is_hot)),
-                Self::gen_button(("end_match",   "End",   BS::Danger,  is_live)),
+                Self::gen_button(("start_match",   "Start",   BS::Primary,   is_hot)),
+                Self::gen_button(("end_match",     "End",     BS::Danger,    is_live)),
+                Self::gen_button(("shuffle_teams", "Shuffle", BS::Secondary, is_hot)),
             ]),
         ];
 

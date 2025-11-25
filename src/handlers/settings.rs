@@ -12,32 +12,25 @@ use crate::Database;
 
 /// Messages to replace description spam with
 const SPAM_REPLACEMENT_MESSAGES: &[&str] = &[
-    "Nice try, but no.",
-    "I'm not your Discord canvas.",
-    "Newline spam detected. Try again with actual content.",
-    "You thought I wouldn't notice?",
-    "Absolutely not.",
-    "That's a no from me.",
-    "Did you really think that would work?",
-    "Nope. Denied.",
-    "Error 418: I'm a teapot, not a newline printer.",
-    "The council has denied your newline spam.",
-    "Spam rejected. Please insert actual message.",
-    "Your newline privileges have been revoked.",
+    "If this is shart city, then I am the mayor",
+    "*proceeds to triple-dribble in front of your goal and die*",
+    "If it wasn't for xCape, I'd be GM already...",
+    "@ me = free pocket medic",
+    "idk, glop bomb is the best way to score",
+    "#removemedic",
+    "#justiceforsleepy",
+    "#justiceforwerxify",
+    "im so fucking ass",
+    "Rawr x3 nuzzles how are you pounces on you you're so warm"
 ];
 
 /// Messages to replace footer spam with
 const FOOTER_SPAM_REPLACEMENT_MESSAGES: &[&str] = &[
-    "Spam-free footer",
-    "Not today, spammer",
-    "Footer: denied",
-    "Nope",
-    "Nice try",
-    "Footer access revoked",
-    "Spam detected",
-    "Invalid footer",
-    "Try harder next time",
-    "Footer: rejected",
+    "Mmmm, feet :3",
+    "Go team!",
+    "PUG PUG PUG!",
+    "GG!",
+    "qBot is best bot",
 ];
 
 /// Check if text contains newline spam
@@ -45,14 +38,29 @@ const FOOTER_SPAM_REPLACEMENT_MESSAGES: &[&str] = &[
 fn is_newline_spam(text: &str) -> bool {
     let newline_count = text.matches('\n').count();
     let non_whitespace_chars = text.chars().filter(|c| !c.is_whitespace()).count();
+    let lines: Vec<&str> = text.lines().collect();
     
-    // Consider it spam if:
-    // 1. More than 3 consecutive newlines anywhere
-    // 2. More newlines than non-whitespace characters
-    // 3. More than 5 newlines total with less than 10 non-whitespace characters
-    text.contains("\n\n\n\n") 
-        || (newline_count > 0 && non_whitespace_chars > 0 && newline_count >= non_whitespace_chars)
-        || (newline_count > 5 && non_whitespace_chars < 10)
+    // Count non-empty lines (lines with actual content)
+    let non_empty_lines = lines.iter().filter(|line| !line.trim().is_empty()).count();
+    // Count short lines (1-3 characters) - common in spam patterns
+    let short_lines = lines.iter()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.is_empty() && trimmed.len() <= 3
+        })
+        .count();
+    
+    // Consider it spam if ANY of these conditions are met:
+    // 1. More than 4 consecutive newlines anywhere
+    // 2. More newlines than actual content characters (stricter ratio)
+    // 3. More than 5 newlines total with very little content
+    // 4. High ratio of newlines to non-empty lines (lots of spacing)
+    // 5. Many short lines separated by newlines (spam pattern)
+    text.contains("\n\n\n\n\n")
+        || (newline_count > 0 && non_whitespace_chars > 0 && newline_count > non_whitespace_chars * 2)
+        || (newline_count > 5 && non_whitespace_chars < 15)
+        || (non_empty_lines > 0 && newline_count > non_empty_lines * 3)
+        || (short_lines >= 3 && newline_count >= short_lines * 2)
 }
 
 /// Process text and replace with spam message if newline spam detected
