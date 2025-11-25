@@ -10,17 +10,86 @@ use tracing::{info, warn};
 
 use crate::Database;
 
+/// Messages to replace description spam with
+const SPAM_REPLACEMENT_MESSAGES: &[&str] = &[
+    "Nice try, but no.",
+    "I'm not your Discord canvas.",
+    "Newline spam detected. Try again with actual content.",
+    "You thought I wouldn't notice?",
+    "Absolutely not.",
+    "That's a no from me.",
+    "Did you really think that would work?",
+    "Nope. Denied.",
+    "Error 418: I'm a teapot, not a newline printer.",
+    "The council has denied your newline spam.",
+    "Spam rejected. Please insert actual message.",
+    "Your newline privileges have been revoked.",
+];
+
+/// Messages to replace footer spam with
+const FOOTER_SPAM_REPLACEMENT_MESSAGES: &[&str] = &[
+    "Spam-free footer",
+    "Not today, spammer",
+    "Footer: denied",
+    "Nope",
+    "Nice try",
+    "Footer access revoked",
+    "Spam detected",
+    "Invalid footer",
+    "Try harder next time",
+    "Footer: rejected",
+];
+
+/// Check if text contains newline spam
+/// Returns true if there are excessive newlines relative to actual content
+fn is_newline_spam(text: &str) -> bool {
+    let newline_count = text.matches('\n').count();
+    let non_whitespace_chars = text.chars().filter(|c| !c.is_whitespace()).count();
+    
+    // Consider it spam if:
+    // 1. More than 3 consecutive newlines anywhere
+    // 2. More newlines than non-whitespace characters
+    // 3. More than 5 newlines total with less than 10 non-whitespace characters
+    text.contains("\n\n\n\n") 
+        || (newline_count > 0 && non_whitespace_chars > 0 && newline_count >= non_whitespace_chars)
+        || (newline_count > 5 && non_whitespace_chars < 10)
+}
+
+/// Process text and replace with spam message if newline spam detected
+fn sanitize_announcement_text(text: &str) -> String {
+    if is_newline_spam(text) {
+        // Pick a random spam replacement message
+        use rand::Rng;
+        let idx = rand::rng().random_range(0..SPAM_REPLACEMENT_MESSAGES.len());
+        SPAM_REPLACEMENT_MESSAGES[idx].to_string()
+    } else {
+        text.to_string()
+    }
+}
+
+/// Process footer text and replace with spam message if newline spam detected
+fn sanitize_footer_text(text: &str) -> String {
+    if is_newline_spam(text) {
+        // Pick a random footer spam replacement message
+        use rand::Rng;
+        let idx = rand::rng().random_range(0..FOOTER_SPAM_REPLACEMENT_MESSAGES.len());
+        FOOTER_SPAM_REPLACEMENT_MESSAGES[idx].to_string()
+    } else {
+        text.to_string()
+    }
+}
+
 /// Handle settings button interactions in DMs
 pub async fn handle_settings_button(
     ctx: &Context,
     interaction: &ComponentInteraction,
     db: &Arc<Database>,
 ) -> Result<()> {
-    let user_id = interaction.user.id;
+    let user_id   = interaction.user.id;
     let button_id = &interaction.data.custom_id;
-    let username = &interaction.user.name;
+    let username  = &interaction.user.name;
 
-    info!("[DM] {} clicked {}", username, button_id);
+    info!("[DM] {} pressed {}", username, button_id);
 
     // Update activity timestamp for DM cleanup tracking
     if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
@@ -87,34 +156,25 @@ pub async fn handle_settings_button(
             let settings = db.users.get_settings(user_id).await?;
             let modal = CreateModal::new("settings_modal_announcement", "Customize join announcement")
                 .components(vec![
-                    CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Color (hex, optional)", "announcement_color")
-                            .placeholder("e.g., 3447003 or FF5733")
-                            .value(format!("{:06X}", settings.announcement_color))
-                            .required(false)
-                            .min_length(6)
-                            .max_length(6)
+                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "HEX Color", "announcement_color")
+                        .placeholder("e.g., 3447003 or FF5733")
+                        .value(format!("{:06X}", settings.announcement_color))
+                        .required(false).min_length(6).max_length(6)
                     ),
-                    CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Paragraph, "Description (optional)", "announcement_description")
-                            .placeholder("e.g., Welcome! Use {rank} for rank")
-                            .value(settings.announcement_description.unwrap_or_default())
-                            .required(false)
-                            .max_length(2000)
+                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Paragraph, "Message", "announcement_description")
+                        .placeholder("e.g., Kafri: defense")
+                        .value(settings.announcement_description.unwrap_or_default())
+                        .required(false).max_length(2000)
                     ),
-                    CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Footer Text (optional)", "announcement_footer_text")
-                            .placeholder("e.g., Good luck!")
-                            .value(settings.announcement_footer_text.unwrap_or_default())
-                            .required(false)
-                            .max_length(2048)
+                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "Footer text", "announcement_footer_text")
+                        .placeholder("e.g., Good luck!")
+                        .value(settings.announcement_footer_text.unwrap_or_default())
+                        .required(false).max_length(2048)
                     ),
-                    CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Thumbnail URL (optional)", "announcement_thumbnail")
-                            .placeholder("https://example.com/thumb.png")
-                            .value(settings.announcement_thumbnail.unwrap_or_default())
-                            .required(false)
-                            .max_length(512)
+                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "Thumbnail URL", "announcement_thumbnail")
+                        .placeholder("https://example.com/thumb.png")
+                        .value(settings.announcement_thumbnail.unwrap_or_default())
+                        .required(false).max_length(512)
                     ),
                 ]);
 
@@ -135,21 +195,21 @@ pub async fn handle_settings_button(
                             .max_length(6)
                     ),
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Paragraph, "Description (optional)", "leave_announcement_description")
+                        CreateInputText::new(InputTextStyle::Paragraph, "Description", "leave_announcement_description")
                             .placeholder("e.g., {name} has left. Use {user} for mention")
                             .value(settings.leave_announcement_description.unwrap_or_default())
                             .required(false)
                             .max_length(2000)
                     ),
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Footer Text (optional)", "leave_announcement_footer_text")
+                        CreateInputText::new(InputTextStyle::Short, "Footer Text", "leave_announcement_footer_text")
                             .placeholder("e.g., See you next time!")
                             .value(settings.leave_announcement_footer_text.unwrap_or_default())
                             .required(false)
                             .max_length(2048)
                     ),
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Thumbnail URL (optional)", "leave_announcement_thumbnail")
+                        CreateInputText::new(InputTextStyle::Short, "Thumbnail URL", "leave_announcement_thumbnail")
                             .placeholder("https://example.com/thumb.png")
                             .value(settings.leave_announcement_thumbnail.unwrap_or_default())
                             .required(false)
@@ -449,8 +509,15 @@ pub async fn build_join_announcement_embed(
 
     // Build description with template support
     let description = if let Some(custom_desc) = &settings.announcement_description {
+        // Sanitize newline spam only for actual announcements (not previews)
+        let text_to_use = if guild_id.is_some() {
+            sanitize_announcement_text(custom_desc)
+        } else {
+            custom_desc.to_string()
+        };
+        
         // Replace template variables
-        custom_desc
+        text_to_use
             .replace("{user}", &format!("<@{}>", user_id))
             .replace("{rank}", rank_name)
             .replace("{name}", &display_name)
@@ -467,7 +534,14 @@ pub async fn build_join_announcement_embed(
 
     // Add custom footer
     if let Some(footer_text) = &settings.announcement_footer_text {
-        let mut footer = CreateEmbedFooter::new(footer_text);
+        // Sanitize footer spam only for actual announcements (not previews)
+        let footer_to_use = if guild_id.is_some() {
+            sanitize_footer_text(footer_text)
+        } else {
+            footer_text.to_string()
+        };
+        
+        let mut footer = CreateEmbedFooter::new(footer_to_use);
         if let Some(footer_icon) = &settings.announcement_footer_icon {
             footer = footer.icon_url(footer_icon);
         }
@@ -510,8 +584,15 @@ pub async fn build_leave_announcement_embed(
 
     // Build description with template support
     let description = if let Some(custom_desc) = &settings.leave_announcement_description {
+        // Sanitize newline spam only for actual announcements (not previews)
+        let text_to_use = if guild_id.is_some() {
+            sanitize_announcement_text(custom_desc)
+        } else {
+            custom_desc.to_string()
+        };
+        
         // Replace template variables (no rank for leave)
-        custom_desc
+        text_to_use
             .replace("{user}", &format!("<@{}>", user_id))
             .replace("{name}", &display_name)
     } else {
@@ -527,7 +608,14 @@ pub async fn build_leave_announcement_embed(
 
     // Add custom footer if provided
     if let Some(footer_text) = &settings.leave_announcement_footer_text {
-        let mut footer = CreateEmbedFooter::new(footer_text);
+        // Sanitize footer spam only for actual announcements (not previews)
+        let footer_to_use = if guild_id.is_some() {
+            sanitize_footer_text(footer_text)
+        } else {
+            footer_text.to_string()
+        };
+        
+        let mut footer = CreateEmbedFooter::new(footer_to_use);
         if let Some(footer_icon) = &settings.leave_announcement_footer_icon {
             footer = footer.icon_url(footer_icon);
         }
