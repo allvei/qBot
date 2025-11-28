@@ -59,7 +59,7 @@ impl Database {
 
     /// Creates a new user in the database
     pub async fn new_user(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
-        self.users.create_or_update_with_tag(user_id, Some(0), ctx).await
+        self.users.upsert_tag(user_id, Some(0), ctx).await
     }
 
     /// Gets a Player by Discord ID
@@ -69,7 +69,7 @@ impl Database {
 
     /// Gets a Player by Discord ID
     pub async fn get_user_with_display_name(&self, user_id: UI, ctx: &Ctx, guild_id: Option<serenity::all::GuildId>) -> Result<Player> {
-        self.users.get_user_with_nick(user_id, ctx, guild_id).await
+        self.users.get_with_nick(user_id, ctx, guild_id).await
     }
 
     /// Updates a user's Steam ID

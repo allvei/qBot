@@ -2679,7 +2679,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
     }
 
     // Get player info with rank from Discord roles
-    let mut player = match cc.db.users.get_player_with_guild_rank(user_id, &cc.ctx, guild_id.get(), &cc.db).await {
+    let mut player = match cc.db.users.get_with_guild_rank(user_id, &cc.ctx, guild_id.get(), &cc.db).await {
         Ok(p) => p,
         Err(_) => {
             let error_embed = CE::new()

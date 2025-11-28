@@ -43,7 +43,7 @@ impl UserRepository {
     }
 
     /// Get player with tag and try to get display name from guild context
-    pub async fn get_user_with_nick(&self, user_id: UI, ctx: &Ctx, guild_id: Option<serenity::all::GuildId>) -> Result<Player> {
+    pub async fn get_with_nick(&self, user_id: UI, ctx: &Ctx, guild_id: Option<serenity::all::GuildId>) -> Result<Player> {
         let mut player = self.get_with_tag(user_id, ctx).await?;
 
         // Try to get display name (nickname) if guild context is available
@@ -55,7 +55,7 @@ impl UserRepository {
     }
 
     /// Ensure user exists without fetching tag (for internal operations)
-    pub async fn ensure_user_exists(&self, user_id: UI, steam_id: Option<u64>) -> Result<Player> {
+    pub async fn check_user(&self, user_id: UI, steam_id: Option<u64>) -> Result<Player> {
         let result = sqlx::query(
             "INSERT INTO users (user_id, steam_id, elo)
              VALUES (?, ?, ?)
@@ -71,7 +71,7 @@ impl UserRepository {
         Ok(Self::get_player(result))
     }
 
-    pub async fn create_or_update(&self, user_id: UI, steam_id: Option<u64>, ctx: &Ctx) -> Result<Player> {
+    pub async fn upsert(&self, user_id: UI, steam_id: Option<u64>, ctx: &Ctx) -> Result<Player> {
         // Fetch discord tag from API first
         let tag = if let Ok(user) = ctx.http.get_user(user_id).await {
             Some(user.tag())
@@ -95,7 +95,7 @@ impl UserRepository {
         Ok(Self::get_player(result))
     }
 
-    pub async fn create_or_update_with_tag(&self, user_id: UI, steam_id: Option<u64>, ctx: &Ctx) -> Result<Player> {
+    pub async fn upsert_tag(&self, user_id: UI, steam_id: Option<u64>, ctx: &Ctx) -> Result<Player> {
         // Fetch discord tag from API first
         let tag = if let Ok(user) = ctx.http.get_user(user_id).await {
             Some(user.tag())
@@ -120,16 +120,14 @@ impl UserRepository {
     }
 
     fn get_player(result: sqlx::sqlite::SqliteRow) -> Player {
-        let mut player = Player::default(result.get::<u64, _>           ("user_id") .into(),
+        let mut player = Player::default(result.get::<u64, _>           ("user_id").into(),
                                          result.get::<String, _>        ("tag"),
-                                         result.get::<Option<i64>, _>   ("steam_id")   .map(|id| id as u64));
+                                         result.get::<Option<i64>, _>   ("steam_id").map(|id| id as u64));
         
         // Set ELO if present in database, otherwise leave at default (will be updated later)
         if let Ok(Some(elo)) = result.try_get::<Option<u16>, _>("elo") {
             player.set_elo(elo);
         }
-        // Note: Rank will be determined by caller based on Discord roles or ELO
-        
         player
     }
 
@@ -149,7 +147,7 @@ impl UserRepository {
     }
 
     /// Get player with rank determined from Discord roles (for display purposes)
-    pub async fn get_player_with_guild_rank(&self, user_id: UI, ctx: &Ctx, guild_id: u64, db: &Database) -> Result<Player> {
+    pub async fn get_with_guild_rank(&self, user_id: UI, ctx: &Ctx, guild_id: u64, db: &Database) -> Result<Player> {
         info!("DEBUG: get_player_with_guild_rank called for user {} in guild {}", user_id, guild_id);
         
         let result = sqlx::query("SELECT user_id, steam_id, elo, tag FROM users WHERE user_id = ?")
@@ -204,7 +202,7 @@ impl UserRepository {
 
     pub async fn update_elo(&self, user_id: UI, elo: Option<Elo>) -> Result<()> {
         // Ensure user exists
-        let _ = self.ensure_user_exists(user_id, None).await?;
+        let _ = self.check_user(user_id, None).await?;
 
         sqlx::query("UPDATE users SET elo = ? WHERE user_id = ?")
             .bind(elo.map(|e| e as i64))
@@ -246,7 +244,7 @@ impl UserRepository {
 
     pub async fn toggle_dm_enabled(&self, user_id: UI) -> Result<bool> {
         // Ensure user exists
-        let _ = self.ensure_user_exists(user_id, None).await?;
+        let _ = self.check_user(user_id, None).await?;
 
         // Get current value
         let current = self.get_dm_enabled(user_id).await?;
@@ -309,7 +307,7 @@ impl UserRepository {
     /// Update user settings
     pub async fn update_settings(&self, user_id: UI, settings: &UserSettings) -> Result<()> {
         // Ensure user exists
-        let _ = self.ensure_user_exists(user_id, None).await?;
+        let _ = self.check_user(user_id, None).await?;
 
         let auto_remove_minutes = (settings.expiry_duration.as_secs() / 60) as i64;
         
@@ -357,7 +355,7 @@ impl UserRepository {
     /// Update a single setting field
     pub async fn update_setting_field(&self, user_id: UI, field: &str, value: i64) -> Result<()> {
         // Ensure user exists
-        let _ = self.ensure_user_exists(user_id, None).await?;
+        let _ = self.check_user(user_id, None).await?;
 
         // Validate field name to prevent SQL injection
         let allowed_fields = ["auto_remove_minutes", "join_announcement", "vc_disconnect_on_leave",
@@ -422,7 +420,7 @@ impl Default for UserSettings {
 #[async_trait]
 impl Repository<Player, UI> for UserRepository {
     async fn create(&self, player: &Player) -> Result<Player> {
-        self.ensure_user_exists(player.user_id, player.steam_id).await
+        self.check_user(player.user_id, player.steam_id).await
     }
 
     async fn get_by_id(&self, user_id: UI) -> Result<Player> {

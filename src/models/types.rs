@@ -106,7 +106,7 @@ pub type Elo = u16;
 // Player
 // ============================================================================
 
-/// User data structure representing a player in the system
+/// User data structure representing a player in a server.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[allow(clippy::missing_docs_in_private_items)]
 pub struct Player {
