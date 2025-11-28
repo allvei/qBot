@@ -11,8 +11,8 @@ use serenity::all::{
 };
 use tracing::{error, info, warn};
 
-use crate::{DEFAULT_QUOTA, Database, ELO_MAX, ELO_MIN, Manager};
-use crate::commands::{parse_rank_name, parse_role_id};
+use crate::{ADMIN, CYAN, DEFAULT_QUOTA, Database, ELO_MAX, ELO_MIN, GRAY, GREEN, Manager, ORANGE, RED, RUNNER};
+use crate::commands::{parse_rank_name};
 use crate::database::repositories::Repository;
 use crate::handlers::player::{check_role, create_rank_roles, validate_rank_roles, validate_system_roles};
 use crate::models::{CommandContext as CC, Role, Server, SETUP_STATE};
@@ -26,11 +26,8 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
 
     if let Some(val,) = value {
         cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found").get()).await?;
-
-        let embed = CE::new().title("Config Updated").description(format!("Set `{key}` = `{val}`"));
-
+        let embed    = CE::new().title("Config Updated").description(format!("Set `{key}` = `{val}`"));
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
-
         cc.intax.create_response(&cc.ctx.http, response).await?;
     } else {
         let config = match cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found").get()).await {
@@ -43,18 +40,14 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
             }
         };
 
-        let config_text = format!(
-            "**Current Configuration:**\n\
-                                  guild: `{}`\n\
-                                  roles: `{}`\n\
-                                  groups: `{}`",
+        let config_text = format!("**Current Configuration:**\n\
+                                     guild: `{}`\n\
+                                     roles: `{}`\n\
+                                     groups: `{}`",
         config.guild_id, config.roles.runner, config.roles.admin
         );
-
         let embed = CE::new().title("Bot Configuration").description(config_text);
-
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
-
         cc.intax.create_response(&cc.ctx.http, response).await?;
     }
 
@@ -133,7 +126,7 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
                 role_type.to_lowercase(),
                 role_id
             ))
-            .color(0x00ff00);
+            .color(GREEN);
 
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -185,7 +178,7 @@ async fn start_grouplink_flow(cc: &CC<'_>) -> Result<()> {
             Select the text channel where the dashboard will be displayed:",
             guild.name
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let channels = get_text_channels(&guild, cc.ctx).await?;
     let channel_options = create_channel_options(&channels, "grouplink_dashboard");
@@ -222,7 +215,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             let error_embed = CE::new()
                 .title("Error")
                 .description(format!("Failed to check roles: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -237,7 +230,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             let error_embed = CE::new()
                 .title("Error")
                 .description(format!("Failed to check rank roles: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -264,7 +257,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
         let embed = CE::new()
             .title("Role Setup Required")
             .description(description)
-            .color(0xffaa00);
+            .color(ORANGE);
 
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -281,7 +274,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                 match guild_id.create_role(&cc.ctx.http,
                     EditRole::new()
                         .name("PUG Runner")
-                        .colour(0x3498db)
+                        .colour(RUNNER)
                         .permissions(Permissions::empty())
                 ).await {
                     Ok(role) => {
@@ -300,7 +293,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                 match guild_id.create_role(&cc.ctx.http,
                     EditRole::new()
                         .name("PUG Admin")
-                        .colour(0xe74c3c)
+                        .colour(ADMIN)
                         .permissions(Permissions::empty())
                 ).await {
                     Ok(role) => {
@@ -329,7 +322,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
         let success_embed = CE::new()
             .title("Roles Created!")
             .description("All required roles have been created.\n\nNow creating group channels...")
-            .color(0x00ff00);
+            .color(GREEN);
 
         cc.intax.edit_response(&cc.ctx.http,
             serenity::all::EditInteractionResponse::new().embed(success_embed)
@@ -342,7 +335,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
         let loading_embed = CE::new()
             .title("Creating Group Channels")
             .description("Creating a new category with all necessary channels...\nThis may take a moment.")
-            .color(0xffaa00);
+            .color(ORANGE);
 
         let response = CIR::Message(CIRM::new().embed(loading_embed).ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -419,7 +412,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                                     blue_channel.get(),
                                     category_id.get()
                                 ))
-                                .color(0x00ff00);
+                                .color(GREEN);
 
                             cc.intax.edit_response(&cc.ctx.http,
                                 serenity::all::EditInteractionResponse::new().embed(success_embed)
@@ -439,7 +432,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                             let error_embed = CE::new()
                                 .title("Failed to Save Group")
                                 .description(format!("Failed to save group to database: {e}\n\nChannels were cleaned up."))
-                                .color(0xff0000);
+                                .color(RED);
 
                             cc.intax.edit_response(&cc.ctx.http,
                                 serenity::all::EditInteractionResponse::new().embed(error_embed)
@@ -460,7 +453,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                     let error_embed = CE::new()
                         .title("Dashboard Creation Failed")
                         .description(format!("Failed to create dashboard: {e}\n\nChannels were cleaned up."))
-                        .color(0xff0000);
+                        .color(RED);
 
                     cc.intax.edit_response(&cc.ctx.http,
                         serenity::all::EditInteractionResponse::new().embed(error_embed)
@@ -472,7 +465,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             let error_embed = CE::new()
                 .title("Channel Creation Failed")
                 .description(format!("Failed to create channels: {e}\n\nMake sure the bot has proper permissions."))
-                .color(0xff0000);
+                .color(RED);
 
             cc.intax.edit_response(&cc.ctx.http,
                 serenity::all::EditInteractionResponse::new().embed(error_embed)
@@ -557,7 +550,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
     let test_embed = CreateEmbed::new()
         .title("PUG Dashboard")
         .description("Setting up queue system...")
-        .color(0xffaa00);
+        .color(ORANGE);
 
     let test_msg = dashboard_channel.id.send_message(&ctx.http,
         CreateMessage::new().embed(test_embed)
@@ -714,7 +707,7 @@ async fn start_setup_flow(cc: &CC<'_>, guild_id: GI, user_id: UI) -> Result<()> 
             Select the channel where the queue dashboard will be displayed:",
             guild.name
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     // Get text channels for dropdown
     let channels = get_text_channels(&guild, cc.ctx).await?;
@@ -886,7 +879,7 @@ async fn handle_dashboard_selection(ctx: &Context, interaction: &CX, channel_id:
             **Step 2/7: Queue Text Channel**\n\
             Select the text channel where players will use queue commands:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let channels = get_text_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "queue");
@@ -925,7 +918,7 @@ async fn handle_queue_selection(ctx: &Context, interaction: &CX, channel_id: u64
             **Step 3/7: Queue Voice Channel**\n\
             Select the voice channel where players will wait in queue:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "queuevc");
@@ -964,7 +957,7 @@ async fn handle_queue_vc_selection(ctx: &Context, interaction: &CX, channel_id: 
             **Step 4/7: Red Team Voice Channel**\n\
             Select the voice channel for the Red team:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "red");
@@ -1003,7 +996,7 @@ async fn handle_red_selection(ctx: &Context, interaction: &CX, channel_id: u64) 
             **Step 5/7: Blue Team Voice Channel**\n\
             Select the voice channel for the Blue team:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "blue");
@@ -1042,7 +1035,7 @@ async fn handle_blue_selection(ctx: &Context, interaction: &CX, channel_id: u64)
             **Step 6/7: Runner Role**\n\
             Select the role that can manage PUG games:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let roles = get_guild_roles(&guild).await?;
     let role_options = create_role_options(&roles, "runner");
@@ -1081,7 +1074,7 @@ async fn handle_runner_selection(ctx: &Context, interaction: &CX, role_id: u64) 
             **Step 7/7: Admin Role**\n\
             Select the role that can configure the bot:"
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let roles = get_guild_roles(&guild).await?;
     let role_options = create_role_options(&roles, "admin");
@@ -1118,7 +1111,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
             let error_embed = CE::new()
                 .title("Setup Error")
                 .description("Configuration is incomplete. Please restart the setup process.")
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::UpdateMessage(
                 CIRM::new()
@@ -1132,19 +1125,19 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
     };
 
     let dashboard_channel = config.dashboard_channel.unwrap();
-    let queue_channel = config.queue_channel.unwrap();
-    let queue_vc_channel = config.queue_vc_channel.unwrap();
-    let red_channel = config.red_channel.unwrap();
-    let blue_channel = config.blue_channel.unwrap();
-    let runner_role = config.runner_role.unwrap();
-    let admin_role = role_id;
+    let queue_channel     = config.queue_channel    .unwrap();
+    let queue_vc_channel  = config.queue_vc_channel .unwrap();
+    let red_channel       = config.red_channel      .unwrap();
+    let blue_channel      = config.blue_channel     .unwrap();
+    let runner_role       = config.runner_role      .unwrap();
+    let admin_role        = role_id;
 
     // Create the initial dashboard message
     let dashboard_channel_id = CI::new(dashboard_channel);
     let initial_embed = CE::new()
         .title("PUG Queue Dashboard")
         .description("Queue is empty. Be the first to join!")
-        .color(0x00aaff);
+        .color(CYAN);
 
     let dashboard_message = match dashboard_channel_id.send_message(&ctx.http, CreateMessage::new().embed(initial_embed)).await {
         Ok(msg) => msg,
@@ -1152,7 +1145,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
             let error_embed = CE::new()
                 .title("Setup Failed")
                 .description(format!("Failed to create dashboard message: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::UpdateMessage(
                 CIRM::new()
@@ -1224,7 +1217,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
                     • Join the queue voice channel to auto-queue\n\n\
                     Runners can use the dashboard buttons to manage matches.",
                 ))
-                .color(0x00ff00);
+                .color(GREEN);
 
             let response = CIR::UpdateMessage(CIRM::new().embed(success_embed).components(vec![]));
 
@@ -1234,7 +1227,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
             let error_embed = CE::new()
                 .title("Setup Failed")
                 .description(format!("Failed to save configuration: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::UpdateMessage(CIRM::new().embed(error_embed).components(vec![]));
 
@@ -1268,7 +1261,7 @@ async fn handle_init_queue_selection(ctx: &Context, interaction: &CX, channel_id
             **Step 3/5: Queue Voice Channel**\n\
             Select the voice channel players will join for the queue:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "init_queuevc");
@@ -1306,7 +1299,7 @@ async fn handle_init_queue_vc_selection(ctx: &Context, interaction: &CX, channel
             **Step 4/5: Red Team Voice Channel**\n\
             Select the voice channel for the Red team:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "init_red");
@@ -1344,7 +1337,7 @@ async fn handle_init_red_selection(ctx: &Context, interaction: &CX, channel_id: 
             **Step 5/5: Blue Team Voice Channel**\n\
             Select the voice channel for the Blue team:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "init_blue");
@@ -1382,7 +1375,7 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &CX, channel_id:
             **Step 2/2: Admin Role**\n\
             Select the role for bot administrators:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let roles = get_guild_roles(&guild).await?;
     let role_options = create_role_options(&roles, "init_admin");
@@ -1420,7 +1413,7 @@ async fn handle_init_runner_selection(ctx: &Context, interaction: &CX, role_id: 
             **Step 2/2: Admin Role**\n\
             Select the role for bot administrators:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let roles = get_guild_roles(&guild).await?;
     let role_options = create_role_options(&roles, "init_admin");
@@ -1464,7 +1457,7 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
             let error_embed = CE::new()
                 .title("Setup Error")
                 .description("Configuration is incomplete. Please restart the setup process.")
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::UpdateMessage(CIRM::new().embed(error_embed).components(vec![]));
 
@@ -1525,7 +1518,7 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
             let error_embed = CE::new()
                 .title("Setup Failed")
                 .description(format!("Failed to create group configuration: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::UpdateMessage(CIRM::new().embed(error_embed).components(vec![]));
 
@@ -1548,7 +1541,7 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
             • Blue Team: <#{blue_channel}>\n\n\
             The dashboard has been initialized in <#{dashboard_channel}> with the interactive queue interface!",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let response = CIR::UpdateMessage(
         CIRM::new()
@@ -1574,7 +1567,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
             let error_embed = CE::new()
                 .title("Error")
                 .description(format!("Failed to check system roles: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1589,7 +1582,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
             let error_embed = CE::new()
                 .title("Error")
                 .description(format!("Failed to check rank roles: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1603,7 +1596,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
         let success_embed = CE::new()
             .title("All Roles Configured")
             .description("All system roles (Runner, Admin) and rank roles are properly configured in this server!")
-            .color(0x00ff00);
+            .color(GREEN);
 
         let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1631,7 +1624,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
         let embed = CE::new()
             .title("Missing Roles")
             .description(description)
-            .color(0xffaa00);
+            .color(ORANGE);
 
         // Only add create button if there are rank roles to create
         if !missing_rank_roles.is_empty() {
@@ -1676,7 +1669,7 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
         let cancel_embed = CE::new()
             .title("Cancelled")
             .description("Rank role creation was cancelled.")
-            .color(0x999999);
+            .color(GRAY);
 
         let response = CIR::UpdateMessage(
             CIRM::new()
@@ -1695,7 +1688,7 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
             let error_embed = CE::new()
                 .title("Error")
                 .description(format!("Failed to create rank roles: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::UpdateMessage(
                 CIRM::new()
@@ -1712,7 +1705,7 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
         let embed = CE::new()
             .title("No Roles Created")
             .description("All rank roles already exist in this server.")
-            .color(0x00aaff);
+            .color(CYAN);
 
         let response = CIR::UpdateMessage(
             CIRM::new()
@@ -1732,7 +1725,7 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
                 • Configure role permissions\n\
                 • Assign roles to existing members",
             ))
-            .color(0x00ff00);
+            .color(GREEN);
 
         let response = CIR::UpdateMessage(
             CIRM::new()
@@ -1757,7 +1750,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
         let error_embed = CE::new()
             .title("Invalid Quota")
             .description("Quota must be between 2 and 100 players.")
-            .color(0xff0000);
+            .color(RED);
 
         let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1774,7 +1767,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
             let error_embed = CE::new()
                 .title("Server Not Found")
                 .description(format!("Server not configured: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1788,7 +1781,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
             let error_embed = CE::new()
                 .title("Group Not Found")
                 .description(format!("No queue group found in this channel: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1821,7 +1814,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
                     "Queue quota has been changed from **{old_quota}** to **{quota}** players.\n\n\
                     The queue will now require {quota} players before a game can start.",
                 ))
-                .color(0x00ff00);
+                .color(GREEN);
 
             let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1833,7 +1826,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
             let error_embed = CE::new()
                 .title("Failed to Update Quota")
                 .description(format!("Failed to save quota to database: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1859,7 +1852,7 @@ pub async fn cmd_add_connect(cc: &CC<'_>, connect_info: String) -> Result<()> {
             let error_embed = CE::new()
                 .title("Server Not Found")
                 .description(format!("Server not configured: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1873,7 +1866,7 @@ pub async fn cmd_add_connect(cc: &CC<'_>, connect_info: String) -> Result<()> {
             let error_embed = CE::new()
                 .title("Group Not Found")
                 .description(format!("No queue group found in this channel: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1893,7 +1886,7 @@ pub async fn cmd_add_connect(cc: &CC<'_>, connect_info: String) -> Result<()> {
             "Server connection command has been set:\n\n```{connect_info}```\n\n\
             This will now appear on the dashboard when players are ready to join.",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1968,7 +1961,7 @@ async fn handle_grouplink_dashboard_selection(ctx: &Context, interaction: &CX, c
             **Step 2/5: Queue Text Channel**\n\
             Select the text channel for queue commands:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let channels = get_text_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "grouplink_queue");
@@ -2001,7 +1994,7 @@ async fn handle_grouplink_queue_selection(ctx: &Context, interaction: &CX, chann
             **Step 3/5: Queue Voice Channel**\n\
             Select the voice channel where players wait:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "grouplink_queuevc");
@@ -2034,7 +2027,7 @@ async fn handle_grouplink_queuevc_selection(ctx: &Context, interaction: &CX, cha
             **Step 4/5: Red Team Voice Channel**\n\
             Select the Red team voice channel:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "grouplink_red");
@@ -2067,7 +2060,7 @@ async fn handle_grouplink_red_selection(ctx: &Context, interaction: &CX, channel
             **Step 5/5: Blue Team Voice Channel**\n\
             Select the Blue team voice channel:",
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let channels = get_voice_channels(&guild, ctx).await?;
     let channel_options = create_channel_options(&channels, "grouplink_blue");
@@ -2107,7 +2100,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
     let loading_embed = CE::new()
         .title("Creating Group")
         .description("Linking channels and creating PUG group...\n\nCleaning up any old configurations...")
-        .color(0xffaa00);
+        .color(ORANGE);
 
     let response = CIR::UpdateMessage(CIRM::new().embed(loading_embed).components(vec![]));
     interaction.create_response(&ctx.http, response).await?;
@@ -2212,7 +2205,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
                             red_channel.get(),
                             blue_channel.get()
                         ))
-                        .color(0x00ff00);
+                        .color(GREEN);
 
                     interaction.edit_response(&ctx.http,
                         serenity::all::EditInteractionResponse::new().embed(success_embed)
@@ -2225,7 +2218,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
                     let error_embed = CE::new()
                         .title("Failed to Save Group")
                         .description(format!("Error saving to database: {e}"))
-                        .color(0xff0000);
+                        .color(RED);
 
                     interaction.edit_response(&ctx.http,
                         serenity::all::EditInteractionResponse::new().embed(error_embed)
@@ -2237,7 +2230,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
             let error_embed = CE::new()
                 .title("Dashboard Creation Failed")
                 .description(format!("Failed to create dashboard: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             interaction.edit_response(&ctx.http,
                 serenity::all::EditInteractionResponse::new().embed(error_embed)
@@ -2264,7 +2257,7 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
         let error_embed = CE::new()
             .title("Invalid ELO Value")
             .description("ELO must be above 0")
-            .color(0xff0000);
+            .color(RED);
         let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
@@ -2281,7 +2274,7 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
             let error_embed = CE::new()
                 .title("Rank Not Configured")
                 .description(format!("Rank '{rank_role}' is not configured.\nUse `/check_ranks` to set up rank roles first."))
-                .color(0xff0000);
+                .color(RED);
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
             return Ok(());
@@ -2309,7 +2302,7 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
             role_id,
             elo
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2337,7 +2330,7 @@ pub async fn cmd_set_player_elo(cc: &CC<'_>, user: serenity::all::User, elo: i64
         let error_embed = CE::new()
             .title("Invalid ELO Value")
             .description(format!("ELO must be between {ELO_MIN} and {ELO_MAX}, or -1 to clear ELO"))
-            .color(0xff0000);
+            .color(RED);
         let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
@@ -2364,7 +2357,7 @@ pub async fn cmd_set_player_elo(cc: &CC<'_>, user: serenity::all::User, elo: i64
             elo,
             player.rank.name()
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2390,7 +2383,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
             let error_embed = CE::new()
                 .title("Player Not Found")
                 .description(format!("<@{}> is not in the database.", user_id))
-                .color(0xff0000);
+                .color(RED);
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
             return Ok(());
@@ -2411,14 +2404,14 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
         let _error_embed = CE::new()
             .title("User Required")
             .description("You must specify a user to view their ELO information, or use the command on yourself.")
-            .color(0xff0000);
+            .color(RED);
         anyhow::anyhow!("User not provided")
     })?;
 
     // Create embed with player info
     let mut embed = CE::new()
         .title(format!("{}'s ELO Information", user_info.tag()))
-        .color(0x0099ff);
+        .color(CYAN);
 
     // ELO information
     embed = embed.field("ELO Rating", format!("**{}** / 100", player.elo), true);
@@ -2449,7 +2442,7 @@ pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
     let success_embed = CE::new()
         .title("Active ELO Enabled")
         .description("Automatic ELO adjustments from match results are now **enabled**.\n\n*Note: This requires webhooks and game server API to be configured to actually work.*")
-        .color(0x00ff00);
+        .color(GREEN);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2469,7 +2462,7 @@ pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
     let success_embed = CE::new()
         .title("Active ELO Disabled")
         .description("Automatic ELO adjustments from match results are now **disabled**.")
-        .color(0xff9900);
+        .color(ORANGE);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2501,7 +2494,7 @@ pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
             *Note: Webhooks and game server integration required for full functionality.*",
             if is_enabled { "✅ ENABLED" } else { "❌ DISABLED" }
         ))
-        .color(if is_enabled { 0x00ff00 } else { 0xff0000 });
+        .color(if is_enabled { GREEN } else { RED });
 
     let response = CIR::Message(CIRM::new().embed(status_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2530,7 +2523,7 @@ pub async fn cmd_set_player_steam(cc: &CC<'_>, user: serenity::all::User, steam_
                 "Cleared".to_string()
             }
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2558,7 +2551,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
             let error_embed = CE::new()
                 .title("Group Not Found")
                 .description(format!("No queue group found in this channel: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2575,7 +2568,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
             let error_embed = CE::new()
                 .title("Player Not Found")
                 .description(format!("<@{user_id}> is not in any queue."))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2591,7 +2584,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
             let error_embed = CE::new()
                 .title("Player Not Found")
                 .description(format!("<@{user_id}> is not in the queue pool."))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2617,7 +2610,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     let success_embed = CE::new()
         .title("Player Buffered")
         .description(format!("<@{user_id}> moved to front of queue."))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2643,7 +2636,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
             let error_embed = CE::new()
                 .title("Group Not Found")
                 .description(format!("No queue group found in this channel: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2660,7 +2653,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
             let error_embed = CE::new()
                 .title("Player Not Found")
                 .description(format!("<@{user_id}> is not in any queue."))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2676,7 +2669,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
             let error_embed = CE::new()
                 .title("Player Not Found")
                 .description(format!("<@{user_id}> is not in the queue pool."))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2702,7 +2695,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     let success_embed = CE::new()
         .title("Player Fatkidded")
         .description(format!("<@{user_id}> moved to end of queue."))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2722,7 +2715,7 @@ pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             let error_embed = CE::new()
                 .title("Group Not Found")
                 .description(format!("No queue group found in this channel: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -2746,7 +2739,7 @@ pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
     let success_embed = CE::new()
         .title("Queue Cleared")
         .description(format!("Removed {player_count} player(s) from the queue."))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;

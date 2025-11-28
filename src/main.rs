@@ -6,7 +6,7 @@ use std::sync::Arc;
 use time::macros::format_description;
 use tracing_subscriber::fmt::time::UtcTime;
 use anyhow::Result;
-use pf_pug_bot::{Player, commands};
+use pf_pug_bot::{Player, RED, commands};
 use serenity::all::{Client, GatewayIntents, EventHandler, Ready, Guild, Interaction, VoiceState, Command, CommandInteraction, CommandOptionType, Context, CreateCommand, CreateCommandOption, CreateInteractionResponse, CreateInteractionResponseMessage, UserId, User, CommandOptionType as COT};
 use serenity::prelude::TypeMapKey;
 use serenity::async_trait;
@@ -1357,7 +1357,7 @@ impl Handler {
                         **Missing Permissions:**\n{missing_perms}\n\n\
                         Please grant these permissions to the bot and click the button below to confirm.",
                     ))
-                    .color(0xFF0000);
+                    .color(RED);
 
                 let button = serenity::all::CreateButton::new("confirm_permissions")
                     .label("Confirm Permissions")

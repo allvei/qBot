@@ -8,7 +8,7 @@ use std::time::SystemTime;
 
 use tokio::sync::Mutex;
 use anyhow::{anyhow, Error, Result};
-use crate::{Database as DB, Manager, Rank, models::constants::{DEFAULT_TIMEOUT, EXPIRY_MIN, EXPIRY_MAX, ACTIVE_ELO_ENABLED_BY_DEFAULT}};
+use crate::{Database as DB, GREEN, Manager, ORANGE, Rank, models::constants::{ACTIVE_ELO_ENABLED_BY_DEFAULT, DEFAULT_TIMEOUT, EXPIRY_MAX, EXPIRY_MIN}};
 use serde::{Deserialize, Serialize};
 use serenity::{all::{
     ChannelId as CI, Context, CreateEmbed,
@@ -790,7 +790,7 @@ impl Group {
                                             current_count,
                                             quota
                                         ))
-                                        .color(0xffa500); // Orange
+                                        .color(ORANGE); // Orange
 
                                     let _ = user.direct_message(&queue_ctx.ctx.http, CreateMessage::new().embed(embed)).await;
                                 }
@@ -978,7 +978,7 @@ impl Group {
                                     "A game is ready in **{}**!\nPlease join the queue channel.",
                                     ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "the server".to_string())
                                 ))
-                                .color(0x00ff00);
+                                .color(GREEN);
 
                             if let Err(e) = user.direct_message(&ctx.http,
                                 serenity::all::CreateMessage::new().embed(dm_embed)

@@ -8,7 +8,7 @@ use tracing::{info, warn, error};
 use crate::{ComponentContext as CC, Database as DB};
 use crate::models::{
     CommandContext as CmC, SessionPlayer as SP, Rank, Role, Server, SessionStatus as SS, Team,
-    DEFAULT_RANK, Player,
+    DEFAULT_RANK,
 };
 
 /// Helper: Get member with cache-first strategy

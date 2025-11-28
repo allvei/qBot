@@ -1,6 +1,5 @@
 use anyhow::Result;
 use sqlx::{Row, SqlitePool};
-use tracing::info;
 
 use crate::DEFAULT_TIMEOUT;
 

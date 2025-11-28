@@ -1,11 +1,17 @@
-use anyhow::{Error, Result, anyhow};
+use anyhow::{Result, anyhow};
 use serenity::all::{
-    CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, EditInteractionResponse, Permissions
+    CreateEmbed                      as CE,
+    CreateInteractionResponse        as CIR,
+    CreateInteractionResponseMessage as CIRM,
+    EditInteractionResponse          as EIR,
+    GuildId                          as GI,
+    RoleId                           as RI,
+    Permissions,
 };
-use serenity::builder::EditRole;
+use serenity::builder::EditRole as ER;
 use tracing::{error, info, warn};
 
-use crate::{Rank, Server};
+use crate::{ADMIN, GREEN, ORANGE, RED, RUNNER, Rank, Server};
 use crate::admin::create_group_channels;
 use crate::models::{CommandContext as CC, Role};
 use crate::repositories::Repository;
@@ -13,28 +19,16 @@ use super::player::{check_role, create_rank_roles};
 use super::settings::{build_settings_embed, build_settings_buttons};
 
 /// Helper: Create a Discord role with error handling
-async fn create_role_with_error(
-    cc: &CC<'_>,
-    guild_id: serenity::all::GuildId,
-    name: &str,
-    color: u32,
-) -> Result<Option<serenity::all::Role>> {
+async fn create_role_with_error(cc: &CC<'_>, guild_id: GI, name: &str, color: u32) -> Result<Option<serenity::all::Role>> {
     match guild_id.create_role(&cc.ctx.http,
-        EditRole::new()
-            .name(name)
-            .colour(color)
-            .permissions(Permissions::empty())
+        ER::new().name(name).colour(color).permissions(Permissions::empty())
     ).await {
         Ok(role) => Ok(Some(role)),
         Err(e) => {
-            let error_embed = CE::new()
-                .title(format!("Failed to Create {name} Role"))
-                .description(format!("Error: {e}"))
-                .color(0xff0000);
+            let error_embed = CE::new().title(format!("Failed to Create {name} Role"))
+                .description(format!("Error: {e}")).color(RED);
 
-            cc.intax.edit_response(&cc.ctx.http,
-                serenity::all::EditInteractionResponse::new().embed(error_embed)
-            ).await?;
+            cc.intax.edit_response(&cc.ctx.http, EIR::new().embed(error_embed)).await?;
             Ok(None)
         }
     }
@@ -49,19 +43,19 @@ pub async fn cmd_role_add(cc: &CC<'_>) -> Result<()> {
     let loading_embed = CE::new()
         .title("Creating Roles")
         .description("Creating Runner and Admin roles...")
-        .color(0xffaa00);
+        .color(ORANGE);
 
     let response = CIR::Message(CIRM::new().embed(loading_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
     // Create Runner role
-    let runner_role = match create_role_with_error(cc, guild_id, "PUG Runner", 0x3498db).await? {
+    let runner_role = match create_role_with_error(cc, guild_id, "PUG Runner", RUNNER as u32).await? {
         Some(role) => role,
         None => return Ok(()), // Error already handled
     };
 
     // Create Admin role
-    let admin_role = match create_role_with_error(cc, guild_id, "PUG Admin", 0xe74c3c).await? {
+    let admin_role = match create_role_with_error(cc, guild_id, "PUG Admin", ADMIN as u32).await? {
         Some(role) => role,
         None => return Ok(()), // Error already handled
     };
@@ -92,10 +86,10 @@ pub async fn cmd_role_add(cc: &CC<'_>) -> Result<()> {
             runner_role.id,
             admin_role.id
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     cc.intax.edit_response(&cc.ctx.http,
-        serenity::all::EditInteractionResponse::new().embed(success_embed)
+        EIR::new().embed(success_embed)
     ).await?;
 
     Ok(())
@@ -163,7 +157,7 @@ pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role:
             "Successfully linked roles:\n{}",
             updated_roles.join("\n")
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -189,7 +183,7 @@ pub async fn cmd_role_remove(cc: &CC<'_>, role_type: String) -> Result<()> {
                 .title("Roles Removed")
                 .description("Removed both Runner and Admin role configurations.\n\n\
                     **Note:** The Discord roles themselves were not deleted.")
-                .color(0x00ff00);
+                .color(GREEN);
 
             let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -213,7 +207,7 @@ pub async fn cmd_role_remove(cc: &CC<'_>, role_type: String) -> Result<()> {
             "Removed {role_type} role configuration.\n\n\
             **Note:** The Discord role itself was not deleted."
         ))
-        .color(0x00ff00);
+        .color(GREEN);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -247,7 +241,7 @@ pub async fn cmd_rank_add(cc: &CC<'_>, rank_name: String, role_mentions: String)
     for role_mention in role_mentions_vec {
         let role_id_str = parse_role_id(role_mention)?;
         let role_id = match role_id_str.parse::<u64>() {
-            Ok(id) => serenity::all::RoleId::new(id),
+            Ok(id) => RI::new(id),
             Err(_) => {
                 let response = CIR::Message(CIRM::new()
                     .content(format!("Invalid role format: {role_mention}. Please mention roles or provide role IDs."))
@@ -273,8 +267,8 @@ pub async fn cmd_rank_add(cc: &CC<'_>, rank_name: String, role_mentions: String)
     }
 
     // Get existing role IDs for this rank
-    let mut existing_ids = rank.role_ids(&cc.db, guild_id.get()).await;
-    let mut added_roles = Vec::new();
+    let mut existing_ids  = rank.role_ids(&cc.db, guild_id.get()).await;
+    let mut added_roles   = Vec::new();
     let mut skipped_roles = Vec::new();
 
     for (role_id, role_name) in roles_to_add {
@@ -312,7 +306,7 @@ pub async fn cmd_rank_add(cc: &CC<'_>, rank_name: String, role_mentions: String)
     let success_embed = CE::new()
         .title("Rank Roles Updated")
         .description(description)
-        .color(0x00ff00);
+        .color(GREEN);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -346,7 +340,7 @@ pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: Stri
     for role_mention in role_mentions_vec {
         let role_id_str = parse_role_id(role_mention)?;
         let role_id = match role_id_str.parse::<u64>() {
-            Ok(id) => serenity::all::RoleId::new(id),
+            Ok(id) => RI::new(id),
             Err(_) => {
                 let response = CIR::Message(CIRM::new()
                     .content(format!("Invalid role format: {role_mention}. Please mention roles or provide role IDs."))
@@ -366,8 +360,8 @@ pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: Stri
     }
 
     // Get existing role IDs for this rank
-    let mut existing_ids = rank.role_ids(&cc.db, guild_id.get()).await;
-    let mut removed_roles = Vec::new();
+    let mut existing_ids    = rank.role_ids(&cc.db, guild_id.get()).await;
+    let mut removed_roles   = Vec::new();
     let mut not_found_roles = Vec::new();
 
     for (role_id, role_name) in roles_to_remove {
@@ -405,7 +399,7 @@ pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: Stri
     let success_embed = CE::new()
         .title("Rank Roles Updated")
         .description(description)
-        .color(0x00ff00);
+        .color(GREEN);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -489,7 +483,7 @@ pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<&str>) -> Result<()> {
     let embed = CE::new()
         .title("Rank Role Mappings")
         .description(description)
-        .color(0x3498db);
+        .color(RUNNER);
 
     let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -565,16 +559,16 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
     let loading_embed = CE::new()
         .title("Setting Up PUG Bot")
         .description("Creating roles and group channels...\nThis may take a moment.")
-        .color(0xffaa00);
+        .color(ORANGE);
 
     let response = CIR::Message(CIRM::new().embed(loading_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
     // Step 1: Create Runner role
     let runner_role = match guild_id.create_role(&cc.ctx.http,
-        EditRole::new()
+        ER::new()
             .name("PUG Runner")
-            .colour(0x3498db)
+            .colour(RUNNER)
             .permissions(Permissions::empty())
     ).await {
         Ok(role) => role,
@@ -582,10 +576,10 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             let error_embed = CE::new()
                 .title("Setup Failed")
                 .description(format!("Failed to create Runner role: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             cc.intax.edit_response(&cc.ctx.http,
-                serenity::all::EditInteractionResponse::new().embed(error_embed)
+                EIR::new().embed(error_embed)
             ).await?;
             return Ok(());
         }
@@ -593,9 +587,9 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 
     // Step 2: Create Admin role
     let admin_role = match guild_id.create_role(&cc.ctx.http,
-        EditRole::new()
+        ER::new()
             .name("PUG Admin")
-            .colour(0xe74c3c)
+            .colour(ADMIN)
             .permissions(Permissions::empty())
     ).await {
         Ok(role) => role,
@@ -603,10 +597,10 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             let error_embed = CE::new()
                 .title("Setup Failed")
                 .description(format!("Failed to create Admin role: {e}"))
-                .color(0xff0000);
+                .color(RED);
 
             cc.intax.edit_response(&cc.ctx.http,
-                serenity::all::EditInteractionResponse::new().embed(error_embed)
+                EIR::new().embed(error_embed)
             ).await?;
             return Ok(());
         }
@@ -634,10 +628,10 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                 let error_embed = CE::new()
                     .title("Setup Failed")
                     .description(format!("Failed to create channels: {e}\n\nRoles were created successfully."))
-                    .color(0xff0000);
+                    .color(RED);
 
                 cc.intax.edit_response(&cc.ctx.http,
-                    serenity::all::EditInteractionResponse::new().embed(error_embed)
+                    EIR::new().embed(error_embed)
                 ).await?;
                 return Ok(());
             }
@@ -717,10 +711,10 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                             blue_channel.get(),
                             category_id.get()
                         ))
-                        .color(0x00ff00);
+                        .color(GREEN);
 
                     cc.intax.edit_response(&cc.ctx.http,
-                        serenity::all::EditInteractionResponse::new().embed(success_embed)
+                        EIR::new().embed(success_embed)
                     ).await?;
                 },
                 Err(e) => {
@@ -737,10 +731,10 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                     let error_embed = CE::new()
                         .title("Setup Failed")
                         .description(format!("Failed to save group to database: {e}\n\nChannels were cleaned up. Roles remain."))
-                        .color(0xff0000);
+                        .color(RED);
 
                     cc.intax.edit_response(&cc.ctx.http,
-                        serenity::all::EditInteractionResponse::new().embed(error_embed)
+                        EIR::new().embed(error_embed)
                     ).await?;
                 }
             }
@@ -758,10 +752,10 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             let error_embed = CE::new()
                 .title("Setup Failed")
                 .description(format!("Failed to create dashboard: {e}\n\nChannels were cleaned up. Roles remain."))
-                .color(0xff0000);
+                .color(RED);
 
             cc.intax.edit_response(&cc.ctx.http,
-                serenity::all::EditInteractionResponse::new().embed(error_embed)
+                EIR::new().embed(error_embed)
             ).await?;
         }
     }
@@ -785,7 +779,7 @@ pub async fn cmd_setup_link(cc: &CC<'_>) -> Result<()> {
             • `/roleadd` - Create new roles\n\
             • `/groupadd` - Create new group channels"
         )
-        .color(0x3498db);
+        .color(RUNNER);
 
     let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -823,7 +817,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                 .description(format!(
                     "Removing group {actual_group_id} and deleting all associated channels...\n\nThis may take a moment.",
                 ))
-                .color(0xffaa00);
+                .color(ORANGE);
 
             let response = CIR::Message(CIRM::new().embed(loading_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -930,11 +924,11 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                     let success_embed = CE::new()
                         .title("Group Removed")
                         .description(description)
-                        .color(0x00ff00);
+                        .color(GREEN);
 
                     // Try to edit the original response first
                     if let Err(e) = cc.intax.edit_response(&cc.ctx.http,
-                        serenity::all::EditInteractionResponse::new().embed(success_embed.clone())
+                        EIR::new().embed(success_embed.clone())
                     ).await {
                         warn!("Failed to edit response (channel may be deleted): {e}");
 
@@ -953,11 +947,11 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                     let error_embed = CE::new()
                         .title("Failed to Remove Group")
                         .description(format!("Error: {e}"))
-                        .color(0xff0000);
+                        .color(RED);
 
                     // Edit the loading message with error
                     cc.intax.edit_response(&cc.ctx.http,
-                        serenity::all::EditInteractionResponse::new().embed(error_embed)
+                        EIR::new().embed(error_embed)
                     ).await?;
                 }
             }
@@ -983,7 +977,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
             let error_embed = CE::new()
                 .title("Group Not Found")
                 .description(format!("{error_message}\n\n{groups_list}",))
-                .color(0xff0000);
+                .color(RED);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1013,7 +1007,7 @@ pub async fn cmd_toggle_dm(cc: &CC<'_>) -> Result<()> {
             You will {a} receive a DM when a game is ready.\n",
             a = if new_state { "now" } else { "no longer" }
         ))
-        .color(if new_state { 0x00ff00 } else { 0xff9900 });
+        .color(if new_state { GREEN } else { 0xff9900 });
 
     let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -1047,7 +1041,7 @@ pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
         Ok(msg) => {
             // Create message link for easy access
             let message_link = format!("https://discord.com/channels/@me/{}/{}", msg.channel_id.get(), msg.id.get());
-            let success_response = EditInteractionResponse::new()
+            let success_response = EIR::new()
                 .content(format!("Settings menu sent successfully!\n[Click here to view]({message_link})"));
             cc.intax.edit_response(&cc.ctx.http, success_response).await?;
             // Track this message for cleanup after 10 minutes of inactivity
@@ -1060,7 +1054,7 @@ pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
             warn!("Failed to send settings DM to user {}: {}", user.tag(), e);
 
             // Update the ephemeral response with error
-            let error_embed = EditInteractionResponse::new().content(
+            let error_embed = EIR::new().content(
                     "I couldn't send you a DM! Please check that:\n\
                     - You have DMs enabled in your Discord privacy settings\n\
                     - You haven't blocked the bot\n\n\

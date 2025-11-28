@@ -11,7 +11,7 @@ use sqlx::Decode;
 use sqlx::prelude::{FromRow, Type};
 use tokio::sync::Mutex;
 
-use crate::DEFAULT_RANK;
+use crate::{RED, DEFAULT_RANK};
 use crate::database::Database;
 use crate::models::{
     Manager as GameManager, Role,
@@ -54,7 +54,7 @@ impl CommandContext<'_> {
         let embed = serenity::all::CreateEmbed::new()
             .title(title)
             .description(description)
-            .color(0xff0000);
+            .color(RED);
         self.reply_embed(embed).await
     }
 
