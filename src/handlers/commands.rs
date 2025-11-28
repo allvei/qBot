@@ -1,11 +1,11 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Error, Result, anyhow};
 use serenity::all::{
     CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, EditInteractionResponse, Permissions
 };
 use serenity::builder::EditRole;
 use tracing::{error, info, warn};
 
-use crate::Server;
+use crate::{Rank, Server};
 use crate::admin::create_group_channels;
 use crate::models::{CommandContext as CC, Role};
 use crate::repositories::Repository;
@@ -244,15 +244,16 @@ pub async fn cmd_rank_add(cc: &CC<'_>, rank_name: String, role_mentions: String)
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
     // Parse the rank
-    let rank = parse_rank_name(&rank_name)?;
-    if rank.is_none() {
-        let response = CIR::Message(CIRM::new()
-            .content("Invalid rank name. Valid ranks: Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, MasterElite, Grandmaster")
-            .ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-    let rank = rank.unwrap();
+    let rank = match parse_rank_name(&rank_name) {
+        Ok(rank) => rank,
+        Err(_) => {
+            let response = CIR::Message(CIRM::new()
+                .content("Invalid rank name. Valid ranks: Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, MasterElite, Grandmaster")
+                .ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
 
     // Parse multiple role mentions (space-separated)
     let role_mentions_vec: Vec<&str> = role_mentions.split_whitespace().collect();
@@ -346,15 +347,16 @@ pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: Stri
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
     // Parse the rank
-    let rank = parse_rank_name(&rank_name)?;
-    if rank.is_none() {
-        let response = CIR::Message(CIRM::new()
-            .content("Invalid rank name. Valid ranks: Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, MasterElite, Grandmaster")
-            .ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-    let rank = rank.unwrap();
+    let rank = match parse_rank_name(&rank_name) {
+        Ok(rank) => rank,
+        Err(_) => {
+            let response = CIR::Message(CIRM::new()
+                .content("Invalid rank name. Valid ranks: Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, MasterElite, Grandmaster")
+                .ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
 
     // Parse multiple role mentions (space-separated)
     let role_mentions_vec: Vec<&str> = role_mentions.split_whitespace().collect();
@@ -432,7 +434,7 @@ pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: Stri
 }
 
 /// `/rankrolelist` - List all role mappings for a rank
-pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<String>) -> Result<()> {
+pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<&str>) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
         let response = CIR::Message(CIRM::new().content("Only admins can view rank role configurations!").ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
@@ -445,19 +447,21 @@ pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<String>) -> Result<()>
     let mut description = String::new();
 
     // If specific rank provided, show only that rank
-    if let Some(rank_name_str) = rank_name {
-        let rank = parse_rank_name(&rank_name_str)?;
-        if rank.is_none() {
-            let response = CIR::Message(CIRM::new()
-                .content("Invalid rank name. Valid ranks: Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, MasterElite, Grandmaster")
-                .ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
-        }
-        let rank = rank.unwrap();
+    if let Some(rank_name) = rank_name {
+        // Parse the rank
+        let rank = match parse_rank_name(rank_name) {
+            Ok(rank) => rank,
+            Err(_) => {
+                let response = CIR::Message(CIRM::new()
+                    .content("Invalid rank name. Valid ranks: Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, MasterElite, Grandmaster")
+                    .ephemeral(true));
+                cc.intax.create_response(&cc.ctx.http, response).await?;
+                return Ok(());
+            }
+        };
 
         let role_ids = rank.role_ids(&cc.db, guild_id.get()).await;
-        let elo = rank.elo_from_config(&cc.db, guild_id.get()).await;
+        let elo = rank.default_rank_elo();
         description.push_str(&format!("**{elo} [ELO: {}]**:\n", rank.name()));
 
         if role_ids.is_empty() {
@@ -488,7 +492,7 @@ pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<String>) -> Result<()>
 
         for rank in all_ranks {
             let role_ids = rank.role_ids(&cc.db, guild_id.get()).await;
-            let elo = rank.elo_from_config(&cc.db, guild_id.get()).await;
+            let elo = rank.default_rank_elo();
             description.push_str(&format!("**{elo} [ELO: {}]**:\n", rank.name()));
 
             if role_ids.is_empty() {
@@ -518,21 +522,19 @@ pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<String>) -> Result<()>
 }
 
 /// Parse rank name to Rank enum
-pub fn parse_rank_name(rank_name: &str) -> Result<Option<crate::models::Rank>> {
-    use crate::models::Rank;
-    let rank = match rank_name.to_lowercase().as_str() {
-        "beginner"                     => Some(Rank::Beginner),
-        "newcomer"                     => Some(Rank::Newcomer),
-        "novice"                       => Some(Rank::Novice),
-        "apprentice"                   => Some(Rank::Apprentice),
-        "journeyman"                   => Some(Rank::Journeyman),
-        "expert"                       => Some(Rank::Expert),
-        "master"                       => Some(Rank::Master),
-        "masterelite" | "master elite" => Some(Rank::MasterElite),
-        "grandmaster"                  => Some(Rank::Grandmaster),
-        _ => None,
-    };
-    Ok(rank)
+pub fn parse_rank_name(rank_name: &str) -> Result<Rank> {
+    match rank_name.to_lowercase().as_str() {
+        "beginner"                            => Ok(Rank::Beginner),
+        "newcomer"                            => Ok(Rank::Newcomer),
+        "novice"                              => Ok(Rank::Novice),
+        "apprentice"                          => Ok(Rank::Apprentice),
+        "journeyman" | "jman"                 => Ok(Rank::Journeyman),
+        "expert"                              => Ok(Rank::Expert),
+        "master"                              => Ok(Rank::Master),
+        "masterelite" | "master elite" | "me" => Ok(Rank::MasterElite),
+        "grandmaster" | "gm"                  => Ok(Rank::Grandmaster),
+        _ => Err(anyhow!("Invalid rank name")),
+    }
 }
 
 /// Parse role ID from mention format <@&123456> or raw ID

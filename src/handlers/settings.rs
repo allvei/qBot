@@ -6,6 +6,7 @@ use serenity::all::{
     CreateModal, CreateEmbedFooter,
 };
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{info, warn};
 
 use crate::Database;
@@ -124,20 +125,48 @@ pub async fn handle_settings_button(
             update_settings_menu(ctx, interaction, db).await?;
         }
         "settings_auto_leave" => {
-            // Show modal for auto-leave timeout
-            let modal = CreateModal::new("settings_modal_auto_leave", "Auto-remove timer")
-                .components(vec![
-                    CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Minutes (1-60)", "auto_remove_minutes")
-                            .placeholder("Default: 30 minutes")
-                            .min_length(1)
-                            .max_length(2)
-                            .required(true)
-                    )
-                ]);
+            // Show buttons for auto-leave timeout options
+            let time_buttons = vec![
+                CB::new("settings_auto_leave:30m").label("30 minutes").style(BS::Secondary),
+                CB::new("settings_auto_leave:1h") .label("1 hour")    .style(BS::Secondary),
+                CB::new("settings_auto_leave:2h") .label("2 hours")   .style(BS::Secondary),
+                CB::new("settings_auto_leave:3h") .label("3 hours")   .style(BS::Secondary),
+                CB::new("settings_auto_leave:4h") .label("4 hours")   .style(BS::Secondary),
+            ];
 
-            let response = CIR::Modal(modal);
+            let response = CIR::Message(
+                CIRM::new()
+                    .content("Select your default auto-remove timer:")
+                    .components(vec![CAR::Buttons(time_buttons)])
+                    .ephemeral(true)
+            );
+
             interaction.create_response(&ctx.http, response).await?;
+        }
+        button_id if button_id.starts_with("settings_auto_leave:") => {
+            // Handle auto-leave time selection
+            let time_str = button_id.split(':').nth(1).unwrap_or("30m");
+            let minutes = match time_str {
+                "30m" => 30,
+                "1h"  => 60,
+                "2h"  => 120,
+                "3h"  => 180,
+                "4h"  => 240,
+                _     => 30,
+            };
+
+            // Update user settings
+            let mut settings = db.users.get_settings(user_id).await?;
+            settings.expiry_duration = Duration::from_secs(minutes as u64 * 60);
+            db.users.update_settings(user_id, &settings).await?;
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().content(format!("✅ Default auto-remove timer set to **{}**", time_str))
+            );
+            interaction.create_response(&ctx.http, response).await?;
+
+            // Update the settings menu
+            update_settings_menu(ctx, interaction, db).await?;
         }
         "settings_vc_disconnect" => {
             // Toggle VC disconnect preference
@@ -169,19 +198,19 @@ pub async fn handle_settings_button(
                         .value(format!("{:06X}", settings.announcement_color))
                         .required(false).min_length(6).max_length(6)
                     ),
-                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Paragraph, "Message", "announcement_description")
+                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Paragraph, "Message", "alert_desc")
                         .placeholder("e.g., Kafri: defense")
-                        .value(settings.announcement_description.unwrap_or_default())
+                        .value(settings.alert_desc.unwrap_or_default())
                         .required(false).max_length(2000)
                     ),
-                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "Footer text", "announcement_footer_text")
+                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "Footer text", "alert_footer_text")
                         .placeholder("e.g., Good luck!")
-                        .value(settings.announcement_footer_text.unwrap_or_default())
+                        .value(settings.alert_footer_text.unwrap_or_default())
                         .required(false).max_length(2048)
                     ),
-                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "Thumbnail URL", "announcement_thumbnail")
+                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "Thumbnail URL", "alert_footer_thumbnail")
                         .placeholder("https://example.com/thumb.png")
-                        .value(settings.announcement_thumbnail.unwrap_or_default())
+                        .value(settings.alert_footer_thumbnail.unwrap_or_default())
                         .required(false).max_length(512)
                     ),
                 ]);
@@ -192,10 +221,10 @@ pub async fn handle_settings_button(
         "settings_edit_leave_alert" => {
             // Show modal for customizing leave announcement embed
             let settings = db.users.get_settings(user_id).await?;
-            let modal = CreateModal::new("settings_modal_leave_announcement", "Customize leave announcement")
+            let modal = CreateModal::new("settings_modal_leave_alert", "Customize leave announcement")
                 .components(vec![
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Color (hex, optional)", "leave_announcement_color")
+                        CreateInputText::new(InputTextStyle::Short, "Color (hex, optional)", "leave_alert_color")
                             .placeholder("e.g., 3447003 or FF5733")
                             .value(format!("{:06X}", settings.announcement_color))
                             .required(false)
@@ -203,23 +232,23 @@ pub async fn handle_settings_button(
                             .max_length(6)
                     ),
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Paragraph, "Description", "leave_announcement_description")
+                        CreateInputText::new(InputTextStyle::Paragraph, "Description", "leave_alert_desc")
                             .placeholder("e.g., {name} has left. Use {user} for mention")
-                            .value(settings.leave_announcement_description.unwrap_or_default())
+                            .value(settings.leave_alert_desc.unwrap_or_default())
                             .required(false)
                             .max_length(2000)
                     ),
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Footer Text", "leave_announcement_footer_text")
+                        CreateInputText::new(InputTextStyle::Short, "Footer Text", "leave_alert_footer_text")
                             .placeholder("e.g., See you next time!")
-                            .value(settings.leave_announcement_footer_text.unwrap_or_default())
+                            .value(settings.leave_alert_footer_text.unwrap_or_default())
                             .required(false)
                             .max_length(2048)
                     ),
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Thumbnail URL", "leave_announcement_thumbnail")
+                        CreateInputText::new(InputTextStyle::Short, "Thumbnail URL", "leave_alert_footer_thumbnail")
                             .placeholder("https://example.com/thumb.png")
-                            .value(settings.leave_announcement_thumbnail.unwrap_or_default())
+                            .value(settings.leave_alert_footer_thumbnail.unwrap_or_default())
                             .required(false)
                             .max_length(512)
                     ),
@@ -273,9 +302,9 @@ pub async fn handle_settings_modal(
                                     }
                                 }
                             },
-                            1 => settings.announcement_description = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
-                            2 => settings.announcement_footer_text = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
-                            3 => settings.announcement_thumbnail   = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                            1 => settings.alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                            2 => settings.alert_footer_text = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                            3 => settings.alert_footer_thumbnail   = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
                             _ => {}
                         }
                     }
@@ -300,45 +329,7 @@ pub async fn handle_settings_modal(
             // Update the original settings menu
             update_settings_menu_from_modal(ctx, interaction, db).await?;
         }
-        "settings_modal_auto_leave" => {
-            // Get the value from the modal
-            if let Some(action_row) = interaction.data.components.first() {
-                if let Some(component) = action_row.components.first() {
-                    if let serenity::all::ActionRowComponent::InputText(input) = component {
-                        if let Some(value) = &input.value {
-                            if !value.is_empty() {
-                        match value.parse::<i64>() {
-                            Ok(minutes) if minutes >= 1 && minutes <= 60 => {
-                                db.users.update_setting_field(user_id, "auto_remove_minutes", minutes).await?;
-
-                                let status_text = format!("set to {} minute{}", minutes, if minutes == 1 { "" } else { "s" });
-
-                                let response = CIR::Message(
-                                    CIRM::new()
-                                        .content(format!("Auto-remove timer: {}", status_text))
-                                        .ephemeral(true)
-                                );
-                                interaction.create_response(&ctx.http, response).await?;
-
-                                // Update the original settings menu
-                                update_settings_menu_from_modal(ctx, interaction, db).await?;
-                            }
-                            _ => {
-                                let response = CIR::Message(
-                                    CIRM::new()
-                                        .content("Invalid value! Please enter a number between 1 and 60.")
-                                        .ephemeral(true)
-                                );
-                                interaction.create_response(&ctx.http, response).await?;
-                            }
-                        }
-                        }
-                        }
-                    }
-                }
-            }
-        }
-        "settings_modal_leave_announcement" => {
+        "settings_modal_leave_alert" => {
             // Get all input values from the modal
             let mut settings = db.users.get_settings(user_id).await?;
 
@@ -360,9 +351,9 @@ pub async fn handle_settings_modal(
                                     }
                                 }
                             },
-                            1 => settings.leave_announcement_description = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
-                            2 => settings.leave_announcement_footer_text = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
-                            3 => settings.leave_announcement_thumbnail   = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                            1 => settings.leave_alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                            2 => settings.leave_alert_footer_text = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                            3 => settings.leave_alert_footer_thumbnail   = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
                             _ => {}
                         }
                     }
@@ -373,7 +364,7 @@ pub async fn handle_settings_modal(
             db.users.update_settings(user_id, &settings).await?;
 
             // Build preview embed
-            let preview_embed = build_leave_announcement_embed(ctx, user_id, None, &settings).await;
+            let preview_embed = build_leave_alert_embed(ctx, user_id, None, &settings).await;
 
             // Send ephemeral preview as interaction response (dismissible)
             let response = CIR::Message(
@@ -516,7 +507,7 @@ pub async fn build_join_announcement_embed(
     };
 
     // Build description with template support
-    let description = if let Some(custom_desc) = &settings.announcement_description {
+    let description = if let Some(custom_desc) = &settings.alert_desc {
         // Sanitize newline spam only for actual announcements (not previews)
         let text_to_use = if guild_id.is_some() {
             sanitize_announcement_text(custom_desc)
@@ -541,7 +532,7 @@ pub async fn build_join_announcement_embed(
         .color(settings.announcement_color as u32);
 
     // Add custom footer
-    if let Some(footer_text) = &settings.announcement_footer_text {
+    if let Some(footer_text) = &settings.alert_footer_text {
         // Sanitize footer spam only for actual announcements (not previews)
         let footer_to_use = if guild_id.is_some() {
             sanitize_footer_text(footer_text)
@@ -550,14 +541,14 @@ pub async fn build_join_announcement_embed(
         };
         
         let mut footer = CreateEmbedFooter::new(footer_to_use);
-        if let Some(footer_icon) = &settings.announcement_footer_icon {
+        if let Some(footer_icon) = &settings.alert_footer_icon {
             footer = footer.icon_url(footer_icon);
         }
         embed = embed.footer(footer);
     }
 
     // Add thumbnail
-    if let Some(thumbnail) = &settings.announcement_thumbnail {
+    if let Some(thumbnail) = &settings.alert_footer_thumbnail {
         embed = embed.thumbnail(thumbnail);
     }
 
@@ -565,7 +556,7 @@ pub async fn build_join_announcement_embed(
 }
 
 /// Build a leave announcement embed (used for both actual announcements and previews)
-pub async fn build_leave_announcement_embed(
+pub async fn build_leave_alert_embed(
     ctx: &Context,
     user_id: serenity::all::UserId,
     guild_id: Option<serenity::all::GuildId>,
@@ -591,7 +582,7 @@ pub async fn build_leave_announcement_embed(
     };
 
     // Build description with template support
-    let description = if let Some(custom_desc) = &settings.leave_announcement_description {
+    let description = if let Some(custom_desc) = &settings.leave_alert_desc {
         // Sanitize newline spam only for actual announcements (not previews)
         let text_to_use = if guild_id.is_some() {
             sanitize_announcement_text(custom_desc)
@@ -615,7 +606,7 @@ pub async fn build_leave_announcement_embed(
         .color(settings.announcement_color as u32);
 
     // Add custom footer if provided
-    if let Some(footer_text) = &settings.leave_announcement_footer_text {
+    if let Some(footer_text) = &settings.leave_alert_footer_text {
         // Sanitize footer spam only for actual announcements (not previews)
         let footer_to_use = if guild_id.is_some() {
             sanitize_footer_text(footer_text)
@@ -624,14 +615,14 @@ pub async fn build_leave_announcement_embed(
         };
         
         let mut footer = CreateEmbedFooter::new(footer_to_use);
-        if let Some(footer_icon) = &settings.leave_announcement_footer_icon {
+        if let Some(footer_icon) = &settings.leave_alert_footer_icon {
             footer = footer.icon_url(footer_icon);
         }
         embed = embed.footer(footer);
     }
 
     // Add custom thumbnail if provided
-    if let Some(thumbnail) = &settings.leave_announcement_thumbnail {
+    if let Some(thumbnail) = &settings.leave_alert_footer_thumbnail {
         embed = embed.thumbnail(thumbnail);
     }
 

@@ -3,12 +3,12 @@ use anyhow::{anyhow, Result};
 use rand::seq::SliceRandom;
 use serenity::all::{Member, Context as Ctx, GuildId as GI, UserId as UI};
 
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 
 use crate::{ComponentContext as CC, Database as DB};
 use crate::models::{
     CommandContext as CmC, SessionPlayer as SP, Rank, Role, Server, SessionStatus as SS, Team,
-    DEFAULT_RANK,
+    DEFAULT_RANK, Player,
 };
 
 /// Helper: Get member with cache-first strategy
@@ -29,25 +29,54 @@ async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI) -> Option<Membe
 
 /// Get player's rank from their Discord roles
 pub async fn get_player_rank(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<Rank> {
-    let member = get_member_cached(ctx, guild_id, user_id).await?;
+    info!("DEBUG: get_player_rank called for user {} in guild {}", user_id, guild_id);
+    
+    let member = match get_member_cached(ctx, guild_id, user_id).await {
+        Some(m) => {
+            info!("DEBUG: Found member {} with {} roles", m.user.tag(), m.roles.len());
+            m
+        },
+        None => {
+            warn!("DEBUG: Could not find member {} in guild {}", user_id, guild_id);
+            return None;
+        }
+    };
 
     // Check all member roles and find the highest matching rank
     let mut highest_rank: Option<Rank> = None;
-    for role_id in &member.roles {
-        if let Some(rank) = Rank::from_role_id(*role_id, db, guild_id.get()).await {
-            highest_rank = match highest_rank {
-                None => Some(rank),
-                Some(current) => {
-                    // Compare ELO values to find highest rank
-                    if rank.elo() > current.elo() {
-                        Some(rank)
-                    } else {
-                        Some(current)
+    info!("DEBUG: Checking {} roles for rank matches", member.roles.len());
+    
+    for (index, role_id) in member.roles.iter().enumerate() {
+        info!("DEBUG: Checking role {}: {}", index, role_id);
+        match Rank::from_role_id(*role_id, db, guild_id.get()).await {
+            Ok(rank) => {
+                info!("DEBUG: Role {} matches rank {}", role_id, rank.name());
+                highest_rank = match highest_rank {
+                    Some(current) => {
+                        // Compare ELO values to find highest rank
+                        if rank.default_rank_elo() > current.default_rank_elo() {
+                            info!("DEBUG: Upgrading from {} to {} (ELO: {} -> {})", 
+                                  current.name(), rank.name(), current.default_rank_elo(), rank.default_rank_elo());
+                            Some(rank)
+                        } else {
+                            info!("DEBUG: Keeping current {} over {} (ELO: {} >= {})", 
+                                  current.name(), rank.name(), current.default_rank_elo(), rank.default_rank_elo());
+                            Some(current)
+                        }
                     }
-                }
-            };
-        }
+                    None => {
+                        info!("DEBUG: First rank found: {} (ELO: {})", rank.name(), rank.default_rank_elo());
+                        Some(rank)
+                    }
+                };
+            },
+            Err(e) => {
+                info!("DEBUG: Role {} does not match any rank: {}", role_id, e);
+            }
+        };
     }
+    
+    info!("DEBUG: Final rank for user {}: {:?}", user_id, highest_rank);
     highest_rank
 }
 
@@ -440,7 +469,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         for game in &mut group.sessions {
             if game.status == SS::Idle {
                 let initial_len = game.pool.len();
-                game.pool.retain(|p| p.player.discord_id != user);
+                game.pool.retain(|p| p.player.user_id != user);
                 if game.pool.len() < initial_len {
                     found = true;
                     queue_count = game.pool.len();
@@ -478,13 +507,60 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     };
 
     // Get player info or create a new one (use fast path without extra API call)
-    let mut player = match cc.db.get_user(user).await {
-        Ok(player) => player,
-        Err(_) => cc.db.new_user(user).await?,
+    let mut player = match cc.db.get_user(user, &cc.ctx).await {
+        Ok(mut player) => {
+            // If player has no ELO in database, use rank-based ELO
+            if player.elo == 0 {
+                info!("DEBUG: Player {} has ELO 0, setting to {} from Discord rank {}", user, rank.default_rank_elo(), rank.name());
+                player.elo = rank.default_rank_elo();
+                player.rank = rank;
+                // Update database with the rank-based ELO
+                if let Err(e) = cc.db.users.update_elo(user, Some(player.elo)).await {
+                    warn!("Failed to update player ELO in database: {}", e);
+                }
+            } else {
+                // Player has stored ELO, check for ELO mismatch with Discord rank
+                let elo_mismatch = player.elo <= 30 && rank.default_rank_elo() > 30;
+                
+                if elo_mismatch {
+                    warn!("ELO MISMATCH DETECTED in queue: Player {} has ELO {} but Discord rank {} (default ELO {}). Auto-correcting...", 
+                          user, player.elo, rank.name(), rank.default_rank_elo());
+                    
+                    player.elo = rank.default_rank_elo();
+                    player.rank = rank;
+                    
+                    // Update the database with the corrected ELO
+                    if let Err(e) = cc.db.users.update_elo(user, Some(player.elo)).await {
+                        error!("Failed to auto-correct ELO for player {} in queue: {}", user, e);
+                    } else {
+                        info!("Successfully auto-corrected ELO for player {} in queue to {} (rank: {})", 
+                              user, player.elo, rank.name());
+                    }
+                } else {
+                    // Player has stored ELO, keep their ELO and only update rank if it makes sense
+                    info!("DEBUG: Player {} has custom ELO {}, keeping it instead of Discord rank ELO {}", user, player.elo, rank.default_rank_elo());
+                    // Don't override rank - keep whatever rank matches their current ELO
+                    player.update_rank_from_elo(&cc.db, guild_id.get()).await;
+                }
+            }
+            player
+        },
+        Err(_) => {
+            // New player - use rank-based ELO
+            info!("DEBUG: New player {}, setting ELO to {} from Discord rank {}", user, rank.default_rank_elo(), rank.name());
+            let mut new_player = cc.db.new_user(user, &cc.ctx).await?;
+            new_player.elo = rank.default_rank_elo();
+            new_player.rank = rank;
+            // Update database with the rank-based ELO
+            if let Err(e) = cc.db.users.update_elo(user, Some(new_player.elo)).await {
+                warn!("Failed to update new player ELO in database: {}", e);
+            }
+            new_player
+        }
     };
 
     // Set discord tag from interaction user data (already available, no API call needed)
-    player.discord_tag = Some(cc.intax.user.tag());
+    player.tag = cc.intax.user.tag();
 
     let group = guild.get_group(channel)?;
 
@@ -513,7 +589,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         }
 
         let queue = group.get_queue().await?;
-        queue.add_player(player, rank);
+        queue.add_player(player);
 
         if group.is_quota() {
             group.hot(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await?;
@@ -551,7 +627,7 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
             let count = game.pool.len();
             let list = if count > 0 {
                 game.pool.iter().enumerate()
-                    .map(|(i, p)| format!("{}. <@{}>", i + 1, p.player.discord_id))
+                    .map(|(i, p)| format!("{}. <@{}>", i + 1, p.player.user_id))
                     .collect::<Vec<_>>().join("\n")
             } else {
                 "Queue is empty".to_string()
@@ -615,11 +691,11 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 
     let red_team_names: Vec<String> = last_session.pool.iter()
         .filter(|sp| sp.team == Some(Team::Red))
-        .map(|sp| format!("<@{}>", sp.player.discord_id))
+        .map(|sp| format!("<@{}>", sp.player.user_id))
         .collect();
     let blu_team_names: Vec<String> = last_session.pool.iter()
         .filter(|sp| sp.team == Some(Team::Blu))
-        .map(|sp| format!("<@{}>", sp.player.discord_id))
+        .map(|sp| format!("<@{}>", sp.player.user_id))
         .collect();
 
     let embed_content = format!(
