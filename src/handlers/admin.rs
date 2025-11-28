@@ -23,8 +23,6 @@ use crate::models::{CommandContext as CC, Role, Server, SETUP_STATE};
 /// * `value` - The value to set for the key.
 pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only game admins can modify the config!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -73,8 +71,6 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
 pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> Result<()> {
     // Check admin permissions
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can manage roles!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -167,8 +163,6 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
 /// `/grouplink` - Interactive flow to link existing channels to a group
 pub async fn cmd_group_link(cc: &CC<'_>, _server: &mut Server) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can set up groups!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -223,8 +217,6 @@ async fn start_grouplink_flow(cc: &CC<'_>) -> Result<()> {
 /// `/groupadd` - Creates a new category with all necessary channels
 pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can create group channels!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -675,11 +667,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
 ///
 /// Creates or updates the dashboard in the current channel
 pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
-    info!("Processing dashboard command");
-
-    // Check permissions - only runners/admins can create dashboard
     if !check_role(cc, &Role::Runner).await? && !check_role(cc, &Role::Admin).await? {
-        cc.reply("Only runners and admins can create the dashboard!").await?;
         return Ok(());
     }
 
@@ -699,12 +687,7 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
 ///
 /// Sets up the bot for a guild using an interactive ephemeral message flow
 pub async fn cmd_setup(cc: &CC<'_>) -> Result<()> {
-    info!("Processing setup command");
-
-    // Check permissions - only admins can run setup
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can run the setup command!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -1594,8 +1577,6 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
 
     // Check admin permissions
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can check roles!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -1788,8 +1769,6 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
 
     // Check admin permissions
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can modify the queue quota!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -1892,8 +1871,6 @@ pub async fn cmd_add_connect(cc: &CC<'_>, connect_info: String) -> Result<()> {
 
     // Check admin permissions
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can set server connect info!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -2296,58 +2273,6 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
     Ok(())
 }
 
-/// `/clear` - Clear all players from the queue
-pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
-    info!("Processing /clear command");
-
-    // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can clear the queue!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-
-    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-
-    // Get the group from the current channel
-    let group = match server.get_group(cc.intax.channel_id) {
-        Ok(g) => g,
-        Err(e) => {
-            let error_embed = CE::new()
-                .title("Group Not Found")
-                .description(format!("No queue group found in this channel: {e}"))
-                .color(0xff0000);
-
-            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
-        }
-    };
-
-    // Get the idle session and clear it
-    let player_count = match group.get_queue().await {
-        Ok(session) => {
-            let count = session.pool.len();
-            session.pool.clear();
-            count
-        },
-        Err(_) => 0
-    };
-
-    // Update the dashboard
-    group.queue_dash_update(cc.ctx, guild_id.get()).await;
-
-    let success_embed = CE::new()
-        .title("Queue Cleared")
-        .description(format!("Removed {player_count} player(s) from the queue."))
-        .color(0x00ff00);
-
-    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-
-    Ok(())
-}
-
 /// `/ranksetelo` - Set custom ELO value for a rank
 ///
 /// * `rank_role` - The rank name or role mention/ID
@@ -2355,8 +2280,6 @@ pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Result<()> {
     // Check admin permissions
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can modify rank ELO values!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -2423,17 +2346,242 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
     Ok(())
 }
 
+/// `/setplayerelo` - Set ELO value for a specific player
+///
+/// * `user` - The Discord user (mention or ID)
+/// * `elo` - The ELO value to set for this player (0-100, or -1 to clear)
+pub async fn cmd_set_player_elo(cc: &CC<'_>, user: serenity::all::User, elo: i64) -> Result<()> {
+    info!("DEBUG: cmd_set_player_elo called for user {} with elo {}", user.tag(), elo);
+    
+    // Check admin permissions
+    if !check_role(cc, &Role::Admin).await? {
+        return Ok(());
+    }
+
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    let user_id = user.id;
+
+    // Validate ELO range
+    if elo != -1 && (elo < ELO_MIN as i64 || elo > ELO_MAX as i64) {
+        let error_embed = CE::new()
+            .title("Invalid ELO Value")
+            .description(format!("ELO must be between {ELO_MIN} and {ELO_MAX}, or -1 to clear ELO"))
+            .color(0xff0000);
+        let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
+        return Ok(());
+    }
+
+    // Set ELO value
+    let elo_value = if elo == -1 { None } else { Some(elo as u16) };
+    info!("DEBUG: Setting ELO value {:?} for user {}", elo_value, user_id);
+    cc.db.users.update_elo(user_id, elo_value).await?;
+
+    // Get updated player info
+    let mut player = cc.db.users.get(user_id).await?;
+    info!("DEBUG: After update - Player ELO: {}, Player Rank: {}", player.elo, player.rank.name());
+    if elo_value.is_some() {
+        player.update_rank_from_elo(&cc.db, guild_id.get()).await;
+        info!("DEBUG: After rank update - Player ELO: {}, Player Rank: {}", player.elo, player.rank.name());
+    }
+
+    let success_embed = CE::new()
+        .title("Player ELO Updated")
+        .description(format!(
+            "**{}**'s ELO set to **{}**\nCurrent rank: **{}**",
+            user.tag(),
+            elo,
+            player.rank.name()
+        ))
+        .color(0x00ff00);
+
+    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+    Ok(())
+}
+
+/// `/getplayerelo` - View ELO and rank information for a player
+///
+/// * `user` - The Discord user (mention or ID, optional - defaults to command user)
+pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) -> Result<()> {
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    let user_id = user.as_ref().map(|u| u.id).unwrap_or(cc.intax.user.id);
+    let is_self = user_id == cc.intax.user.id;
+
+    if !is_self && !check_role(cc, &Role::Admin).await? {
+        return Ok(());
+    }
+
+    // Get player info with rank from Discord roles
+    let mut player = match cc.db.users.get_with_guild_rank(user_id, &cc.ctx, guild_id.get(), &cc.db).await {
+        Ok(p) => p,
+        Err(_) => {
+            let error_embed = CE::new()
+                .title("Player Not Found")
+                .description(format!("<@{}> is not in the database.", user_id))
+                .color(0xff0000);
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+
+    // LOGGING: Check what's happening with rank detection
+    use crate::handlers::player::get_player_rank;
+    let detected_rank = get_player_rank(&cc.ctx, &cc.db, guild_id, user_id).await;
+    info!("DEBUG: User {} - Database ELO: {}, Detected rank: {:?}", user_id, player.elo, detected_rank);
+
+    // Update rank based on guild's configured ELO values
+    player.update_rank_from_elo(&cc.db, guild_id.get()).await;
+    info!("DEBUG: After update_rank_from_elo - Player ELO: {}, Player Rank: {}", player.elo, player.rank.name());
+
+    // Get user info - if no user provided, we can't continue
+    let user_info = user.ok_or_else(|| {
+        let _error_embed = CE::new()
+            .title("User Required")
+            .description("You must specify a user to view their ELO information, or use the command on yourself.")
+            .color(0xff0000);
+        anyhow::anyhow!("User not provided")
+    })?;
+
+    // Create embed with player info
+    let mut embed = CE::new()
+        .title(format!("{}'s ELO Information", user_info.tag()))
+        .color(0x0099ff);
+
+    // ELO information
+    embed = embed.field("ELO Rating", format!("**{}** / 100", player.elo), true);
+
+    // Rank information
+    let rank_elo = player.rank.elo_from_config(&cc.db, guild_id.get()).await;
+    embed = embed.field("Current Rank", format!("**{}**", player.rank.name()), true);
+
+    // Additional info
+    embed = embed.field("Discord ID", format!("`{}`", user_id), false)
+        .field("Steam ID", player.steam_id.map(|id| format!("`{}`", id)).unwrap_or_else(|| "*Not linked*".to_string()), false);
+
+    let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+    Ok(())
+}
+
+/// `/enableactiveelo` - Enable automatic ELO adjustments from match results
+pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
+    // Check admin permissions
+    if !check_role(cc, &Role::Admin).await? {
+        return Ok(());
+    }
+
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    
+    // Enable active ELO in config
+    cc.db.config.set_config("active_elo_enabled", "true", guild_id.get()).await?;
+
+    let success_embed = CE::new()
+        .title("Active ELO Enabled")
+        .description("Automatic ELO adjustments from match results are now **enabled**.\n\n*Note: This requires webhooks and game server API to be configured to actually work.*")
+        .color(0x00ff00);
+
+    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+    Ok(())
+}
+
+/// `/disableactiveelo` - Disable automatic ELO adjustments from match results
+pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
+    // Check admin permissions
+    if !check_role(cc, &Role::Admin).await? {
+        return Ok(());
+    }
+
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    
+    // Disable active ELO in config
+    cc.db.config.set_config("active_elo_enabled", "false", guild_id.get()).await?;
+
+    let success_embed = CE::new()
+        .title("Active ELO Disabled")
+        .description("Automatic ELO adjustments from match results are now **disabled**.")
+        .color(0xff9900);
+
+    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+    Ok(())
+}
+
+/// `/activeelostatus` - Check if automatic ELO adjustments are enabled
+pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
+    // Check admin permissions
+    if !check_role(cc, &Role::Admin).await? {
+        return Ok(());
+    }
+
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+    
+    // Check current status
+    let is_enabled = match cc.db.config.get_config_value("active_elo_enabled", guild_id.get()).await {
+        Ok(Some(value)) => value.parse::<bool>().unwrap_or(crate::ACTIVE_ELO_ENABLED_BY_DEFAULT),
+        Ok(None) => crate::ACTIVE_ELO_ENABLED_BY_DEFAULT,
+        Err(_) => crate::ACTIVE_ELO_ENABLED_BY_DEFAULT,
+    };
+
+    let status_embed = CE::new()
+        .title("Active ELO Status")
+        .description(format!(
+            "Automatic ELO adjustments are currently **{}**\n\n\
+            When enabled, this feature will:\n\
+            • Receive match results from game server API\n\
+            • Automatically adjust player ELO based on wins/losses\n\
+            • Update player ranks based on new ELO values\n\n\
+            *Note: Webhooks and game server integration required for full functionality.*",
+            if is_enabled { "✅ ENABLED" } else { "❌ DISABLED" }
+        ))
+        .color(if is_enabled { 0x00ff00 } else { 0xff0000 });
+
+    let response = CIR::Message(CIRM::new().embed(status_embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+    Ok(())
+}
+
+/// `/setplayersteam` - Set Steam ID for a specific player
+pub async fn cmd_set_player_steam(cc: &CC<'_>, user: serenity::all::User, steam_id: u64) -> Result<()> {
+    // Check admin permissions
+    if !check_role(cc, &Role::Admin).await? {
+        return Ok(());
+    }
+
+    let user_id = user.id;
+    let steam_id_value = if steam_id == 0 { None } else { Some(steam_id) };
+
+    // Update Steam ID in database
+    cc.db.users.update_steam_id(&user_id, steam_id_value).await?;
+
+    let success_embed = CE::new()
+        .title("Steam ID Updated")
+        .description(format!(
+            "**{}**'s Steam ID set to **{}**",
+            user.tag(),
+            if let Some(sid) = steam_id_value {
+                format!("`{}`", sid)
+            } else {
+                "Cleared".to_string()
+            }
+        ))
+        .color(0x00ff00);
+
+    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+    Ok(())
+}
+
+// RUNNER COMMANDS
+
 /// `/buffer`
 ///
 /// * `user_id` - The user ID to buffer.
 /// * `server` - The server (already has manager lock held by caller)
 pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result<()> {
-    info!("Processing /buffer command for user {}", user_id);
-
-    if !check_role(cc, &Role::Admin).await? {
-        info!("User lacks admin permissions for /buffer");
-        let response = CIR::Message(CIRM::new().content("Only admins can buffer players!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
+    if !check_role(cc, &Role::Runner).await? {
         return Ok(());
     }
 
@@ -2522,10 +2670,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
 pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result<()> {
     info!("Processing /fatkid command for user {}", user_id);
 
-    if !check_role(cc, &Role::Admin).await? {
-        info!("User lacks admin permissions for /fatkid");
-        let response = CIR::Message(CIRM::new().content("Only admins can fatkid players!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
+    if !check_role(cc, &Role::Runner).await? {
         return Ok(());
     }
 
@@ -2607,243 +2752,52 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     Ok(())
 }
 
-/// `/setplayerelo` - Set ELO value for a specific player
-///
-/// * `user` - The Discord user (mention or ID)
-/// * `elo` - The ELO value to set for this player (0-100, or -1 to clear)
-pub async fn cmd_set_player_elo(cc: &CC<'_>, user: serenity::all::User, elo: i64) -> Result<()> {
-    info!("DEBUG: cmd_set_player_elo called for user {} with elo {}", user.tag(), elo);
-    
-    // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can modify player ELO values!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
+/// `/clear` - Clear all players from the queue
+pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
+    info!("Processing /clear command");
+
+    // Check runner permissions
+    if !check_role(cc, &Role::Runner).await? {
         return Ok(());
     }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-    let user_id = user.id;
 
-    // Validate ELO range
-    if elo != -1 && (elo < ELO_MIN as i64 || elo > ELO_MAX as i64) {
-        let error_embed = CE::new()
-            .title("Invalid ELO Value")
-            .description(format!("ELO must be between {ELO_MIN} and {ELO_MAX}, or -1 to clear ELO"))
-            .color(0xff0000);
-        let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-
-    // Set ELO value
-    let elo_value = if elo == -1 { None } else { Some(elo as u16) };
-    info!("DEBUG: Setting ELO value {:?} for user {}", elo_value, user_id);
-    cc.db.users.update_elo(user_id, elo_value).await?;
-
-    // Get updated player info
-    let mut player = cc.db.users.get(user_id).await?;
-    info!("DEBUG: After update - Player ELO: {}, Player Rank: {}", player.elo, player.rank.name());
-    if elo_value.is_some() {
-        player.update_rank_from_elo(&cc.db, guild_id.get()).await;
-        info!("DEBUG: After rank update - Player ELO: {}, Player Rank: {}", player.elo, player.rank.name());
-    }
-
-    let success_embed = CE::new()
-        .title("Player ELO Updated")
-        .description(format!(
-            "**{}**'s ELO set to **{}**\nCurrent rank: **{}**",
-            user.tag(),
-            elo,
-            player.rank.name()
-        ))
-        .color(0x00ff00);
-
-    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-    Ok(())
-}
-
-/// `/getplayerelo` - View ELO and rank information for a player
-///
-/// * `user` - The Discord user (mention or ID, optional - defaults to command user)
-pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) -> Result<()> {
-    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-    let user_id = user.as_ref().map(|u| u.id).unwrap_or(cc.intax.user.id);
-    let is_self = user_id == cc.intax.user.id;
-
-    // Check permissions (viewing own info is allowed, others require admin)
-    if !is_self && !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can view other players' ELO information!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-
-    // Get player info with rank from Discord roles
-    let mut player = match cc.db.users.get_with_guild_rank(user_id, &cc.ctx, guild_id.get(), &cc.db).await {
-        Ok(p) => p,
-        Err(_) => {
+    // Get the group from the current channel
+    let group = match server.get_group(cc.intax.channel_id) {
+        Ok(g) => g,
+        Err(e) => {
             let error_embed = CE::new()
-                .title("Player Not Found")
-                .description(format!("<@{}> is not in the database.", user_id))
+                .title("Group Not Found")
+                .description(format!("No queue group found in this channel: {e}"))
                 .color(0xff0000);
+
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             cc.intax.create_response(&cc.ctx.http, response).await?;
             return Ok(());
         }
     };
 
-    // LOGGING: Check what's happening with rank detection
-    use crate::handlers::player::get_player_rank;
-    let detected_rank = get_player_rank(&cc.ctx, &cc.db, guild_id, user_id).await;
-    info!("DEBUG: User {} - Database ELO: {}, Detected rank: {:?}", user_id, player.elo, detected_rank);
-
-    // Update rank based on guild's configured ELO values
-    player.update_rank_from_elo(&cc.db, guild_id.get()).await;
-    info!("DEBUG: After update_rank_from_elo - Player ELO: {}, Player Rank: {}", player.elo, player.rank.name());
-
-    // Get user info - if no user provided, we can't continue
-    let user_info = user.ok_or_else(|| {
-        let _error_embed = CE::new()
-            .title("User Required")
-            .description("You must specify a user to view their ELO information, or use the command on yourself.")
-            .color(0xff0000);
-        anyhow::anyhow!("User not provided")
-    })?;
-
-    // Create embed with player info
-    let mut embed = CE::new()
-        .title(format!("{}'s ELO Information", user_info.tag()))
-        .color(0x0099ff);
-
-    // ELO information
-    embed = embed.field("ELO Rating", format!("**{}** / 100", player.elo), true);
-
-    // Rank information
-    let rank_elo = player.rank.elo_from_config(&cc.db, guild_id.get()).await;
-    embed = embed.field("Current Rank", format!("**{}**", player.rank.name()), true);
-
-    // Additional info
-    embed = embed.field("Discord ID", format!("`{}`", user_id), false)
-        .field("Steam ID", player.steam_id.map(|id| format!("`{}`", id)).unwrap_or_else(|| "*Not linked*".to_string()), false);
-
-    let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-    Ok(())
-}
-
-/// `/enableactiveelo` - Enable automatic ELO adjustments from match results
-pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
-    // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can enable active ELO!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-
-    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-    
-    // Enable active ELO in config
-    cc.db.config.set_config("active_elo_enabled", "true", guild_id.get()).await?;
-
-    let success_embed = CE::new()
-        .title("Active ELO Enabled")
-        .description("Automatic ELO adjustments from match results are now **enabled**.\n\n*Note: This requires webhooks and game server API to be configured to actually work.*")
-        .color(0x00ff00);
-
-    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-    Ok(())
-}
-
-/// `/disableactiveelo` - Disable automatic ELO adjustments from match results
-pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
-    // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can disable active ELO!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-
-    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-    
-    // Disable active ELO in config
-    cc.db.config.set_config("active_elo_enabled", "false", guild_id.get()).await?;
-
-    let success_embed = CE::new()
-        .title("Active ELO Disabled")
-        .description("Automatic ELO adjustments from match results are now **disabled**.")
-        .color(0xff9900);
-
-    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-    Ok(())
-}
-
-/// `/activeelostatus` - Check if automatic ELO adjustments are enabled
-pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
-    // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can check active ELO status!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-
-    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-    
-    // Check current status
-    let is_enabled = match cc.db.config.get_config_value("active_elo_enabled", guild_id.get()).await {
-        Ok(Some(value)) => value.parse::<bool>().unwrap_or(crate::ACTIVE_ELO_ENABLED_BY_DEFAULT),
-        Ok(None) => crate::ACTIVE_ELO_ENABLED_BY_DEFAULT,
-        Err(_) => crate::ACTIVE_ELO_ENABLED_BY_DEFAULT,
+    // Get the idle session and clear it
+    let player_count = match group.get_queue().await {
+        Ok(session) => {
+            let count = session.pool.len();
+            session.pool.clear();
+            count
+        },
+        Err(_) => 0
     };
 
-    let status_embed = CE::new()
-        .title("Active ELO Status")
-        .description(format!(
-            "Automatic ELO adjustments are currently **{}**\n\n\
-            When enabled, this feature will:\n\
-            • Receive match results from game server API\n\
-            • Automatically adjust player ELO based on wins/losses\n\
-            • Update player ranks based on new ELO values\n\n\
-            *Note: Webhooks and game server integration required for full functionality.*",
-            if is_enabled { "✅ ENABLED" } else { "❌ DISABLED" }
-        ))
-        .color(if is_enabled { 0x00ff00 } else { 0xff0000 });
-
-    let response = CIR::Message(CIRM::new().embed(status_embed).ephemeral(true));
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-    Ok(())
-}
-
-/// `/setplayersteam` - Set Steam ID for a specific player
-pub async fn cmd_set_player_steam(cc: &CC<'_>, user: serenity::all::User, steam_id: u64) -> Result<()> {
-    // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can set player Steam IDs!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-
-    let user_id = user.id;
-    let steam_id_value = if steam_id == 0 { None } else { Some(steam_id) };
-
-    // Update Steam ID in database
-    cc.db.users.update_steam_id(&user_id, steam_id_value).await?;
+    // Update the dashboard
+    group.queue_dash_update(cc.ctx, guild_id.get()).await;
 
     let success_embed = CE::new()
-        .title("Steam ID Updated")
-        .description(format!(
-            "**{}**'s Steam ID set to **{}**",
-            user.tag(),
-            if let Some(sid) = steam_id_value {
-                format!("`{}`", sid)
-            } else {
-                "Cleared".to_string()
-            }
-        ))
+        .title("Queue Cleared")
+        .description(format!("Removed {player_count} player(s) from the queue."))
         .color(0x00ff00);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
+
     Ok(())
 }

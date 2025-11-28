@@ -1,7 +1,7 @@
 // Combined game handlers
 use anyhow::{anyhow, Result};
 use rand::seq::SliceRandom;
-use serenity::all::{Member, Context as Ctx, GuildId as GI, UserId as UI};
+use serenity::all::{Context as Ctx, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, GuildId as GI, Member, UserId as UI};
 
 use tracing::{info, warn, error};
 
@@ -363,6 +363,13 @@ pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<V
     Ok(missing_roles)
 }
 
+async fn deny_command(cc: &CmC<'_>, role: &Role) -> Result<()> {
+    info!("[{}] User {} does not have {} role", cc.guild_name(), cc.intax.user.name, role.name());
+    let response = CIR::Message(CIRM::new().content(format!("This command is reserved for {}s", role.name().to_lowercase())).ephemeral(true));
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+    Ok(())
+}
+
 /// Checks if a user has the specified role.
 /// Prioritizes Discord permissions (Administrator or Manage Server) over configured role.
 pub async fn check_role(cc: &CmC<'_>, role: &Role) -> Result<bool> {
@@ -391,12 +398,26 @@ pub async fn check_role(cc: &CmC<'_>, role: &Role) -> Result<bool> {
         let role_ids = role.ids(&cc.db, guild_id.get()).await;
         if !role_ids.is_empty() {
             // User has the role if they have ANY of the configured roles
-            return Ok(role_ids.iter().any(|role_id| member.roles.contains(role_id)));
+            if role_ids.iter().any(|role_id| member.roles.contains(role_id)) {
+                return Ok(true);
+            } else {
+                deny_command(cc, role).await?;
+                return Ok(false);
+            }
         } else {
-            info!("[{}] Role {} not configured", cc.guild_name(), role.name());
+            deny_command(cc, role).await?;
+            return Ok(false);
         }
     }
     Ok(false)
+}
+
+pub async fn check_admin(cc: &CmC<'_>) -> Result<bool> {
+    check_role(cc, &Role::Admin).await
+}
+
+pub async fn check_runner(cc: &CmC<'_>) -> Result<bool> {
+    check_role(cc, &Role::Runner).await
 }
 
 /// Checks if a user has the specified role (for component interactions).
@@ -647,9 +668,7 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
 
 /// `/shuffle`
 pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
-    // Check permissions
     if !check_role(cc, &Role::Runner).await? {
-        cc.reply("Only runners can shuffle teams!").await?;
         return Ok(());
     }
 
@@ -713,9 +732,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 
 /// `/accept`
 pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
-    // Check permissions
     if !check_role(cc, &Role::Runner).await? {
-        cc.reply("Only runners can accept games!").await?;
         return Ok(());
     }
 
@@ -754,9 +771,7 @@ pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 }
 
 pub async fn end(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
-    // Check permissions
     if !check_role(cc, &Role::Runner).await? {
-        cc.reply("Only runners can end games!").await?;
         return Ok(());
     }
 

@@ -43,8 +43,6 @@ async fn create_role_with_error(
 /// `/roleadd` - Create runner and admin roles for the bot
 pub async fn cmd_role_add(cc: &CC<'_>) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can create roles!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -108,8 +106,6 @@ pub async fn cmd_role_add(cc: &CC<'_>) -> Result<()> {
 /// `/rolelink` - Link existing runner and admin roles (supports multiple roles per type)
 pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role: Option<String>) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can link roles!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -182,8 +178,6 @@ pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role:
 /// `/roleremove` - Remove runner and admin role configuration
 pub async fn cmd_role_remove(cc: &CC<'_>, role_type: String) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can remove role configuration!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -236,8 +230,6 @@ pub async fn cmd_role_remove(cc: &CC<'_>, role_type: String) -> Result<()> {
 /// `/rankroleadd` - Add Discord role(s) to a rank (supports multiple roles at once)
 pub async fn cmd_rank_add(cc: &CC<'_>, rank_name: String, role_mentions: String) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can configure rank roles!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -339,8 +331,6 @@ pub async fn cmd_rank_add(cc: &CC<'_>, rank_name: String, role_mentions: String)
 /// `/rankroleremove` - Remove Discord role(s) from a rank (supports multiple roles at once)
 pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: String) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can configure rank roles!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -436,8 +426,6 @@ pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: Stri
 /// `/rankrolelist` - List all role mappings for a rank
 pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<&str>) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can view rank role configurations!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -582,8 +570,6 @@ fn log_rank_remove(rank_name: &str, role_name: &str) {
 /// `/setupadd` - Creates both roles and a new group with channels
 pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can run setup!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -800,8 +786,6 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 /// `/setuplink` - Links existing roles and channels
 pub async fn cmd_setup_link(cc: &CC<'_>) -> Result<()> {
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can run setup!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
@@ -833,8 +817,6 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
 
     // Check admin permissions
     if !check_role(cc, &Role::Admin).await? {
-        let response = CIR::Message(CIRM::new().content("Only admins can remove groups!").ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
         return Ok(());
     }
 
