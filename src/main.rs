@@ -238,7 +238,7 @@ impl EventHandler for Handler {
     async fn interaction_create(&self,ctx: Context,pl: Interaction,) {
         match pl {
             Interaction::Command(itx) => {
-                let discord_tag = match self.db.get_user(itx.user.id, &ctx).await {
+                let tag = match self.db.get_user(itx.user.id, &ctx).await {
                     Ok(player) => player.tag,
                     Err(_) => itx.user.name.clone(),
                 };
@@ -253,7 +253,7 @@ impl EventHandler for Handler {
 
                 let info = || {
                     let guild_name = itx.guild_id.and_then(|gid| ctx.cache.guild(gid).map(|g| g.name.clone())).unwrap_or_else(|| "DM".to_string());
-                    info!("[{}] {} used /{}", guild_name, discord_tag, itx.data.name);
+                    info!("[{}] {} used /{}", guild_name, tag, itx.data.name);
                 };
 
                 // Handle commands that don't need a server/group first
@@ -852,8 +852,8 @@ impl EventHandler for Handler {
             None => {return;}
         };
 
-        // Get player discord_tag from database (primary source)
-        let discord_tag = match self.db.get_user(user_id, &ctx).await {
+        // Get player tag from database (primary source)
+        let tag = match self.db.get_user(user_id, &ctx).await {
             Ok(player) => {
                 if let tag = player.tag {
                     tag
@@ -903,7 +903,7 @@ impl EventHandler for Handler {
                 let group_name = ctx.cache.channel(group.channels.dashboard)
                     .map(|ch| ch.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
-                log_queue_toggle(&guild_name, &group_name, &discord_tag, VL);
+                log_queue_toggle(&guild_name, &group_name, &tag, VL);
 
                 let quota = group.quota as usize;
                 // Get session index before mutable borrow
@@ -955,7 +955,7 @@ impl EventHandler for Handler {
                     let group_name = ctx.cache.channel(group.channels.dashboard)
                         .map(|ch| ch.name.clone())
                         .unwrap_or_else(|| "Unknown".to_string());
-                    log_queue_toggle(&guild_name, &group_name, &discord_tag, VL);
+                    log_queue_toggle(&guild_name, &group_name, &tag, VL);
 
                     let quota = group.quota as usize;
                     // Get session index before mutable borrow
@@ -1036,7 +1036,7 @@ impl EventHandler for Handler {
                                 // Update dashboard if player was missing in a hot session
                                 // This removes them from the "Missing players" list
                                 if was_hot && was_missing {
-                                    info!("{} joined VC during hot session, updating dashboard", discord_tag);
+                                    info!("{} joined VC during hot session, updating dashboard", tag);
                                     group.queue_dash_update(&ctx, server.get()).await;
                                 }
                             }
@@ -1044,9 +1044,9 @@ impl EventHandler for Handler {
                             // Player not in session yet, add them
                             // Ensure a session exists before trying to add player
                             if group.get_inactives().is_empty() {
-                                warn!("No idle sessions present when player {} joined VC, creating one", discord_tag);
+                                warn!("No idle sessions present when player {} joined VC, creating one", tag);
                                 if let Err(e) = group.create_session() {
-                                    error!("Failed to create session for player {}: {}", discord_tag, e);
+                                    error!("Failed to create session for player {}: {}", tag, e);
                                     return;
                                 }
                             }
@@ -1131,13 +1131,13 @@ impl EventHandler for Handler {
                                             let group_name = ctx.cache.channel(group.channels.dashboard)
                                                 .map(|ch| ch.name.clone())
                                                 .unwrap_or_else(|| "Unknown".to_string());
-                                            log_queue_toggle(&guild_name, &group_name, &discord_tag, QueueToggleType::VJ);
+                                            log_queue_toggle(&guild_name, &group_name, &tag, QueueToggleType::VJ);
                                         }
 
                                         group.queue_dash_update(&ctx, server.get()).await;
                                     },
                                     Err(e) => {
-                                        warn!("{} failed to get or assign rank: {}", discord_tag, e);
+                                        warn!("{} failed to get or assign rank: {}", tag, e);
                                     }
                                 }
                             }
@@ -1235,7 +1235,7 @@ impl Handler {
                         continue;
                     }
 
-                    let discord_tag = if let Ok(player) = self.db.get_user(*user_id, &ctx).await {
+                    let tag = if let Ok(player) = self.db.get_user(*user_id, &ctx).await {
                         player.tag
                     } else {
                         "Unknown".to_string()
@@ -1243,11 +1243,11 @@ impl Handler {
 
                     match get_or_assign_player_rank(ctx, &self.db, guild.id, *user_id).await {
                         Ok(rank) => {
-                            let player = Player::add(*user_id, discord_tag, None, rank);
+                            let player = Player::add(*user_id, tag, None, rank);
                             players_to_add.push(player);
                         },
                         Err(e) => {
-                            warn!("Failed to get or assign rank for existing user {}: {}", discord_tag, e);
+                            warn!("Failed to get or assign rank for existing user {}: {}", tag, e);
                         }
                     }
                 }

@@ -133,7 +133,7 @@ impl DatabaseMigrations {
                 add_column!(self, "users", "leave_alert_footer_text",      "TEXT",    "NULL");
                 add_column!(self, "users", "leave_alert_footer_icon",      "TEXT",    "NULL");
                 add_column!(self, "users", "leave_alert_footer_thumbnail", "TEXT",    "NULL");
-                add_column!(self, "users", "elo",                          "INTEGER", "30");
+                add_column!(self, "users", "elos",                         "INTEGER", "30");
             }
 
             if !has_user_id || !has_steam_id || !has_unique {
@@ -152,26 +152,26 @@ impl DatabaseMigrations {
                 sqlx::query("DROP TABLE users").execute(&self.pool).await?;
                 sqlx::query(
                     "CREATE TABLE users (
-                        id                        INTEGER PRIMARY KEY,
-                        user_id                INTEGER NOT NULL UNIQUE,
-                        steam_id                  INTEGER,
-                        dm_enabled                INTEGER DEFAULT 1,
-                        auto_remove_minutes        INTEGER DEFAULT 0,
-                        join_announcement         INTEGER DEFAULT 0,
-                        vc_disconnect_on_leave    INTEGER DEFAULT 1,
-                        announcement_color        INTEGER DEFAULT 3447003,
-                        show_stats_in_announcement INTEGER DEFAULT 0,
-                        notify_quota_threshold    INTEGER DEFAULT NULL,
-                        alert_desc                TEXT DEFAULT NULL,
-                        alert_footer_text         TEXT DEFAULT NULL,
-                        alert_footer_icon         TEXT DEFAULT NULL,
-                        alert_footer_thumbnail    TEXT DEFAULT NULL,
-                        leave_alert               INTEGER DEFAULT 0,
-                        leave_alert_desc          TEXT DEFAULT NULL,
-                        leave_alert_footer_text   TEXT DEFAULT NULL,
-                        leave_alert_footer_icon   TEXT DEFAULT NULL,
-                        leave_alert_footer_thumbnail TEXT DEFAULT NULL,
-                        elo                       INTEGER DEFAULT 30
+                        id                           INTEGER PRIMARY KEY,
+                        user_id                      INTEGER NOT NULL UNIQUE,
+                        steam_id                     INTEGER,
+                        dm_enabled                   INTEGER DEFAULT 1,
+                        auto_remove_minutes          INTEGER DEFAULT 0,
+                        join_announcement            INTEGER DEFAULT 0,
+                        vc_disconnect_on_leave       INTEGER DEFAULT 1,
+                        announcement_color           INTEGER DEFAULT 3447003,
+                        show_stats_in_announcement   INTEGER DEFAULT 0,
+                        notify_quota_threshold       INTEGER DEFAULT NULL,
+                        alert_desc                   TEXT    DEFAULT NULL,
+                        alert_footer_text            TEXT    DEFAULT NULL,
+                        alert_footer_icon            TEXT    DEFAULT NULL,
+                        alert_footer_thumbnail       TEXT    DEFAULT NULL,
+                        leave_alert                  INTEGER DEFAULT 0,
+                        leave_alert_desc             TEXT    DEFAULT NULL,
+                        leave_alert_footer_text      TEXT    DEFAULT NULL,
+                        leave_alert_footer_icon      TEXT    DEFAULT NULL,
+                        leave_alert_footer_thumbnail TEXT    DEFAULT NULL,
+                        elo                          INTEGER DEFAULT 30
                     )"
                 )
                 .execute(&self.pool)
@@ -261,9 +261,9 @@ impl DatabaseMigrations {
         Ok(())
     }
     async fn create_elo_table(&self) ->    Result<()> {
-        if !self.check_table("elo").await? {
+        if !self.check_table("elos").await? {
             sqlx::query(
-                "CREATE TABLE elo (
+                "CREATE TABLE elos (
                     id       INTEGER PRIMARY KEY,
                     guild_id INTEGER NOT NULL,
                     user_id  INTEGER NOT NULL,
@@ -287,7 +287,7 @@ impl DatabaseMigrations {
         let required_columns = vec![
             "id",
             "user_id",
-            "discord_tag",
+            "tag",
             "steam_id",
             "dm_enabled",
             "auto_remove_minutes",

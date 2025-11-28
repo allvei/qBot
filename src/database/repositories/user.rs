@@ -22,7 +22,7 @@ impl UserRepository {
 
     pub async fn get(&self, user_id: UI) -> Result<Player> {
         match sqlx::query(
-            "SELECT id, user_id, discord_tag, steam_id, elo FROM users WHERE user_id = ?"
+            "SELECT id, user_id, tag, steam_id, elo FROM users WHERE user_id = ?"
         ).bind(user_id.get() as i64).fetch_one(&self.pool).await {
             Ok(result) => Ok(Self::get_player(result)),
             Err(e) => Err(e.into()),
@@ -31,7 +31,7 @@ impl UserRepository {
 
     pub async fn get_with_tag(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
         let result = sqlx::query(
-            "SELECT id, user_id, discord_tag, steam_id, elo FROM users WHERE user_id = ?"
+            "SELECT id, user_id, tag, steam_id, elo FROM users WHERE user_id = ?"
         )
         .bind(user_id.get() as i64)
         .fetch_one(&self.pool)
@@ -60,7 +60,7 @@ impl UserRepository {
             "INSERT INTO users (user_id, steam_id, elo)
              VALUES (?, ?, ?)
              ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id
-             RETURNING id, user_id, discord_tag, steam_id, elo"
+             RETURNING id, user_id, tag, steam_id, elo"
         )
         .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
@@ -73,22 +73,22 @@ impl UserRepository {
 
     pub async fn create_or_update(&self, user_id: UI, steam_id: Option<u64>, ctx: &Ctx) -> Result<Player> {
         // Fetch discord tag from API first
-        let discord_tag = if let Ok(user) = ctx.http.get_user(user_id).await {
+        let tag = if let Ok(user) = ctx.http.get_user(user_id).await {
             Some(user.tag())
         } else {
             None
         };
 
         let result = sqlx::query(
-            "INSERT INTO users (user_id, steam_id, elo, discord_tag)
+            "INSERT INTO users (user_id, steam_id, elo, tag)
              VALUES (?, ?, ?, ?)
-             ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id, discord_tag=excluded.discord_tag
-             RETURNING id, user_id, discord_tag, steam_id, elo"
+             ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id, tag=excluded.tag
+             RETURNING id, user_id, tag, steam_id, elo"
         )
         .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
         .bind(30) // default ELO only for new users
-        .bind(&discord_tag)
+        .bind(&tag)
         .fetch_one(&self.pool)
         .await?;
 
@@ -97,22 +97,22 @@ impl UserRepository {
 
     pub async fn create_or_update_with_tag(&self, user_id: UI, steam_id: Option<u64>, ctx: &Ctx) -> Result<Player> {
         // Fetch discord tag from API first
-        let discord_tag = if let Ok(user) = ctx.http.get_user(user_id).await {
+        let tag = if let Ok(user) = ctx.http.get_user(user_id).await {
             Some(user.tag())
         } else {
             None
         };
 
         let result = sqlx::query(
-            "INSERT INTO users (user_id, steam_id, elo, discord_tag)
+            "INSERT INTO users (user_id, steam_id, elo, tag)
              VALUES (?, ?, ?, ?)
-             ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id, discord_tag=excluded.discord_tag
-             RETURNING id, user_id, discord_tag, steam_id, elo"
+             ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id, tag=excluded.tag
+             RETURNING id, user_id, tag, steam_id, elo"
         )
         .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
         .bind(30) // default ELO only for new users
-        .bind(&discord_tag)
+        .bind(&tag)
         .fetch_one(&self.pool)
         .await?;
 
@@ -121,7 +121,7 @@ impl UserRepository {
 
     fn get_player(result: sqlx::sqlite::SqliteRow) -> Player {
         let mut player = Player::default(result.get::<u64, _>           ("user_id") .into(),
-                                         result.get::<String, _>        ("discord_tag"),
+                                         result.get::<String, _>        ("tag"),
                                          result.get::<Option<i64>, _>   ("steam_id")   .map(|id| id as u64));
         
         // Set ELO if present in database, otherwise leave at default (will be updated later)
@@ -152,7 +152,7 @@ impl UserRepository {
     pub async fn get_player_with_guild_rank(&self, user_id: UI, ctx: &Ctx, guild_id: u64, db: &Database) -> Result<Player> {
         info!("DEBUG: get_player_with_guild_rank called for user {} in guild {}", user_id, guild_id);
         
-        let result = sqlx::query("SELECT user_id, steam_id, elo, discord_tag FROM users WHERE user_id = ?")
+        let result = sqlx::query("SELECT user_id, steam_id, elo, tag FROM users WHERE user_id = ?")
             .bind(user_id.get() as i64)
             .fetch_one(&self.pool)
             .await?;
