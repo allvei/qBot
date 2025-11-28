@@ -19,9 +19,7 @@ impl ConfigRepository {
     }
 
     pub async fn get_config_map(&self, guild_id: u64) -> Result<HashMap<String, String>> {
-        let rows = sqlx::query_as::<_, ConfigFormat>(
-            "SELECT key, value, description FROM config WHERE guild = ?"
-        )
+        let rows = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config WHERE guild = ?")
         .bind(guild_id as i64)
         .fetch_all(&self.pool)
         .await?;
@@ -37,9 +35,7 @@ impl ConfigRepository {
     }
 
     pub async fn set_config(&self, key: &str, value: &str, guild_id: u64) -> Result<()> {
-        let query_result = sqlx::query(
-            "INSERT OR REPLACE INTO config (guild, key, value) VALUES (?, ?, ?)"
-        )
+        let query_result = sqlx::query("INSERT OR REPLACE INTO config (guild, key, value) VALUES (?, ?, ?)")
         .bind(guild_id as i64)
         .bind(key)
         .bind(value)
@@ -75,9 +71,7 @@ impl ConfigRepository {
     }
 
     pub async fn get_all_for_guild(&self, guild_id: u64) -> Result<Vec<ConfigFormat>> {
-        let rows = sqlx::query_as::<_, ConfigFormat>(
-            "SELECT key, value, description FROM config WHERE guild = ?"
-        )
+        let rows = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config WHERE guild = ?")
         .bind(guild_id as i64)
         .fetch_all(&self.pool)
         .await?;
@@ -95,9 +89,7 @@ impl Repository<ConfigFormat, (u64, String)> for ConfigRepository {
     }
 
     async fn get_by_id(&self, (guild_id, key): (u64, String)) -> Result<ConfigFormat> {
-        let result = sqlx::query_as::<_, ConfigFormat>(
-            "SELECT key, value, description FROM config WHERE guild = ? AND key = ?"
-        )
+        let result = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config WHERE guild = ? AND key = ?")
         .bind(guild_id as i64)
         .bind(&key)
         .fetch_one(&self.pool)

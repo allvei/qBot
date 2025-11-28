@@ -92,10 +92,10 @@ impl Database {
     ) -> Result<Group> {
         let config = repositories::group::GroupConfig {
             dashboard_channel_id: dashboard,
-            chat_channel_id: chat,
-            queue_vc_id: queue,
-            red_vc_id: red,
-            blu_vc_id: blu,
+            chat_channel_id:      chat,
+            queue_vc_id:          queue,
+            red_vc_id:            red,
+            blu_vc_id:            blu,
             quota,
         };
         self.groups.create_group(guild_id, dashboard_msg, config).await
@@ -115,10 +115,10 @@ impl Database {
     ) -> Result<Group> {
         let config = repositories::group::GroupConfig {
             dashboard_channel_id: dashboard,
-            chat_channel_id: chat,
-            queue_vc_id: queue_id,
-            red_vc_id: red,
-            blu_vc_id: blu,
+            chat_channel_id:      chat,
+            queue_vc_id:          queue_id,
+            red_vc_id:            red,
+            blu_vc_id:            blu,
             quota,
         };
         self.groups.update_group(guild_id, config).await

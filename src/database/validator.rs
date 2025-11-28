@@ -63,10 +63,8 @@ impl DatabaseValidator {
     /// Check for orphaned records
     async fn check_orphaned_records(&self, report: &mut ValidationReport) -> Result<()> {
         // Check for config entries without corresponding groups
-        let orphaned_configs: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM config c
-             WHERE NOT EXISTS (SELECT 1 FROM groups g WHERE g.guild_id = c.guild)"
-        )
+        let orphaned_configs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM config c
+                                                        WHERE NOT EXISTS (SELECT 1 FROM groups g WHERE g.guild_id = c.guild)")
         .fetch_one(&self.pool)
         .await?;
 
@@ -80,10 +78,8 @@ impl DatabaseValidator {
 
     /// Check for invalid Discord IDs (placeholder values)
     async fn check_invalid_user_ids(&self, report: &mut ValidationReport) -> Result<()> {
-        let placeholder_groups: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM groups
-             WHERE dashboard = 1 OR chat = 1 OR queue = 1 OR red = 1 OR blu = 1"
-        )
+        let placeholder_groups: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM groups
+                                                          WHERE dashboard = 1 OR chat = 1 OR queue = 1 OR red = 1 OR blu = 1")
         .fetch_one(&self.pool)
         .await?;
 
@@ -98,9 +94,7 @@ impl DatabaseValidator {
     /// Check for duplicate records
     async fn check_duplicate_records(&self, report: &mut ValidationReport) -> Result<()> {
         // Check for duplicate users
-        let duplicate_users: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) - COUNT(DISTINCT user_id) FROM users"
-        )
+        let duplicate_users: i64 = sqlx::query_scalar("SELECT COUNT(*) - COUNT(DISTINCT user_id) FROM users")
         .fetch_one(&self.pool)
         .await?;
 
@@ -169,11 +163,7 @@ impl DatabaseValidator {
 
     /// Remove duplicate users
     async fn remove_duplicate_users(&self) -> Result<i64> {
-        let result = sqlx::query(
-            "DELETE FROM users WHERE id NOT IN (
-                SELECT MIN(id) FROM users GROUP BY user_id
-            )"
-        )
+        let result = sqlx::query("DELETE FROM users WHERE id NOT IN (SELECT MIN(id) FROM users GROUP BY user_id )")
         .execute(&self.pool)
         .await?;
 
@@ -182,10 +172,7 @@ impl DatabaseValidator {
 
     /// Count groups with placeholder IDs
     async fn count_placeholder_ids(&self) -> Result<i64> {
-        let count = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM groups
-             WHERE dashboard = 1 OR chat = 1 OR queue = 1 OR red = 1 OR blu = 1"
-        )
+        let count = sqlx::query_scalar("SELECT COUNT(*) FROM groups WHERE dashboard = 1 OR chat = 1 OR queue = 1 OR red = 1 OR blu = 1")
         .fetch_one(&self.pool)
         .await?;
 
@@ -259,7 +246,7 @@ pub struct RepairReport {
 impl RepairReport {
     fn new() -> Self {
         Self {
-            actions: Vec::new(),
+            actions:        Vec::new(),
             manual_actions: Vec::new(),
         }
     }

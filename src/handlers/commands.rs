@@ -42,9 +42,7 @@ async fn create_role_with_error(
 
 /// `/roleadd` - Create runner and admin roles for the bot
 pub async fn cmd_role_add(cc: &CC<'_>) -> Result<()> {
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
@@ -105,9 +103,7 @@ pub async fn cmd_role_add(cc: &CC<'_>) -> Result<()> {
 
 /// `/rolelink` - Link existing runner and admin roles (supports multiple roles per type)
 pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role: Option<String>) -> Result<()> {
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
@@ -177,9 +173,7 @@ pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role:
 
 /// `/roleremove` - Remove runner and admin role configuration
 pub async fn cmd_role_remove(cc: &CC<'_>, role_type: String) -> Result<()> {
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
@@ -229,9 +223,7 @@ pub async fn cmd_role_remove(cc: &CC<'_>, role_type: String) -> Result<()> {
 
 /// `/rankroleadd` - Add Discord role(s) to a rank (supports multiple roles at once)
 pub async fn cmd_rank_add(cc: &CC<'_>, rank_name: String, role_mentions: String) -> Result<()> {
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
@@ -330,9 +322,7 @@ pub async fn cmd_rank_add(cc: &CC<'_>, rank_name: String, role_mentions: String)
 
 /// `/rankroleremove` - Remove Discord role(s) from a rank (supports multiple roles at once)
 pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: String) -> Result<()> {
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
@@ -425,9 +415,7 @@ pub async fn cmd_rank_remove(cc: &CC<'_>, rank_name: String, role_mentions: Stri
 
 /// `/rankrolelist` - List all role mappings for a rank
 pub async fn cmd_rank_list(cc: &CC<'_>, rank_name: Option<&str>) -> Result<()> {
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild_roles = cc.ctx.http.get_guild_roles(guild_id).await?;
@@ -569,9 +557,7 @@ fn log_rank_remove(rank_name: &str, role_name: &str) {
 
 /// `/setupadd` - Creates both roles and a new group with channels
 pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
@@ -785,9 +771,7 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 
 /// `/setuplink` - Links existing roles and channels
 pub async fn cmd_setup_link(cc: &CC<'_>) -> Result<()> {
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let embed = CE::new()
         .title("Link Existing Configuration")
@@ -813,12 +797,7 @@ pub async fn cmd_setup_link(cc: &CC<'_>) -> Result<()> {
 ///
 /// * `group_id` - The ID of the group to remove (0 = auto-detect from current channel)
 pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) -> Result<()> {
-    info!("Processing /groupremove for group_id: {}", group_id);
-
-    // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+    if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     let channel_id = cc.intax.channel_id;
@@ -864,9 +843,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
                         Ok(channel) => {
                             if let Some(guild_channel) = channel.guild() {
                                 guild_channel.parent_id
-                            } else {
-                                None
-                            }
+                            } else { None }
                         },
                         Err(e) => {
                             warn!("Failed to get dashboard channel info: {e}");
@@ -876,7 +853,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
 
                     // Delete Discord channels
                     let mut deleted_channels = Vec::new();
-                    let mut failed_channels = Vec::new();
+                    let mut failed_channels  = Vec::new();
 
                     // Delete dashboard channel
                     if let Err(e) = channels.dashboard.delete(&cc.ctx.http).await {
@@ -1005,9 +982,7 @@ pub async fn cmd_group_remove(cc: &CC<'_>, server: &mut Server, group_id: u8) ->
 
             let error_embed = CE::new()
                 .title("Group Not Found")
-                .description(format!(
-                    "{error_message}\n\n{groups_list}",
-                ))
+                .description(format!("{error_message}\n\n{groups_list}",))
                 .color(0xff0000);
 
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));

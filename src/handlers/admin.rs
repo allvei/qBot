@@ -22,9 +22,7 @@ use crate::models::{CommandContext as CC, Role, Server, SETUP_STATE};
 /// * `key`   - The key to modify.
 /// * `value` - The value to set for the key.
 pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Result<()> {
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     if let Some(val,) = value {
         cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found").get()).await?;
@@ -70,9 +68,7 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
 /// * `role` - The Discord role mention/ID to assign
 pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> Result<()> {
     // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found").get();
 
@@ -162,9 +158,7 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
 
 /// `/grouplink` - Interactive flow to link existing channels to a group
 pub async fn cmd_group_link(cc: &CC<'_>, _server: &mut Server) -> Result<()> {
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     let user_id = cc.intax.user.id;
@@ -216,9 +210,7 @@ async fn start_grouplink_flow(cc: &CC<'_>) -> Result<()> {
 
 /// `/groupadd` - Creates a new category with all necessary channels
 pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
@@ -687,9 +679,7 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
 ///
 /// Sets up the bot for a guild using an interactive ephemeral message flow
 pub async fn cmd_setup(cc: &CC<'_>) -> Result<()> {
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id: GI = cc.intax.guild_id.expect("Guild ID not found");
     let user_id:  UI  = cc.intax.user.id;
@@ -1573,12 +1563,7 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
 
 /// `/check_ranks` - Check and offer to create missing rank roles
 pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
-    info!("Processing check_ranks command");
-
-    // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+    if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
 
@@ -1765,12 +1750,7 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
 ///
 /// * `quota` - The new quota value (number of players required to start a game)
 pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
-    info!("Processing /quotaset quota: {}", quota);
-
-    // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+    if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     // Validate quota range
     if !(2..=100).contains(&quota) {
@@ -1867,12 +1847,7 @@ pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
 ///
 /// * `connect_info` - The server connect command (e.g., "connect 1.1.1.1:1234; password 1234")
 pub async fn cmd_add_connect(cc: &CC<'_>, connect_info: String) -> Result<()> {
-    info!("Processing /connectadd");
-
-    // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+    if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
 
@@ -2279,9 +2254,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
 /// * `elo` - The ELO value to set for this rank
 pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Result<()> {
     // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
@@ -2354,9 +2327,7 @@ pub async fn cmd_set_player_elo(cc: &CC<'_>, user: serenity::all::User, elo: i64
     info!("DEBUG: cmd_set_player_elo called for user {} with elo {}", user.tag(), elo);
     
     // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     let user_id = user.id;
@@ -2468,9 +2439,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
 /// `/enableactiveelo` - Enable automatic ELO adjustments from match results
 pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
     // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     
@@ -2490,9 +2459,7 @@ pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
 /// `/disableactiveelo` - Disable automatic ELO adjustments from match results
 pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
     // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     
@@ -2512,9 +2479,7 @@ pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
 /// `/activeelostatus` - Check if automatic ELO adjustments are enabled
 pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
     // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     
@@ -2546,9 +2511,7 @@ pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
 /// `/setplayersteam` - Set Steam ID for a specific player
 pub async fn cmd_set_player_steam(cc: &CC<'_>, user: serenity::all::User, steam_id: u64) -> Result<()> {
     // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let user_id = user.id;
     let steam_id_value = if steam_id == 0 { None } else { Some(steam_id) };
@@ -2581,9 +2544,7 @@ pub async fn cmd_set_player_steam(cc: &CC<'_>, user: serenity::all::User, steam_
 /// * `user_id` - The user ID to buffer.
 /// * `server` - The server (already has manager lock held by caller)
 pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result<()> {
-    if !check_role(cc, &Role::Runner).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
@@ -2668,11 +2629,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
 /// * `user_id` - The user ID to fatkid (move to end of queue).
 /// * `server` - The server (already has manager lock held by caller)
 pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result<()> {
-    info!("Processing /fatkid command for user {}", user_id);
-
-    if !check_role(cc, &Role::Runner).await? {
-        return Ok(());
-    }
+    if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
@@ -2754,12 +2711,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
 
 /// `/clear` - Clear all players from the queue
 pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
-    info!("Processing /clear command");
-
-    // Check runner permissions
-    if !check_role(cc, &Role::Runner).await? {
-        return Ok(());
-    }
+    if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
 

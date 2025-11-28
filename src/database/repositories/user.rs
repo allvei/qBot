@@ -21,18 +21,14 @@ impl UserRepository {
     }
 
     pub async fn get(&self, user_id: UI) -> Result<Player> {
-        match sqlx::query(
-            "SELECT id, user_id, tag, steam_id, elo FROM users WHERE user_id = ?"
-        ).bind(user_id.get() as i64).fetch_one(&self.pool).await {
+        match sqlx::query("SELECT id, user_id, tag, steam_id, elo FROM users WHERE user_id = ?").bind(user_id.get() as i64).fetch_one(&self.pool).await {
             Ok(result) => Ok(Self::get_player(result)),
             Err(e) => Err(e.into()),
         }
     }
 
     pub async fn get_with_tag(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
-        let result = sqlx::query(
-            "SELECT id, user_id, tag, steam_id, elo FROM users WHERE user_id = ?"
-        )
+        let result = sqlx::query("SELECT id, user_id, tag, steam_id, elo FROM users WHERE user_id = ?")
         .bind(user_id.get() as i64)
         .fetch_one(&self.pool)
         .await?;
@@ -96,7 +92,6 @@ impl UserRepository {
     }
 
     pub async fn upsert_tag(&self, user_id: UI, steam_id: Option<u64>, ctx: &Ctx) -> Result<Player> {
-        // Fetch discord tag from API first
         let tag = if let Ok(user) = ctx.http.get_user(user_id).await {
             Some(user.tag())
         } else {
@@ -133,16 +128,16 @@ impl UserRepository {
 
     fn get_rank(rank: Option<String>) -> Rank {
         match rank {
-            Some(val) if val == "Beginner"   =>  Rank::Beginner,
-            Some(val) if val == "Newcomer"   =>  Rank::Newcomer,
-            Some(val) if val == "Novice"     =>  Rank::Novice,
-            Some(val) if val == "Apprentice" =>  Rank::Apprentice,
-            Some(val) if val == "Journeyman" =>  Rank::Journeyman,
-            Some(val) if val == "Expert"     =>  Rank::Expert,
-            Some(val) if val == "Master"     =>  Rank::Master,
+            Some(val) if val == "Beginner"    => Rank::Beginner,
+            Some(val) if val == "Newcomer"    => Rank::Newcomer,
+            Some(val) if val == "Novice"      => Rank::Novice,
+            Some(val) if val == "Apprentice"  => Rank::Apprentice,
+            Some(val) if val == "Journeyman"  => Rank::Journeyman,
+            Some(val) if val == "Expert"      => Rank::Expert,
+            Some(val) if val == "Master"      => Rank::Master,
             Some(val) if val == "MasterElite" => Rank::MasterElite,
             Some(val) if val == "Grandmaster" => Rank::Grandmaster,
-            _                              => DEFAULT_RANK,
+            _                                 => DEFAULT_RANK,
         }
     }
 
@@ -280,22 +275,22 @@ impl UserRepository {
                 let auto_remove_minutes: i64 = row.try_get("auto_remove_minutes").unwrap_or(30);
                 let minutes = if auto_remove_minutes == 0 { 30 } else { auto_remove_minutes };
                 Ok(UserSettings {
-                expiry_duration: Duration::from_secs((minutes as u64) * 60),
-                join_announcement: row.try_get::<i64, _>("join_announcement").unwrap_or(0) != 0,
-                vc_kick: row.try_get::<i64, _>("vc_disconnect_on_leave").unwrap_or(1) != 0,
-                announcement_color: row.try_get("announcement_color").unwrap_or(3447003),
-                dm_alerts: row.try_get::<i64, _>("dm_enabled").unwrap_or(1) != 0,
-                notify_quota_threshold: row.try_get::<i64, _>("notify_quota_threshold").ok().map(|v| v as u8),
-                alert_desc: row.try_get("alert_desc").ok(),
-                alert_footer_text: row.try_get("alert_footer_text").ok(),
-                alert_footer_icon: row.try_get("alert_footer_icon").ok(),
-                alert_footer_thumbnail: row.try_get("alert_footer_thumbnail").ok(),
-                leave_alert: row.try_get::<i64, _>("leave_alert").unwrap_or(0) != 0,
-                leave_alert_desc: row.try_get("leave_alert_desc").ok(),
-                leave_alert_footer_text: row.try_get("leave_alert_footer_text").ok(),
-                leave_alert_footer_icon: row.try_get("leave_alert_footer_icon").ok(),
-                leave_alert_footer_thumbnail: row.try_get("leave_alert_footer_thumbnail").ok(),
-            })
+                    expiry_duration:              Duration::from_secs((minutes as u64) * 60),
+                    join_announcement:            row.try_get::<i64, _>("join_announcement").unwrap_or(0) != 0,
+                    vc_kick:                      row.try_get::<i64, _>("vc_disconnect_on_leave").unwrap_or(1) != 0,
+                    announcement_color:           row.try_get("announcement_color").unwrap_or(3447003),
+                    dm_alerts:                    row.try_get::<i64, _>("dm_enabled").unwrap_or(1) != 0,
+                    notify_quota_threshold:       row.try_get::<i64, _>("notify_quota_threshold").ok().map(|v| v as u8),
+                    alert_desc:                   row.try_get("alert_desc").ok(),
+                    alert_footer_text:            row.try_get("alert_footer_text").ok(),
+                    alert_footer_icon:            row.try_get("alert_footer_icon").ok(),
+                    alert_footer_thumbnail:       row.try_get("alert_footer_thumbnail").ok(),
+                    leave_alert:                  row.try_get::<i64, _>("leave_alert").unwrap_or(0) != 0,
+                    leave_alert_desc:             row.try_get("leave_alert_desc").ok(),
+                    leave_alert_footer_text:      row.try_get("leave_alert_footer_text").ok(),
+                    leave_alert_footer_icon:      row.try_get("leave_alert_footer_icon").ok(),
+                    leave_alert_footer_thumbnail: row.try_get("leave_alert_footer_thumbnail").ok(),
+                })
             }
             None => {
                 // User doesn't exist, return defaults
@@ -358,8 +353,7 @@ impl UserRepository {
         let _ = self.check_user(user_id, None).await?;
 
         // Validate field name to prevent SQL injection
-        let allowed_fields = ["auto_remove_minutes", "join_announcement", "vc_disconnect_on_leave",
-                               "announcement_color", "dm_enabled"];
+        let allowed_fields = ["auto_remove_minutes", "join_announcement", "vc_disconnect_on_leave", "announcement_color", "dm_enabled"];
         if !allowed_fields.contains(&field) {
             return Err(anyhow::anyhow!("Invalid setting field: {}", field));
         }
@@ -398,21 +392,21 @@ pub struct UserSettings {
 impl Default for UserSettings {
     fn default() -> Self {
         Self {
-            expiry_duration:               Duration::from_secs(30 * 60), // Default 30 minutes
-            join_announcement:              false,
-            vc_kick:                        true,
-            announcement_color:             3447003, // Discord blurple
-            dm_alerts:                      true,
-            notify_quota_threshold:         None,
-            alert_desc:       None,
-            alert_footer_text:       None,
-            alert_footer_icon:       None,
-            alert_footer_thumbnail:         None,
-            leave_alert:             false,
-            leave_alert_desc: None,
-            leave_alert_footer_text: None,
-            leave_alert_footer_icon: None,
-            leave_alert_footer_thumbnail:   None,
+            expiry_duration:              Duration::from_secs(30 * 60), // Default 30 minutes
+            join_announcement:            false,
+            vc_kick:                      true,
+            announcement_color:           3447003, // Discord blurple
+            dm_alerts:                    true,
+            notify_quota_threshold:       None,
+            alert_desc:                   None,
+            alert_footer_text:            None,
+            alert_footer_icon:            None,
+            alert_footer_thumbnail:       None,
+            leave_alert:                  false,
+            leave_alert_desc:             None,
+            leave_alert_footer_text:      None,
+            leave_alert_footer_icon:      None,
+            leave_alert_footer_thumbnail: None,
         }
     }
 }

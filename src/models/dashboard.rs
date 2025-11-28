@@ -1275,7 +1275,6 @@ impl DashboardUpdateQueue {
 
                     // Process the batched updates
                     if !pending_updates.is_empty() {
-                        // info!("Processing batch of {} dashboard updates", pending_updates.len());
                         Self::process_batch(&pending_updates, &ctx, manager.clone(), database.clone()).await;
                         pending_updates.clear();
                     }

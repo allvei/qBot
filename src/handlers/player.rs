@@ -668,9 +668,7 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
 
 /// `/shuffle`
 pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
-    if !check_role(cc, &Role::Runner).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     // Get active group with game
     let group = guild.get_group(cc.intax.channel_id)?;
@@ -732,9 +730,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 
 /// `/accept`
 pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
-    if !check_role(cc, &Role::Runner).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     // Get the group for the current channel
     let channel_id = cc.intax.channel_id;
@@ -771,9 +767,7 @@ pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 }
 
 pub async fn end(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
-    if !check_role(cc, &Role::Runner).await? {
-        return Ok(());
-    }
+        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
 
     // Get the group for the current channel
     let channel_id = cc.intax.channel_id;
