@@ -1,14 +1,17 @@
 use std::sync::Arc;
 
+use anyhow::{Error, anyhow};
 use serde::{Deserialize, Serialize};
 use serenity::all::{
     CommandInteraction, ComponentInteraction, Context,
     CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM,
     RoleId, UserId,
 };
-use sqlx::prelude::FromRow;
+use sqlx::Decode;
+use sqlx::prelude::{FromRow, Type};
 use tokio::sync::Mutex;
 
+use crate::DEFAULT_RANK;
 use crate::database::Database;
 use crate::models::{
     Manager as GameManager, Role,
@@ -96,6 +99,9 @@ impl ComponentContext<'_> {
     }
 }
 
+/// Player ELO rating (0-100 scale)
+pub type Elo = u16;
+
 // ============================================================================
 // Player
 // ============================================================================
@@ -104,20 +110,33 @@ impl ComponentContext<'_> {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[allow(clippy::missing_docs_in_private_items)]
 pub struct Player {
-    pub discord_id:  UserId,
-    pub discord_tag: Option<String>,
-    pub steam_id:    Option<u64>,
-    pub rank:        Option<Rank>,
-    pub role:        Option<Role>,
+    pub user_id:  UserId,
+    pub tag:      String,
+    pub steam_id: Option<u64>,
+    pub rank:     Rank,
+    pub elo:      Elo,
+    pub role:     Option<Role>,
 }
 
 impl Player {
-    pub fn add(discord_id: UserId, discord_tag: Option<String>, steam_id: Option<u64>) -> Player {
+    pub fn default(user_id: UserId, tag: String, steam_id: Option<u64>) -> Player {
         Player {
-            discord_id,
-            discord_tag,
+            user_id,
+            tag,
             steam_id,
-            rank: None,
+            rank: DEFAULT_RANK,
+            elo:  DEFAULT_RANK.default_rank_elo(),
+            role: None,
+        }
+    }
+
+    pub fn add(user_id: UserId, tag: String, steam_id: Option<u64>, rank: Rank) -> Player {
+        Player {
+            user_id,
+            tag,
+            steam_id,
+            rank,
+            elo:  rank.default_rank_elo(),
             role: None,
         }
     }
@@ -126,8 +145,22 @@ impl Player {
         self.steam_id = steam_id;
     }
 
-    pub fn set_rank(&mut self, rank: Option<Rank>) {
+    pub fn set_rank(&mut self, rank: Rank) {
         self.rank = rank;
+    }
+
+    pub fn set_elo(&mut self, elo: Elo) {
+        self.elo = elo;
+    }
+
+    /// Update rank based on ELO using configurable values
+    pub async fn update_rank_from_elo(&mut self, db: &Database, guild_id: u64) {
+            self.rank = Rank::from_elo(self.elo, db, guild_id).await;
+    }
+
+    /// Update rank based on ELO using default values (fallback)
+    pub fn update_rank_from_elo_default(&mut self) {
+        self.rank = Rank::from_elo_default(self.elo);
     }
 
     pub fn set_role(&mut self, role: Option<Role>) {
@@ -135,7 +168,7 @@ impl Player {
     }
 
     pub async fn get_name(&self, ctx: &Context) -> String {
-        let name = &ctx.http.get_user(self.discord_id).await.unwrap();
+        let name = &ctx.http.get_user(self.user_id).await.unwrap();
         name.display_name().to_string()
     }
 }
@@ -216,6 +249,89 @@ impl Rank {
         }
     }
 
+    /// Get default ELO for this rank (renamed from elo for clarity)
+    pub fn default_rank_elo(&self) -> Elo {
+        match self {
+            Rank::Beginner    => 10,
+            Rank::Newcomer    => 30,
+            Rank::Novice      => 40,
+            Rank::Apprentice  => 50,
+            Rank::Journeyman  => 65,
+            Rank::Expert      => 75,
+            Rank::Master      => 85,
+            Rank::MasterElite => 90,
+            Rank::Grandmaster => 95,
+        }
+    }
+
+    /// Get the next higher rank (for ELO comparison)
+    pub fn next_rank(&self) -> Option<Rank> {
+        match self {
+            Rank::Beginner    => Some(Rank::Newcomer),
+            Rank::Newcomer    => Some(Rank::Novice),
+            Rank::Novice      => Some(Rank::Apprentice),
+            Rank::Apprentice  => Some(Rank::Journeyman),
+            Rank::Journeyman  => Some(Rank::Expert),
+            Rank::Expert      => Some(Rank::Master),
+            Rank::Master      => Some(Rank::MasterElite),
+            Rank::MasterElite => Some(Rank::Grandmaster),
+            Rank::Grandmaster => None,
+        }
+    }
+
+    /// Determine rank from ELO value using simple comparison with config
+    pub async fn from_elo(elo: Elo, db: &Database, guild_id: u64) -> Rank {
+        // Check each rank in order - if ELO >= rank_elo and < next_rank_elo, that's the rank
+        for rank in [
+            Rank::Beginner,
+            Rank::Newcomer,
+            Rank::Novice,
+            Rank::Apprentice,
+            Rank::Journeyman,
+            Rank::Expert,
+            Rank::Master,
+            Rank::MasterElite,
+        ] {
+            let current_elo = rank.elo_from_config(db, guild_id).await as Elo;
+            let next_elo = match rank.next_rank() {
+                Some(next_rank) => next_rank.elo_from_config(db, guild_id).await as Elo,
+                None => 101, // Grandmaster max is 100, use 101 as upper bound
+            };
+            
+            if elo >= current_elo && elo < next_elo {
+                return rank;
+            }
+        }
+        
+        // If ELO is >= Grandmaster (95) or above max (100), return Grandmaster
+        Rank::Grandmaster
+    }
+
+    /// Determine rank from ELO value using default values (fallback)
+    pub fn from_elo_default(elo: Elo) -> Rank {
+        // Check each rank in order - if ELO >= rank_elo and < next_rank_elo, that's the rank
+        for rank in [
+            Rank::Beginner,
+            Rank::Newcomer,
+            Rank::Novice,
+            Rank::Apprentice,
+            Rank::Journeyman,
+            Rank::Expert,
+            Rank::Master,
+            Rank::MasterElite,
+        ] {
+            let current_elo = rank.default_rank_elo();
+            let next_elo = rank.next_rank().map(|r| r.default_rank_elo()).unwrap_or(101); // Grandmaster max is 100, use 101 as upper bound
+            
+            if elo >= current_elo && elo < next_elo {
+                return rank;
+            }
+        }
+        
+        // If ELO is >= Grandmaster (95) or above max (100), return Grandmaster
+        Rank::Grandmaster
+    }
+
     /// Get ELO value from config, falling back to default if not set
     pub async fn elo_from_config(&self, db: &Database, guild_id: u64) -> u32 {
         let config_key = format!("rank_{}_elo", self.name().to_lowercase().replace(" ", "_"));
@@ -232,7 +348,7 @@ impl Rank {
 
     /// Convert a Discord RoleId to a Rank enum using guild config
     /// Supports multiple Discord roles mapping to the same rank (EU/NA/Retired variants)
-    pub async fn from_role_id(role_id: RoleId, db: &Database, guild_id: u64) -> Option<Rank> {
+    pub async fn from_role_id(role_id: RoleId, db: &Database, guild_id: u64) -> Result<Rank, Error> {
         // Check each rank's role IDs
         for rank in [
             Rank::Beginner,
@@ -246,10 +362,11 @@ impl Rank {
             Rank::Grandmaster,
         ] {
             if rank.role_ids(db, guild_id).await.contains(&role_id) {
-                return Some(rank);
+                return Ok(rank);
             }
         }
-        None
+
+        Err(anyhow!("Role ID not found in any rank"))
     }
 
     /// Get all rank role IDs from config (including all regional and retired variants)

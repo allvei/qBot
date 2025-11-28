@@ -7,13 +7,20 @@ use serde::{Deserialize, Serialize};
 use serenity::all::VoiceState;
 use sqlx::FromRow;
 
+use crate::Elo;
+
 use super::types::Rank;
 
 pub const DEFAULT_QUOTA:   u8   = 8;
+pub const DEFAULT_QUEUE_CHANNEL: u64 = 0;
 pub const DEFAULT_RANK:    Rank = Rank::Newcomer;
 pub const DEFAULT_TIMEOUT: u16  = 30;
 pub const EXPIRY_MAX: Duration = Duration::from_secs(4 * 60 * 60);  // 4 hours
 pub const EXPIRY_MIN: Duration = Duration::from_secs(30 * 60);      // 30 minutes
+pub const DEFAULT_ELO: Elo = 30;
+pub const ELO_MIN: Elo = 0;
+pub const ELO_MAX: Elo = 1000;
+pub const ACTIVE_ELO_ENABLED_BY_DEFAULT: bool = false;
 
 pub const CLEANUP_INTERVAL_SECS:   u64 = 60; // Check every minute
 pub const INACTIVITY_TIMEOUT_SECS: u64 = 600; // 10 minutes
