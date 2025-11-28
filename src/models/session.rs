@@ -4,7 +4,7 @@ use std::time::SystemTime;
 use anyhow::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serenity::all::{
-    ChannelId as CI, CreateEmbed as CE, CreateEmbedFooter as CEF, UserId,
+    ChannelId as CI, CreateEmbed as CE, CreateEmbedFooter as CEF, UserId as UI,
 };
 use sqlx::FromRow;
 
@@ -20,33 +20,29 @@ pub struct Session {
 
 impl Session {
     /// Get a player by their Discord ID
-    pub fn get_player(&self, discord_id: UserId) -> Result<Player> {
-        match self.pool.iter().find(|p| p.player.discord_id == discord_id) {
+    pub fn get_player(&self, user_id: UI) -> Result<Player> {
+        match self.pool.iter().find(|p| p.player.user_id == user_id) {
             Some(player) => Ok(player.player.clone()),
             None => Err(anyhow::anyhow!("User not found")),
         }
     }
 
     /// Add a player to the session with their rank
-    pub fn add_player(&mut self, player: Player, rank: crate::models::Rank) {
-        use tracing::info;
-
-        let session_player = SessionPlayer::add(player, rank);
+    pub fn add_player(&mut self, player: Player) {
+        let session_player = SessionPlayer::add(player);
         self.pool.push(session_player);
     }
 
     /// Add a player to the session with their rank, marking them as already in queue VC
     /// Use this when re-adding players who were just moved to the queue channel
-    pub fn add_player_in_vc(&mut self, player: Player, rank: crate::models::Rank) {
-        use tracing::info;
-
-        let mut session_player = SessionPlayer::add(player, rank);
+    pub fn add_player_in_vc(&mut self, player: Player) {
+        let mut session_player = SessionPlayer::add(player);
         session_player.in_queue_vc = true;
         self.pool.push(session_player);
     }
 
-    pub fn remove_player(&mut self, discord_id: UserId) {
-        self.pool.retain(|p| p.player.discord_id != discord_id);
+    pub fn remove_player(&mut self, user_id: UI) {
+        self.pool.retain(|p| p.player.user_id != user_id);
     }
 
     /// Create a new session
@@ -164,8 +160,7 @@ pub struct SessionPlayer {
 }
 
 impl SessionPlayer {
-    pub fn add(mut player: Player, rank: crate::models::Rank) -> Self {
-        player.set_rank(Some(rank));
+    pub fn add(player: Player) -> Self {
         Self {
             player,
             team:            None,

@@ -15,13 +15,7 @@ use crate::models::{ComponentContext as CC, DashboardQueueKey, Group, SessionSta
 async fn format_team_field(team: &[crate::models::SessionPlayer], db: &crate::Database, guild_id: u64) -> String {
     let mut lines = Vec::new();
     for player in team {
-        let elo_str = if let Some(rank) = player.player.rank {
-            let elo = rank.elo_from_config(db, guild_id).await;
-            format!("[**{elo}**] ")
-        } else {
-            String::new()
-        };
-        lines.push(format!("{elo_str}<@{}>", player.player.discord_id));
+        lines.push(format!("[**{}**] <@{}>", player.player.elo, player.player.user_id));
     }
     lines.join("\n")
 }
@@ -43,8 +37,8 @@ fn get_sorted_teams(pool: &[crate::models::SessionPlayer], quota: usize) -> (Vec
 
     // Sort both teams by ELO descending
     let sort_by_elo = |a: &crate::models::SessionPlayer, b: &crate::models::SessionPlayer| {
-        let elo_a = a.player.rank.map(|r| r.elo()).unwrap_or(0);
-        let elo_b = b.player.rank.map(|r| r.elo()).unwrap_or(0);
+        let elo_a = a.player.elo;
+        let elo_b = b.player.elo;
         elo_b.cmp(&elo_a)
     };
 
@@ -234,9 +228,9 @@ impl Group {
                 Self::gen_button(("show_settings",  "Settings", BS::Secondary, true)),
             ]),
             CAR::Buttons(vec![
-                Self::gen_button(("start_match",   "Start",   BS::Primary,   is_hot)),
-                Self::gen_button(("end_match",     "End",     BS::Danger,    is_live)),
                 Self::gen_button(("shuffle_teams", "Shuffle", BS::Secondary, is_hot)),
+                Self::gen_button(("start_match",   "Start",   BS::Success,   is_hot)),
+                Self::gen_button(("end_match",     "End",     BS::Danger,    is_live)),
             ]),
         ];
 
@@ -309,13 +303,8 @@ impl Group {
 
                         description.push_str("**Missing players:**\n");
                         for player in players_never_joined {
-                            let elo_str = if let Some(rank) = player.player.rank {
-                                let elo = rank.elo_from_config(db, guild_id).await;
-                                format!("[**{elo}**] ")
-                            } else {
-                                String::new()
-                            };
-                            description.push_str(&format!("  • {elo_str}<@{}>\n", player.player.discord_id));
+                            let elo_str = format!("[**{}**] ", player.player.elo);
+                            description.push_str(&format!("  • {elo_str}<@{}>\n", player.player.user_id));
                         }
                         description.push_str("\n\n");
                     }
@@ -358,13 +347,8 @@ impl Group {
 
                         description.push_str("**Missing players:**\n");
                         for player in players_never_joined {
-                            let elo_str = if let Some(rank) = player.player.rank {
-                                let elo = rank.elo_from_config(db, guild_id).await;
-                                format!("[**{elo}**] ")
-                            } else {
-                                String::new()
-                            };
-                            description.push_str(&format!("  • {elo_str}<@{}>\n", player.player.discord_id));
+                            let elo_str = format!("[**{}**] ", player.player.elo);
+                            description.push_str(&format!("  • {elo_str}<@{}>\n", player.player.user_id));
                         }
                         description.push_str("\n\n");
                     }
@@ -389,25 +373,20 @@ impl Group {
         // Add queue fields for idle session (before quota is met)
         if actives.is_empty() {
             if let Some(current_session) = inactives.first() {
-                if !current_session.is_hot() && current_session.pool.len() > 0 && current_session.pool.len() < quota {
+                if !current_session.is_hot() && !current_session.pool.is_empty() && current_session.pool.len() < quota {
                     let mut players_field = String::new();
                     let mut timers_field  = String::new();
 
                     for player in current_session.pool.iter() {
-                        // Build player list with ELO
-                        let elo_str = if let Some(rank) = player.player.rank {
-                            let elo = rank.elo_from_config(db, guild_id).await;
-                            format!("[**{elo}**] ")
-                        } else {
-                            String::new()
-                        };
-                        players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.discord_id));
+                        // Build player list with ELO - use player's actual ELO
+                        let elo_str = format!("[**{}**] ", player.player.elo);
+                        players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
 
                         // Build auto-remove timer list
                         // Use per-instance expiry_duration if set, otherwise get user's setting
                         let expiry_duration = if let Some(duration) = player.expiry_duration {
                             duration
-                        } else if let Ok(settings) = db.users.get_settings(player.player.discord_id).await {
+                        } else if let Ok(settings) = db.users.get_settings(player.player.user_id).await {
                             settings.expiry_duration
                         } else {
                             std::time::Duration::ZERO
@@ -457,13 +436,9 @@ impl Group {
                     let overflow_count = queue_players - quota;
                     let mut fatkid = format!("**Waiting for next game ({overflow_count}/{quota}):**\n");
                     for player in current_session.pool.iter().skip(quota) {
-                        let elo_str = if let Some(rank) = player.player.rank {
-                            let elo = rank.elo_from_config(db, guild_id).await;
-                            format!("[**{elo}**] ")
-                        } else {
-                            String::new()
-                        };
-                        fatkid.push_str(&format!("{elo_str}<@{}>\n", player.player.discord_id));
+                        // Use player's actual ELO, not rank default
+                        let elo_str = format!("[**{}**] ", player.player.elo);
+                        fatkid.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
                     }
                     embed = embed.field("\u{200B}", fatkid, false); // Full-width field
                 }
@@ -485,13 +460,9 @@ impl Group {
                 if !next_session.pool.is_empty() {
                     let mut fatkid = format!("**Waiting for next game ({quota}/{}):**\n", next_session.pool.len());
                     for player in next_session.pool.iter() {
-                        let elo_str = if let Some(rank) = player.player.rank {
-                            let elo = rank.elo_from_config(db, guild_id).await;
-                            format!("[**{elo}**] ")
-                        } else {
-                            String::new()
-                        };
-                        fatkid.push_str(&format!("{elo_str}<@{}>\n", player.player.discord_id));
+                        // Use player's actual ELO, not rank default
+                        let elo_str = format!("[**{}**] ", player.player.elo);
+                        fatkid.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
                     }
                     embed = embed.field("\u{200B}", fatkid, false); // Full-width field
                 }
@@ -672,26 +643,64 @@ impl Group {
         use crate::handlers::player::get_or_assign_player_rank;
         if let Some(guild_id) = cc.component.guild_id {
             //
-            // Get player object from database (without fetching discord tag for performance)
-            let mut player = match cc.db.get_user(user_id).await {
-                Ok(p) => p,
-                Err(_) => match cc.db.new_user(user_id).await {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!("Failed to get or create player: {e}");
-                        return Ok(());
-                    }
-                }
-            };
-
-            // Fetch discord tag from component user for performance (avoid extra API call)
-            player.discord_tag = Some(cc.component.user.tag());
-
             match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user_id).await {
                 Ok(rank) => {
-                    //
-                    // Refresh player rank from current Discord roles before queueing
-                    player.rank = Some(rank);
+                    // Get player info and handle ELO fallback
+                    let mut player = match cc.db.get_user(user_id, &cc.ctx).await {
+                        Ok(mut player) => {
+                            // If player has no ELO in database, use rank-based ELO
+                            if player.elo == 0 {
+                                info!("DEBUG: Dashboard - Player {} has ELO 0, setting to {} from Discord rank {}", user_id, rank.default_rank_elo(), rank.name());
+                                player.elo = rank.default_rank_elo();
+                                player.rank = rank;
+                                // Update database with the rank-based ELO
+                                if let Err(e) = cc.db.users.update_elo(user_id, Some(player.elo)).await {
+                                    warn!("Failed to update player ELO in database: {}", e);
+                                }
+                            } else {
+                                // Player has stored ELO, check for ELO mismatch with Discord rank
+                                let elo_mismatch = player.elo <= 30 && rank.default_rank_elo() > 30;
+                                
+                                if elo_mismatch {
+                                    warn!("ELO MISMATCH DETECTED in dashboard: Player {} has ELO {} but Discord rank {} (default ELO {}). Auto-correcting...", 
+                                          user_id, player.elo, rank.name(), rank.default_rank_elo());
+                                    
+                                    player.elo = rank.default_rank_elo();
+                                    player.rank = rank;
+                                    
+                                    // Update the database with the corrected ELO
+                                    if let Err(e) = cc.db.users.update_elo(user_id, Some(player.elo)).await {
+                                        error!("Failed to auto-correct ELO for player {} in dashboard: {}", user_id, e);
+                                    } else {
+                                        info!("Successfully auto-corrected ELO for player {} in dashboard to {} (rank: {})", 
+                                              user_id, player.elo, rank.name());
+                                    }
+                                } else {
+                                    // Player has stored ELO, keep their ELO and only update rank if it makes sense
+                                    info!("DEBUG: Dashboard - Player {} has custom ELO {}, keeping it instead of Discord rank ELO {}", user_id, player.elo, rank.default_rank_elo());
+                                    // Don't override rank - keep whatever rank matches their current ELO
+                                    let guild_id_num = guild_id.get();
+                                    player.update_rank_from_elo(&cc.db, guild_id_num).await;
+                                }
+                            }
+                            player
+                        },
+                        Err(_) => {
+                            // New player - use rank-based ELO
+                            info!("DEBUG: Dashboard - New player {}, setting ELO to {} from Discord rank {}", user_id, rank.default_rank_elo(), rank.name());
+                            let mut new_player = cc.db.new_user(user_id, &cc.ctx).await?;
+                            new_player.elo = rank.default_rank_elo();
+                            new_player.rank = rank;
+                            // Update database with the rank-based ELO
+                            if let Err(e) = cc.db.users.update_elo(user_id, Some(new_player.elo)).await {
+                                warn!("Failed to update new player ELO in database: {}", e);
+                            }
+                            new_player
+                        }
+                    };
+
+                    // Fetch discord tag from component user for performance (avoid extra API call)
+                    player.tag = cc.component.user.tag();
 
                     // Save rank for announcement (player will be moved)
                     let player_rank = rank;
@@ -719,7 +728,7 @@ impl Group {
                                 user_id,
                                 Some(guild_id),
                                 &settings,
-                                &player_rank.name()
+                                player_rank.name()
                             ).await;
 
                             let queue_chat = self.channels.queue_chat;
@@ -757,12 +766,12 @@ impl Group {
 
         // Get session index before mutable borrow
         let session_idx = self.sessions.iter()
-            .position(|s| s.pool.iter().any(|p| p.player.discord_id == user_id));
+            .position(|s| s.pool.iter().any(|p| p.player.user_id == user_id));
 
         // Check if player is in queue
         let should_regenerate_teams = if let Ok(session) = self.get_user_session(user_id).await {
             // Check if player is physically in the queue VC
-            let player_in_vc = if let Some(player) = session.pool.iter().find(|p| p.player.discord_id == user_id) {
+            let player_in_vc = if let Some(player) = session.pool.iter().find(|p| p.player.user_id == user_id) {
                 player.in_queue_vc
             } else {
                 false
@@ -817,9 +826,9 @@ impl Group {
             // Send leave announcement using shared function
             if let Ok(settings) = cc.db.users.get_settings(user_id).await {
                 use serenity::all::CreateMessage;
-                use crate::handlers::settings::build_leave_announcement_embed;
+                use crate::handlers::settings::build_leave_alert_embed;
 
-                let embed = build_leave_announcement_embed(
+                let embed = build_leave_alert_embed(
                     cc.ctx,
                     user_id,
                     Some(guild_id),
@@ -833,7 +842,7 @@ impl Group {
             if was_hot {
                 if pool_len < quota {
                     // Dropped below quota, transition back to idle
-                    if let Some(idx) = session_idx {
+                    if let Some(_idx) = session_idx {
 
                     } else {
                         info!("Session dropped below quota, transitioning from Hot to Idle");
@@ -842,7 +851,7 @@ impl Group {
                     false
                 } else {
                     // Still at or above quota, need to regenerate teams
-                    if let Some(idx) = session_idx {
+                    if let Some(_idx) = session_idx {
 
                     } else {
                         info!("Session still meets quota after player left, will regenerate teams");
@@ -1046,7 +1055,7 @@ impl Group {
         // Check if user is in queue
         let user_id = cc.component.user.id;
         let is_in_queue = self.sessions.iter()
-            .any(|s| s.pool.iter().any(|p| p.player.discord_id == user_id));
+            .any(|s| s.pool.iter().any(|p| p.player.user_id == user_id));
 
         if !is_in_queue {
             cc.reply("You must be in the queue to change your expiry time.").await?;
@@ -1093,7 +1102,7 @@ impl Group {
         // Find and update the player's expiry duration in any session they're in
         let mut found = false;
         for session in self.sessions.iter_mut() {
-            if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
+            if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                 player.expiry_duration = Some(duration);
                 found = true;
                 break;
@@ -1121,7 +1130,7 @@ impl Group {
 
     /// Show user settings as ephemeral embed in dashboard channel
     async fn dash_show_settings(&mut self, cc: &CC<'_>) -> Result<()> {
-        use crate::handlers::settings::build_settings_embed;
+        use crate::handlers::settings::{build_settings_embed, build_settings_buttons};
         
         let user_id = cc.component.user.id;
         
@@ -1134,14 +1143,16 @@ impl Group {
             }
         };
 
-        // Build settings embed (without buttons for read-only view)
+        // Build settings embed with interactive buttons
         let embed = build_settings_embed(&settings);
+        let buttons = build_settings_buttons(&settings);
 
-        // Send ephemeral message with settings embed
+        // Send ephemeral message with settings embed and buttons
         let response = CIR::Message(
             CIRM::new()
-                .content("**Your current settings:**\nUse `/settings` in DMs to modify these settings.")
+                .content("**Your current settings:**")
                 .embed(embed)
+                .components(buttons)
                 .ephemeral(true)
         );
 

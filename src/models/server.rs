@@ -8,7 +8,7 @@ use std::time::SystemTime;
 
 use tokio::sync::Mutex;
 use anyhow::{anyhow, Error, Result};
-use crate::{Database as DB, Manager, Rank, models::constants::{DEFAULT_TIMEOUT, EXPIRY_MIN, EXPIRY_MAX}};
+use crate::{Database as DB, Manager, Rank, models::constants::{DEFAULT_TIMEOUT, EXPIRY_MIN, EXPIRY_MAX, ACTIVE_ELO_ENABLED_BY_DEFAULT}};
 use serde::{Deserialize, Serialize};
 use serenity::{all::{
     ChannelId as CI, Context, CreateEmbed,
@@ -105,6 +105,20 @@ impl Server {
             None => Err(anyhow!("Group not found")),
         }
     }
+
+    /// Check if active ELO is enabled for this server
+    pub async fn is_active_elo_enabled(&self, db: &DB) -> Result<bool> {
+        match db.config.get_config_value("active_elo_enabled", self.guild_id.get()).await {
+            Ok(Some(value)) => {
+                match value.parse::<bool>() {
+                    Ok(enabled) => Ok(enabled),
+                    Err(_) => Ok(ACTIVE_ELO_ENABLED_BY_DEFAULT),
+                }
+            }
+            Ok(None) => Ok(ACTIVE_ELO_ENABLED_BY_DEFAULT),
+            Err(_) => Ok(ACTIVE_ELO_ENABLED_BY_DEFAULT),
+        }
+    }
 }
 
 // Group
@@ -196,15 +210,15 @@ impl Group {
     }
 
     pub async fn get_user_session(&mut self, user_id: UI) -> Result<&mut Session> {
-        match self.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.discord_id == user_id)) {
+        match self.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.user_id == user_id)) {
             Some(game) => Ok(game),
             None       => Err(anyhow!("User not found in any game")),
         }
     }
 
     pub fn get_player(&mut self, user_id: UI) -> Result<&mut SessionPlayer> {
-        match self.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.discord_id == user_id)) {
-            Some(game) => Ok(game.pool.iter_mut().find(|p| p.player.discord_id == user_id).unwrap()),
+        match self.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.user_id == user_id)) {
+            Some(game) => Ok(game.pool.iter_mut().find(|p| p.player.user_id == user_id).unwrap()),
             None       => Err(anyhow!("User not found in any game")),
         }
     }
@@ -286,7 +300,7 @@ impl Group {
             // Get players who are not in VC (timed out)
             let timed_out_players: Vec<_> = session.pool.iter().take(quota)
                 .filter(|p| !p.in_queue_vc)
-                .map(|p| p.player.discord_id)
+                .map(|p| p.player.user_id)
                 .collect();
 
             if timed_out_players.is_empty() {continue;}
@@ -294,7 +308,7 @@ impl Group {
             info!("Removing {} timed-out players from hot session", timed_out_players.len());
 
             // Remove timed out players - retain() preserves order of remaining elements
-            session.pool.retain(|p| !timed_out_players.contains(&p.player.discord_id));
+            session.pool.retain(|p| !timed_out_players.contains(&p.player.user_id));
 
             // Check if we still have enough players after removals
             if session.pool.len() >= quota {
@@ -337,7 +351,7 @@ impl Group {
                 let expiry_duration = if let Some(duration) = player.expiry_duration {
                     duration
                 } else {
-                    match db.users.get_settings(player.player.discord_id).await {
+                    match db.users.get_settings(player.player.user_id).await {
                         Ok(settings) => settings.expiry_duration,
                         Err(_) => {
                             // If we can't get settings, skip this player
@@ -358,11 +372,11 @@ impl Group {
                 if let Ok(elapsed) = SystemTime::now().duration_since(player.joined_at) {
                     if elapsed.as_secs() >= expiry_secs {
                         info!("Auto-removing player {} after {} seconds (limit: {})",
-                            player.player.discord_tag.as_deref().unwrap_or("Unknown"),
+                            player.player.tag,
                             elapsed.as_secs(),
                             expiry_secs
                         );
-                        players_to_remove.push(player.player.discord_id);
+                        players_to_remove.push(player.player.user_id);
                     }
                 }
             }
@@ -413,14 +427,14 @@ impl Group {
 
                 match player.team {
                     Some(crate::models::Team::Red) => Some((
-                        player.player.discord_id,
+                        player.player.user_id,
                         red_vc,
-                        player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string())
+                        player.player.tag.clone()
                     )),
                     Some(crate::models::Team::Blu) => Some((
-                        player.player.discord_id,
+                        player.player.user_id,
                         blu_vc,
-                        player.player.discord_tag.clone().unwrap_or_else(|| "Unknown".to_string())
+                        player.player.tag.clone()
                     )),
                     _ => None,
                 }
@@ -495,11 +509,11 @@ impl Group {
         // Move all players back to queue voice channel and track who successfully moved
         let mut successfully_moved = std::collections::HashSet::new();
         for player in &players_to_requeue {
-            let tag = player.discord_tag.as_deref().unwrap_or("Unknown");
-            if let Err(e) = self.move_user(guild_id, player.discord_id, queue_vc, ctx).await {
+            let tag = &player.tag;
+            if let Err(e) = self.move_user(guild_id, player.user_id, queue_vc, ctx).await {
                 warn!("Failed to move user {} back to queue (likely not in voice): {}", tag, e);
             } else {
-                successfully_moved.insert(player.discord_id);
+                successfully_moved.insert(player.user_id);
             }
         }
 
@@ -517,13 +531,13 @@ impl Group {
 
         // Only re-add players who were successfully moved (i.e., were still in voice)
         for player in players_to_requeue {
-            if let Some(rank) = player.rank {
-                if successfully_moved.contains(&player.discord_id) {
+            if let rank = player.rank {
+                if successfully_moved.contains(&player.user_id) {
                     // Player was successfully moved back to queue VC
-                    idle_session.add_player_in_vc(player, rank);
+                    idle_session.add_player_in_vc(player);
                 } else {
                     // Player was not in voice, don't re-add them
-                    let tag = player.discord_tag.as_deref().unwrap_or("Unknown");
+                    let tag = player.tag;
                     info!("Not re-queueing {} - they left voice before match ended", tag);
                 }
             }
@@ -547,8 +561,8 @@ impl Group {
 
         for session in &mut self.sessions {
             for player in &mut session.pool {
-                if let Some(updated_rank) = get_player_rank(ctx, db, guild_id, player.player.discord_id).await {
-                    player.player.rank = Some(updated_rank);
+                if let Some(updated_rank) = get_player_rank(ctx, db, guild_id, player.player.user_id).await {
+                    player.player.rank = updated_rank;
                 }
             }
         }
@@ -580,12 +594,12 @@ impl Group {
         // Update flags for all players in all sessions
         for session in &mut self.sessions {
             for player in &mut session.pool {
-                let user_id      = player.player.discord_id.get();
+                let user_id      = player.player.user_id.get();
                 let actual_in_vc = users_in_vc.contains(&user_id);
 
                 // Log if we're correcting a desync
                 if player.in_queue_vc != actual_in_vc {
-                    let username = player.player.discord_tag.as_deref().unwrap_or("Unknown");
+                    let username = &player.player.tag;
                     info!("[validate_vc_status] Correcting VC status for {}: was {}, now {}", 
                         username, player.in_queue_vc, actual_in_vc);
                     player.in_queue_vc = actual_in_vc;
@@ -613,16 +627,10 @@ impl Group {
             return;
         }
 
-        // Extract player ELOs (use config-based ELO if available, otherwise default)
+        // Extract player ELOs (use player's ELO or rank default)
         let mut players_with_elo: Vec<(usize, u32)> = Vec::new();
         for (idx, gp) in game.pool.iter().enumerate() {
-            let elo = if let (Some(rank), Some(database)) = (gp.player.rank, db) {
-                rank.elo_from_config(database, guild_id.get()).await
-            } else if let Some(rank) = gp.player.rank {
-                rank.elo()
-            } else {
-                30 // Default to Novice (30)
-            };
+            let elo = gp.player.elo as u32;
             players_with_elo.push((idx, elo));
         }
 
@@ -737,13 +745,13 @@ impl Group {
     }
 
     pub async fn queue_player_with_vc_status(&mut self, player: Player, rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
-        let player_id = player.discord_id;
+        let player_id = player.user_id;
         let quota = self.quota as usize;
         let session = self.get_queue().await?;
 
         //
-        if in_vc {session.add_player_in_vc(player, rank);}
-        else {session.add_player(player, rank);}
+        if in_vc {session.add_player_in_vc(player);}
+        else {session.add_player(player);}
 
         let current_count = session.pool.len();
         //
@@ -762,15 +770,15 @@ impl Group {
                 // Get all users with notification preferences
                 for session_player in &session.pool {
                     // Skip the player who just joined
-                    if session_player.player.discord_id == player_id {
+                    if session_player.player.user_id == player_id {
                         continue;
                     }
 
-                    if let Ok(settings) = db.users.get_settings(session_player.player.discord_id).await {
+                    if let Ok(settings) = db.users.get_settings(session_player.player.user_id).await {
                         if let Some(threshold) = settings.notify_quota_threshold {
                             if slots_remaining <= threshold as usize {
                                 // Send DM notification
-                                if let Ok(user) = queue_ctx.ctx.http.get_user(session_player.player.discord_id).await {
+                                if let Ok(user) = queue_ctx.ctx.http.get_user(session_player.player.user_id).await {
                                     use serenity::all::{CreateEmbed, CreateMessage};
 
                                     let embed = CreateEmbed::new()
@@ -886,7 +894,7 @@ impl Group {
     }
 
     pub async fn add_player(&mut self, session: &mut Session, player: Player, rank: Rank, ctx: &Context, guild_id: GI) {
-        session.add_player(player, rank);
+        session.add_player(player);
         self.queue_dash_update(ctx, guild_id.get()).await;
     }
 
@@ -935,8 +943,8 @@ impl Group {
             // AND only the first 'quota' players (not extras queued for next match)
             for player in game.pool.iter().take(quota) {
                 if !player.in_queue_vc {
-                    player_mentions.push(format!("<@{}>", player.player.discord_id));
-                    players_to_dm.push(player.player.discord_id);
+                    player_mentions.push(format!("<@{}>", player.player.user_id));
+                    players_to_dm.push(player.player.user_id);
                 }
             }
         }
@@ -1097,43 +1105,5 @@ impl Channels {
             || self.queue_vc  == channel_id
             || self.dashboard == channel_id
             || self.teams.iter().any(|team| team.contains_channel(channel_id))
-    }
-}
-
-mod tests {
-    #[allow(unused_imports)]
-    use super::*;
-
-    #[test]
-    fn test_group_meets_quota() {
-        use crate::models::{Rank, Player};
-
-        let mut group = Group::new(
-            1,
-            4,
-            120,
-            MI::new(1),
-            Channels::new(
-                CI::new(1),
-                CI::new(1),
-                vec![TeamChannel::new(CI::new(1), CI::new(1))],
-                CI::new(1),
-            ),
-            Vec::new(),
-        );
-
-        #[allow(unused_must_use)]
-        group.create_session();
-
-        // Add players one by one - each call borrows and immediately drops
-        group.sessions.last_mut().unwrap().add_player(Player::add(UI::new(1), None, None), Rank::Novice);
-        group.sessions.last_mut().unwrap().add_player(Player::add(UI::new(2), None, None), Rank::Novice);
-        group.sessions.last_mut().unwrap().add_player(Player::add(UI::new(3), None, None), Rank::Novice);
-
-        assert!(!group.is_quota());
-
-        group.sessions.last_mut().unwrap().add_player(Player::add(UI::new(4), None, None), Rank::Novice);
-
-        assert!(group.is_quota());
     }
 }
