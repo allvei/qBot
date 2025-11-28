@@ -51,13 +51,13 @@ pub async fn cmd_role_add(cc: &CC<'_>) -> Result<()> {
     // Create Runner role
     let runner_role = match create_role_with_error(cc, guild_id, "PUG Runner", RUNNER as u32).await? {
         Some(role) => role,
-        None => return Ok(()), // Error already handled
+        None => return Ok(()),
     };
 
     // Create Admin role
     let admin_role = match create_role_with_error(cc, guild_id, "PUG Admin", ADMIN as u32).await? {
         Some(role) => role,
-        None => return Ok(()), // Error already handled
+        None => return Ok(()),
     };
 
     // Save to database
@@ -104,10 +104,10 @@ pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role:
     // If no parameters provided, show current configuration
     if runner_role.is_none() && admin_role.is_none() {
         let current_runner = cc.db.config.get_config_value("runner_role", guild_id.get()).await?;
-        let current_admin = cc.db.config.get_config_value("admin_role", guild_id.get()).await?;
+        let current_admin  = cc.db.config.get_config_value("admin_role", guild_id.get()).await?;
 
         let runner_display = format_role_mentions(current_runner);
-        let admin_display = format_role_mentions(current_admin);
+        let admin_display  = format_role_mentions(current_admin);
 
         let embed = CE::new()
             .title("Current Role Configuration")
@@ -129,10 +129,10 @@ pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role:
 
     // Link runner roles if provided
     if let Some(role_str) = runner_role {
-        let role_ids = parse_multiple_role_ids(&role_str)?;
+        let role_ids     = parse_role_ids(&role_str)?;
         let role_ids_str = role_ids.join(",");
         cc.db.config.set_config("runner_role", &role_ids_str, guild_id.get()).await?;
-        let display = role_ids.iter()
+        let display      = role_ids.iter()
             .map(|id| format!("<@&{id}>"))
             .collect::<Vec<_>>()
             .join(", ");
@@ -141,7 +141,7 @@ pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role:
 
     // Link admin roles if provided
     if let Some(role_str) = admin_role {
-        let role_ids = parse_multiple_role_ids(&role_str)?;
+        let role_ids     = parse_role_ids(&role_str)?;
         let role_ids_str = role_ids.join(",");
         cc.db.config.set_config("admin_role", &role_ids_str, guild_id.get()).await?;
         let display = role_ids.iter()
@@ -153,10 +153,7 @@ pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role:
 
     let success_embed = CE::new()
         .title("Roles Linked!")
-        .description(format!(
-            "Successfully linked roles:\n{}",
-            updated_roles.join("\n")
-        ))
+        .description(format!("Successfully linked roles:\n{}", updated_roles.join("\n")))
         .color(GREEN);
 
     let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
@@ -527,7 +524,7 @@ fn format_role_mentions(role_ids_str: Option<String>) -> String {
 }
 
 /// Parse multiple role IDs from a string containing space or comma separated role mentions/IDs
-fn parse_multiple_role_ids(role_str: &str) -> Result<Vec<String>> {
+fn parse_role_ids(role_str: &str) -> Result<Vec<String>> {
     let mut role_ids = Vec::new();
 
     // Split by both spaces and commas, then filter empty strings
@@ -566,10 +563,7 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 
     // Step 1: Create Runner role
     let runner_role = match guild_id.create_role(&cc.ctx.http,
-        ER::new()
-            .name("PUG Runner")
-            .colour(RUNNER)
-            .permissions(Permissions::empty())
+        ER::new().name("PUG Runner").colour(RUNNER).permissions(Permissions::empty())
     ).await {
         Ok(role) => role,
         Err(e) => {
@@ -587,10 +581,7 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 
     // Step 2: Create Admin role
     let admin_role = match guild_id.create_role(&cc.ctx.http,
-        ER::new()
-            .name("PUG Admin")
-            .colour(ADMIN)
-            .permissions(Permissions::empty())
+        ER::new().name("PUG Admin").colour(ADMIN).permissions(Permissions::empty())
     ).await {
         Ok(role) => role,
         Err(e) => {
@@ -667,11 +658,11 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             // Step 7: Save group to database
             let group_config = crate::database::repositories::group::GroupConfig {
                 dashboard_channel_id: dashboard_channel.get(),
-                chat_channel_id: queue_channel.get(),
-                queue_vc_id: queue_vc_channel.get(),
-                red_vc_id: red_channel.get(),
-                blu_vc_id: blue_channel.get(),
-                quota: crate::DEFAULT_QUOTA,
+                chat_channel_id:      queue_channel    .get(),
+                queue_vc_id:          queue_vc_channel .get(),
+                red_vc_id:            red_channel      .get(),
+                blu_vc_id:            blue_channel     .get(),
+                quota:                crate::DEFAULT_QUOTA,
             };
             match cc.db.groups.create_group(
                 guild_id.get(),
@@ -705,11 +696,11 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                             runner_role.id,
                             admin_role.id,
                             dashboard_channel.get(),
-                            queue_channel.get(),
-                            queue_vc_channel.get(),
-                            red_channel.get(),
-                            blue_channel.get(),
-                            category_id.get()
+                            queue_channel    .get(),
+                            queue_vc_channel .get(),
+                            red_channel      .get(),
+                            blue_channel     .get(),
+                            category_id      .get()
                         ))
                         .color(GREEN);
 
@@ -722,11 +713,11 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
                     info!("[{}] Database save failed, cleaning up channels and dashboard", guild_name);
                     let _ = dashboard_channel.delete_message(&cc.ctx.http, dashboard_msg_id).await;
                     let _ = dashboard_channel.delete(&cc.ctx.http).await;
-                    let _ = queue_channel.delete(&cc.ctx.http).await;
-                    let _ = queue_vc_channel.delete(&cc.ctx.http).await;
-                    let _ = red_channel.delete(&cc.ctx.http).await;
-                    let _ = blue_channel.delete(&cc.ctx.http).await;
-                    let _ = category_id.delete(&cc.ctx.http).await;
+                    let _ = queue_channel    .delete(&cc.ctx.http).await;
+                    let _ = queue_vc_channel .delete(&cc.ctx.http).await;
+                    let _ = red_channel      .delete(&cc.ctx.http).await;
+                    let _ = blue_channel     .delete(&cc.ctx.http).await;
+                    let _ = category_id      .delete(&cc.ctx.http).await;
 
                     let error_embed = CE::new()
                         .title("Setup Failed")
@@ -743,11 +734,11 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
             // Dashboard creation failed - clean up the created channels
             info!("[{}] Dashboard creation failed, cleaning up channels", guild_name);
             let _ = dashboard_channel.delete(&cc.ctx.http).await;
-            let _ = queue_channel.delete(&cc.ctx.http).await;
-            let _ = queue_vc_channel.delete(&cc.ctx.http).await;
-            let _ = red_channel.delete(&cc.ctx.http).await;
-            let _ = blue_channel.delete(&cc.ctx.http).await;
-            let _ = category_id.delete(&cc.ctx.http).await;
+            let _ = queue_channel    .delete(&cc.ctx.http).await;
+            let _ = queue_vc_channel .delete(&cc.ctx.http).await;
+            let _ = red_channel      .delete(&cc.ctx.http).await;
+            let _ = blue_channel     .delete(&cc.ctx.http).await;
+            let _ = category_id      .delete(&cc.ctx.http).await;
 
             let error_embed = CE::new()
                 .title("Setup Failed")
