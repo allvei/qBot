@@ -2,10 +2,11 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serenity::all::{Context, UserId};
+use serenity::all::{Context as Ctx, UserId as UI};
 use sqlx::{Row, SqlitePool};
-use tracing::info;
+use tracing::{info, warn, error};
 
+use crate::{Database, Elo, Rank, DEFAULT_RANK};
 use crate::models::Player;
 use super::Repository;
 
@@ -19,98 +20,215 @@ impl UserRepository {
         Self { pool }
     }
 
-    pub async fn get_by_discord_id(&self, discord_id: UserId) -> Result<Player> {
+    pub async fn get(&self, user_id: UI) -> Result<Player> {
+        match sqlx::query(
+            "SELECT id, user_id, discord_tag, steam_id, elo FROM users WHERE user_id = ?"
+        ).bind(user_id.get() as i64).fetch_one(&self.pool).await {
+            Ok(result) => Ok(Self::get_player(result)),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub async fn get_with_tag(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
         let result = sqlx::query(
-            "SELECT id, discord_id, steam_id FROM users WHERE discord_id = ?"
+            "SELECT id, user_id, discord_tag, steam_id, elo FROM users WHERE user_id = ?"
         )
-        .bind(discord_id.get() as i64)
+        .bind(user_id.get() as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let player = Self::get_player(result);
+
+        Ok(player)
+    }
+
+    /// Get player with tag and try to get display name from guild context
+    pub async fn get_user_with_nick(&self, user_id: UI, ctx: &Ctx, guild_id: Option<serenity::all::GuildId>) -> Result<Player> {
+        let mut player = self.get_with_tag(user_id, ctx).await?;
+
+        // Try to get display name (nickname) if guild context is available
+        if let Some(guild_id) = guild_id {
+            player.tag = ctx.cache.member(guild_id, user_id).unwrap().display_name().to_string();
+        }
+
+        Ok(player)
+    }
+
+    /// Ensure user exists without fetching tag (for internal operations)
+    pub async fn ensure_user_exists(&self, user_id: UI, steam_id: Option<u64>) -> Result<Player> {
+        let result = sqlx::query(
+            "INSERT INTO users (user_id, steam_id, elo)
+             VALUES (?, ?, ?)
+             ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id
+             RETURNING id, user_id, discord_tag, steam_id, elo"
+        )
+        .bind(user_id.get() as i64)
+        .bind(steam_id.map(|id| id as i64).unwrap_or(0))
+        .bind(30) // default ELO only for new users
         .fetch_one(&self.pool)
         .await?;
 
         Ok(Self::get_player(result))
     }
 
-    pub async fn get_by_discord_id_with_tag(&self, discord_id: UserId, ctx: &Context) -> Result<Player> {
-        let result = sqlx::query(
-            "SELECT id, discord_id, steam_id FROM users WHERE discord_id = ?"
-        )
-        .bind(discord_id.get() as i64)
-        .fetch_one(&self.pool)
-        .await?;
-
-        let mut player = Self::get_player(result);
-
-        // Fetch discord tag from Discord API
-        if let Ok(user) = ctx.http.get_user(discord_id).await {
-            player.discord_tag = Some(user.tag());
-        }
-
-        Ok(player)
-    }
-
-    pub async fn create_or_update(&self, discord_id: UserId, steam_id: Option<u64>) -> Result<Player> {
-        // info!("Creating or updating user with discord_id: {}", discord_id);
+    pub async fn create_or_update(&self, user_id: UI, steam_id: Option<u64>, ctx: &Ctx) -> Result<Player> {
+        // Fetch discord tag from API first
+        let discord_tag = if let Ok(user) = ctx.http.get_user(user_id).await {
+            Some(user.tag())
+        } else {
+            None
+        };
 
         let result = sqlx::query(
-            "INSERT INTO users (discord_id, steam_id)
-             VALUES (?, ?)
-             ON CONFLICT(discord_id) DO UPDATE SET steam_id=excluded.steam_id
-             RETURNING id, discord_id, steam_id"
+            "INSERT INTO users (user_id, steam_id, elo, discord_tag)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id, discord_tag=excluded.discord_tag
+             RETURNING id, user_id, discord_tag, steam_id, elo"
         )
-        .bind(discord_id.get() as i64)
+        .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
+        .bind(30) // default ELO only for new users
+        .bind(&discord_tag)
         .fetch_one(&self.pool)
         .await?;
 
         Ok(Self::get_player(result))
     }
 
-    pub async fn create_or_update_with_tag(&self, discord_id: UserId, steam_id: Option<u64>, ctx: &Context) -> Result<Player> {
-        // info!("Creating or updating user with discord_id: {}", discord_id);
+    pub async fn create_or_update_with_tag(&self, user_id: UI, steam_id: Option<u64>, ctx: &Ctx) -> Result<Player> {
+        // Fetch discord tag from API first
+        let discord_tag = if let Ok(user) = ctx.http.get_user(user_id).await {
+            Some(user.tag())
+        } else {
+            None
+        };
 
         let result = sqlx::query(
-            "INSERT INTO users (discord_id, steam_id)
-             VALUES (?, ?)
-             ON CONFLICT(discord_id) DO UPDATE SET steam_id=excluded.steam_id
-             RETURNING id, discord_id, steam_id"
+            "INSERT INTO users (user_id, steam_id, elo, discord_tag)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id, discord_tag=excluded.discord_tag
+             RETURNING id, user_id, discord_tag, steam_id, elo"
         )
-        .bind(discord_id.get() as i64)
+        .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
+        .bind(30) // default ELO only for new users
+        .bind(&discord_tag)
         .fetch_one(&self.pool)
         .await?;
 
-        let mut player = Self::get_player(result);
-
-        // Fetch discord tag from Discord API
-        if let Ok(user) = ctx.http.get_user(discord_id).await {
-            player.discord_tag = Some(user.tag());
-        }
-
-        Ok(player)
+        Ok(Self::get_player(result))
     }
 
     fn get_player(result: sqlx::sqlite::SqliteRow) -> Player {
-        Player::add(result.get::<u64, _>        ("discord_id").into(),
-                    None,
-                    result.get::<Option<i64>, _>("steam_id")  .map(|id| id as u64)
-                   )
+        let mut player = Player::default(result.get::<u64, _>           ("user_id") .into(),
+                                         result.get::<String, _>        ("discord_tag"),
+                                         result.get::<Option<i64>, _>   ("steam_id")   .map(|id| id as u64));
+        
+        // Set ELO if present in database, otherwise leave at default (will be updated later)
+        if let Ok(Some(elo)) = result.try_get::<Option<u16>, _>("elo") {
+            player.set_elo(elo);
+        }
+        // Note: Rank will be determined by caller based on Discord roles or ELO
+        
+        player
     }
 
-    pub async fn update_steam_id(&self, discord_id: UserId, steam_id: Option<u64>) -> Result<Player> {
-        info!("Updating user steam_id for discord_id: {}", discord_id);
+    fn get_rank(rank: Option<String>) -> Rank {
+        match rank {
+            Some(val) if val == "Beginner"   =>  Rank::Beginner,
+            Some(val) if val == "Newcomer"   =>  Rank::Newcomer,
+            Some(val) if val == "Novice"     =>  Rank::Novice,
+            Some(val) if val == "Apprentice" =>  Rank::Apprentice,
+            Some(val) if val == "Journeyman" =>  Rank::Journeyman,
+            Some(val) if val == "Expert"     =>  Rank::Expert,
+            Some(val) if val == "Master"     =>  Rank::Master,
+            Some(val) if val == "MasterElite" => Rank::MasterElite,
+            Some(val) if val == "Grandmaster" => Rank::Grandmaster,
+            _                              => DEFAULT_RANK,
+        }
+    }
 
-        sqlx::query("UPDATE users SET steam_id = ? WHERE discord_id = ?")
-            .bind(steam_id.map(|id| id as i64))
-            .bind(discord_id.get() as i64)
+    /// Get player with rank determined from Discord roles (for display purposes)
+    pub async fn get_player_with_guild_rank(&self, user_id: UI, ctx: &Ctx, guild_id: u64, db: &Database) -> Result<Player> {
+        info!("DEBUG: get_player_with_guild_rank called for user {} in guild {}", user_id, guild_id);
+        
+        let result = sqlx::query("SELECT user_id, steam_id, elo, discord_tag FROM users WHERE user_id = ?")
+            .bind(user_id.get() as i64)
+            .fetch_one(&self.pool)
+            .await?;
+
+        let mut player = Self::get_player(result);
+        info!("DEBUG: Player from database - ELO: {}, Rank: {}", player.elo, player.rank.name());
+
+        // Check if player has Discord rank that should override database ELO
+        use crate::handlers::player::get_player_rank;
+        if let Some(discord_rank) = get_player_rank(ctx, db, guild_id.into(), user_id).await {
+            info!("DEBUG: Found Discord rank {} with ELO {}", discord_rank.name(), discord_rank.default_rank_elo());
+            
+            // Check for ELO mismatch - if player has low ELO but high Discord rank, fix it
+            let discord_default_elo = discord_rank.default_rank_elo();
+            let elo_mismatch = player.elo <= 30 && discord_default_elo > 30;
+            
+            if elo_mismatch {
+                warn!("ELO MISMATCH DETECTED: Player {} has ELO {} but Discord rank {} (default ELO {}). Auto-correcting...", 
+                      user_id, player.elo, discord_rank.name(), discord_default_elo);
+                
+                player.rank = discord_rank;
+                player.elo = discord_default_elo;
+                
+                // Update the database with the corrected ELO
+                if let Err(e) = self.update_elo(user_id, Some(player.elo)).await {
+                    error!("Failed to auto-correct ELO for player {}: {}", user_id, e);
+                } else {
+                    info!("Successfully auto-corrected ELO for player {} to {} (rank: {})", 
+                          user_id, player.elo, discord_rank.name());
+                }
+            } else if player.elo <= 30 {
+                info!("DEBUG: Player has low/default ELO ({}), using Discord rank {} with ELO {}", 
+                      player.elo, discord_rank.name(), discord_rank.default_rank_elo());
+                player.rank = discord_rank;
+                player.elo = discord_default_elo;
+            } else {
+                info!("DEBUG: Player has meaningful ELO ({}), keeping database ELO", player.elo);
+                player.update_rank_from_elo(db, guild_id).await;
+                info!("DEBUG: After update_rank_from_elo - Player ELO: {}, Rank: {}", player.elo, player.rank.name());
+            }
+        } else {
+            info!("DEBUG: No Discord rank found, using database ELO-to-rank conversion");
+            player.update_rank_from_elo(db, guild_id).await;
+            info!("DEBUG: After update_rank_from_elo - Player ELO: {}, Rank: {}", player.elo, player.rank.name());
+        }
+
+        Ok(player)
+    }
+
+    pub async fn update_elo(&self, user_id: UI, elo: Option<Elo>) -> Result<()> {
+        // Ensure user exists
+        let _ = self.ensure_user_exists(user_id, None).await?;
+
+        sqlx::query("UPDATE users SET elo = ? WHERE user_id = ?")
+            .bind(elo.map(|e| e as i64))
+            .bind(user_id.get() as i64)
             .execute(&self.pool)
             .await?;
 
-        Ok(Player::add(discord_id, None, steam_id))
+        Ok(())
     }
 
-    pub async fn get_dm_enabled(&self, discord_id: UserId) -> Result<bool> {
-        let result = sqlx::query("SELECT dm_enabled FROM users WHERE discord_id = ?")
-            .bind(discord_id.get() as i64)
+    pub async fn update_steam_id(&self, user_id: &UI, steam_id: Option<u64>) -> Result<Player> {
+        info!("Updating user steam_id for user_id: {}", user_id);
+
+        sqlx::query("UPDATE users SET steam_id = ? WHERE user_id = ?")
+            .bind(steam_id.map(|id| id as i64))
+            .bind(user_id.get() as i64)
+            .execute(&self.pool)
+            .await?;
+        Ok(self.get(*user_id).await?)
+    }
+
+    pub async fn get_dm_enabled(&self, user_id: UI) -> Result<bool> {
+        let result = sqlx::query("SELECT dm_enabled FROM users WHERE user_id = ?")
+            .bind(user_id.get() as i64)
             .fetch_optional(&self.pool)
             .await?;
 
@@ -126,18 +244,18 @@ impl UserRepository {
         }
     }
 
-    pub async fn toggle_dm_enabled(&self, discord_id: UserId) -> Result<bool> {
+    pub async fn toggle_dm_enabled(&self, user_id: UI) -> Result<bool> {
         // Ensure user exists
-        let _ = self.create_or_update(discord_id, None).await?;
+        let _ = self.ensure_user_exists(user_id, None).await?;
 
         // Get current value
-        let current = self.get_dm_enabled(discord_id).await?;
+        let current = self.get_dm_enabled(user_id).await?;
         let new_value = !current;
 
         // Update database
-        sqlx::query("UPDATE users SET dm_enabled = ? WHERE discord_id = ?")
+        sqlx::query("UPDATE users SET dm_enabled = ? WHERE user_id = ?")
             .bind(if new_value { 1 } else { 0 })
-            .bind(discord_id.get() as i64)
+            .bind(user_id.get() as i64)
             .execute(&self.pool)
             .await?;
 
@@ -145,17 +263,17 @@ impl UserRepository {
     }
 
     /// Get user settings
-    pub async fn get_settings(&self, discord_id: UserId) -> Result<UserSettings> {
+    pub async fn get_settings(&self, user_id: UI) -> Result<UserSettings> {
         let result = sqlx::query(
             "SELECT auto_remove_minutes, join_announcement, vc_disconnect_on_leave,
                     announcement_color, dm_enabled, notify_quota_threshold,
-                    announcement_description, announcement_footer_text,
-                    announcement_footer_icon, announcement_thumbnail,
-                    leave_announcement, leave_announcement_description,
-                    leave_announcement_footer_text, leave_announcement_footer_icon, leave_announcement_thumbnail
-             FROM users WHERE discord_id = ?"
+                    alert_desc, alert_footer_text,
+                    alert_footer_icon, alert_footer_thumbnail,
+                    leave_alert, leave_alert_desc,
+                    leave_alert_footer_text, leave_alert_footer_icon, leave_alert_footer_thumbnail
+             FROM users WHERE user_id = ?"
         )
-        .bind(discord_id.get() as i64)
+        .bind(user_id.get() as i64)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -170,15 +288,15 @@ impl UserRepository {
                 announcement_color: row.try_get("announcement_color").unwrap_or(3447003),
                 dm_alerts: row.try_get::<i64, _>("dm_enabled").unwrap_or(1) != 0,
                 notify_quota_threshold: row.try_get::<i64, _>("notify_quota_threshold").ok().map(|v| v as u8),
-                announcement_description: row.try_get("announcement_description").ok(),
-                announcement_footer_text: row.try_get("announcement_footer_text").ok(),
-                announcement_footer_icon: row.try_get("announcement_footer_icon").ok(),
-                announcement_thumbnail: row.try_get("announcement_thumbnail").ok(),
-                leave_announcement: row.try_get::<i64, _>("leave_announcement").unwrap_or(0) != 0,
-                leave_announcement_description: row.try_get("leave_announcement_description").ok(),
-                leave_announcement_footer_text: row.try_get("leave_announcement_footer_text").ok(),
-                leave_announcement_footer_icon: row.try_get("leave_announcement_footer_icon").ok(),
-                leave_announcement_thumbnail: row.try_get("leave_announcement_thumbnail").ok(),
+                alert_desc: row.try_get("alert_desc").ok(),
+                alert_footer_text: row.try_get("alert_footer_text").ok(),
+                alert_footer_icon: row.try_get("alert_footer_icon").ok(),
+                alert_footer_thumbnail: row.try_get("alert_footer_thumbnail").ok(),
+                leave_alert: row.try_get::<i64, _>("leave_alert").unwrap_or(0) != 0,
+                leave_alert_desc: row.try_get("leave_alert_desc").ok(),
+                leave_alert_footer_text: row.try_get("leave_alert_footer_text").ok(),
+                leave_alert_footer_icon: row.try_get("leave_alert_footer_icon").ok(),
+                leave_alert_footer_thumbnail: row.try_get("leave_alert_footer_thumbnail").ok(),
             })
             }
             None => {
@@ -189,9 +307,9 @@ impl UserRepository {
     }
 
     /// Update user settings
-    pub async fn update_settings(&self, discord_id: UserId, settings: &UserSettings) -> Result<()> {
+    pub async fn update_settings(&self, user_id: UI, settings: &UserSettings) -> Result<()> {
         // Ensure user exists
-        let _ = self.create_or_update(discord_id, None).await?;
+        let _ = self.ensure_user_exists(user_id, None).await?;
 
         let auto_remove_minutes = (settings.expiry_duration.as_secs() / 60) as i64;
         
@@ -203,16 +321,16 @@ impl UserRepository {
                 announcement_color = ?,
                 dm_enabled = ?,
                 notify_quota_threshold = ?,
-                announcement_description = ?,
-                announcement_footer_text = ?,
-                announcement_footer_icon = ?,
-                announcement_thumbnail = ?,
-                leave_announcement = ?,
-                leave_announcement_description = ?,
-                leave_announcement_footer_text = ?,
-                leave_announcement_footer_icon = ?,
-                leave_announcement_thumbnail = ?
-             WHERE discord_id = ?"
+                alert_desc = ?,
+                alert_footer_text = ?,
+                alert_footer_icon = ?,
+                alert_footer_thumbnail = ?,
+                leave_alert = ?,
+                leave_alert_desc = ?,
+                leave_alert_footer_text = ?,
+                leave_alert_footer_icon = ?,
+                leave_alert_footer_thumbnail = ?
+             WHERE user_id = ?"
         )
         .bind(auto_remove_minutes)
         .bind(if settings.join_announcement { 1 } else { 0 })
@@ -220,16 +338,16 @@ impl UserRepository {
         .bind(settings.announcement_color)
         .bind(if settings.dm_alerts { 1 } else { 0 })
         .bind(settings.notify_quota_threshold.map(|v| v as i64))
-        .bind(&settings.announcement_description)
-        .bind(&settings.announcement_footer_text)
-        .bind(&settings.announcement_footer_icon)
-        .bind(&settings.announcement_thumbnail)
-        .bind(if settings.leave_announcement { 1 } else { 0 })
-        .bind(&settings.leave_announcement_description)
-        .bind(&settings.leave_announcement_footer_text)
-        .bind(&settings.leave_announcement_footer_icon)
-        .bind(&settings.leave_announcement_thumbnail)
-        .bind(discord_id.get() as i64)
+        .bind(&settings.alert_desc)
+        .bind(&settings.alert_footer_text)
+        .bind(&settings.alert_footer_icon)
+        .bind(&settings.alert_footer_thumbnail)
+        .bind(if settings.leave_alert { 1 } else { 0 })
+        .bind(&settings.leave_alert_desc)
+        .bind(&settings.leave_alert_footer_text)
+        .bind(&settings.leave_alert_footer_icon)
+        .bind(&settings.leave_alert_footer_thumbnail)
+        .bind(user_id.get() as i64)
         .execute(&self.pool)
         .await?;
 
@@ -237,9 +355,9 @@ impl UserRepository {
     }
 
     /// Update a single setting field
-    pub async fn update_setting_field(&self, discord_id: UserId, field: &str, value: i64) -> Result<()> {
+    pub async fn update_setting_field(&self, user_id: UI, field: &str, value: i64) -> Result<()> {
         // Ensure user exists
-        let _ = self.create_or_update(discord_id, None).await?;
+        let _ = self.ensure_user_exists(user_id, None).await?;
 
         // Validate field name to prevent SQL injection
         let allowed_fields = ["auto_remove_minutes", "join_announcement", "vc_disconnect_on_leave",
@@ -248,10 +366,10 @@ impl UserRepository {
             return Err(anyhow::anyhow!("Invalid setting field: {}", field));
         }
 
-        let query_str = format!("UPDATE users SET {} = ? WHERE discord_id = ?", field);
+        let query_str = format!("UPDATE users SET {} = ? WHERE user_id = ?", field);
         sqlx::query(&query_str)
             .bind(value)
-            .bind(discord_id.get() as i64)
+            .bind(user_id.get() as i64)
             .execute(&self.pool)
             .await?;
 
@@ -268,15 +386,15 @@ pub struct UserSettings {
     pub announcement_color:             i64,
     pub dm_alerts:                      bool,
     pub notify_quota_threshold:         Option<u8>,
-    pub announcement_description:       Option<String>,
-    pub announcement_footer_text:       Option<String>,
-    pub announcement_footer_icon:       Option<String>,
-    pub announcement_thumbnail:         Option<String>,
-    pub leave_announcement:             bool,
-    pub leave_announcement_description: Option<String>,
-    pub leave_announcement_footer_text: Option<String>,
-    pub leave_announcement_footer_icon: Option<String>,
-    pub leave_announcement_thumbnail:   Option<String>,
+    pub alert_desc:                     Option<String>,
+    pub alert_footer_text:              Option<String>,
+    pub alert_footer_icon:              Option<String>,
+    pub alert_footer_thumbnail:         Option<String>,
+    pub leave_alert:                    bool,
+    pub leave_alert_desc:               Option<String>,
+    pub leave_alert_footer_text:        Option<String>,
+    pub leave_alert_footer_icon:        Option<String>,
+    pub leave_alert_footer_thumbnail:   Option<String>,
 }
 
 impl Default for UserSettings {
@@ -288,36 +406,37 @@ impl Default for UserSettings {
             announcement_color:             3447003, // Discord blurple
             dm_alerts:                      true,
             notify_quota_threshold:         None,
-            announcement_description:       None,
-            announcement_footer_text:       None,
-            announcement_footer_icon:       None,
-            announcement_thumbnail:         None,
-            leave_announcement:             false,
-            leave_announcement_description: None,
-            leave_announcement_footer_text: None,
-            leave_announcement_footer_icon: None,
-            leave_announcement_thumbnail:   None,
+            alert_desc:       None,
+            alert_footer_text:       None,
+            alert_footer_icon:       None,
+            alert_footer_thumbnail:         None,
+            leave_alert:             false,
+            leave_alert_desc: None,
+            leave_alert_footer_text: None,
+            leave_alert_footer_icon: None,
+            leave_alert_footer_thumbnail:   None,
         }
     }
 }
 
 #[async_trait]
-impl Repository<Player, UserId> for UserRepository {
+impl Repository<Player, UI> for UserRepository {
     async fn create(&self, player: &Player) -> Result<Player> {
-        self.create_or_update(player.discord_id, player.steam_id).await
+        self.ensure_user_exists(player.user_id, player.steam_id).await
     }
 
-    async fn get_by_id(&self, discord_id: UserId) -> Result<Player> {
-        self.get_by_discord_id(discord_id).await
+    async fn get_by_id(&self, user_id: UI) -> Result<Player> {
+        self.get(user_id).await
     }
 
     async fn update(&self, player: &Player) -> Result<Player> {
-        self.update_steam_id(player.discord_id, player.steam_id).await
+        self.update_steam_id(&player.user_id, player.steam_id).await?;
+        Ok(player.clone())
     }
 
-    async fn delete(&self, discord_id: UserId) -> Result<()> {
-        sqlx::query("DELETE FROM users WHERE discord_id = ?")
-            .bind(discord_id.get() as i64)
+    async fn delete(&self, user_id: UI) -> Result<()> {
+        sqlx::query("DELETE FROM users WHERE user_id = ?")
+            .bind(user_id.get() as i64)
             .execute(&self.pool)
             .await?;
         Ok(())

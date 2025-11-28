@@ -3,7 +3,7 @@ pub mod repositories;
 pub mod validator;
 
 use anyhow::Result;
-use serenity::all::{Context, UserId};
+use serenity::all::{Context as Ctx, UserId as UI};
 use sqlx::SqlitePool;
 use tracing::info;
 
@@ -40,7 +40,7 @@ impl Database {
 
         // Run migrations
         let migrations = DatabaseMigrations::new(&pool);
-        migrations.run_all().await?;
+        migrations.create_tables().await?;
 
         // Initialize repositories
         let users  = UserRepository  ::new(pool.clone());
@@ -58,28 +58,23 @@ impl Database {
     // Backward compatibility methods - delegate to repositories
 
     /// Creates a new user in the database
-    pub async fn new_user(&self, discord_id: UserId) -> Result<Player> {
-        self.users.create_or_update(discord_id, Some(0)).await
+    pub async fn new_user(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
+        self.users.create_or_update_with_tag(user_id, Some(0), ctx).await
     }
 
-    /// Creates a new user in the database with discord tag fetched from API
-    pub async fn new_user_with_tag(&self, discord_id: UserId, ctx: &Context) -> Result<Player> {
-        self.users.create_or_update_with_tag(discord_id, Some(0), ctx).await
+    /// Gets a Player by Discord ID
+    pub async fn get_user(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
+        self.users.get_with_tag(user_id, ctx).await
     }
 
-    /// Gets a user by Discord ID
-    pub async fn get_user(&self, discord_id: UserId) -> Result<Player> {
-        self.users.get_by_discord_id(discord_id).await
-    }
-
-    /// Gets a user by Discord ID with discord tag fetched from API
-    pub async fn get_user_with_tag(&self, discord_id: UserId, ctx: &Context) -> Result<Player> {
-        self.users.get_by_discord_id_with_tag(discord_id, ctx).await
+    /// Gets a Player by Discord ID
+    pub async fn get_user_with_display_name(&self, user_id: UI, ctx: &Ctx, guild_id: Option<serenity::all::GuildId>) -> Result<Player> {
+        self.users.get_user_with_nick(user_id, ctx, guild_id).await
     }
 
     /// Updates a user's Steam ID
-    pub async fn set_user(&self, discord_id: UserId, steam_id: Option<u64>) -> Result<Player> {
-        self.users.update_steam_id(discord_id, steam_id).await
+    pub async fn set_player_steam_id(&self, user_id: &UI, steam_id: Option<u64>) -> Result<Player> {
+        self.users.update_steam_id(user_id, steam_id).await
     }
 
     /// Creates a new group

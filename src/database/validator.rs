@@ -28,7 +28,7 @@ impl DatabaseValidator {
         let mut report = ValidationReport::new();
 
         // Schema validation
-        match self.migrations.validate_schema().await {
+        match self.migrations.verify_schemas().await {
             Ok(_) => {
                 report.schema_valid = true;
                 info!("Schema validation passed");
@@ -54,7 +54,7 @@ impl DatabaseValidator {
     async fn validate_data_integrity(&self, report: &mut ValidationReport) -> Result<()> {
         info!("Validating data integrity");
         self.check_orphaned_records(report).await?;
-        self.check_invalid_discord_ids(report).await?;
+        self.check_invalid_user_ids(report).await?;
         self.check_duplicate_records(report).await?;
 
         Ok(())
@@ -79,7 +79,7 @@ impl DatabaseValidator {
     }
 
     /// Check for invalid Discord IDs (placeholder values)
-    async fn check_invalid_discord_ids(&self, report: &mut ValidationReport) -> Result<()> {
+    async fn check_invalid_user_ids(&self, report: &mut ValidationReport) -> Result<()> {
         let placeholder_groups: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM groups
              WHERE dashboard = 1 OR chat = 1 OR queue = 1 OR red = 1 OR blu = 1"
@@ -99,7 +99,7 @@ impl DatabaseValidator {
     async fn check_duplicate_records(&self, report: &mut ValidationReport) -> Result<()> {
         // Check for duplicate users
         let duplicate_users: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) - COUNT(DISTINCT discord_id) FROM users"
+            "SELECT COUNT(*) - COUNT(DISTINCT user_id) FROM users"
         )
         .fetch_one(&self.pool)
         .await?;
@@ -171,7 +171,7 @@ impl DatabaseValidator {
     async fn remove_duplicate_users(&self) -> Result<i64> {
         let result = sqlx::query(
             "DELETE FROM users WHERE id NOT IN (
-                SELECT MIN(id) FROM users GROUP BY discord_id
+                SELECT MIN(id) FROM users GROUP BY user_id
             )"
         )
         .execute(&self.pool)
@@ -194,7 +194,7 @@ impl DatabaseValidator {
 
     /// Create a default group for a guild
     pub async fn create_default_group(&self, guild_id: u64) -> Result<()> {
-        self.migrations.ensure_default_group(guild_id).await
+        self.migrations.init_first_group(guild_id).await
     }
 }
 
