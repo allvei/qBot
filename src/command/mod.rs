@@ -110,7 +110,7 @@ impl CommandRegistry {
             usage: vec!["query <sql>"],
             examples: vec![
                 "query SELECT * FROM groups",
-                "query SELECT * FROM players WHERE discord_id = 123456",
+                "query SELECT * FROM players WHERE user_id = 123456",
             ],
             category: CommandCategory::Config,
         });
@@ -565,32 +565,6 @@ impl ConsoleHandler {
                     self.cmd_force_generate_teams(parts[1], parts[2]).await?;
                 }
             },
-            "fakeplayer" => {
-                match parts.len() {
-                    3 => {
-                        // fakeplayer <guild_name> <count> - defaults to group 0
-                        self.cmd_add_fake_players(parts[1], "0", parts[2]).await?;
-                    },
-                    4 => {
-                        // fakeplayer <guild_id> <group_id> <count>
-                        self.cmd_add_fake_players(parts[1], parts[2], parts[3]).await?;
-                    },
-                    _ => {
-                        if let Some(cmd) = self.registry.commands.get("fakeplayer") {
-                            println!("Usage:");
-                            for usage in &cmd.usage {
-                                println!("  {usage}");
-                            }
-                            if !cmd.examples.is_empty() {
-                                println!("Examples:");
-                                for example in &cmd.examples {
-                                    println!("  {example}");
-                                }
-                            }
-                        }
-                    }
-                }
-            },
             "testnotify" => {
                 if parts.len() < 3 {
                     if let Some(cmd) = self.registry.commands.get("testnotify") {
@@ -693,18 +667,6 @@ impl ConsoleHandler {
                     self.cmd_force_pull(parts[1], parts[2]).await?;
                 }
             },
-            "simulate" => {
-                if parts.len() < 3 {
-                    if let Some(cmd) = self.registry.commands.get("simulate") {
-                        println!("Usage:");
-                        for usage in &cmd.usage {
-                            println!("  {usage}");
-                        }
-                    }
-                } else {
-                    self.cmd_simulate_cycle(parts[1], parts[2]).await?;
-                }
-            },
             "help" => {
                 let verbose = parts.len() > 1 && (parts[1] == "-v" || parts[1] == "--verbose");
                 self.registry.print_help(verbose);
@@ -803,7 +765,7 @@ impl ConsoleHandler {
                         print!("  Players: ");
                         for (j, player) in game.pool.iter().enumerate() {
                             if j > 0 { print!(", "); }
-                            print!("{}", player.player.discord_id);
+                            print!("{}", player.player.user_id);
                         }
                         println!();
                     }
@@ -1183,49 +1145,14 @@ impl ConsoleHandler {
 
                 println!("Red Team ({} players):", red_players.len());
                 for p in red_players {
-                    println!("  - {}", p.player.discord_id);
+                    println!("  - {}", p.player.user_id);
                 }
 
                 println!("\nBlue Team ({} players):", blu_players.len());
                 for p in blu_players {
-                    println!("  - {}", p.player.discord_id);
+                    println!("  - {}", p.player.user_id);
                 }
             }
-        } else {
-            Self::print_no_queue_message(guild_id, group_id);
-        }
-
-        Ok(())
-    }
-
-    async fn cmd_add_fake_players(&self, guild_identifier: &str, group_id_str: &str, count_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
-        let count: usize = count_str.parse()
-            .map_err(|_| format!("Invalid player count: {count_str}"))?;
-
-        if count == 0 || count > 20 {
-            println!("Player count must be between 1 and 20");
-            return Ok(());
-        }
-
-        let mut manager = self.get_group_mut(guild_id, group_id).await?;
-        let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-
-        // Get the idle session
-        if let Ok(session) = group.get_queue().await {
-            println!("Adding {count} fake player(s) to guild {guild_id} group {group_id}...");
-
-            // Generate fake player IDs starting from a high number to avoid conflicts
-            let base_id = 9000000000000000000_u64;
-            for i in 0..count {
-                let fake_id = UserId::new(base_id + i as u64);
-                // Use Novice rank as default for test players
-                let fake_player = pf_pug_bot::Player::add(fake_id, Some(format!("FakePlayer{i}")), None);
-                session.add_player(fake_player, pf_pug_bot::Rank::Novice);
-            }
-
-            println!("Added {} fake player(s). Total players in queue: {}", count, session.pool.len());
-            self.update_dashboard_if_available(&mut manager, guild_id, group_id).await;
         } else {
             Self::print_no_queue_message(guild_id, group_id);
         }
@@ -1270,7 +1197,7 @@ impl ConsoleHandler {
                         Some(Team::Blu) => " [BLU]",
                         Some(Team::Unassigned) | None => "",
                     };
-                    println!("  {}. {}{}", i, player.player.discord_id, team_str);
+                    println!("  {}. {}{}", i, player.player.user_id, team_str);
                 }
             }
         } else {
@@ -1297,14 +1224,14 @@ impl ConsoleHandler {
 
                 println!("\nRed Team ({} players):", red_players.len());
                 for p in red_players {
-                    let elo = p.player.rank.map(|r| r.elo()).unwrap_or(30);
-                    println!("  - {} (ELO: {})", p.player.discord_id, elo);
+                    let elo = p.player.elo;
+                    println!("  - {} (ELO: {})", p.player.user_id, elo);
                 }
 
                 println!("\nBlue Team ({} players):", blu_players.len());
                 for p in blu_players {
-                    let elo = p.player.rank.map(|r| r.elo()).unwrap_or(30);
-                    println!("  - {} (ELO: {})", p.player.discord_id, elo);
+                    let elo = p.player.elo;
+                    println!("  - {} (ELO: {})", p.player.user_id, elo);
                 }
             }
         } else {
@@ -1345,7 +1272,7 @@ impl ConsoleHandler {
                 println!("Index {index} is out of bounds. Queue has {len} player(s)", len = session.pool.len());
             } else {
                 let removed_player = session.pool.remove(index);
-                println!("Removed player {} from position {}", removed_player.player.discord_id, index);
+                println!("Removed player {} from position {}", removed_player.player.user_id, index);
                 self.update_dashboard_if_available(&mut manager, guild_id, group_id).await;
             }
         } else {
@@ -1415,80 +1342,4 @@ impl ConsoleHandler {
 
         Ok(())
     }
-
-    async fn cmd_simulate_cycle(&self, guild_identifier: &str, group_id_str: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let (guild_id, group_id) = self.resolve_guild_and_group(guild_identifier, group_id_str).await?;
-        let ctx = self.require_context()?;
-            println!("\nStarting complete game cycle simulation...\n");
-
-            // Step 1: Add fake players to fill quota
-            {
-                let mut manager = self.manager.lock().await;
-                let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-                let quota = group.quota as usize;
-
-                if group.sessions.is_empty() {
-                    let _ = group.create_session();
-                }
-
-                if let Ok(session) = group.get_queue().await {
-                    let current_count = session.pool.len();
-                    if current_count < quota {
-                        let needed = quota - current_count;
-                        println!("1️⃣  Adding {needed} fake player(s) to reach quota ({quota})...");
-
-                        let base_id = 9000000000000000000_u64;
-                        for i in 0..needed {
-                            let fake_id = UserId::new(base_id + i as u64);
-                            // Use Novice rank as default for test players
-                            let fake_player = pf_pug_bot::Player::add(fake_id, Some(format!("FakePlayer{i}")), None);
-                            session.add_player(fake_player, pf_pug_bot::Rank::Novice);
-                        }
-                        println!("   Queue now has {} players\n", session.pool.len());
-                    } else {
-                        println!("1️⃣  Queue already has {current_count} players (quota: {quota})\n");
-                    }
-                }
-            }
-
-            // Step 2: Force Hot
-            println!("2️⃣  Setting session to Hot...");
-            {
-                let mut manager = self.manager.lock().await;
-                let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-                group.hot(ctx, Some(serenity::model::id::GuildId::new(guild_id)), None, Some(self.manager.clone())).await?;
-                println!("   Session is Hot, teams generated\n");
-            }
-
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-            // Step 3: Push to team channels
-            println!("3️⃣  Pushing players to team channels...");
-            {
-                let mut manager = self.manager.lock().await;
-                let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-                match group.push(ctx, serenity::model::id::GuildId::new(guild_id)).await {
-                    Ok(_) => println!("   Players pushed, session is Live\n"),
-                    Err(e) => println!("     Push failed: {e}\n"),
-                }
-            }
-
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-            // Step 4: Pull back to queue
-            println!("4️⃣  Pulling players back to queue...");
-            {
-                let mut manager = self.manager.lock().await;
-                let group = manager.get_group_by_id(serenity::model::id::GuildId::new(guild_id), group_id)?;
-                match group.pull(ctx, serenity::model::id::GuildId::new(guild_id), &self.database, Some(self.manager.clone())).await {
-                    Ok(_) => println!("   Players pulled back, session reset to Idle\n"),
-                    Err(e) => println!("     Pull failed: {e}\n"),
-                }
-            }
-
-            println!("Complete game cycle simulation finished!\n");
-
-        Ok(())
-    }
-
 }

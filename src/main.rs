@@ -6,11 +6,8 @@ use std::sync::Arc;
 use time::macros::format_description;
 use tracing_subscriber::fmt::time::UtcTime;
 use anyhow::Result;
-use pf_pug_bot::commands;
-use serenity::all::{
-    Client, Command, CommandOptionType as COT, Context, EventHandler, Guild,
-    GatewayIntents, Interaction, Ready, VoiceState,
-};
+use pf_pug_bot::{Player, commands};
+use serenity::all::{Client, GatewayIntents, EventHandler, Ready, Guild, Interaction, VoiceState, Command, CommandInteraction, CommandOptionType, Context, CreateCommand, CreateCommandOption, CreateInteractionResponse, CreateInteractionResponseMessage, UserId, User, CommandOptionType as COT};
 use serenity::prelude::TypeMapKey;
 use serenity::async_trait;
 use serenity::builder::{
@@ -31,13 +28,20 @@ fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
 
 pub trait CmdOp:
     Sized {
-    fn op(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self;
-    fn op_user(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self;
+    fn op_int(   self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self;
+    fn op_string(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self;
+    fn op_user(  self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self;
+    fn op_role(  self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self;
 }
 
 impl CmdOp for CC {
+    /// Adds an integer option to the command
+    fn op_int(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self {
+        self.add_option(CCO::new(COT::Integer, name, desc).required(req))
+    }
+
     /// Adds a string option to the command
-    fn op(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self {
+    fn op_string(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self {
         self.add_option(CCO::new(COT::String, name, desc).required(req))
     }
 
@@ -45,10 +49,14 @@ impl CmdOp for CC {
     fn op_user(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self {
         self.add_option(CCO::new(COT::User, name, desc).required(req))
     }
+
+    fn op_role(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self {
+        self.add_option(CCO::new(COT::Role, name, desc).required(req))
+    }
 }
 
 struct Handler {
-    database:        Arc<Database>,
+    db:        Arc<Database>,
     manager:         Arc<Mutex<Manager>>,
     dashboard_queue: Arc<tokio::sync::Mutex<Option<DashboardUpdateQueue>>>,
 }
@@ -64,7 +72,7 @@ impl EventHandler for Handler {
         {
             let mut queue_lock = self.dashboard_queue.lock().await;
             if queue_lock.is_none() {
-                let queue = DashboardUpdateQueue::new(ctx.clone(), self.manager.clone(), self.database.clone());
+                let queue = DashboardUpdateQueue::new(ctx.clone(), self.manager.clone(), self.db.clone());
                 let queue_arc = Arc::new(queue.clone());
                 *queue_lock = Some(queue);
 
@@ -86,7 +94,7 @@ impl EventHandler for Handler {
         // Start auto-remove background task
         {
             let manager   = self.manager.clone();
-            let database  = self.database.clone();
+            let database  = self.db.clone();
             let ctx_clone = ctx.clone();
 
             tokio::spawn(async move {
@@ -136,33 +144,44 @@ impl EventHandler for Handler {
             cmd("setuplink",   "Guide to link existing roles and channels"),
             cmd("roleadd",     "Create runner and admin roles"),
             cmd("rolelink",    "Link existing runner and admin roles")
-                .op("runner_role", "Runner role to link", false)
-                .op("admin_role",  "Admin role to link",  false),
+                .op_role("runner_role", "Runner role to link", false)
+                .op_role("admin_role",  "Admin role to link",  false),
             cmd("roledel",     "Remove role configuration")
-                .op("role_type",   "Role type: runner, admin, or both", true),
+                .op_role("role_type",   "Role type: runner, admin, or both", true),
 
             cmd("rankadd",     "Add Discord role(s) to a rank (supports multiple roles)")
-                .op("rank", "Rank name", true)
-                .op("role", "Discord roles to add", true),
+                .op_string("rank", "Rank name", true)
+                .op_role("role", "Discord roles to add", true),
             cmd("rankremove",  "Remove Discord role(s) from a rank (supports multiple roles)")
-                .op("rank", "Rank name", true)
-                .op("role", "Discord roles to remove", true),
+                .op_string("rank", "Rank name", true)
+                .op_role("role", "Discord roles to remove", true),
             cmd("ranklist",    "List all role mappings for ranks")
-                .op("rank", "Rank name to filter (optional)", false),
+                .op_string("rank", "Rank name to filter (optional)", false),
 
             cmd("groupadd",    "Create a new category with all group channels"),
             cmd("grouplink",   "Link existing channels to a group"),
             cmd("groupremove", "Remove a group")
-                .op("group_id", "Group ID to remove (defaults to current channel's group)", false),
+                .op_int("group_id", "Group ID to remove (defaults to current channel's group)", false),
 
             cmd("quotaset",    "Set the queue quota")
-                .op("quota", "Number of players required (2-100)", true),
+                .op_int("quota", "Number of players required (2-100)", true),
             cmd("connectadd",  "Set server connection info")
-                .op("connect_info", "Server connect command (e.g., connect 192.168.10.10:27015)", true),
+                .op_string("connect_info", "Server connect command (e.g., connect 192.168.10.10:27015)", true),
             cmd("clear",       "Clear all players from the queue"),
             cmd("ranksetelo",  "Set custom ELO value for a rank")
-                .op("rank_role", "The rank role (mention or ID)", true)
-                .op("elo", "ELO value (1-100)", true),
+                .op_role("rank_role", "The rank role (mention or ID)", true)
+                .op_int("elo", "ELO value (1-100)", true),
+            cmd("setplayerelo",  "Set ELO value for a specific player")
+                .op_user("user", "The Discord user (mention or ID)", true)
+                .op_int("elo", "ELO value (0-100, or -1 to clear)", true),
+            cmd("getplayerelo",  "View ELO and rank information for a player")
+                .op_user("user", "The Discord user (mention or ID, optional)", false),
+            cmd("setplayersteam", "Set Steam ID for a specific player")
+                .op_user("user", "The Discord user (mention or ID)", true)
+                .op_int("steam_id", "Steam ID (64-bit number)", true),
+            cmd("enableactiveelo", "Enable automatic ELO adjustments from match results"),
+            cmd("disableactiveelo", "Disable automatic ELO adjustments from match results"),
+            cmd("activeelostatus", "Check if automatic ELO adjustments are enabled"),
             cmd("toggledm",    "Toggle DM notifications when a game is ready"),
             cmd("settings",    "Open your personal settings menu in DMs"),
         ];
@@ -175,10 +194,10 @@ impl EventHandler for Handler {
     /// When the bot is connected to a new guild
     async fn guild_create(&self,ctx: Context, guild: Guild, _is_new: Option<bool>,) {
         let guild_id = guild.id.get();
-        match self.database.get_config(guild_id).await {
+        match self.db.get_config(guild_id).await {
             Ok(_config) => {
                 // Load groups from database into manager
-                let group_repo = GroupRepository::new(self.database.pool().clone());
+                let group_repo = GroupRepository::new(self.db.pool().clone());
                 match group_repo.get_groups_for_guild(guild_id).await {
                     Ok(groups) => {
                         let mut manager = self.manager.lock().await;
@@ -219,14 +238,14 @@ impl EventHandler for Handler {
     async fn interaction_create(&self,ctx: Context,pl: Interaction,) {
         match pl {
             Interaction::Command(itx) => {
-                let discord_tag = match self.database.get_user(itx.user.id).await {
-                    Ok(player) => player.discord_tag.unwrap_or_else(|| itx.user.name.clone()),
+                let discord_tag = match self.db.get_user(itx.user.id, &ctx).await {
+                    Ok(player) => player.tag,
                     Err(_) => itx.user.name.clone(),
                 };
                 let cmd_ctx     = CommandContext {
                     ctx:     &ctx,
                     intax:   &itx,
-                    db:      self.database.clone(),
+                    db:      self.db.clone(),
                     manager: &self.manager.clone(),
                 };
                 let cd  = &itx.data;
@@ -318,8 +337,7 @@ impl EventHandler for Handler {
                         info();
                         let rank_name = cdo.iter()
                             .find(|opt| opt.name == "rank")
-                            .and_then(|opt| opt.value.as_str())
-                            .map(|s| s.to_string());
+                            .and_then(|opt| opt.value.as_str());
                         commands::cmd_rank_list(&cmd_ctx, rank_name).await
                     }
                     "quotaset" => {
@@ -445,6 +463,103 @@ impl EventHandler for Handler {
                                     .unwrap_or(0);
                                 admin::cmd_rank_set_elo(&cmd_ctx, rank_role, elo).await
                             }
+                            "setplayerelo" => {
+                                let user_str = cdo.first().unwrap().value.as_str().unwrap_or("");
+                                info!("DEBUG: setplayerelo user_str: '{}'", user_str);
+                                
+                                // Try multiple ways to parse the user
+                                let user = if let Some(user_id) = cdo.first().unwrap().value.as_user_id() {
+                                    info!("DEBUG: Found user_id: {}", user_id);
+                                    ctx.http.get_user(user_id).await.ok()
+                                } else if let Ok(user_id) = user_str.parse::<u64>() {
+                                    info!("DEBUG: Parsed user_id from string: {}", user_id);
+                                    ctx.http.get_user(UserId::new(user_id)).await.ok()
+                                } else if user_str.starts_with("<@") && user_str.ends_with('>') {
+                                    // Handle user mentions like <@123456789>
+                                    let mention_id = user_str.trim_start_matches("<@").trim_start_matches('!').trim_end_matches('>');
+                                    info!("DEBUG: Extracted mention_id: '{}'", mention_id);
+                                    if let Ok(user_id) = mention_id.parse::<u64>() {
+                                        info!("DEBUG: Parsed user_id from mention: {}", user_id);
+                                        ctx.http.get_user(UserId::new(user_id)).await.ok()
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    info!("DEBUG: Could not parse user from: '{}'", user_str);
+                                    None
+                                };
+                                
+                                if let Some(user) = user {
+                                    let elo = if let Some(elo_option) = cdo.iter()
+                                        .find(|opt| opt.name == "elo") {
+                                    match &elo_option.value {
+                                        serenity::all::CommandDataOptionValue::Integer(i) => *i,
+                                        _ => 0,
+                                    }
+                                } else {
+                                    0
+                                };
+                                    info!("DEBUG: Setting ELO {} for user {}", elo, user.tag());
+                                    admin::cmd_set_player_elo(&cmd_ctx, user, elo).await
+                                } else {
+                                    let response = CIR::Message(CIRM::new().content("Invalid user specified").ephemeral(true));
+                                    itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                                }
+                            }
+                            "getplayerelo" => {
+                                info();
+                                if let Some(user_option) = cdo.first() {
+                                    if let Some(user_id) = user_option.value.as_user_id() {
+                                        let user: Result<User, serenity::Error> = ctx.http.get_user(user_id).await;
+                                        if let Ok(user) = user {
+                                            admin::cmd_get_player_elo(&cmd_ctx, Some(user)).await
+                                        } else {
+                                            let response = CIR::Message(CIRM::new().content("Failed to get user").ephemeral(true));
+                                            itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                                        }
+                                    } else {
+                                        let response = CIR::Message(CIRM::new().content("Invalid user specified").ephemeral(true));
+                                        itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                                    }
+                                } else {
+                                    let response = CIR::Message(CIRM::new().content("No user specified").ephemeral(true));
+                                    itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                                }
+                            }
+                            "enableactiveelo" => {
+                                admin::cmd_enable_active_elo(&cmd_ctx).await
+                            }
+                            "disableactiveelo" => {
+                                admin::cmd_disable_active_elo(&cmd_ctx).await
+                            }
+                            "activeelostatus" => {
+                                admin::cmd_active_elo_status(&cmd_ctx).await
+                            }
+                            "setplayersteam" => {
+                                info();
+                                if let Some(user_option) = cdo.first() {
+                                    if let Some(user_id) = user_option.value.as_user_id() {
+                                        let user: Result<User, serenity::Error> = ctx.http.get_user(user_id).await;
+                                        if let Ok(user) = user {
+                                            let steam_id = cdo.iter()
+                                                .find(|opt| opt.name == "steam_id")
+                                                .and_then(|opt| opt.value.as_str())
+                                                .and_then(|s| s.parse::<u64>().ok())
+                                                .unwrap_or(0);
+                                            admin::cmd_set_player_steam(&cmd_ctx, user, steam_id).await
+                                        } else {
+                                            let response = CIR::Message(CIRM::new().content("Failed to get user").ephemeral(true));
+                                            itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                                        }
+                                    } else {
+                                        let response = CIR::Message(CIRM::new().content("Invalid user specified").ephemeral(true));
+                                        itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                                    }
+                                } else {
+                                    let response = CIR::Message(CIRM::new().content("No user specified").ephemeral(true));
+                                    itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                                }
+                            }
                             _ => {
                                 let response = CIR::Message(CIRM::new().content("Unknown command").ephemeral(true));
                                 itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
@@ -488,7 +603,7 @@ impl EventHandler for Handler {
                     let is_admin = match member {
                         Some(member) => {
                             // Get admin role from database config
-                            match self.database.config.get_config_value("admin_role", guild_id.get()).await {
+                            match self.db.config.get_config_value("admin_role", guild_id.get()).await {
                                 Ok(Some(admin_role_str)) => {
                                     if let Ok(admin_role_id) = admin_role_str.parse::<u64>() {
                                         let admin_role = serenity::all::RoleId::new(admin_role_id);
@@ -569,7 +684,7 @@ impl EventHandler for Handler {
 
                 if matches!(button_type, ButtonType::CreateRankRolesYes | ButtonType::CreateRankRolesNo) {
                     let create = matches!(button_type, ButtonType::CreateRankRolesYes);
-                    let result = admin::handle_create_rank_roles(&ctx, &self.database, &itx, create).await;
+                    let result = admin::handle_create_rank_roles(&ctx, &self.db, &itx, create).await;
                     if let Err(e) = result {
                         error!("Error handling rank role creation: {e}");
                     }
@@ -577,7 +692,7 @@ impl EventHandler for Handler {
                 }
 
                 if button_type.is_setup_button() {
-                    let result = admin::handle_setup_interaction(&ctx, &itx, &self.database, &self.manager).await;
+                    let result = admin::handle_setup_interaction(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling setup interaction: {e}");
                     }
@@ -586,7 +701,7 @@ impl EventHandler for Handler {
 
                 // Handle settings buttons (in DMs)
                 if itx.data.custom_id.starts_with("settings_") {
-                    let result = handlers::handle_settings_button(&ctx, &itx, &self.database).await;
+                    let result = handlers::handle_settings_button(&ctx, &itx, &self.db).await;
                     if let Err(e) = result {
                         error!("Error handling settings interaction: {e}");
                     }
@@ -612,7 +727,7 @@ impl EventHandler for Handler {
                         let message_id_u64 = message_id.get();
 
                         // Load groups from database for this guild
-                        let group_repo = GroupRepository::new(self.database.pool().clone());
+                        let group_repo = GroupRepository::new(self.db.pool().clone());
                         match group_repo.get_groups_for_guild(guild_id_u64).await {
                             Ok(groups) => {
                                 // Find the group that matches this dashboard channel
@@ -685,7 +800,7 @@ impl EventHandler for Handler {
                 let comp_ctx = ComponentContext {
                     ctx:       &ctx,
                     component: &itx,
-                    db:        self.database.clone(),
+                    db:        self.db.clone(),
                     manager:   &self.manager,
                 };
 
@@ -708,7 +823,7 @@ impl EventHandler for Handler {
             Interaction::Modal(itx) => {
                 // Handle modal submissions for settings
                 if itx.data.custom_id.starts_with("settings_modal_") {
-                    let result = handlers::handle_settings_modal(&ctx, &itx, &self.database).await;
+                    let result = handlers::handle_settings_modal(&ctx, &itx, &self.db).await;
                     if let Err(e) = result {
                         error!("Error handling settings modal '{}': {}", itx.data.custom_id, e);
                     }
@@ -732,15 +847,22 @@ impl EventHandler for Handler {
             }
         };
 
-        // Get player discord_tag from database
-        let discord_tag = match self.database.get_user(user_id).await {
-            Ok(player) => player.discord_tag.unwrap_or_else(|| user.display_name().to_string()),
-            Err(_) => user.display_name().to_string(),
-        };
-
         let server      = match new.guild_id {
             Some(s) => s,
             None => {return;}
+        };
+
+        // Get player discord_tag from database (primary source)
+        let discord_tag = match self.db.get_user(user_id, &ctx).await {
+            Ok(player) => {
+                if let tag = player.tag {
+                    tag
+                } else {
+                    // Only use API if database doesn't have the tag
+                    user.display_name().to_string()
+                }
+            },
+            Err(_) => user.display_name().to_string(),
         };
 
         // First manager lock scope - released before line 660
@@ -786,7 +908,7 @@ impl EventHandler for Handler {
                 let quota = group.quota as usize;
                 // Get session index before mutable borrow
                 let _ = group.sessions.iter()
-                    .position(|s| s.pool.iter().any(|p| p.player.discord_id == user_id));
+                    .position(|s| s.pool.iter().any(|p| p.player.user_id == user_id));
 
                 let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
                     if !sesh.is_active() {
@@ -813,7 +935,7 @@ impl EventHandler for Handler {
                 };
 
                 if should_regenerate {
-                    group.generate_teams(&ctx, server, Some(&self.database)).await;
+                    group.generate_teams(&ctx, server, Some(&self.db)).await;
                 }
                 group.queue_dash_update(&ctx, server.get()).await;
             },
@@ -838,7 +960,7 @@ impl EventHandler for Handler {
                     let quota = group.quota as usize;
                     // Get session index before mutable borrow
                     let _ = group.sessions.iter()
-                        .position(|s| s.pool.iter().any(|p| p.player.discord_id == user_id));
+                        .position(|s| s.pool.iter().any(|p| p.player.user_id == user_id));
 
                     let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
                         if !sesh.is_active() {
@@ -865,7 +987,7 @@ impl EventHandler for Handler {
                     };
 
                     if should_regenerate {
-                        group.generate_teams(&ctx, server, Some(&self.database)).await;
+                        group.generate_teams(&ctx, server, Some(&self.db)).await;
                     }
                     // Queue count now only displayed in dashboard
                     group.queue_dash_update(&ctx, server.get()).await;
@@ -885,15 +1007,15 @@ impl EventHandler for Handler {
         // Note: Join logging is done inside the queue VC check below to avoid logging unrelated channel joins
 
         // Get player data
-        let player = match self.database.get_user_with_tag(user_id, &ctx).await {
+        let player = match self.db.get_user(user_id, &ctx).await {
             Ok(user) => user,
-            Err(_) => match self.database.new_user_with_tag(user_id, &ctx).await {
+            Err(_) => match self.db.new_user(user_id, &ctx).await {
                     Ok(new_user) => new_user,
                     Err(e) => {
                         error!("Failed to create new user: {e}");
                         return;
                     }
-            },
+            }
         };
 
         // Mutex scope
@@ -907,7 +1029,7 @@ impl EventHandler for Handler {
                         // Check if player is already in any session and mark them as in VC
                         if let Ok(session) = group.get_user_session(user_id).await {
                             let was_hot = session.is_hot();
-                            if let Some(player) = session.pool.iter_mut().find(|p| p.player.discord_id == user_id) {
+                            if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                                 let was_missing = !player.in_queue_vc;
                                 player.in_queue_vc = true;
 
@@ -933,16 +1055,75 @@ impl EventHandler for Handler {
                             {
                                 // Get or assign player rank (auto-creates ranks and assigns Apprentice if needed)
                                 use pf_pug_bot::handlers::player::get_or_assign_player_rank;
-                                match get_or_assign_player_rank(&ctx, &self.database, server, user_id).await {
+                                match get_or_assign_player_rank(&ctx, &self.db, server, user_id).await {
                                     Ok(rank) => {
+                                        // Get player info and handle ELO fallback
+                                        let mut updated_player = match self.db.get_user(user_id, &ctx).await {
+                                            Ok(mut player) => {
+                                                // If player has no ELO in database, use rank-based ELO
+                                                if player.elo == 0 {
+                                                    info!("DEBUG: Voice join - Player {} has ELO 0, setting to {} from Discord rank {}", user_id, rank.default_rank_elo(), rank.name());
+                                                    player.elo = rank.default_rank_elo();
+                                                    player.rank = rank;
+                                                    // Update database with the rank-based ELO
+                                                    if let Err(e) = self.db.users.update_elo(user_id, Some(player.elo)).await {
+                                                        warn!("Failed to update player ELO in database: {}", e);
+                                                    }
+                                                } else {
+                                                    // Player has stored ELO, check for ELO mismatch with Discord rank
+                                                    let elo_mismatch = player.elo <= 30 && rank.default_rank_elo() > 30;
+                                                    
+                                                    if elo_mismatch {
+                                                        warn!("ELO MISMATCH DETECTED in voice join: Player {} has ELO {} but Discord rank {} (default ELO {}). Auto-correcting...", 
+                                                              user_id, player.elo, rank.name(), rank.default_rank_elo());
+                                                        
+                                                        player.elo = rank.default_rank_elo();
+                                                        player.rank = rank;
+                                                        
+                                                        // Update the database with the corrected ELO
+                                                        if let Err(e) = self.db.users.update_elo(user_id, Some(player.elo)).await {
+                                                            error!("Failed to auto-correct ELO for player {} in voice join: {}", user_id, e);
+                                                        } else {
+                                                            info!("Successfully auto-corrected ELO for player {} in voice join to {} (rank: {})", 
+                                                                  user_id, player.elo, rank.name());
+                                                        }
+                                                    } else {
+                                                        // Player has stored ELO, keep their ELO and only update rank if it makes sense
+                                                        info!("DEBUG: Voice join - Player {} has custom ELO {}, keeping it instead of Discord rank ELO {}", user_id, player.elo, rank.default_rank_elo());
+                                                        // Don't override rank - keep whatever rank matches their current ELO
+                                                        player.update_rank_from_elo(&self.db, server.get()).await;
+                                                    }
+                                                }
+                                                player
+                                            },
+                                            Err(_) => {
+                                                // New player - use rank-based ELO
+                                                info!("DEBUG: Voice join - New player {}, setting ELO to {} from Discord rank {}", user_id, rank.default_rank_elo(), rank.name());
+                                                let mut new_player = match self.db.new_user(user_id, &ctx).await {
+                                                    Ok(p) => p,
+                                                    Err(e) => {
+                                                        error!("Failed to create new user: {}", e);
+                                                        return;
+                                                    }
+                                                };
+                                                new_player.elo = rank.default_rank_elo();
+                                                new_player.rank = rank;
+                                                // Update database with the rank-based ELO
+                                                if let Err(e) = self.db.users.update_elo(user_id, Some(new_player.elo)).await {
+                                                    warn!("Failed to update new player ELO in database: {}", e);
+                                                }
+                                                new_player
+                                            }
+                                        };
+                                        
                                         // Use queue_player_with_vc_status to set in_queue_vc BEFORE quota check/notification
                                         let queue_ctx = pf_pug_bot::models::server::QueueContext {
                                             ctx: &ctx,
                                             guild_id: Some(server),
-                                            db: Some(&self.database),
+                                            db: Some(&self.db),
                                             manager: Some(self.manager.clone()),
                                         };
-                                        if let Err(e) = group.queue_player_with_vc_status(player.clone(), rank, queue_ctx, true).await {
+                                        if let Err(e) = group.queue_player_with_vc_status(updated_player.clone(), rank, queue_ctx, true).await {
                                             error!("Failed to add player to queue: {e}");
                                         } else {
                                             // Log successful queue join via voice channel
@@ -1045,7 +1226,7 @@ impl Handler {
             }
 
             // Collect all players to add first (to avoid quota check per player)
-            let mut players_to_add = Vec::new();
+            let mut players_to_add: Vec<Player> = Vec::new();
             for (user_id, voice_state) in &guild.voice_states {
                 // Check if user is in this queue voice channel
                 if voice_state.channel_id == Some(queue_vc_id) {
@@ -1054,25 +1235,16 @@ impl Handler {
                         continue;
                     }
 
-                    let discord_tag = if let Ok(player) = self.database.get_user(*user_id).await {
-                        if let Some(tag) = player.discord_tag {
-                            tag
-                        } else {
-                            match ctx.http.get_user(*user_id).await {
-                                Ok(user) => user.display_name().to_string(),
-                                Err(_) => user_id.to_string(),
-                            }
-                        }
+                    let discord_tag = if let Ok(player) = self.db.get_user(*user_id, &ctx).await {
+                        player.tag
                     } else {
-                        match ctx.http.get_user(*user_id).await {
-                            Ok(user) => user.display_name().to_string(),
-                            Err(_) => user_id.to_string(),
-                        }
+                        "Unknown".to_string()
                     };
 
-                    match get_or_assign_player_rank(ctx, &self.database, guild.id, *user_id).await {
+                    match get_or_assign_player_rank(ctx, &self.db, guild.id, *user_id).await {
                         Ok(rank) => {
-                            players_to_add.push((*user_id, rank, discord_tag));
+                            let player = Player::add(*user_id, discord_tag, None, rank);
+                            players_to_add.push(player);
                         },
                         Err(e) => {
                             warn!("Failed to get or assign rank for existing user {}: {}", discord_tag, e);
@@ -1089,20 +1261,66 @@ impl Handler {
                     .map(|ch| ch.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
 
-                for (user_id, rank, discord_tag) in &players_to_add {
-                    // Fetch player from database to preserve discord_tag
-                    let player = match self.database.get_user_with_tag(*user_id, ctx).await {
-                        Ok(p) => p,
-                        Err(_) => match self.database.new_user_with_tag(*user_id, ctx).await {
-                            Ok(p) => p,
-                            Err(e) => {
-                                warn!("Failed to get or create player {}: {}", discord_tag, e);
-                                continue;
+                for player in &mut players_to_add {
+                    // Get player info and handle ELO fallback
+                    let player = match self.db.get_user(player.user_id, ctx).await {
+                        Ok(mut player) => {
+                            // If player has no ELO in database, use rank-based ELO
+                            if player.elo == 0 {
+                                info!("DEBUG: Existing VC - Player {} has ELO 0, setting to {} from Discord rank {}", player.user_id, player.rank.default_rank_elo(), player.rank.name());
+                                player.elo = player.rank.default_rank_elo();
+                                // Update database with the rank-based ELO
+                                if let Err(e) = self.db.users.update_elo(player.user_id, Some(player.elo)).await {
+                                    warn!("Failed to update player ELO in database: {}", e);
+                                }
+                            } else {
+                                // Player has stored ELO, check for ELO mismatch with Discord rank
+                                let elo_mismatch = player.elo <= 30 && player.rank.default_rank_elo() > 30;
+                                
+                                if elo_mismatch {
+                                    warn!("ELO MISMATCH DETECTED in existing VC: Player {} has ELO {} but Discord rank {} (default ELO {}). Auto-correcting...", 
+                                          player.user_id, player.elo, player.rank.name(), player.rank.default_rank_elo());
+                                    
+                                    player.elo = player.rank.default_rank_elo();
+                                    
+                                    // Update the database with the corrected ELO
+                                    if let Err(e) = self.db.users.update_elo(player.user_id, Some(player.elo)).await {
+                                        error!("Failed to auto-correct ELO for player {} in existing VC: {}", player.user_id, e);
+                                    } else {
+                                        info!("Successfully auto-corrected ELO for player {} in existing VC to {} (rank: {})", 
+                                              player.user_id, player.elo, player.rank.name());
+                                    }
+                                } else {
+                                    // Player has stored ELO, keep their ELO and only update rank if it makes sense
+                                    info!("DEBUG: Existing VC - Player {} has custom ELO {}, keeping it instead of Discord rank ELO {}", player.user_id, player.elo, player.rank.default_rank_elo());
+                                    // Don't override rank - keep whatever rank matches their current ELO
+                                    player.update_rank_from_elo(&self.db, guild.id.get()).await;
+                                }
                             }
+                            player
+                        },
+                        Err(_) => {
+                            // New player - use rank-based ELO
+                            info!("DEBUG: Existing VC - New player {}, setting ELO to {} from Discord rank {}", player.user_id, player.rank.default_rank_elo(), player.rank.name());
+                            let mut new_player = match self.db.new_user(player.user_id, ctx).await {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    error!("Failed to create new user: {}", e);
+                                    return;
+                                }
+                            };
+                            new_player.elo = player.rank.default_rank_elo();
+                            new_player.rank = player.rank;
+                            // Update database with the rank-based ELO
+                            if let Err(e) = self.db.users.update_elo(player.user_id, Some(new_player.elo)).await {
+                                warn!("Failed to update new player ELO in database: {}", e);
+                            }
+                            new_player
                         }
                     };
-                    session.add_player_in_vc(player, *rank);
-                    log_queue_toggle(&guild_name, &group_name, discord_tag, QueueToggleType::VJ);
+                    
+                    log_queue_toggle(&guild_name, &group_name, &player.tag.clone(), QueueToggleType::VJ);
+                    session.add_player(player);
                 }
             }
 
@@ -1111,7 +1329,7 @@ impl Handler {
 
                 // NOW check quota once after all players added
                 if group.is_quota() {
-                    if let Err(e) = group.hot(ctx, Some(guild.id), Some(&self.database), Some(self.manager.clone())).await {
+                    if let Err(e) = group.hot(ctx, Some(guild.id), Some(&self.db), Some(self.manager.clone())).await {
                         error!("Failed to transition to hot: {e}");
                     }
                 }
@@ -1197,13 +1415,13 @@ impl Handler {
             let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
 
             // Create dashboard in the dashboard channel
-            match group.dash_publish(ctx, channel_id, &self.database, guild.id.get()).await {
+            match group.dash_publish(ctx, channel_id, &self.db, guild.id.get()).await {
                 Ok(_) => {
                     info!("Dashboard created successfully for channel {}", channel_name);
 
                     // Persist the dashboard message ID to database
                     let dashboard_msg_id = group.dashboard_msg.get();
-                    if let Err(e) = self.database.groups.update_dashboard_msg(
+                    if let Err(e) = self.db.groups.update_dashboard_msg(
                         guild.id.get(),
                         channel_id.get(),
                         dashboard_msg_id
@@ -1228,7 +1446,7 @@ impl Handler {
 async fn main(
 ) -> Result<()> {
     // Initialize tracing with minimal, colored format
-    let timer = UtcTime::new(format_description!("[hour]:[minute]:[second].[subsecond digits:4]"));
+    let timer = UtcTime::new(format_description!("[hour]:[minute]:[second]"));
     tracing_subscriber::fmt()
         .with_ansi(true)
         .with_target(false)
@@ -1237,7 +1455,7 @@ async fn main(
         .with_thread_names(false)
         .with_file(true)
         .with_line_number(true)
-        .with_level(true)
+        .with_level(false)
         .compact()
         .init();
 
@@ -1252,10 +1470,8 @@ async fn main(
 
     // Run database migrations
     let migrations = DatabaseMigrations::new(db.pool());
-    migrations.run_all().await?;
-
-    // Validate database schema integrity
-    migrations.validate_schema().await?;
+    migrations.create_tables().await?;
+    migrations.verify_schemas().await?;
 
     // Configure the client with the framework and intents
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILD_VOICE_STATES | GatewayIntents::GUILDS;
@@ -1273,8 +1489,8 @@ async fn main(
     // Init client
     let mut client = Client::builder(&token, intents)
         .event_handler(Handler {
-            database: db.clone(),
-            manager: manager.clone(),
+            db:        db.clone(),
+            manager:         manager.clone(),
             dashboard_queue: Arc::new(tokio::sync::Mutex::new(None)),
         })
         .await
