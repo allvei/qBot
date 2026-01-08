@@ -1046,7 +1046,7 @@ pub async fn cmd_server_settings(cc: &CC<'_>) -> Result<()> {
 
     // Build embed and buttons
     let embed   = build_server_settings_embed(&settings, &guild_name);
-    let buttons = build_server_settings_buttons(&settings);
+    let buttons = build_server_settings_buttons(&settings, &guild_name);
 
     // Send ephemeral message in the current channel
     let response = CIR::Message(
@@ -1154,5 +1154,52 @@ pub async fn cmd_group_settings(cc: &CC<'_>) -> Result<()> {
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
     info!("Sent group settings menu to {} (ephemeral)", cc.intax.user.name);
+    Ok(())
+}
+
+/// `/editplayer` - Open player settings menu as ephemeral message (admin only)
+pub async fn cmd_player_settings(cc: &CC<'_>) -> Result<()> {
+    use crate::handlers::settings::{PlayerSettings, build_player_settings_embed, build_player_settings_buttons};
+    
+    // Check admin permissions
+    if !check_role(cc, &Role::Admin).await? { return Ok(()); }
+
+    let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+
+    // Get target user from command options
+    let target_user = cc.intax.data.options.iter()
+        .find(|o| o.name == "user")
+        .and_then(|o| o.value.as_user_id())
+        .ok_or_else(|| anyhow!("User option not found"))?;
+
+    // Get player data
+    let player = cc.db.users.get(target_user).await?;
+    let guild_elo = cc.db.elos.get(target_user, guild_id.get()).await?;
+    let username = cc.ctx.http.get_user(target_user).await
+        .map(|u| u.name.clone())
+        .unwrap_or_else(|_| target_user.to_string());
+
+    let settings = PlayerSettings {
+        user_id:  target_user,
+        username,
+        steam_id: player.steam_id,
+        elo:      guild_elo.elo,
+        division: guild_elo.division.name().to_string(),
+        games:    guild_elo.games,
+        wins:     guild_elo.wins,
+    };
+
+    let embed = build_player_settings_embed(&settings);
+    let buttons = build_player_settings_buttons(target_user);
+
+    let response = CIR::Message(
+        CIRM::new()
+            .embed(embed)
+            .components(buttons)
+            .ephemeral(true)
+    );
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+
+    info!("Sent player settings menu for {} to {} (ephemeral)", target_user, cc.intax.user.name);
     Ok(())
 }

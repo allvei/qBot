@@ -1,6 +1,5 @@
 use serenity::all::CreateButton as CB;
 use serenity::all::ButtonStyle as BS;
-use serenity::all::CreateActionRow as CAR;
 
 pub fn toggle(custom_id: &str, label: &str, bool: bool) -> CB {
     CB::new(custom_id)

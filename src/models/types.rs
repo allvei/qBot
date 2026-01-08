@@ -235,6 +235,21 @@ impl Rank {
         }
     }
 
+    pub fn from_name(name: &str) -> Rank {
+        match name.to_lowercase().as_str() {
+            "beginner"     => Rank::Beginner,
+            "newcomer"     => Rank::Newcomer,
+            "novice"       => Rank::Novice,
+            "apprentice"   => Rank::Apprentice,
+            "journeyman"   => Rank::Journeyman,
+            "expert"       => Rank::Expert,
+            "master"       => Rank::Master,
+            "master elite" => Rank::MasterElite,
+            "grandmaster"  => Rank::Grandmaster,
+            _              => Rank::Journeyman, // Default fallback
+        }
+    }
+
     pub fn elo(&self) -> u32 {
         match self {
             Rank::Beginner    => 10,

@@ -182,6 +182,8 @@ impl EventHandler for Handler {
             cmd("settings",       "Open your personal settings menu"),
             cmd("serversettings", "Open server settings menu (admin only)"),
             cmd("groupsettings",  "Open group settings menu (runner only)"),
+            cmd("editplayer", "Open player settings menu (admin only)")
+                .op_user("user", "The Discord user to edit", true),
         ];
 
         if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
@@ -286,6 +288,10 @@ impl EventHandler for Handler {
                     "groupsettings" => {
                         info();
                         commands::cmd_group_settings(&cmd_ctx).await
+                    }
+                    "editplayer" => {
+                        info();
+                        commands::cmd_player_settings(&cmd_ctx).await
                     }
                     "setupadd" => {
                         info();
@@ -728,6 +734,15 @@ impl EventHandler for Handler {
                     return;
                 }
 
+                // Handle player settings buttons
+                if itx.data.custom_id.starts_with("player_settings_") {
+                    let result = handlers::handle_player_settings_button(&ctx, &itx, &self.db).await;
+                    if let Err(e) = result {
+                        error!("Error handling player settings interaction: {e}");
+                    }
+                    return;
+                }
+
                 let mut manager = self.manager.lock().await;
                 let guild_id = itx.guild_id.unwrap();
                 let channel_id = itx.channel_id;
@@ -860,6 +875,13 @@ impl EventHandler for Handler {
                     let result = handlers::handle_group_settings_modal(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling group settings modal '{}': {}", itx.data.custom_id, e);
+                    }
+                }
+                // Handle modal submissions for player settings
+                if itx.data.custom_id.starts_with("player_settings_modal_") {
+                    let result = handlers::handle_player_settings_modal(&ctx, &itx, &self.db).await;
+                    if let Err(e) = result {
+                        error!("Error handling player settings modal '{}': {}", itx.data.custom_id, e);
                     }
                 }
             },

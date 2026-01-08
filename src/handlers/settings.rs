@@ -4,14 +4,13 @@ use serenity::all::{
     CreateInteractionResponseMessage as CIRM, CreateActionRow as CAR, CreateActionRow, CreateButton as CB,
     ButtonStyle as BS, EditMessage, CreateInputText, InputTextStyle, CreateModal,
     CreateEmbedFooter, CreateSelectMenu as CSM, CreateSelectMenuKind as CSMK,
-    CreateSelectMenuOption as CSMO, RoleId,
+    CreateSelectMenuOption as CSMO,
 };
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
-use crate::models::buttons::*;
 
-use crate::{Database, row};
+use crate::Database;
 
 /// Messages to replace description spam with
 const SPAM_REPLACEMENT_MESSAGES: &[&str] = &[
@@ -431,35 +430,14 @@ async fn update_settings_menu_from_modal(
 
 /// Build settings embed
 pub fn build_settings_embed(settings: &crate::database::repositories::UserSettings) -> CE {
-    CE::new()
-        .title("qBot user settings")
-        .description({
-            let minutes = settings.expiry_duration.as_secs() / 60;
-            format!(
-                "**Timeout length:** {} minute{}\n",
-                minutes,
-                if minutes == 1 { "" } else { "s" }
-            )
-        })
-        .color(settings.announcement_color as u32)
-        .footer(CreateEmbedFooter::new("VC Kick - kicks you from the vc when you leave the queue."))
+    use crate::handlers::settings_menu::IntoSettingsMenu;
+    settings.into_settings_menu().build_embed()
 }
 
 /// Build settings buttons
 pub fn build_settings_buttons(settings: &crate::database::repositories::UserSettings) -> Vec<CAR> {
-    vec![
-        row!([
-            toggle("settings_toggle_dm",        "DM alerts", settings.dm_alerts),
-            toggle("settings_vc_disconnect",    "VC kick*",  settings.vc_kick)
-        ]),
-        row!([
-            edit("settings_timeout", "Set timeout length"),
-        ]),
-        row!([
-            edit("settings_edit_alert",       "Edit join alert"),
-            edit("settings_edit_leave_alert", "Edit leave alert"),
-        ]),
-    ]
+    use crate::handlers::settings_menu::IntoSettingsMenu;
+    settings.into_settings_menu().build_components()
 }
 
 /// Build a join announcement embed (used for both actual announcements and previews)
@@ -632,47 +610,26 @@ pub struct ServerSettings {
 
 /// Build server settings embed
 pub fn build_server_settings_embed(settings: &ServerSettings, guild_name: &str) -> CE {
-    let runner_display = settings.runner_role.as_ref()
-        .map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
-        .unwrap_or_else(|| "*Not configured*".to_string());
-    
-    let admin_display = settings.admin_role.as_ref()
-        .map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
-        .unwrap_or_else(|| "*Not configured*".to_string());
-
-    CE::new()
-        .title(format!("{guild_name} Server Settings"))
-        .field("Runner Role", runner_display, false)
-        .field("Admin Role", admin_display, false)
-        .color(0x5865F2) // Discord blurple
+    use crate::handlers::settings_menu::{IntoSettingsMenu, ServerSettingsDisplay};
+    let display = ServerSettingsDisplay {
+        guild_name:  guild_name.to_string(),
+        runner_role: settings.runner_role.clone(),
+        admin_role:  settings.admin_role.clone(),
+        dynamic_elo: settings.dynamic_elo,
+    };
+    display.into_settings_menu().build_embed()
 }
 
 /// Build server settings buttons and select menus
-pub fn build_server_settings_buttons(settings: &ServerSettings) -> Vec<CAR> {
-    let runner_default = settings.runner_role.as_ref()
-        .and_then(|s| s.parse::<u64>().ok())
-        .map(|id| vec![RoleId::new(id)]);
-    let admin_default = settings.admin_role.as_ref()
-        .and_then(|s| s.parse::<u64>().ok())
-        .map(|id| vec![RoleId::new(id)]);
-
-    vec![
-        row!([
-            toggle("server_settings_dynamic_elo", "Dynamic ELO", settings.dynamic_elo),
-        ]),
-        CAR::SelectMenu(
-            CSM::new("server_settings_runner_role", CSMK::Role { default_roles: runner_default })
-                .placeholder("Select Runner Role")
-                .min_values(0)
-                .max_values(1)
-        ),
-        CAR::SelectMenu(
-            CSM::new("server_settings_admin_role", CSMK::Role { default_roles: admin_default })
-                .placeholder("Select Admin Role")
-                .min_values(0)
-                .max_values(1)
-        ),
-    ]
+pub fn build_server_settings_buttons(settings: &ServerSettings, guild_name: &str) -> Vec<CAR> {
+    use crate::handlers::settings_menu::{IntoSettingsMenu, ServerSettingsDisplay};
+    let display = ServerSettingsDisplay {
+        guild_name:  guild_name.to_string(),
+        runner_role: settings.runner_role.clone(),
+        admin_role:  settings.admin_role.clone(),
+        dynamic_elo: settings.dynamic_elo,
+    };
+    display.into_settings_menu().build_components()
 }
 
 /// Handle server settings button interactions
@@ -700,7 +657,7 @@ pub async fn handle_server_settings_button(
             let settings = get_server_settings(db, guild_id.get()).await?;
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let embed = build_server_settings_embed(&settings, &guild_name);
-            let buttons = build_server_settings_buttons(&settings);
+            let buttons = build_server_settings_buttons(&settings, &guild_name);
 
             let response = CIR::UpdateMessage(
                 CIRM::new().embed(embed).components(buttons)
@@ -722,7 +679,7 @@ pub async fn handle_server_settings_button(
                 let settings = get_server_settings(db, guild_id.get()).await?;
                 let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
                 let embed = build_server_settings_embed(&settings, &guild_name);
-                let buttons = build_server_settings_buttons(&settings);
+                let buttons = build_server_settings_buttons(&settings, &guild_name);
 
                 let response = CIR::UpdateMessage(
                     CIRM::new().embed(embed).components(buttons)
@@ -745,7 +702,7 @@ pub async fn handle_server_settings_button(
                 let settings = get_server_settings(db, guild_id.get()).await?;
                 let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
                 let embed = build_server_settings_embed(&settings, &guild_name);
-                let buttons = build_server_settings_buttons(&settings);
+                let buttons = build_server_settings_buttons(&settings, &guild_name);
 
                 let response = CIR::UpdateMessage(
                     CIRM::new().embed(embed).components(buttons)
@@ -802,34 +759,28 @@ pub struct GroupSettings {
 
 /// Build group settings embed
 pub fn build_group_settings_embed(settings: &GroupSettings) -> CE {
-    let name_display = settings.name.as_ref()
-        .map(|s| s.clone())
-        .unwrap_or_else(|| format!("Group {}", settings.group_id));
-    let connect_display = settings.connect_info.as_ref()
-        .map(|s| format!("`{s}`"))
-        .unwrap_or_else(|| "*Not configured*".to_string());
-
-    CE::new()
-        .title(format!("{name_display} Settings"))
-        .field("Name",    name_display.clone(), true)
-        .field("Quota",   format!("{} players", settings.quota), true)
-        .field("Timeout", format!("{} minutes", settings.timeout), true)
-        .field("Connect Info", connect_display, false)
-        .color(0x5865F2) // Discord blurple
+    use crate::handlers::settings_menu::{IntoSettingsMenu, GroupSettingsDisplay};
+    let display = GroupSettingsDisplay {
+        group_id:     settings.group_id,
+        name:         settings.name.clone(),
+        quota:        settings.quota,
+        timeout:      settings.timeout,
+        connect_info: settings.connect_info.clone(),
+    };
+    display.into_settings_menu().build_embed()
 }
 
 /// Build group settings buttons with group_id embedded in custom_id
 pub fn build_group_settings_buttons(group_id: u8) -> Vec<CAR> {
-    vec![
-        row!([
-            edit(&format!("group_settings_edit_name_{group_id}"),    "Edit Name"),
-            edit(&format!("group_settings_edit_quota_{group_id}"),   "Edit Quota"),
-            edit(&format!("group_settings_edit_timeout_{group_id}"), "Edit Timeout"),
-        ]),
-        row!([
-            edit(&format!("group_settings_edit_connect_{group_id}"), "Edit Connect Info"),
-        ]),
-    ]
+    use crate::handlers::settings_menu::{IntoSettingsMenu, GroupSettingsDisplay};
+    let display = GroupSettingsDisplay {
+        group_id,
+        name:         None,
+        quota:        0,
+        timeout:      0,
+        connect_info: None,
+    };
+    display.into_settings_menu().build_components()
 }
 
 /// Build group selector for choosing which group to configure
@@ -1218,6 +1169,302 @@ pub async fn handle_group_settings_modal(
         interaction.create_response(&ctx.http, response).await?;
     } else {
         warn!("Unknown group settings modal: {}", modal_id);
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// Player Settings (Admin editing of player info)
+// ============================================================================
+
+/// Player settings structure for admin editing
+pub struct PlayerSettings {
+    pub user_id:  serenity::all::UserId,
+    pub username: String,
+    pub steam_id: Option<u64>,
+    pub elo:      u16,
+    pub division: String,
+    pub games:    u32,
+    pub wins:     u32,
+}
+
+/// Build player settings embed
+pub fn build_player_settings_embed(settings: &PlayerSettings) -> CE {
+    use crate::handlers::settings_menu::{IntoSettingsMenu, PlayerSettingsDisplay};
+    let display = PlayerSettingsDisplay {
+        user_id:  settings.user_id,
+        username: settings.username.clone(),
+        steam_id: settings.steam_id,
+        elo:      settings.elo,
+        division: settings.division.clone(),
+        games:    settings.games,
+        wins:     settings.wins,
+    };
+    display.into_settings_menu().build_embed()
+}
+
+/// Build player settings buttons
+pub fn build_player_settings_buttons(user_id: serenity::all::UserId) -> Vec<CAR> {
+    use crate::handlers::settings_menu::{IntoSettingsMenu, PlayerSettingsDisplay};
+    let display = PlayerSettingsDisplay {
+        user_id,
+        username: String::new(),
+        steam_id: None,
+        elo:      0,
+        division: String::new(),
+        games:    0,
+        wins:     0,
+    };
+    display.into_settings_menu().build_components()
+}
+
+/// Handle player settings button interactions
+pub async fn handle_player_settings_button(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    db: &Arc<Database>,
+) -> Result<()> {
+    let button_id = &interaction.data.custom_id;
+    
+    info!("[Player Settings] {} pressed {}", interaction.user.name, button_id);
+
+    // Extract user_id from button custom_id (format: player_settings_edit_<action>_<user_id>)
+    let target_user_id: u64 = button_id
+        .rsplit('_')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!("Invalid button ID format: {}", button_id))?;
+    
+    let target_uid = serenity::all::UserId::new(target_user_id);
+
+    // Get current player data
+    let player = db.users.get(target_uid).await?;
+    let guild_id = interaction.guild_id.expect("Guild ID not found");
+    let guild_elo = db.elos.get(target_uid, guild_id.get()).await?;
+
+    if button_id.starts_with("player_settings_edit_steam_") {
+        let modal = CreateModal::new(format!("player_settings_modal_steam_{target_user_id}"), "Edit Steam ID")
+            .components(vec![
+                CreateActionRow::InputText(
+                    CreateInputText::new(InputTextStyle::Short, "Steam ID (64-bit)", "steam_id")
+                        .placeholder("e.g., 76561198012345678")
+                        .value(player.steam_id.map(|id| id.to_string()).unwrap_or_default())
+                        .required(false)
+                        .max_length(20)
+                ),
+            ]);
+
+        let response = CIR::Modal(modal);
+        interaction.create_response(&ctx.http, response).await?;
+    } else if button_id.starts_with("player_settings_edit_elo_") {
+        let modal = CreateModal::new(format!("player_settings_modal_elo_{target_user_id}"), "Edit ELO")
+            .components(vec![
+                CreateActionRow::InputText(
+                    CreateInputText::new(InputTextStyle::Short, "ELO (0-100)", "elo")
+                        .placeholder("e.g., 50")
+                        .value(guild_elo.elo.to_string())
+                        .required(true)
+                        .min_length(1)
+                        .max_length(3)
+                ),
+            ]);
+
+        let response = CIR::Modal(modal);
+        interaction.create_response(&ctx.http, response).await?;
+    } else if button_id.starts_with("player_settings_edit_division_") {
+        let modal = CreateModal::new(format!("player_settings_modal_division_{target_user_id}"), "Edit Division")
+            .components(vec![
+                CreateActionRow::InputText(
+                    CreateInputText::new(InputTextStyle::Short, "Division", "division")
+                        .placeholder("e.g., Gold, Silver, Bronze")
+                        .value(guild_elo.division.name())
+                        .required(true)
+                        .max_length(20)
+                ),
+            ]);
+
+        let response = CIR::Modal(modal);
+        interaction.create_response(&ctx.http, response).await?;
+    } else {
+        warn!("Unknown player settings button: {}", button_id);
+    }
+
+    Ok(())
+}
+
+/// Handle player settings modal submissions
+pub async fn handle_player_settings_modal(
+    ctx: &Context,
+    interaction: &ModalInteraction,
+    db: &Arc<Database>,
+) -> Result<()> {
+    let guild_id = interaction.guild_id.expect("Guild ID not found");
+    let modal_id = &interaction.data.custom_id;
+
+    info!("[Player Settings] {} submitted modal {}", interaction.user.name, modal_id);
+
+    // Extract user_id from modal custom_id (format: player_settings_modal_<action>_<user_id>)
+    let target_user_id: u64 = modal_id
+        .rsplit('_')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!("Invalid modal ID format: {}", modal_id))?;
+    
+    let target_uid = serenity::all::UserId::new(target_user_id);
+
+    if modal_id.starts_with("player_settings_modal_steam_") {
+        let steam_str = interaction.data.components.first()
+            .and_then(|row| row.components.first())
+            .and_then(|c| {
+                if let serenity::all::ActionRowComponent::InputText(input) = c {
+                    input.value.clone()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+
+        let steam_id: Option<u64> = if steam_str.trim().is_empty() {
+            None
+        } else {
+            match steam_str.trim().parse() {
+                Ok(id) => Some(id),
+                Err(_) => {
+                    let response = CIR::Message(
+                        CIRM::new()
+                            .content("Invalid Steam ID. Must be a 64-bit number.")
+                            .ephemeral(true)
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                    return Ok(());
+                }
+            }
+        };
+
+        db.users.update_steam_id(&target_uid, steam_id).await?;
+
+        // Refresh the settings menu
+        let player = db.users.get(target_uid).await?;
+        let guild_elo = db.elos.get(target_uid, guild_id.get()).await?;
+        let username = ctx.http.get_user(target_uid).await
+            .map(|u| u.name.clone())
+            .unwrap_or_else(|_| target_user_id.to_string());
+
+        let settings = PlayerSettings {
+            user_id:  target_uid,
+            username,
+            steam_id: player.steam_id,
+            elo:      guild_elo.elo,
+            division: guild_elo.division.name().to_string(),
+            games:    guild_elo.games,
+            wins:     guild_elo.wins,
+        };
+
+        let embed = build_player_settings_embed(&settings);
+        let buttons = build_player_settings_buttons(target_uid);
+
+        let response = CIR::UpdateMessage(
+            CIRM::new().embed(embed).components(buttons)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+    } else if modal_id.starts_with("player_settings_modal_elo_") {
+        let elo_str = interaction.data.components.first()
+            .and_then(|row| row.components.first())
+            .and_then(|c| {
+                if let serenity::all::ActionRowComponent::InputText(input) = c {
+                    input.value.clone()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+
+        let elo: u16 = match elo_str.trim().parse() {
+            Ok(e) if e <= 100 => e,
+            _ => {
+                let response = CIR::Message(
+                    CIRM::new()
+                        .content("Invalid ELO. Must be between 0 and 100.")
+                        .ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+        };
+
+        // Get current division to preserve it
+        let guild_elo = db.elos.get(target_uid, guild_id.get()).await?;
+        db.elos.set(target_uid, guild_id.get(), elo, guild_elo.division).await?;
+
+        // Refresh the settings menu
+        let player = db.users.get(target_uid).await?;
+        let guild_elo = db.elos.get(target_uid, guild_id.get()).await?;
+        let username = ctx.http.get_user(target_uid).await
+            .map(|u| u.name.clone())
+            .unwrap_or_else(|_| target_user_id.to_string());
+
+        let settings = PlayerSettings {
+            user_id:  target_uid,
+            username,
+            steam_id: player.steam_id,
+            elo:      guild_elo.elo,
+            division: guild_elo.division.name().to_string(),
+            games:    guild_elo.games,
+            wins:     guild_elo.wins,
+        };
+
+        let embed = build_player_settings_embed(&settings);
+        let buttons = build_player_settings_buttons(target_uid);
+
+        let response = CIR::UpdateMessage(
+            CIRM::new().embed(embed).components(buttons)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+    } else if modal_id.starts_with("player_settings_modal_division_") {
+        let division_str = interaction.data.components.first()
+            .and_then(|row| row.components.first())
+            .and_then(|c| {
+                if let serenity::all::ActionRowComponent::InputText(input) = c {
+                    input.value.clone()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+
+        let division = crate::models::types::Rank::from_name(division_str.trim());
+
+        // Get current ELO to preserve it
+        let guild_elo = db.elos.get(target_uid, guild_id.get()).await?;
+        db.elos.set(target_uid, guild_id.get(), guild_elo.elo, division).await?;
+
+        // Refresh the settings menu
+        let player = db.users.get(target_uid).await?;
+        let guild_elo = db.elos.get(target_uid, guild_id.get()).await?;
+        let username = ctx.http.get_user(target_uid).await
+            .map(|u| u.name.clone())
+            .unwrap_or_else(|_| target_user_id.to_string());
+
+        let settings = PlayerSettings {
+            user_id:  target_uid,
+            username,
+            steam_id: player.steam_id,
+            elo:      guild_elo.elo,
+            division: guild_elo.division.name().to_string(),
+            games:    guild_elo.games,
+            wins:     guild_elo.wins,
+        };
+
+        let embed = build_player_settings_embed(&settings);
+        let buttons = build_player_settings_buttons(target_uid);
+
+        let response = CIR::UpdateMessage(
+            CIRM::new().embed(embed).components(buttons)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+    } else {
+        warn!("Unknown player settings modal: {}", modal_id);
     }
 
     Ok(())
