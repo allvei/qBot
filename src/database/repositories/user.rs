@@ -209,7 +209,7 @@ impl UserRepository {
             .bind(user_id.get() as i64)
             .execute(&self.pool)
             .await?;
-        Ok(self.get(*user_id).await?)
+        self.get(*user_id).await
     }
 
     pub async fn get_dm_enabled(&self, user_id: UI) -> Result<bool> {

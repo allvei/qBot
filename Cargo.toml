@@ -35,9 +35,9 @@ rustyline          = "17.0.2"
 # missing_docs_in_private_items = "warn"
 # arbitrary_source_item_ordering = "warn"
 # unused_imports     = "allow"
-# dead_code          = "allow"
-# unused_must_use    = "allow"
-# unused_variables   = "allow"
+dead_code          = "allow"
+unused_must_use    = "allow"
+unused_variables   = "allow"
 deprecated = "allow"
 
 [lints.clippy]

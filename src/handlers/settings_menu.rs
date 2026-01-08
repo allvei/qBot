@@ -195,16 +195,16 @@ impl SettingsMenu {
 }
 
 /// Trait for types that can be displayed as a settings menu
-pub trait IntoSettingsMenu {
-    fn into_settings_menu(&self) -> SettingsMenu;
+pub trait AsSettingsMenu {
+    fn as_settings_menu(&self) -> SettingsMenu;
 }
 
 // ============================================================================
 // UserSettings implementation
 // ============================================================================
 
-impl IntoSettingsMenu for crate::database::repositories::UserSettings {
-    fn into_settings_menu(&self) -> SettingsMenu {
+impl AsSettingsMenu for crate::database::repositories::UserSettings {
+    fn as_settings_menu(&self) -> SettingsMenu {
         let minutes = self.expiry_duration.as_secs() / 60;
         let timeout_desc = format!(
             "**Timeout length:** {} minute{}",
@@ -244,8 +244,8 @@ pub struct ServerSettingsDisplay {
     pub default_rank: String,
 }
 
-impl IntoSettingsMenu for ServerSettingsDisplay {
-    fn into_settings_menu(&self) -> SettingsMenu {
+impl AsSettingsMenu for ServerSettingsDisplay {
+    fn as_settings_menu(&self) -> SettingsMenu {
         let runner_display = self.runner_role.as_ref()
             .map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
             .unwrap_or_else(|| "*Not configured*".to_string());
@@ -394,8 +394,8 @@ pub struct GroupSettingsDisplay {
     pub connect_info: Option<String>,
 }
 
-impl IntoSettingsMenu for GroupSettingsDisplay {
-    fn into_settings_menu(&self) -> SettingsMenu {
+impl AsSettingsMenu for GroupSettingsDisplay {
+    fn as_settings_menu(&self) -> SettingsMenu {
         let name_display = self.name.as_ref()
             .cloned()
             .unwrap_or_else(|| format!("Group {}", self.group_id));
@@ -437,8 +437,8 @@ pub struct PlayerSettingsDisplay {
     pub wins:     u32,
 }
 
-impl IntoSettingsMenu for PlayerSettingsDisplay {
-    fn into_settings_menu(&self) -> SettingsMenu {
+impl AsSettingsMenu for PlayerSettingsDisplay {
+    fn as_settings_menu(&self) -> SettingsMenu {
         let steam_display = self.steam_id
             .map(|id| format!("`{id}`"))
             .unwrap_or_else(|| "*Not linked*".to_string());

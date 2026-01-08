@@ -337,7 +337,7 @@ pub async fn handle_settings_modal(
                                 if !trimmed.is_empty() {
                                     let hex_str = trimmed.trim_start_matches('#');
                                     if let Ok(color) = i64::from_str_radix(hex_str, 16) {
-                                        if color >= 0 && color <= 0xFFFFFF {
+                                        if (0..=0xFFFFFF).contains(&color) {
                                             settings.announcement_color = color;
                                         }
                                     }
@@ -430,14 +430,14 @@ async fn update_settings_menu_from_modal(
 
 /// Build settings embed
 pub fn build_settings_embed(settings: &crate::database::repositories::UserSettings) -> CE {
-    use crate::handlers::settings_menu::IntoSettingsMenu;
-    settings.into_settings_menu().build_embed()
+    use crate::handlers::settings_menu::AsSettingsMenu;
+    settings.as_settings_menu().build_embed()
 }
 
 /// Build settings buttons
 pub fn build_settings_buttons(settings: &crate::database::repositories::UserSettings) -> Vec<CAR> {
-    use crate::handlers::settings_menu::IntoSettingsMenu;
-    settings.into_settings_menu().build_components()
+    use crate::handlers::settings_menu::AsSettingsMenu;
+    settings.as_settings_menu().build_components()
 }
 
 /// Build a join announcement embed (used for both actual announcements and previews)
@@ -612,7 +612,7 @@ pub struct ServerSettings {
 
 /// Build server settings embed
 pub fn build_server_settings_embed(settings: &ServerSettings, guild_name: &str) -> CE {
-    use crate::handlers::settings_menu::{IntoSettingsMenu, ServerSettingsDisplay};
+    use crate::handlers::settings_menu::{AsSettingsMenu, ServerSettingsDisplay};
     let display = ServerSettingsDisplay {
         guild_name:   guild_name.to_string(),
         runner_role:  settings.runner_role.clone(),
@@ -621,12 +621,12 @@ pub fn build_server_settings_embed(settings: &ServerSettings, guild_name: &str) 
         default_elo:  settings.default_elo,
         default_rank: settings.default_rank.clone(),
     };
-    display.into_settings_menu().build_embed()
+    display.as_settings_menu().build_embed()
 }
 
 /// Build server settings buttons and select menus
 pub fn build_server_settings_buttons(settings: &ServerSettings, guild_name: &str) -> Vec<CAR> {
-    use crate::handlers::settings_menu::{IntoSettingsMenu, ServerSettingsDisplay};
+    use crate::handlers::settings_menu::{AsSettingsMenu, ServerSettingsDisplay};
     let display = ServerSettingsDisplay {
         guild_name:   guild_name.to_string(),
         runner_role:  settings.runner_role.clone(),
@@ -635,7 +635,7 @@ pub fn build_server_settings_buttons(settings: &ServerSettings, guild_name: &str
         default_elo:  settings.default_elo,
         default_rank: settings.default_rank.clone(),
     };
-    display.into_settings_menu().build_components()
+    display.as_settings_menu().build_components()
 }
 
 /// Handle server settings button interactions
@@ -1225,7 +1225,7 @@ pub struct GroupSettings {
 
 /// Build group settings embed
 pub fn build_group_settings_embed(settings: &GroupSettings) -> CE {
-    use crate::handlers::settings_menu::{IntoSettingsMenu, GroupSettingsDisplay};
+    use crate::handlers::settings_menu::{AsSettingsMenu, GroupSettingsDisplay};
     let display = GroupSettingsDisplay {
         group_id:     settings.group_id,
         name:         settings.name.clone(),
@@ -1233,12 +1233,12 @@ pub fn build_group_settings_embed(settings: &GroupSettings) -> CE {
         timeout:      settings.timeout,
         connect_info: settings.connect_info.clone(),
     };
-    display.into_settings_menu().build_embed()
+    display.as_settings_menu().build_embed()
 }
 
 /// Build group settings buttons with group_id embedded in custom_id
 pub fn build_group_settings_buttons(group_id: u8) -> Vec<CAR> {
-    use crate::handlers::settings_menu::{IntoSettingsMenu, GroupSettingsDisplay};
+    use crate::handlers::settings_menu::{AsSettingsMenu, GroupSettingsDisplay};
     let display = GroupSettingsDisplay {
         group_id,
         name:         None,
@@ -1246,7 +1246,7 @@ pub fn build_group_settings_buttons(group_id: u8) -> Vec<CAR> {
         timeout:      0,
         connect_info: None,
     };
-    display.into_settings_menu().build_components()
+    display.as_settings_menu().build_components()
 }
 
 /// Build group selector for choosing which group to configure
@@ -1657,7 +1657,7 @@ pub struct PlayerSettings {
 
 /// Build player settings embed
 pub fn build_player_settings_embed(settings: &PlayerSettings) -> CE {
-    use crate::handlers::settings_menu::{IntoSettingsMenu, PlayerSettingsDisplay};
+    use crate::handlers::settings_menu::{AsSettingsMenu, PlayerSettingsDisplay};
     let display = PlayerSettingsDisplay {
         user_id:  settings.user_id,
         username: settings.username.clone(),
@@ -1667,12 +1667,12 @@ pub fn build_player_settings_embed(settings: &PlayerSettings) -> CE {
         games:    settings.games,
         wins:     settings.wins,
     };
-    display.into_settings_menu().build_embed()
+    display.as_settings_menu().build_embed()
 }
 
 /// Build player settings buttons
 pub fn build_player_settings_buttons(user_id: serenity::all::UserId) -> Vec<CAR> {
-    use crate::handlers::settings_menu::{IntoSettingsMenu, PlayerSettingsDisplay};
+    use crate::handlers::settings_menu::{AsSettingsMenu, PlayerSettingsDisplay};
     let display = PlayerSettingsDisplay {
         user_id,
         username: String::new(),
@@ -1682,7 +1682,7 @@ pub fn build_player_settings_buttons(user_id: serenity::all::UserId) -> Vec<CAR>
         games:    0,
         wins:     0,
     };
-    display.into_settings_menu().build_components()
+    display.as_settings_menu().build_components()
 }
 
 /// Handle player settings button interactions

@@ -578,7 +578,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     };
 
     // Get player info or create a new one (use fast path without extra API call)
-    let mut player = match cc.db.get_user(user, &cc.ctx).await {
+    let mut player = match cc.db.get_user(user, cc.ctx).await {
         Ok(mut player) => {
             // If player has no ELO in database, use rank-based ELO
             if player.elo == 0 {
@@ -619,7 +619,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         Err(_) => {
             // New player - use rank-based ELO
             info!("DEBUG: New player {}, setting ELO to {} from Discord rank {}", user, rank.default_rank_elo(), rank.name());
-            let mut new_player = cc.db.new_user(user, &cc.ctx).await?;
+            let mut new_player = cc.db.new_user(user, cc.ctx).await?;
             new_player.elo = rank.default_rank_elo();
             new_player.rank = rank;
             // Update database with the rank-based ELO
@@ -718,7 +718,7 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
 
 /// `/shuffle`
 pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
-        if !check_run(&cc).await? { return Ok(()); }
+        if !check_run(cc).await? { return Ok(()); }
 
     // Get active group with game
     let group = guild.get_group(cc.intax.channel_id)?;
@@ -780,7 +780,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 
 /// `/accept`
 pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
-        if !check_run(&cc).await? { return Ok(()); }
+        if !check_run(cc).await? { return Ok(()); }
 
     // Get the group for the current channel
     let channel_id = cc.intax.channel_id;
@@ -817,7 +817,7 @@ pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 }
 
 pub async fn end(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
-        if !check_run(&cc).await? { return Ok(()); }
+        if !check_run(cc).await? { return Ok(()); }
 
     // Get the group for the current channel
     let channel_id = cc.intax.channel_id;

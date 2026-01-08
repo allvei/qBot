@@ -7,7 +7,10 @@ use time::macros::format_description;
 use tracing_subscriber::fmt::time::UtcTime;
 use anyhow::Result;
 use pf_pug_bot::{Player, RED, commands};
-use serenity::all::{Client, GatewayIntents, EventHandler, Ready, Guild, Interaction, VoiceState, Command, CommandInteraction, CommandOptionType, Context, CreateCommand, CreateCommandOption, CreateInteractionResponse, CreateInteractionResponseMessage, UserId, User, CommandOptionType as COT};
+use serenity::all::{
+    Client, GatewayIntents, EventHandler, Ready, Guild,Interaction,
+    VoiceState, Command, Context, User, CommandOptionType as COT,
+};
 use serenity::prelude::TypeMapKey;
 use serenity::async_trait;
 use serenity::builder::{
@@ -644,14 +647,7 @@ impl EventHandler for Handler {
 
         // Get player tag from database (primary source)
         let tag = match self.db.get_user(user_id, &ctx).await {
-            Ok(player) => {
-                if let tag = player.tag {
-                    tag
-                } else {
-                    // Only use API if database doesn't have the tag
-                    user.display_name().to_string()
-                }
-            },
+            Ok(player) => player.tag,
             Err(_) => user.display_name().to_string(),
         };
 
@@ -848,7 +844,7 @@ impl EventHandler for Handler {
                                 match get_or_assign_player_rank(&ctx, &self.db, server, user_id).await {
                                     Ok(rank) => {
                                         // Get player info and handle ELO fallback
-                                        let mut updated_player = match self.db.get_user(user_id, &ctx).await {
+                                        let updated_player = match self.db.get_user(user_id, &ctx).await {
                                             Ok(mut player) => {
                                                 // If player has no ELO in database, use rank-based ELO
                                                 if player.elo == 0 {

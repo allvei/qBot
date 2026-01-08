@@ -12,4 +12,4 @@ pub use settings::{
     build_settings_embed, build_settings_buttons,
     handle_player_settings_button, handle_player_settings_modal,
 };
-pub use settings_menu::{SettingsMenu, SettingsField, SettingsRow, SettingsButton, SettingsButtonStyle, IntoSettingsMenu};
+pub use settings_menu::{SettingsMenu, SettingsField, SettingsRow, SettingsButton, SettingsButtonStyle, AsSettingsMenu};

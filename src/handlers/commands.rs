@@ -6,8 +6,7 @@ use tracing::info;
 
 use crate::player::check_adm;
 use crate::{ GREEN, YELLOW };
-use crate::models::{CommandContext as CC, Role};
-use super::player::check_role;
+use crate::models::{CommandContext as CC};
 use super::settings::{get_server_settings};
 use crate::models::Ephemeral;
 
@@ -55,7 +54,7 @@ pub async fn cmd_prefs(cc: &CC<'_>) -> Result<()> {
 /// `/config` - Open server settings menu as ephemeral message (admin only)
 pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
     // Check admin permissions
-    if !check_adm(&cc).await? { return Ok(()); }
+    if !check_adm(cc).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild_name = cc.ctx.cache.guild(guild_id)
@@ -77,7 +76,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     use crate::handlers::settings::{PlayerSettings};
     
     // Check admin permissions
-    if !check_adm(&cc).await? { return Ok(()); }
+    if !check_adm(cc).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 

@@ -7,8 +7,7 @@ use serenity::all::{
     CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM,
     RoleId, UserId,
 };
-use sqlx::Decode;
-use sqlx::prelude::{FromRow, Type};
+use sqlx::prelude::{FromRow};
 use tokio::sync::Mutex;
 
 use crate::{RED, DEFAULT_RANK};

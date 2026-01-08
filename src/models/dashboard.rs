@@ -646,7 +646,7 @@ impl Group {
             match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user_id).await {
                 Ok(rank) => {
                     // Get player info and handle ELO fallback
-                    let mut player = match cc.db.get_user(user_id, &cc.ctx).await {
+                    let mut player = match cc.db.get_user(user_id, cc.ctx).await {
                         Ok(mut player) => {
                             // If player has no ELO in database, use rank-based ELO
                             if player.elo == 0 {
@@ -688,7 +688,7 @@ impl Group {
                         Err(_) => {
                             // New player - use rank-based ELO
                             info!("DEBUG: Dashboard - New player {}, setting ELO to {} from Discord rank {}", user_id, rank.default_rank_elo(), rank.name());
-                            let mut new_player = cc.db.new_user(user_id, &cc.ctx).await?;
+                            let mut new_player = cc.db.new_user(user_id, cc.ctx).await?;
                             new_player.elo = rank.default_rank_elo();
                             new_player.rank = rank;
                             // Update database with the rank-based ELO

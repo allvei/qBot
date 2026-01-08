@@ -42,7 +42,7 @@ fn calculate_stats(elos: &[f64]) -> (f64, f64, f64) {
     // Calculate median
     let mut sorted = elos.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let median = if sorted.len() % 2 == 0 {
+    let median = if sorted.len().is_multiple_of(2) {
         let mid = sorted.len() / 2;
         (sorted[mid - 1] + sorted[mid]) / 2.0
     } else {
@@ -539,15 +539,14 @@ impl Group {
 
         // Only re-add players who were successfully moved (i.e., were still in voice)
         for player in players_to_requeue {
-            if let rank = player.rank {
-                if successfully_moved.contains(&player.user_id) {
-                    // Player was successfully moved back to queue VC
-                    idle_session.add_player_in_vc(player);
-                } else {
-                    // Player was not in voice, don't re-add them
-                    let tag = player.tag;
-                    info!("Not re-queueing {} - they left voice before match ended", tag);
-                }
+            let _rank = player.rank;
+            if successfully_moved.contains(&player.user_id) {
+                // Player was successfully moved back to queue VC
+                idle_session.add_player_in_vc(player);
+            } else {
+                // Player was not in voice, don't re-add them
+                let tag = player.tag;
+                info!("Not re-queueing {} - they left voice before match ended", tag);
             }
         }
 
@@ -767,11 +766,7 @@ impl Group {
         //
         // Check for near-quota notifications
         if let Some(db) = queue_ctx.db {
-            let slots_remaining = if current_count < quota {
-                quota - current_count
-            } else {
-                0
-            };
+            let slots_remaining = quota.saturating_sub(current_count);
 
             // Send near-quota notifications to users who have the threshold set
             if slots_remaining > 0 && slots_remaining <= 5 {
@@ -831,7 +826,7 @@ impl Group {
     /// Discord has a strict rate limit of 2 channel name changes per 10 minutes.
     /// To avoid hitting this limit, we parse the current name and skip updates if:
     /// - The displayed count hasn't changed
-    /// This prevents rate limit issues while keeping the name accurate.
+    ///   This prevents rate limit issues while keeping the name accurate.
     pub async fn update_queue_vc_name(&self, ctx: &Context, _guild_id: GI) {
         use serenity::all::EditChannel;
 
