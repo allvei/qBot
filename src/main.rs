@@ -140,23 +140,11 @@ impl EventHandler for Handler {
             cmd("fatkid",      "Move a player to the end of the queue")
                 .op_user("user",  "User to fatkid", true),
 
-            cmd("setupadd",    "Create roles and group (full setup)"),
-            cmd("setuplink",   "Guide to link existing roles and channels"),
-            cmd("roleadd",     "Create runner and admin roles"),
-            cmd("roledel",     "Remove role configuration")
-                .op_role("role_type",   "Role type: runner, admin, or both", true),
-
-            cmd("groupadd",    "Create a new category with all group channels"),
-            cmd("grouplink",   "Link existing channels to a group"),
-            cmd("groupremove", "Remove a group")
-                .op_int("group_id", "Group ID to remove (defaults to current channel's group)", false),
-
             cmd("clear",       "Clear all players from the queue"),
             cmd("getplayerelo",  "View ELO and rank information for a player")
                 .op_user("user", "The Discord user (mention or ID, optional)", false),
             cmd("settings",       "Open your personal settings menu"),
             cmd("serversettings", "Open server settings menu (admin only)"),
-            cmd("groupsettings",  "Open group settings menu (runner only)"),
             cmd("editplayer", "Open player settings menu (admin only)")
                 .op_user("user", "The Discord user to edit", true),
         ];
@@ -233,19 +221,6 @@ impl EventHandler for Handler {
 
                 // Handle commands that don't need a server/group first
                 let result = match cd.name.as_str() {
-                    "setup" => {
-                        info();
-                        admin::cmd_setup(&cmd_ctx).await
-                    }
-                    "roleadd" => {
-                        info();
-                        commands::cmd_role_add(&cmd_ctx).await
-                    }
-                    "roleremove" => {
-                        info();
-                        let role_type = cdo.iter().find(|opt| opt.name == "role_type").and_then(|opt| opt.value.as_str()).unwrap_or("both").to_string();
-                        commands::cmd_role_remove(&cmd_ctx, role_type).await
-                    }
                     "settings" => {
                         info();
                         commands::cmd_settings(&cmd_ctx).await
@@ -254,84 +229,9 @@ impl EventHandler for Handler {
                         info();
                         commands::cmd_server_settings(&cmd_ctx).await
                     }
-                    "groupsettings" => {
-                        info();
-                        commands::cmd_group_settings(&cmd_ctx).await
-                    }
                     "editplayer" => {
                         info();
                         commands::cmd_player_settings(&cmd_ctx).await
-                    }
-                    "setupadd" => {
-                        info();
-                        let mut manager = self.manager.lock().await;
-                        let server = match manager.get_server(itx.guild_id.unwrap()) {
-                            Ok(s) => s,
-                            Err(_) => {
-                                // Create new server if it doesn't exist
-                                let guild_id = itx.guild_id.unwrap();
-                                let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-                                let new_server = Server::new(guild_id, guild_name, Roles::empty());
-                                manager.servers.push(new_server);
-                                manager.servers.last_mut().unwrap()
-                            }
-                        };
-                        commands::cmd_setup_add(&cmd_ctx, server).await
-                    }
-                    "setuplink" => {
-                        info();
-                        commands::cmd_setup_link(&cmd_ctx).await
-                    }
-                    "groupadd" => {
-                        info();
-                        let mut manager = self.manager.lock().await;
-                        let server = match manager.get_server(itx.guild_id.unwrap()) {
-                            Ok(s) => s,
-                            Err(_) => {
-                                // Create new server if it doesn't exist
-                                let guild_id = itx.guild_id.unwrap();
-                                let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-                                let new_server = Server::new(guild_id, guild_name, Roles::empty());
-                                manager.servers.push(new_server);
-                                manager.servers.last_mut().unwrap()
-                            }
-                        };
-                        admin::cmd_group_add(&cmd_ctx, server).await
-                    }
-                    "grouplink" => {
-                        info();
-                        let mut manager = self.manager.lock().await;
-                        let server = match manager.get_server(itx.guild_id.unwrap()) {
-                            Ok(s) => s,
-                            Err(_) => {
-                                // Create new server if it doesn't exist
-                                let guild_id = itx.guild_id.unwrap();
-                                let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-                                let new_server = Server::new(guild_id, guild_name, Roles::empty());
-                                manager.servers.push(new_server);
-                                manager.servers.last_mut().unwrap()
-                            }
-                        };
-                        admin::cmd_group_link(&cmd_ctx, server).await
-                    }
-                    "groupremove" => {
-                        info();
-                        let mut manager = self.manager.lock().await;
-                        let group_id = cdo.iter()
-                            .find(|opt| opt.name == "group_id")
-                            .and_then(|opt| opt.value.as_str())
-                            .and_then(|s| s.parse::<u8>().ok())
-                            .unwrap_or(0);
-                        let server = match manager.get_server(itx.guild_id.unwrap()) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                error!("Server not found: {e}");
-                                let response = CIR::Message(CIRM::new().content("No groups found. Please create one with `/groupadd` first.").ephemeral(true));
-                                let _ = itx.create_response(&ctx.http, response).await;
-                                return;
-                            }
-                        };
-                        commands::cmd_group_remove(&cmd_ctx, server, group_id).await
                     }
                     _ => {
                         // All other commands need a server
@@ -340,7 +240,7 @@ impl EventHandler for Handler {
                             Ok(s) => s,
                             Err(e) => {
                                 error!("Server not found: {e}");
-                                let response = CIR::Message(CIRM::new().content("Server not configured. Please run `/setupadd` or `/groupadd` first.").ephemeral(true));
+                                let response = CIR::Message(CIRM::new().content("Server not configured. Please use `/serversettings` to create roles and groups.").ephemeral(true));
                                 let _ = itx.create_response(&ctx.http, response).await;
                                 return;
                             }
@@ -543,7 +443,7 @@ impl EventHandler for Handler {
 
                 // Handle server settings buttons
                 if itx.data.custom_id.starts_with("server_settings_") {
-                    let result = handlers::handle_server_settings_button(&ctx, &itx, &self.db).await;
+                    let result = handlers::handle_server_settings_button(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling server settings interaction: {e}");
                     }

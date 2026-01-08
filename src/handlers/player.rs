@@ -127,6 +127,56 @@ pub async fn get_or_assign_player_rank(ctx: &Ctx, db: &DB, guild_id: GI, user_id
     }
 }
 
+/// Update a player's rank and synchronize Discord roles
+/// Removes old rank roles and adds new rank role
+pub async fn update_player_rank_with_roles(
+    ctx: &Ctx,
+    db: &DB,
+    guild_id: GI,
+    user_id: UI,
+    old_rank: Rank,
+    new_rank: Rank,
+) -> Result<()> {
+    if old_rank == new_rank {
+        return Ok(());
+    }
+
+    let member = match get_member_cached(ctx, guild_id, user_id).await {
+        Some(m) => m,
+        None => return Err(anyhow!("Could not find member {} in guild {}", user_id, guild_id)),
+    };
+
+    // Get role IDs for old and new ranks
+    let old_role_ids = old_rank.role_ids(db, guild_id.get()).await;
+    let new_role_ids = new_rank.role_ids(db, guild_id.get()).await;
+
+    // Remove old rank roles that the member has
+    for role_id in &old_role_ids {
+        if member.roles.contains(role_id) {
+            if let Err(e) = member.remove_role(&ctx.http, role_id).await {
+                warn!("Failed to remove {} role from {}: {}", old_rank.name(), member.user.tag(), e);
+            } else {
+                info!("Removed {} role from {}", old_rank.name(), member.user.tag());
+            }
+        }
+    }
+
+    // Add new rank role (use first configured role)
+    if let Some(new_role_id) = new_role_ids.first() {
+        if !member.roles.contains(new_role_id) {
+            if let Err(e) = member.add_role(&ctx.http, new_role_id).await {
+                warn!("Failed to add {} role to {}: {}", new_rank.name(), member.user.tag(), e);
+            } else {
+                info!("Added {} role to {}", new_rank.name(), member.user.tag());
+            }
+        }
+    } else {
+        warn!("No role configured for rank {} in guild {}", new_rank.name(), guild_id);
+    }
+
+    Ok(())
+}
+
 /// Validate that the server has rank roles configured
 pub async fn validate_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec<String>> {
     let mut missing_roles = Vec::new();

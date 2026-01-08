@@ -8,7 +8,7 @@ use serenity::all::{
 };
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::Database;
 
@@ -603,19 +603,23 @@ pub async fn build_leave_alert_embed(
 
 /// Server settings structure for display
 pub struct ServerSettings {
-    pub runner_role:       Option<String>,
-    pub admin_role:        Option<String>,
-    pub dynamic_elo:       bool,
+    pub runner_role:  Option<String>,
+    pub admin_role:   Option<String>,
+    pub dynamic_elo:  bool,
+    pub default_elo:  u16,
+    pub default_rank: String,
 }
 
 /// Build server settings embed
 pub fn build_server_settings_embed(settings: &ServerSettings, guild_name: &str) -> CE {
     use crate::handlers::settings_menu::{IntoSettingsMenu, ServerSettingsDisplay};
     let display = ServerSettingsDisplay {
-        guild_name:  guild_name.to_string(),
-        runner_role: settings.runner_role.clone(),
-        admin_role:  settings.admin_role.clone(),
-        dynamic_elo: settings.dynamic_elo,
+        guild_name:   guild_name.to_string(),
+        runner_role:  settings.runner_role.clone(),
+        admin_role:   settings.admin_role.clone(),
+        dynamic_elo:  settings.dynamic_elo,
+        default_elo:  settings.default_elo,
+        default_rank: settings.default_rank.clone(),
     };
     display.into_settings_menu().build_embed()
 }
@@ -624,10 +628,12 @@ pub fn build_server_settings_embed(settings: &ServerSettings, guild_name: &str) 
 pub fn build_server_settings_buttons(settings: &ServerSettings, guild_name: &str) -> Vec<CAR> {
     use crate::handlers::settings_menu::{IntoSettingsMenu, ServerSettingsDisplay};
     let display = ServerSettingsDisplay {
-        guild_name:  guild_name.to_string(),
-        runner_role: settings.runner_role.clone(),
-        admin_role:  settings.admin_role.clone(),
-        dynamic_elo: settings.dynamic_elo,
+        guild_name:   guild_name.to_string(),
+        runner_role:  settings.runner_role.clone(),
+        admin_role:   settings.admin_role.clone(),
+        dynamic_elo:  settings.dynamic_elo,
+        default_elo:  settings.default_elo,
+        default_rank: settings.default_rank.clone(),
     };
     display.into_settings_menu().build_components()
 }
@@ -637,6 +643,7 @@ pub async fn handle_server_settings_button(
     ctx:         &Context,
     interaction: &ComponentInteraction,
     db:          &Arc<Database>,
+    manager:     &Arc<tokio::sync::Mutex<crate::models::Manager>>,
 ) -> Result<()> {
     let guild_id = interaction.guild_id.expect("Guild ID not found");
     let button_id = &interaction.data.custom_id;
@@ -833,6 +840,218 @@ pub async fn handle_server_settings_button(
             );
             interaction.create_response(&ctx.http, response).await?;
         }
+        "server_settings_edit_default_elo" => {
+            // Show modal to edit default ELO
+            let settings = get_server_settings(db, guild_id.get()).await?;
+            let modal = CreateModal::new("server_settings_modal_default_elo", "Edit Default ELO")
+                .components(vec![
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Short, "Default ELO (0-100)", "default_elo")
+                            .placeholder("e.g., 50")
+                            .value(settings.default_elo.to_string())
+                            .required(true)
+                            .min_length(1)
+                            .max_length(3)
+                    ),
+                ]);
+
+            let response = CIR::Modal(modal);
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_edit_default_rank" => {
+            // Show modal to edit default rank
+            let settings = get_server_settings(db, guild_id.get()).await?;
+            let modal = CreateModal::new("server_settings_modal_default_rank", "Edit Default Rank")
+                .components(vec![
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Short, "Default Rank", "default_rank")
+                            .placeholder("Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, Master Elite, Grandmaster")
+                            .value(settings.default_rank)
+                            .required(true)
+                            .max_length(20)
+                    ),
+                ]);
+
+            let response = CIR::Modal(modal);
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_create_roles" => {
+            // Create runner, admin, and rank roles
+            use serenity::all::Permissions;
+            use serenity::builder::EditRole;
+
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+
+            // Create Runner role if not configured
+            let runner_role = db.config.get_config_value("runner_role", guild_id.get()).await?;
+            if runner_role.is_none() {
+                match guild_id.create_role(&ctx.http,
+                    EditRole::new()
+                        .name("PUG Runner")
+                        .colour(crate::RUNNER)
+                        .permissions(Permissions::empty())
+                ).await {
+                    Ok(role) => {
+                        if let Err(e) = db.config.set_config("runner_role", &role.id.to_string(), guild_id.get()).await {
+                            warn!("Failed to save runner_role config: {e}");
+                        }
+                        info!("[{}] Created PUG Runner role", guild_name);
+                    },
+                    Err(e) => {
+                        warn!("[{}] Failed to create PUG Runner role: {}", guild_name, e);
+                    }
+                }
+            }
+
+            // Create Admin role if not configured
+            let admin_role = db.config.get_config_value("admin_role", guild_id.get()).await?;
+            if admin_role.is_none() {
+                match guild_id.create_role(&ctx.http,
+                    EditRole::new()
+                        .name("PUG Admin")
+                        .colour(crate::ADMIN)
+                        .permissions(Permissions::empty())
+                ).await {
+                    Ok(role) => {
+                        if let Err(e) = db.config.set_config("admin_role", &role.id.to_string(), guild_id.get()).await {
+                            warn!("Failed to save admin_role config: {e}");
+                        }
+                        info!("[{}] Created PUG Admin role", guild_name);
+                    },
+                    Err(e) => {
+                        warn!("[{}] Failed to create PUG Admin role: {}", guild_name, e);
+                    }
+                }
+            }
+
+            // Create rank roles
+            if let Err(e) = crate::handlers::player::create_rank_roles(ctx, db, guild_id).await {
+                warn!("[{}] Failed to create rank roles: {}", guild_name, e);
+            } else {
+                info!("[{}] Created rank roles", guild_name);
+            }
+
+            // Refresh the settings menu
+            let settings = get_server_settings(db, guild_id.get()).await?;
+            let embed = build_server_settings_embed(&settings, &guild_name);
+            let buttons = build_server_settings_buttons(&settings, &guild_name);
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(embed).components(buttons)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_create_group" => {
+            // Create a new group with channels
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+
+            // Create the category and channels
+            match crate::handlers::admin::create_group_channels(ctx, guild_id).await {
+                Ok((category_id, dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel)) => {
+                    use crate::models::{Group, Channels, TeamChannel};
+                    use serenity::all::MessageId;
+
+                    let mut temp_group = Group {
+                        group_id: 0,
+                        name: None,
+                        quota: crate::DEFAULT_QUOTA,
+                        timeout: crate::DEFAULT_TIMEOUT,
+                        dashboard_msg: MessageId::new(1),
+                        channels: Channels {
+                            queue_chat: queue_channel,
+                            queue_vc: queue_vc_channel,
+                            teams: vec![TeamChannel {
+                                red_vc: red_channel,
+                                blu_vc: blue_channel,
+                            }],
+                            dashboard: dashboard_channel,
+                        },
+                        sessions: vec![],
+                        connect_info: None,
+                    };
+
+                    // Publish the dashboard to get the actual message ID
+                    match temp_group.dash_publish(ctx, dashboard_channel, db, guild_id.get()).await {
+                        Ok(_) => {
+                            let dashboard_msg_id = temp_group.dashboard_msg.get();
+                            info!("[{}] Dashboard message created with ID {}", guild_name, dashboard_msg_id);
+
+                            // Create the group in the database
+                            let group_config = crate::database::repositories::group::GroupConfig {
+                                dashboard_channel_id: dashboard_channel.get(),
+                                chat_channel_id: queue_channel.get(),
+                                queue_vc_id: queue_vc_channel.get(),
+                                red_vc_id: red_channel.get(),
+                                blu_vc_id: blue_channel.get(),
+                                quota: crate::DEFAULT_QUOTA,
+                            };
+                            match db.groups.create_group(guild_id.get(), dashboard_msg_id, group_config).await {
+                                Ok(db_group) => {
+                                    info!("[{}] Group {} saved to database", guild_name, db_group.group_id);
+
+                                    // Add group to in-memory server
+                                    let mut manager_lock = manager.lock().await;
+                                    if let Ok(server) = manager_lock.get_server(guild_id) {
+                                        if let Err(e) = server.add_group(db_group.clone()) {
+                                            error!("Failed to add group to server: {e}");
+                                        }
+                                    }
+                                    drop(manager_lock);
+
+                                    // Refresh the settings menu
+                                    let settings = get_server_settings(db, guild_id.get()).await?;
+                                    let embed = build_server_settings_embed(&settings, &guild_name);
+                                    let buttons = build_server_settings_buttons(&settings, &guild_name);
+
+                                    let response = CIR::UpdateMessage(
+                                        CIRM::new().embed(embed).components(buttons)
+                                    );
+                                    interaction.create_response(&ctx.http, response).await?;
+                                },
+                                Err(e) => {
+                                    // Database save failed - clean up
+                                    let _ = dashboard_channel.delete_message(&ctx.http, dashboard_msg_id).await;
+                                    let _ = dashboard_channel.delete(&ctx.http).await;
+                                    let _ = queue_channel.delete(&ctx.http).await;
+                                    let _ = queue_vc_channel.delete(&ctx.http).await;
+                                    let _ = red_channel.delete(&ctx.http).await;
+                                    let _ = blue_channel.delete(&ctx.http).await;
+                                    let _ = category_id.delete(&ctx.http).await;
+
+                                    warn!("[{}] Failed to save group to database: {}", guild_name, e);
+                                    let response = CIR::Message(
+                                        CIRM::new().content(format!("Failed to save group: {e}")).ephemeral(true)
+                                    );
+                                    interaction.create_response(&ctx.http, response).await?;
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            // Dashboard creation failed - clean up
+                            let _ = dashboard_channel.delete(&ctx.http).await;
+                            let _ = queue_channel.delete(&ctx.http).await;
+                            let _ = queue_vc_channel.delete(&ctx.http).await;
+                            let _ = red_channel.delete(&ctx.http).await;
+                            let _ = blue_channel.delete(&ctx.http).await;
+                            let _ = category_id.delete(&ctx.http).await;
+
+                            warn!("[{}] Failed to create dashboard: {}", guild_name, e);
+                            let response = CIR::Message(
+                                CIRM::new().content(format!("Failed to create dashboard: {e}")).ephemeral(true)
+                            );
+                            interaction.create_response(&ctx.http, response).await?;
+                        }
+                    }
+                },
+                Err(e) => {
+                    warn!("[{}] Failed to create channels: {}", guild_name, e);
+                    let response = CIR::Message(
+                        CIRM::new().content(format!("Failed to create channels: {e}")).ephemeral(true)
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
         _ => {
             warn!("Unknown server settings button: {}", button_id);
         }
@@ -887,22 +1106,107 @@ pub async fn get_server_settings(db: &Arc<Database>, guild_id: u64) -> Result<Se
     let dynamic_elo = db.config.get_config_value("active_elo_enabled", guild_id).await?
         .map(|v| v.parse::<bool>().unwrap_or(false))
         .unwrap_or(false);
+    let default_elo = db.config.get_config_value("default_elo", guild_id).await?
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(crate::models::DEFAULT_RANK.default_rank_elo());
+    let default_rank = db.config.get_config_value("default_rank", guild_id).await?
+        .unwrap_or_else(|| crate::models::DEFAULT_RANK.name().to_string());
 
     Ok(ServerSettings {
         runner_role,
         admin_role,
         dynamic_elo,
+        default_elo,
+        default_rank,
     })
 }
 
-/// Handle server settings modal submissions (currently unused - roles use select menus)
+/// Handle server settings modal submissions
 pub async fn handle_server_settings_modal(
-    _ctx: &Context,
+    ctx: &Context,
     interaction: &ModalInteraction,
-    _db: &Arc<Database>,
+    db: &Arc<Database>,
 ) -> Result<()> {
+    let guild_id = interaction.guild_id.expect("Guild ID not found");
     let modal_id = &interaction.data.custom_id;
-    warn!("Unknown server settings modal: {}", modal_id);
+
+    info!("[Server Settings] {} submitted modal {}", interaction.user.name, modal_id);
+
+    if modal_id == "server_settings_modal_default_elo" {
+        let elo_str = interaction.data.components.first()
+            .and_then(|row| row.components.first())
+            .and_then(|c| {
+                if let serenity::all::ActionRowComponent::InputText(input) = c {
+                    input.value.clone()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+
+        let elo: u16 = match elo_str.trim().parse() {
+            Ok(e) if e <= 100 => e,
+            _ => {
+                let response = CIR::Message(
+                    CIRM::new()
+                        .content("Invalid ELO. Must be between 0 and 100.")
+                        .ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+        };
+
+        // Save to config
+        db.config.set_config("default_elo", &elo.to_string(), guild_id.get()).await?;
+
+        // Also update default rank to match the ELO
+        let new_rank = crate::models::types::Rank::from_elo(elo, db, guild_id.get()).await;
+        db.config.set_config("default_rank", new_rank.name(), guild_id.get()).await?;
+
+        // Refresh the settings menu
+        let settings = get_server_settings(db, guild_id.get()).await?;
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+        let embed = build_server_settings_embed(&settings, &guild_name);
+        let buttons = build_server_settings_buttons(&settings, &guild_name);
+
+        let response = CIR::UpdateMessage(
+            CIRM::new().embed(embed).components(buttons)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+    } else if modal_id == "server_settings_modal_default_rank" {
+        let rank_str = interaction.data.components.first()
+            .and_then(|row| row.components.first())
+            .and_then(|c| {
+                if let serenity::all::ActionRowComponent::InputText(input) = c {
+                    input.value.clone()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+
+        let new_rank = crate::models::types::Rank::from_name(rank_str.trim());
+        let new_elo = new_rank.default_rank_elo();
+
+        // Save both to config
+        db.config.set_config("default_rank", new_rank.name(), guild_id.get()).await?;
+        db.config.set_config("default_elo", &new_elo.to_string(), guild_id.get()).await?;
+
+        // Refresh the settings menu
+        let settings = get_server_settings(db, guild_id.get()).await?;
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+        let embed = build_server_settings_embed(&settings, &guild_name);
+        let buttons = build_server_settings_buttons(&settings, &guild_name);
+
+        let response = CIR::UpdateMessage(
+            CIRM::new().embed(embed).components(buttons)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+    } else {
+        warn!("Unknown server settings modal: {}", modal_id);
+    }
+
     Ok(())
 }
 
@@ -1555,9 +1859,22 @@ pub async fn handle_player_settings_modal(
             }
         };
 
-        // Get current division to preserve it
+        // Get current division and calculate new rank from ELO
         let guild_elo = db.elos.get(target_uid, guild_id.get()).await?;
-        db.elos.set(target_uid, guild_id.get(), elo, guild_elo.division).await?;
+        let old_rank = guild_elo.division;
+        let new_rank = crate::models::types::Rank::from_elo(elo, db, guild_id.get()).await;
+
+        // Update ELO and rank in database
+        db.elos.set(target_uid, guild_id.get(), elo, new_rank).await?;
+
+        // Update Discord roles if rank changed
+        if old_rank != new_rank {
+            if let Err(e) = crate::handlers::player::update_player_rank_with_roles(
+                ctx, db, guild_id, target_uid, old_rank, new_rank
+            ).await {
+                warn!("Failed to update Discord roles for {}: {}", target_uid, e);
+            }
+        }
 
         // Refresh the settings menu
         let player = db.users.get(target_uid).await?;
@@ -1595,11 +1912,24 @@ pub async fn handle_player_settings_modal(
             })
             .unwrap_or_default();
 
-        let division = crate::models::types::Rank::from_name(division_str.trim());
+        let new_rank = crate::models::types::Rank::from_name(division_str.trim());
 
-        // Get current ELO to preserve it
+        // Get current data and calculate new ELO from rank
         let guild_elo = db.elos.get(target_uid, guild_id.get()).await?;
-        db.elos.set(target_uid, guild_id.get(), guild_elo.elo, division).await?;
+        let old_rank = guild_elo.division;
+        let new_elo = new_rank.default_rank_elo();
+
+        // Update ELO and rank in database
+        db.elos.set(target_uid, guild_id.get(), new_elo, new_rank).await?;
+
+        // Update Discord roles if rank changed
+        if old_rank != new_rank {
+            if let Err(e) = crate::handlers::player::update_player_rank_with_roles(
+                ctx, db, guild_id, target_uid, old_rank, new_rank
+            ).await {
+                warn!("Failed to update Discord roles for {}: {}", target_uid, e);
+            }
+        }
 
         // Refresh the settings menu
         let player = db.users.get(target_uid).await?;

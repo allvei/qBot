@@ -2,14 +2,6 @@
 
 ## Testing
 
-### Setup & Configuration
-
-- `/setupadd`    - Create roles and group (full setup)
-- `/roleadd`     - Create runner and admin roles
-- `/groupadd`    - Create a new category with all group channels
-- `/grouplink`   - Link existing channels to a group
-- `/groupremove` - Remove a group
-
 ### Settings Menus
 
 - `/settings` - Open personal settings menu
@@ -21,11 +13,10 @@
   - Toggle Dynamic ELO
   - Set runner role
   - Set admin role
-- `/groupsettings` - Open group settings menu (runner)
-  - Edit group name
-  - Edit quota
-  - Edit timeout
-  - Edit connect info
+  - Edit default ELO
+  - Edit default rank
+  - Rank configuration
+  - Group management (add/edit/remove groups)
 - `/editplayer <user>` - Open player settings menu (admin)
   - Edit Steam ID
   - Edit ELO
@@ -42,9 +33,9 @@
 
 ### Player Management
 
-- `/buffer <user>`     - Move player to start of queue
-- `/fatkid <user>`     - Move player to end of queue
-- `/clear`             - Clear all players from queue
+- `/buffer <user>`       - Move player to start of queue
+- `/fatkid <user>`       - Move player to end of queue
+- `/clear`               - Clear all players from queue
 - `/getplayerelo [user]` - View player ELO info
 
 ### Timeout & Alerts
@@ -68,13 +59,12 @@
   - Add a new group
     - Create new channels OR link existing channels
   - Remove a group
-- Group settings is only for admins
-- Move roleadd and rolelink under server settings.
-
 - Add right click user actions
+  - Edit player
 
 ## Secondary
 
+- logs.tf API data
 - New features:
   - Bait command/button
     - cancels current game and removes self from the queue

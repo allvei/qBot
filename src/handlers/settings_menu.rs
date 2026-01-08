@@ -236,10 +236,12 @@ impl IntoSettingsMenu for crate::database::repositories::UserSettings {
 
 /// Server settings with guild name for display
 pub struct ServerSettingsDisplay {
-    pub guild_name:  String,
-    pub runner_role: Option<String>,
-    pub admin_role:  Option<String>,
-    pub dynamic_elo: bool,
+    pub guild_name:   String,
+    pub runner_role:  Option<String>,
+    pub admin_role:   Option<String>,
+    pub dynamic_elo:  bool,
+    pub default_elo:  u16,
+    pub default_rank: String,
 }
 
 impl IntoSettingsMenu for ServerSettingsDisplay {
@@ -262,10 +264,20 @@ impl IntoSettingsMenu for ServerSettingsDisplay {
         SettingsMenu::new(format!("{} Server Settings", self.guild_name))
             .field(SettingsField::new("Runner Role", runner_display).inline(false))
             .field(SettingsField::new("Admin Role", admin_display).inline(false))
+            .field(SettingsField::new("Default ELO", self.default_elo.to_string()).inline(true))
+            .field(SettingsField::new("Default Rank", &self.default_rank).inline(true))
             .color(0x5865F2)
             .row(SettingsRow::Buttons(vec![
                 SettingsButton::toggle("server_settings_dynamic_elo", "Dynamic ELO", self.dynamic_elo),
                 SettingsButton::action("server_settings_ranks", "Rank Configuration", SettingsButtonStyle::Secondary),
+            ]))
+            .row(SettingsRow::Buttons(vec![
+                SettingsButton::edit("server_settings_edit_default_elo", "Edit Default ELO"),
+                SettingsButton::edit("server_settings_edit_default_rank", "Edit Default Rank"),
+            ]))
+            .row(SettingsRow::Buttons(vec![
+                SettingsButton::action("server_settings_create_roles", "Create Roles", SettingsButtonStyle::Primary),
+                SettingsButton::action("server_settings_create_group", "Create Group", SettingsButtonStyle::Primary),
             ]))
             .row(SettingsRow::RoleSelect {
                 id: "server_settings_runner_role".to_string(),
