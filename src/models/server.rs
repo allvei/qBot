@@ -359,7 +359,7 @@ impl Group {
                 let expiry_duration = if let Some(duration) = player.expiry_duration {
                     duration
                 } else {
-                    match db.users.get_settings(player.player.user_id).await {
+                    match db.users.get_prefs(player.player.user_id).await {
                         Ok(settings) => settings.expiry_duration,
                         Err(_) => {
                             // If we can't get settings, skip this player
@@ -395,7 +395,7 @@ impl Group {
                     session.remove_player(*user_id);
                     
                     // Optionally: disconnect from VC if vc_kick is enabled
-                    if let Ok(settings) = db.users.get_settings(*user_id).await {
+                    if let Ok(settings) = db.users.get_prefs(*user_id).await {
                         if settings.vc_kick {
                             if let Ok(member) = guild_id.member(&ctx.http, *user_id).await {
                                 if let Err(e) = member.disconnect_from_voice(&ctx.http).await {
@@ -782,7 +782,7 @@ impl Group {
                         continue;
                     }
 
-                    if let Ok(settings) = db.users.get_settings(session_player.player.user_id).await {
+                    if let Ok(settings) = db.users.get_prefs(session_player.player.user_id).await {
                         if let Some(threshold) = settings.notify_quota_threshold {
                             if slots_remaining <= threshold as usize {
                                 // Send DM notification

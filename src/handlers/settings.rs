@@ -87,7 +87,7 @@ pub async fn handle_settings_button(
             let _new_state = db.users.toggle_dm_enabled(user_id).await?;
 
             // Acknowledge and update the settings menu directly (no popup)
-            let settings = db.users.get_settings(user_id).await?;
+            let settings = db.users.get_prefs(user_id).await?;
             let embed = build_settings_embed(&settings);
             let buttons = build_settings_buttons(&settings);
 
@@ -98,7 +98,7 @@ pub async fn handle_settings_button(
         }
         "settings_timeout" => {
             // Show time selection buttons inline (replace current message temporarily)
-            let settings = db.users.get_settings(user_id).await?;
+            let settings = db.users.get_prefs(user_id).await?;
             let current_minutes = settings.expiry_duration.as_secs() / 60;
             
             let time_buttons = vec![
@@ -132,7 +132,7 @@ pub async fn handle_settings_button(
             
             if time_str == "cancel" {
                 // Just restore the settings menu
-                let settings = db.users.get_settings(user_id).await?;
+                let settings = db.users.get_prefs(user_id).await?;
                 let embed = build_settings_embed(&settings);
                 let buttons = build_settings_buttons(&settings);
 
@@ -151,7 +151,7 @@ pub async fn handle_settings_button(
                 };
 
                 // Update user settings
-                let mut settings = db.users.get_settings(user_id).await?;
+                let mut settings = db.users.get_prefs(user_id).await?;
                 settings.expiry_duration = Duration::from_secs(minutes as u64 * 60);
                 db.users.update_settings(user_id, &settings).await?;
 
@@ -167,7 +167,7 @@ pub async fn handle_settings_button(
         }
         "settings_vc_disconnect" => {
             // Toggle VC disconnect preference
-            let mut settings = db.users.get_settings(user_id).await?;
+            let mut settings = db.users.get_prefs(user_id).await?;
             settings.vc_kick = !settings.vc_kick;
             db.users.update_settings(user_id, &settings).await?;
 
@@ -182,7 +182,7 @@ pub async fn handle_settings_button(
         }
         "settings_edit_alert" => {
             // Show modal for customizing join announcement embed
-            let settings = db.users.get_settings(user_id).await?;
+            let settings = db.users.get_prefs(user_id).await?;
             let modal = CreateModal::new("settings_modal_announcement", "Customize join announcement")
                 .components(vec![
                     CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "HEX Color", "announcement_color")
@@ -212,7 +212,7 @@ pub async fn handle_settings_button(
         }
         "settings_edit_leave_alert" => {
             // Show modal for customizing leave announcement embed
-            let settings = db.users.get_settings(user_id).await?;
+            let settings = db.users.get_prefs(user_id).await?;
             let modal = CreateModal::new("settings_modal_leave_alert", "Customize leave announcement")
                 .components(vec![
                     CreateActionRow::InputText(
@@ -274,7 +274,7 @@ pub async fn handle_settings_modal(
     match modal_id.as_str() {
         "settings_modal_announcement" => {
             // Get all input values from the modal
-            let mut settings = db.users.get_settings(user_id).await?;
+            let mut settings = db.users.get_prefs(user_id).await?;
 
             // Extract values from modal components
             for (idx, action_row) in interaction.data.components.iter().enumerate() {
@@ -323,7 +323,7 @@ pub async fn handle_settings_modal(
         }
         "settings_modal_leave_alert" => {
             // Get all input values from the modal
-            let mut settings = db.users.get_settings(user_id).await?;
+            let mut settings = db.users.get_prefs(user_id).await?;
 
             // Extract values from modal components
             for (idx, action_row) in interaction.data.components.iter().enumerate() {
@@ -385,7 +385,7 @@ async fn update_settings_menu(
     db: &Arc<Database>,
 ) -> Result<()> {
     let user_id = interaction.user.id;
-    let settings = db.users.get_settings(user_id).await?;
+    let settings = db.users.get_prefs(user_id).await?;
 
     let embed = build_settings_embed(&settings);
     let buttons = build_settings_buttons(&settings);
@@ -404,7 +404,7 @@ async fn update_settings_menu_from_modal(
     db: &Arc<Database>,
 ) -> Result<()> {
     let user_id = interaction.user.id;
-    let settings = db.users.get_settings(user_id).await?;
+    let settings = db.users.get_prefs(user_id).await?;
 
     let embed = build_settings_embed(&settings);
     let buttons = build_settings_buttons(&settings);

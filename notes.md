@@ -4,12 +4,12 @@
 
 ### Settings Menus
 
-- `/settings` - Open personal settings menu
+- `/prefs` - Open personal settings menu
   - Toggle DM alerts
   - Toggle VC kick
   - Set timeout length
   - Edit join/leave alerts
-- `/serversettings` - Open server settings menu (admin)
+- `/config` - Open server settings menu (admin)
   - Toggle Dynamic ELO
   - Set runner role
   - Set admin role
@@ -54,7 +54,7 @@
 
 ## Priority
 
-- Edit groups via /serversettings
+- Edit groups via /config
   - Edit a group
   - Add a new group
     - Create new channels OR link existing channels

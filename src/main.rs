@@ -144,7 +144,7 @@ impl EventHandler for Handler {
             cmd("getplayerelo",  "View ELO and rank information for a player")
                 .op_user("user", "The Discord user (mention or ID, optional)", false),
             cmd("settings",       "Open your personal settings menu"),
-            cmd("serversettings", "Open server settings menu (admin only)"),
+            cmd("config", "Open server settings menu (admin only)"),
             cmd("editplayer", "Open player settings menu (admin only)")
                 .op_user("user", "The Discord user to edit", true),
         ];
@@ -221,17 +221,17 @@ impl EventHandler for Handler {
 
                 // Handle commands that don't need a server/group first
                 let result = match cd.name.as_str() {
-                    "settings" => {
+                    "prefs" => {
                         info();
-                        commands::cmd_settings(&cmd_ctx).await
+                        commands::cmd_prefs(&cmd_ctx).await
                     }
-                    "serversettings" => {
+                    "config" => {
                         info();
-                        commands::cmd_server_settings(&cmd_ctx).await
+                        commands::cmd_config(&cmd_ctx).await
                     }
                     "editplayer" => {
                         info();
-                        commands::cmd_player_settings(&cmd_ctx).await
+                        commands::cmd_edit_player(&cmd_ctx).await
                     }
                     _ => {
                         // All other commands need a server
@@ -240,7 +240,7 @@ impl EventHandler for Handler {
                             Ok(s) => s,
                             Err(e) => {
                                 error!("Server not found: {e}");
-                                let response = CIR::Message(CIRM::new().content("Server not configured. Please use `/serversettings` to create roles and groups.").ephemeral(true));
+                                let response = CIR::Message(CIRM::new().content("Server not configured. Please use `/config` to create roles and groups.").ephemeral(true));
                                 let _ = itx.create_response(&ctx.http, response).await;
                                 return;
                             }

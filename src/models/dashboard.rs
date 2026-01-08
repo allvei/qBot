@@ -386,7 +386,7 @@ impl Group {
                         // Use per-instance expiry_duration if set, otherwise get user's setting
                         let expiry_duration = if let Some(duration) = player.expiry_duration {
                             duration
-                        } else if let Ok(settings) = db.users.get_settings(player.player.user_id).await {
+                        } else if let Ok(settings) = db.users.get_prefs(player.player.user_id).await {
                             settings.expiry_duration
                         } else {
                             std::time::Duration::ZERO
@@ -719,7 +719,7 @@ impl Group {
                         log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ);
 
                         // Send join announcement using shared function
-                        if let Ok(settings) = cc.db.users.get_settings(user_id).await {
+                        if let Ok(settings) = cc.db.users.get_prefs(user_id).await {
                             use serenity::all::CreateMessage;
                             use crate::handlers::settings::build_join_announcement_embed;
 
@@ -781,7 +781,7 @@ impl Group {
             if player_in_vc {
 
                 // Check user's VC disconnect preference
-                let settings = cc.db.users.get_settings(user_id).await.unwrap_or_default();
+                let settings = cc.db.users.get_prefs(user_id).await.unwrap_or_default();
 
                 if settings.vc_kick {
 
@@ -824,7 +824,7 @@ impl Group {
             log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BL);
 
             // Send leave announcement using shared function
-            if let Ok(settings) = cc.db.users.get_settings(user_id).await {
+            if let Ok(settings) = cc.db.users.get_prefs(user_id).await {
                 use serenity::all::CreateMessage;
                 use crate::handlers::settings::build_leave_alert_embed;
 
@@ -1135,7 +1135,7 @@ impl Group {
         let user_id = cc.component.user.id;
         
         // Get user's settings
-        let settings = match cc.db.users.get_settings(user_id).await {
+        let settings = match cc.db.users.get_prefs(user_id).await {
             Ok(s) => s,
             Err(e) => {
                 cc.reply(&format!("Failed to load settings: {}", e)).await?;

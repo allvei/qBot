@@ -249,7 +249,7 @@ impl UserRepository {
     }
 
     /// Get user settings
-    pub async fn get_settings(&self, user_id: UI) -> Result<UserSettings> {
+    pub async fn get_prefs(&self, user_id: UI) -> Result<UserSettings> {
         let result = sqlx::query(
             "SELECT timeout_length, join_announcement, vc_disconnect_on_leave,
                     announcement_color, dm_enabled, notify_quota_threshold,
