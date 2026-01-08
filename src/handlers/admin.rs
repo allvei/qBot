@@ -1716,10 +1716,10 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
                             • Blue Team: <#{}>\n\n\
                             The PUG queue is now ready to use!",
                             dashboard_channel.get(),
-                            queue_channel.get(),
-                            queue_vc_channel.get(),
-                            red_channel.get(),
-                            blue_channel.get()
+                            queue_channel    .get(),
+                            queue_vc_channel .get(),
+                            red_channel      .get(),
+                            blue_channel     .get()
                         ))
                         .color(GREEN);
 
@@ -1762,8 +1762,8 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
 /// * `user` - The Discord user (mention or ID, optional - defaults to command user)
 pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) -> Result<()> {
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-    let user_id = user.as_ref().map(|u| u.id).unwrap_or(cc.intax.user.id);
-    let is_self = user_id == cc.intax.user.id;
+    let user_id  = user.as_ref().map(|u| u.id).unwrap_or(cc.intax.user.id);
+    let is_self  = user_id == cc.intax.user.id;
 
     if !is_self && !check_adm(&cc).await? {
         return Ok(());
