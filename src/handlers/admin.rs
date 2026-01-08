@@ -12,7 +12,6 @@ use serenity::all::{
 use tracing::{error, info, warn};
 
 use crate::{ADMIN, CYAN, DEFAULT_QUOTA, Database, GRAY, GREEN, Manager, ORANGE, RED, RUNNER};
-use crate::commands::{parse_rank_name};
 use crate::database::repositories::Repository;
 use crate::handlers::player::{check_role, create_rank_roles, validate_rank_roles, validate_system_roles};
 use crate::models::{CommandContext as CC, Role, Server, SETUP_STATE};
@@ -2081,77 +2080,6 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
             ).await?;
         }
     }
-
-    Ok(())
-}
-
-/// `/ranksetelo` - Set custom ELO value for a rank
-///
-/// * `rank_role` - The rank name or role mention/ID
-/// * `elo` - The ELO value to set for this rank
-pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Result<()> {
-    // Check admin permissions
-        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
-
-    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-    let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-
-    // Validate ELO range (1-100)
-    if elo < 1 {
-        let error_embed = CE::new()
-            .title("Invalid ELO Value")
-            .description("ELO must be above 0")
-            .color(RED);
-        let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-
-    // Try to parse as rank name first
-    let rank = parse_rank_name(&rank_role).expect("Invalid rank name");
-    // Verify this rank has a role configured
-    let config_key = format!("rank_{}_role", rank.name().to_lowercase().replace(" ", "_"));
-    match cc.db.config.get_config_value(&config_key, guild_id.get()).await {
-        Ok(Some(_)) => rank,
-        _ => {
-            error!("[{}] - Invalid rank name: {}", guild_name, rank_role);
-            let error_embed = CE::new()
-                .title("Rank Not Configured")
-                .description(format!("Rank '{rank_role}' is not configured.\nUse `/check_ranks` to set up rank roles first."))
-                .color(RED);
-            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
-        }
-    };
-    let config_key = format!("rank_{}_elo", rank.name().to_lowercase().replace(" ", "_"));
-
-    // Store ELO value in config
-    cc.db.config.set_config(&config_key, &elo.to_string(), guild_id.get()).await?;
-
-    // Get role ID for display in success message
-    let role_config_key = format!("rank_{}_role", rank.name().to_lowercase().replace(" ", "_"));
-    let role_id = cc.db.config.get_config_value(&role_config_key, guild_id.get()).await
-        .ok()
-        .flatten()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(0);
-
-    let success_embed = CE::new()
-        .title("Rank ELO Updated")
-        .description(format!(
-            "**{}** rank (<@&{}>) ELO set to **{}**\n\n\
-            *Note: This will take effect for new team generations.*",
-            rank.name(),
-            role_id,
-            elo
-        ))
-        .color(GREEN);
-
-    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-
-    info!("[{}] - {} = {}", guild_name, rank.name(), elo);
 
     Ok(())
 }

@@ -146,24 +146,12 @@ impl EventHandler for Handler {
             cmd("roledel",     "Remove role configuration")
                 .op_role("role_type",   "Role type: runner, admin, or both", true),
 
-            cmd("rankadd",     "Add Discord role(s) to a rank (supports multiple roles)")
-                .op_string("rank", "Rank name", true)
-                .op_role("role", "Discord roles to add", true),
-            cmd("rankremove",  "Remove Discord role(s) from a rank (supports multiple roles)")
-                .op_string("rank", "Rank name", true)
-                .op_role("role", "Discord roles to remove", true),
-            cmd("ranklist",    "List all role mappings for ranks")
-                .op_string("rank", "Rank name to filter (optional)", false),
-
             cmd("groupadd",    "Create a new category with all group channels"),
             cmd("grouplink",   "Link existing channels to a group"),
             cmd("groupremove", "Remove a group")
                 .op_int("group_id", "Group ID to remove (defaults to current channel's group)", false),
 
             cmd("clear",       "Clear all players from the queue"),
-            cmd("ranksetelo",  "Set custom ELO value for a rank")
-                .op_role("rank_role", "The rank role (mention or ID)", true)
-                .op_int("elo", "ELO value (1-100)", true),
             cmd("getplayerelo",  "View ELO and rank information for a player")
                 .op_user("user", "The Discord user (mention or ID, optional)", false),
             cmd("settings",       "Open your personal settings menu"),
@@ -294,41 +282,6 @@ impl EventHandler for Handler {
                         info();
                         commands::cmd_setup_link(&cmd_ctx).await
                     }
-                    "rankadd" => {
-                        info();
-                        let rank_name = cdo.iter()
-                            .find(|opt| opt.name == "rank")
-                            .and_then(|opt| opt.value.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let role_mention = cdo.iter()
-                            .find(|opt| opt.name == "role")
-                            .and_then(|opt| opt.value.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        commands::cmd_rank_add(&cmd_ctx, rank_name, role_mention).await
-                    }
-                    "rankremove" => {
-                        info();
-                        let rank_name = cdo.iter()
-                            .find(|opt| opt.name == "rank")
-                            .and_then(|opt| opt.value.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let role_mention = cdo.iter()
-                            .find(|opt| opt.name == "role")
-                            .and_then(|opt| opt.value.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        commands::cmd_rank_remove(&cmd_ctx, rank_name, role_mention).await
-                    }
-                    "ranklist" => {
-                        info();
-                        let rank_name = cdo.iter()
-                            .find(|opt| opt.name == "rank")
-                            .and_then(|opt| opt.value.as_str());
-                        commands::cmd_rank_list(&cmd_ctx, rank_name).await
-                    }
                     "groupadd" => {
                         info();
                         let mut manager = self.manager.lock().await;
@@ -419,20 +372,6 @@ impl EventHandler for Handler {
                             "clear" => {
                                 info();
                                 admin::cmd_clear_queue(&cmd_ctx, server).await
-                            }
-                            "ranksetelo" => {
-                                info();
-                                let rank_role = cdo.iter()
-                                    .find(|opt| opt.name == "rank_role")
-                                    .and_then(|opt| opt.value.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let elo = cdo.iter()
-                                    .find(|opt| opt.name == "elo")
-                                    .and_then(|opt| opt.value.as_str())
-                                    .and_then(|s| s.parse::<i64>().ok())
-                                    .unwrap_or(0);
-                                admin::cmd_rank_set_elo(&cmd_ctx, rank_role, elo).await
                             }
                             "getplayerelo" => {
                                 info();

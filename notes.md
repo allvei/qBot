@@ -47,13 +47,6 @@
 - `/clear`             - Clear all players from queue
 - `/getplayerelo [user]` - View player ELO info
 
-### Rank System
-
-- `/rankadd <rank> <role>`        - Add Discord role to rank
-- `/rankremove <rank> <role>`     - Remove Discord role from rank
-- `/ranklist [rank]`              - List rank role mappings
-- `/ranksetelo <rank_role> <elo>` - Set custom ELO for rank
-
 ### Timeout & Alerts
 
 - Player timeout - Auto-remove after configured time

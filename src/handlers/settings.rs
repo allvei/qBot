@@ -710,12 +710,174 @@ pub async fn handle_server_settings_button(
                 interaction.create_response(&ctx.http, response).await?;
             }
         }
+        "server_settings_ranks" => {
+            // Show rank configuration menu
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let rank_roles = get_all_rank_roles(db, guild_id.get()).await?;
+            
+            let display = crate::handlers::settings_menu::RankConfigDisplay {
+                guild_name,
+                rank_roles,
+            };
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(display.build_embed()).components(display.build_components())
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_ranks_back" => {
+            // Go back to main server settings
+            let settings = get_server_settings(db, guild_id.get()).await?;
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let embed = build_server_settings_embed(&settings, &guild_name);
+            let buttons = build_server_settings_buttons(&settings, &guild_name);
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(embed).components(buttons)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_rank_select" => {
+            // Handle rank selection from dropdown
+            if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
+                if let Some(rank_key) = values.first() {
+                    let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                    let rank_name = rank_key_to_name(rank_key);
+                    let config_key = format!("rank_{rank_key}_roles");
+                    let role_ids = db.config.get_config_value(&config_key, guild_id.get()).await?;
+
+                    let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
+                        guild_name,
+                        rank_name,
+                        rank_key: rank_key.clone(),
+                        role_ids,
+                    };
+
+                    let response = CIR::UpdateMessage(
+                        CIRM::new().embed(display.build_embed()).components(display.build_components())
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
+        "server_settings_rank_back" => {
+            // Go back to rank list
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let rank_roles = get_all_rank_roles(db, guild_id.get()).await?;
+            
+            let display = crate::handlers::settings_menu::RankConfigDisplay {
+                guild_name,
+                rank_roles,
+            };
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(display.build_embed()).components(display.build_components())
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        _ if button_id.starts_with("server_settings_rank_role_") => {
+            // Handle rank role selection
+            let rank_key = button_id.strip_prefix("server_settings_rank_role_").unwrap();
+            if let serenity::all::ComponentInteractionDataKind::RoleSelect { values } = &interaction.data.kind {
+                let config_key = format!("rank_{rank_key}_roles");
+                
+                if let Some(role_id) = values.first() {
+                    // Get existing roles and add new one
+                    let existing = db.config.get_config_value(&config_key, guild_id.get()).await?.unwrap_or_default();
+                    let mut role_ids: Vec<String> = existing.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+                    let new_id = role_id.get().to_string();
+                    if !role_ids.contains(&new_id) {
+                        role_ids.push(new_id);
+                    }
+                    let role_ids_str = role_ids.join(",");
+                    db.config.set_config(&config_key, &role_ids_str, guild_id.get()).await?;
+
+                    // Refresh the rank role config view
+                    let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                    let rank_name = rank_key_to_name(rank_key);
+                    let role_ids = db.config.get_config_value(&config_key, guild_id.get()).await?;
+
+                    let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
+                        guild_name,
+                        rank_name,
+                        rank_key: rank_key.to_string(),
+                        role_ids,
+                    };
+
+                    let response = CIR::UpdateMessage(
+                        CIRM::new().embed(display.build_embed()).components(display.build_components())
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
+        _ if button_id.starts_with("server_settings_rank_clear_") => {
+            // Clear rank role configuration
+            let rank_key = button_id.strip_prefix("server_settings_rank_clear_").unwrap();
+            let config_key = format!("rank_{rank_key}_roles");
+            db.config.delete_config(&config_key, guild_id.get()).await?;
+
+            // Refresh the rank role config view
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let rank_name = rank_key_to_name(rank_key);
+
+            let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
+                guild_name,
+                rank_name,
+                rank_key: rank_key.to_string(),
+                role_ids: None,
+            };
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(display.build_embed()).components(display.build_components())
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
         _ => {
             warn!("Unknown server settings button: {}", button_id);
         }
     }
 
     Ok(())
+}
+
+/// Get all rank roles for display
+async fn get_all_rank_roles(db: &Arc<Database>, guild_id: u64) -> Result<Vec<(String, Option<String>)>> {
+    let ranks = [
+        ("Beginner", "beginner"),
+        ("Newcomer", "newcomer"),
+        ("Novice", "novice"),
+        ("Apprentice", "apprentice"),
+        ("Journeyman", "journeyman"),
+        ("Expert", "expert"),
+        ("Master", "master"),
+        ("Master Elite", "master_elite"),
+        ("Grandmaster", "grandmaster"),
+    ];
+
+    let mut result = Vec::new();
+    for (name, key) in ranks {
+        let config_key = format!("rank_{key}_roles");
+        let role_ids = db.config.get_config_value(&config_key, guild_id).await?;
+        result.push((name.to_string(), role_ids));
+    }
+    Ok(result)
+}
+
+/// Convert rank key to display name
+fn rank_key_to_name(key: &str) -> String {
+    match key {
+        "beginner"     => "Beginner".to_string(),
+        "newcomer"     => "Newcomer".to_string(),
+        "novice"       => "Novice".to_string(),
+        "apprentice"   => "Apprentice".to_string(),
+        "journeyman"   => "Journeyman".to_string(),
+        "expert"       => "Expert".to_string(),
+        "master"       => "Master".to_string(),
+        "master_elite" => "Master Elite".to_string(),
+        "grandmaster"  => "Grandmaster".to_string(),
+        _              => key.to_string(),
+    }
 }
 
 /// Get server settings from database

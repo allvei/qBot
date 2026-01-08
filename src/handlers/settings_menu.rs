@@ -265,6 +265,7 @@ impl IntoSettingsMenu for ServerSettingsDisplay {
             .color(0x5865F2)
             .row(SettingsRow::Buttons(vec![
                 SettingsButton::toggle("server_settings_dynamic_elo", "Dynamic ELO", self.dynamic_elo),
+                SettingsButton::action("server_settings_ranks", "Rank Configuration", SettingsButtonStyle::Secondary),
             ]))
             .row(SettingsRow::RoleSelect {
                 id: "server_settings_runner_role".to_string(),
@@ -276,6 +277,95 @@ impl IntoSettingsMenu for ServerSettingsDisplay {
                 placeholder: "Select Admin Role".to_string(),
                 default: admin_default,
             })
+    }
+}
+
+/// Rank configuration display for server settings sub-menu
+pub struct RankConfigDisplay {
+    pub guild_name:  String,
+    pub rank_roles:  Vec<(String, Option<String>)>, // (rank_name, role_ids_csv)
+}
+
+impl RankConfigDisplay {
+    pub fn build_embed(&self) -> CE {
+        let mut embed = CE::new()
+            .title(format!("{} Rank Configuration", self.guild_name))
+            .color(0x5865F2);
+
+        for (rank_name, role_ids) in &self.rank_roles {
+            let display = role_ids.as_ref()
+                .map(|ids| ids.split(',').filter(|s| !s.is_empty()).map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "*Not configured*".to_string());
+            embed = embed.field(rank_name, display, false);
+        }
+
+        embed.footer(CreateEmbedFooter::new("Select a rank below to configure its Discord role"))
+    }
+
+    pub fn build_components(&self) -> Vec<CAR> {
+        let rank_options: Vec<(String, String)> = self.rank_roles.iter()
+            .map(|(name, _)| (name.clone(), name.to_lowercase().replace(" ", "_")))
+            .collect();
+
+        vec![
+            CAR::SelectMenu(
+                CSM::new("server_settings_rank_select", CSMK::String {
+                    options: rank_options.iter()
+                        .map(|(label, value)| CSMO::new(label, value))
+                        .collect()
+                })
+                .placeholder("Select rank to configure")
+            ),
+            CAR::Buttons(vec![
+                CB::new("server_settings_ranks_back")
+                    .label("Back to Server Settings")
+                    .style(BS::Secondary),
+            ]),
+        ]
+    }
+}
+
+/// Single rank role configuration
+pub struct RankRoleConfigDisplay {
+    pub guild_name: String,
+    pub rank_name:  String,
+    pub rank_key:   String,
+    pub role_ids:   Option<String>,
+}
+
+impl RankRoleConfigDisplay {
+    pub fn build_embed(&self) -> CE {
+        let display = self.role_ids.as_ref()
+            .map(|ids| ids.split(',').filter(|s| !s.is_empty()).map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "*Not configured*".to_string());
+
+        CE::new()
+            .title(format!("{} - {} Rank", self.guild_name, self.rank_name))
+            .field("Current Role(s)", display, false)
+            .color(0x5865F2)
+            .footer(CreateEmbedFooter::new("Select a role below to set for this rank"))
+    }
+
+    pub fn build_components(&self) -> Vec<CAR> {
+        vec![
+            CAR::SelectMenu(
+                CSM::new(
+                    format!("server_settings_rank_role_{}", self.rank_key),
+                    CSMK::Role { default_roles: None }
+                )
+                .placeholder(format!("Select role for {}", self.rank_name))
+            ),
+            CAR::Buttons(vec![
+                CB::new(format!("server_settings_rank_clear_{}", self.rank_key))
+                    .label("Clear Role")
+                    .style(BS::Danger),
+                CB::new("server_settings_rank_back")
+                    .label("Back to Ranks")
+                    .style(BS::Secondary),
+            ]),
+        ]
     }
 }
 
