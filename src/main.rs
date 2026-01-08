@@ -143,9 +143,6 @@ impl EventHandler for Handler {
             cmd("setupadd",    "Create roles and group (full setup)"),
             cmd("setuplink",   "Guide to link existing roles and channels"),
             cmd("roleadd",     "Create runner and admin roles"),
-            cmd("rolelink",    "Link existing runner and admin roles")
-                .op_role("runner_role", "Runner role to link", false)
-                .op_role("admin_role",  "Admin role to link",  false),
             cmd("roledel",     "Remove role configuration")
                 .op_role("role_type",   "Role type: runner, admin, or both", true),
 
@@ -163,22 +160,12 @@ impl EventHandler for Handler {
             cmd("groupremove", "Remove a group")
                 .op_int("group_id", "Group ID to remove (defaults to current channel's group)", false),
 
-            cmd("quotaset",    "Set the queue quota")
-                .op_int("quota", "Number of players required (2-100)", true),
-            cmd("connectadd",  "Set server connection info")
-                .op_string("connect_info", "Server connect command (e.g., connect 192.168.10.10:27015)", true),
             cmd("clear",       "Clear all players from the queue"),
             cmd("ranksetelo",  "Set custom ELO value for a rank")
                 .op_role("rank_role", "The rank role (mention or ID)", true)
                 .op_int("elo", "ELO value (1-100)", true),
-            cmd("setplayerelo",  "Set ELO value for a specific player")
-                .op_user("user", "The Discord user (mention or ID)", true)
-                .op_int("elo", "ELO value (0-100, or -1 to clear)", true),
             cmd("getplayerelo",  "View ELO and rank information for a player")
                 .op_user("user", "The Discord user (mention or ID, optional)", false),
-            cmd("setplayersteam", "Set Steam ID for a specific player")
-                .op_user("user", "The Discord user (mention or ID)", true)
-                .op_int("steam_id", "Steam ID (64-bit number)", true),
             cmd("settings",       "Open your personal settings menu"),
             cmd("serversettings", "Open server settings menu (admin only)"),
             cmd("groupsettings",  "Open group settings menu (runner only)"),
@@ -266,12 +253,6 @@ impl EventHandler for Handler {
                         info();
                         commands::cmd_role_add(&cmd_ctx).await
                     }
-                    "rolelink" => {
-                        info();
-                        let runner_role = cdo.iter().find(|opt| opt.name == "runner_role").and_then(|opt| opt.value.as_str()).map(|s| s.to_string());
-                        let admin_role  = cdo.iter().find(|opt| opt.name == "admin_role").and_then(|opt| opt.value.as_str()).map(|s| s.to_string());
-                        commands::cmd_role_link(&cmd_ctx, runner_role, admin_role).await
-                    }
                     "roleremove" => {
                         info();
                         let role_type = cdo.iter().find(|opt| opt.name == "role_type").and_then(|opt| opt.value.as_str()).unwrap_or("both").to_string();
@@ -347,24 +328,6 @@ impl EventHandler for Handler {
                             .find(|opt| opt.name == "rank")
                             .and_then(|opt| opt.value.as_str());
                         commands::cmd_rank_list(&cmd_ctx, rank_name).await
-                    }
-                    "quotaset" => {
-                        info();
-                        let quota = cdo.iter()
-                            .find(|opt| opt.name == "quota")
-                            .and_then(|opt| opt.value.as_str())
-                            .and_then(|s| s.parse::<i64>().ok())
-                            .unwrap_or(0);
-                        admin::cmd_set_quota(&cmd_ctx, quota).await
-                    }
-                    "connectadd" => {
-                        info();
-                        let connect_info = cdo.iter()
-                            .find(|opt| opt.name == "connect_info")
-                            .and_then(|opt| opt.value.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        admin::cmd_add_connect(&cmd_ctx, connect_info).await
                     }
                     "groupadd" => {
                         info();
@@ -471,49 +434,6 @@ impl EventHandler for Handler {
                                     .unwrap_or(0);
                                 admin::cmd_rank_set_elo(&cmd_ctx, rank_role, elo).await
                             }
-                            "setplayerelo" => {
-                                let user_str = cdo.first().unwrap().value.as_str().unwrap_or("");
-                                info!("DEBUG: setplayerelo user_str: '{}'", user_str);
-                                
-                                // Try multiple ways to parse the user
-                                let user = if let Some(user_id) = cdo.first().unwrap().value.as_user_id() {
-                                    info!("DEBUG: Found user_id: {}", user_id);
-                                    ctx.http.get_user(user_id).await.ok()
-                                } else if let Ok(user_id) = user_str.parse::<u64>() {
-                                    info!("DEBUG: Parsed user_id from string: {}", user_id);
-                                    ctx.http.get_user(UserId::new(user_id)).await.ok()
-                                } else if user_str.starts_with("<@") && user_str.ends_with('>') {
-                                    // Handle user mentions like <@123456789>
-                                    let mention_id = user_str.trim_start_matches("<@").trim_start_matches('!').trim_end_matches('>');
-                                    info!("DEBUG: Extracted mention_id: '{}'", mention_id);
-                                    if let Ok(user_id) = mention_id.parse::<u64>() {
-                                        info!("DEBUG: Parsed user_id from mention: {}", user_id);
-                                        ctx.http.get_user(UserId::new(user_id)).await.ok()
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    info!("DEBUG: Could not parse user from: '{}'", user_str);
-                                    None
-                                };
-                                
-                                if let Some(user) = user {
-                                    let elo = if let Some(elo_option) = cdo.iter()
-                                        .find(|opt| opt.name == "elo") {
-                                    match &elo_option.value {
-                                        serenity::all::CommandDataOptionValue::Integer(i) => *i,
-                                        _ => 0,
-                                    }
-                                } else {
-                                    0
-                                };
-                                    info!("DEBUG: Setting ELO {} for user {}", elo, user.tag());
-                                    admin::cmd_set_player_elo(&cmd_ctx, user, elo).await
-                                } else {
-                                    let response = CIR::Message(CIRM::new().content("Invalid user specified").ephemeral(true));
-                                    itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
-                                }
-                            }
                             "getplayerelo" => {
                                 info();
                                 if let Some(user_option) = cdo.first() {
@@ -521,31 +441,6 @@ impl EventHandler for Handler {
                                         let user: Result<User, serenity::Error> = ctx.http.get_user(user_id).await;
                                         if let Ok(user) = user {
                                             admin::cmd_get_player_elo(&cmd_ctx, Some(user)).await
-                                        } else {
-                                            let response = CIR::Message(CIRM::new().content("Failed to get user").ephemeral(true));
-                                            itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
-                                        }
-                                    } else {
-                                        let response = CIR::Message(CIRM::new().content("Invalid user specified").ephemeral(true));
-                                        itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
-                                    }
-                                } else {
-                                    let response = CIR::Message(CIRM::new().content("No user specified").ephemeral(true));
-                                    itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
-                                }
-                            }
-                            "setplayersteam" => {
-                                info();
-                                if let Some(user_option) = cdo.first() {
-                                    if let Some(user_id) = user_option.value.as_user_id() {
-                                        let user: Result<User, serenity::Error> = ctx.http.get_user(user_id).await;
-                                        if let Ok(user) = user {
-                                            let steam_id = cdo.iter()
-                                                .find(|opt| opt.name == "steam_id")
-                                                .and_then(|opt| opt.value.as_str())
-                                                .and_then(|s| s.parse::<u64>().ok())
-                                                .unwrap_or(0);
-                                            admin::cmd_set_player_steam(&cmd_ctx, user, steam_id).await
                                         } else {
                                             let response = CIR::Message(CIRM::new().content("Failed to get user").ephemeral(true));
                                             itx.create_response(&ctx.http, response).await.map_err(|e| e.into())

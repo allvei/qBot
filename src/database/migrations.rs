@@ -78,10 +78,10 @@ impl DatabaseMigrations {
             sqlx::query(
                 "CREATE TABLE users (
                     id                              INTEGER PRIMARY KEY,
-                    user_id                      INTEGER NOT NULL UNIQUE,
+                    user_id                         INTEGER NOT NULL UNIQUE,
                     steam_id                        INTEGER,
                     dm_enabled                      INTEGER DEFAULT 1,
-                    timeout_length             INTEGER DEFAULT 30,
+                    timeout_length                  INTEGER DEFAULT 30,
                     join_announcement               INTEGER DEFAULT 0,
                     vc_disconnect_on_leave          INTEGER DEFAULT 1,
                     announcement_color              INTEGER DEFAULT 3447003,
@@ -117,7 +117,7 @@ impl DatabaseMigrations {
 
             // Add new settings columns if missing
             if has_user_id {
-                add_column!(self, "users", "timeout_length",          "INTEGER", "30");
+                add_column!(self, "users", "timeout_length",               "INTEGER", "30");
                 add_column!(self, "users", "join_announcement",            "INTEGER", "0");
                 add_column!(self, "users", "vc_disconnect_on_leave",       "INTEGER", "1");
                 add_column!(self, "users", "announcement_color",           "INTEGER", "3447003");
@@ -155,7 +155,7 @@ impl DatabaseMigrations {
                         user_id                      INTEGER NOT NULL UNIQUE,
                         steam_id                     INTEGER,
                         dm_enabled                   INTEGER DEFAULT 1,
-                        timeout_length          INTEGER DEFAULT 0,
+                        timeout_length               INTEGER DEFAULT 0,
                         join_announcement            INTEGER DEFAULT 0,
                         vc_disconnect_on_leave       INTEGER DEFAULT 1,
                         announcement_color           INTEGER DEFAULT 3447003,
@@ -291,7 +291,7 @@ impl DatabaseMigrations {
                     guild_idx INTEGER NOT NULL,
                     user_idx  INTEGER NOT NULL,
                     elo       INTEGER NOT NULL DEFAULT 50,
-                    division  TEXT NOT NULL DEFAULT 'Apprentice',
+                    division  TEXT    NOT NULL DEFAULT 'Apprentice',
                     games     INTEGER NOT NULL DEFAULT 0,
                     wins      INTEGER NOT NULL DEFAULT 0,
                     UNIQUE(guild_idx, user_idx),

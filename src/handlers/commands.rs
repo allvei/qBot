@@ -95,73 +95,6 @@ pub async fn cmd_role_add(cc: &CC<'_>) -> Result<()> {
     Ok(())
 }
 
-/// `/rolelink` - Link existing runner and admin roles (supports multiple roles per type)
-pub async fn cmd_role_link(cc: &CC<'_>, runner_role: Option<String>, admin_role: Option<String>) -> Result<()> {
-        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
-
-    let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
-
-    // If no parameters provided, show current configuration
-    if runner_role.is_none() && admin_role.is_none() {
-        let current_runner = cc.db.config.get_config_value("runner_role", guild_id.get()).await?;
-        let current_admin  = cc.db.config.get_config_value("admin_role", guild_id.get()).await?;
-
-        let runner_display = format_role_mentions(current_runner);
-        let admin_display  = format_role_mentions(current_admin);
-
-        let embed = CE::new()
-            .title("Current Role Configuration")
-            .description(format!(
-                "**Current Roles:**\n\
-                • Runner: {runner_display}\n\
-                • Admin: {admin_display}\n\n\
-                **Usage:**\n\
-                `/rolelink runner_role:@Role1 @Role2 admin_role:@AdminRole`\n\
-                Supports multiple roles per type (space or comma separated)",
-            ));
-
-        let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-
-    let mut updated_roles = Vec::new();
-
-    // Link runner roles if provided
-    if let Some(role_str) = runner_role {
-        let role_ids     = parse_role_ids(&role_str)?;
-        let role_ids_str = role_ids.join(",");
-        cc.db.config.set_config("runner_role", &role_ids_str, guild_id.get()).await?;
-        let display      = role_ids.iter()
-            .map(|id| format!("<@&{id}>"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        updated_roles.push(format!("• Runner: {display}"));
-    }
-
-    // Link admin roles if provided
-    if let Some(role_str) = admin_role {
-        let role_ids     = parse_role_ids(&role_str)?;
-        let role_ids_str = role_ids.join(",");
-        cc.db.config.set_config("admin_role", &role_ids_str, guild_id.get()).await?;
-        let display = role_ids.iter()
-            .map(|id| format!("<@&{id}>"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        updated_roles.push(format!("• Admin: {display}"));
-    }
-
-    let success_embed = CE::new()
-        .title("Roles Linked!")
-        .description(format!("Successfully linked roles:\n{}", updated_roles.join("\n")))
-        .color(GREEN);
-
-    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-
-    Ok(())
-}
-
 /// `/roleremove` - Remove runner and admin role configuration
 pub async fn cmd_role_remove(cc: &CC<'_>, role_type: String) -> Result<()> {
         if !check_role(cc, &Role::Runner).await? { return Ok(()); }
@@ -511,35 +444,6 @@ pub fn parse_role_id(role_str: &str) -> Result<String> {
     } else {
         Ok(role_str.to_string())
     }
-}
-
-/// Format role IDs as Discord mentions for display
-fn format_role_mentions(role_ids_str: Option<String>) -> String {
-    role_ids_str.map(|r| {
-        r.split(',')
-            .map(|id| format!("<@&{}>", id.trim()))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }).unwrap_or_else(|| "Not set".to_string())
-}
-
-/// Parse multiple role IDs from a string containing space or comma separated role mentions/IDs
-fn parse_role_ids(role_str: &str) -> Result<Vec<String>> {
-    let mut role_ids = Vec::new();
-
-    // Split by both spaces and commas, then filter empty strings
-    for part in role_str.split([' ', ',']) {
-        let trimmed = part.trim();
-        if !trimmed.is_empty() {
-            role_ids.push(parse_role_id(trimmed)?);
-        }
-    }
-
-    if role_ids.is_empty() {
-        return Err(anyhow!("No valid role IDs found"));
-    }
-
-    Ok(role_ids)
 }
 
 fn log_rank_remove(rank_name: &str, role_name: &str) {

@@ -352,7 +352,7 @@ impl IntoSettingsMenu for PlayerSettingsDisplay {
         SettingsMenu::new(format!("{} - Player Settings", self.username))
             .field(SettingsField::new("Steam ID", steam_display))
             .field(SettingsField::new("ELO", format!("{}", self.elo)))
-            .field(SettingsField::new("Division", &self.division))
+            .field(SettingsField::new("Rank", &self.division))
             .field(SettingsField::new("Games", format!("{}", self.games)))
             .field(SettingsField::new("Wins", format!("{}", self.wins)))
             .field(SettingsField::new("Winrate", winrate))
@@ -362,7 +362,7 @@ impl IntoSettingsMenu for PlayerSettingsDisplay {
                 SettingsButton::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO"),
             ]))
             .row(SettingsRow::Buttons(vec![
-                SettingsButton::edit(format!("player_settings_edit_division_{uid}"), "Edit Division"),
+                SettingsButton::edit(format!("player_settings_edit_division_{uid}"), "Edit Rank"),
             ]))
     }
 }

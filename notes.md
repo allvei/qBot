@@ -3,74 +3,82 @@
 ## Testing
 
 ### Setup & Configuration
-- [ ] `/setupadd` - Create roles and group (full setup)
-- [ ] `/roleadd` - Create runner and admin roles
-- [ ] `/rolelink` - Link existing runner and admin roles
-- [ ] `/groupadd` - Create a new category with all group channels
-- [ ] `/grouplink` - Link existing channels to a group
-- [ ] `/groupremove` - Remove a group
+
+- `/setupadd`    - Create roles and group (full setup)
+- `/roleadd`     - Create runner and admin roles
+- `/groupadd`    - Create a new category with all group channels
+- `/grouplink`   - Link existing channels to a group
+- `/groupremove` - Remove a group
 
 ### Settings Menus
-- [ ] `/settings` - Open personal settings menu
-  - [ ] Toggle DM alerts
-  - [ ] Toggle VC kick
-  - [ ] Set timeout length
-  - [ ] Edit join/leave alerts
-- [ ] `/serversettings` - Open server settings menu (admin)
-  - [ ] Toggle Dynamic ELO
-  - [ ] Set runner role
-  - [ ] Set admin role
-- [ ] `/groupsettings` - Open group settings menu (runner)
-  - [ ] Edit group name
-  - [ ] Edit quota
-  - [ ] Edit timeout
-  - [ ] Edit connect info
-- [ ] `/editplayer <user>` - Open player settings menu (admin)
-  - [ ] Edit Steam ID
-  - [ ] Edit ELO
-  - [ ] Edit Division
+
+- `/settings` - Open personal settings menu
+  - Toggle DM alerts
+  - Toggle VC kick
+  - Set timeout length
+  - Edit join/leave alerts
+- `/serversettings` - Open server settings menu (admin)
+  - Toggle Dynamic ELO
+  - Set runner role
+  - Set admin role
+- `/groupsettings` - Open group settings menu (runner)
+  - Edit group name
+  - Edit quota
+  - Edit timeout
+  - Edit connect info
+- `/editplayer <user>` - Open player settings menu (admin)
+  - Edit Steam ID
+  - Edit ELO
+  - Edit Rank
 
 ### Queue & Game Flow
-- [ ] Dashboard "Add" button - Join queue
-- [ ] Dashboard "Leave" button - Leave queue
-- [ ] Dashboard "Settings" button - Open settings
-- [ ] Queue fills to quota - Session goes Hot
-- [ ] Teams generated - Players moved to team VCs
-- [ ] Game ends - Players pulled back, session resets
+
+- Dashboard "Add" button      - Join queue
+- Dashboard "Leave" button    - Leave queue
+- Dashboard "Settings" button - Open settings
+- Queue fills to quota        - Session goes Hot
+- Teams generated             - Players moved to team VCs
+- Game ends                   - Players pulled back, session resets
 
 ### Player Management
-- [ ] `/buffer <user>` - Move player to start of queue
-- [ ] `/fatkid <user>` - Move player to end of queue
-- [ ] `/clear` - Clear all players from queue
-- [ ] `/setplayerelo <user> <elo>` - Set player ELO
-- [ ] `/getplayerelo [user]` - View player ELO info
-- [ ] `/setplayersteam <user> <steam_id>` - Set Steam ID
+
+- `/buffer <user>`     - Move player to start of queue
+- `/fatkid <user>`     - Move player to end of queue
+- `/clear`             - Clear all players from queue
+- `/getplayerelo [user]` - View player ELO info
 
 ### Rank System
-- [ ] `/rankadd <rank> <role>` - Add Discord role to rank
-- [ ] `/rankremove <rank> <role>` - Remove Discord role from rank
-- [ ] `/ranklist [rank]` - List rank role mappings
-- [ ] `/ranksetelo <rank_role> <elo>` - Set custom ELO for rank
 
-### Configuration
-- [ ] `/quotaset <quota>` - Set queue quota
-- [ ] `/connectadd <connect_info>` - Set server connect info
+- `/rankadd <rank> <role>`        - Add Discord role to rank
+- `/rankremove <rank> <role>`     - Remove Discord role from rank
+- `/ranklist [rank]`              - List rank role mappings
+- `/ranksetelo <rank_role> <elo>` - Set custom ELO for rank
 
 ### Timeout & Alerts
-- [ ] Player timeout - Auto-remove after configured time
-- [ ] Join alert - Custom embed on player join
-- [ ] Leave alert - Custom embed on player leave
-- [ ] DM alerts - Notify player when game ready
+
+- Player timeout - Auto-remove after configured time
+- Join alert     - Custom embed on player join
+- Leave alert    - Custom embed on player leave
+- DM alerts      - Notify player when game ready
 
 ### Edge Cases
-- [ ] Player leaves during Hot phase
-- [ ] Player disconnects from VC during game
-- [ ] Multiple groups in same server
-- [ ] Role permissions (runner vs admin vs regular user)
+
+- Player leaves during Hot phase
+- Player disconnects from VC during game
+- Multiple groups in same server
+- Role permissions (runner vs admin vs regular user)
 
 ## Priority
 
-- ensure group name is in db
+- Edit groups via /serversettings
+  - Edit a group
+  - Add a new group
+    - Create new channels OR link existing channels
+  - Remove a group
+- Group settings is only for admins
+- Move roleadd and rolelink under server settings.
+
+- Add right click user actions
 
 ## Secondary
 

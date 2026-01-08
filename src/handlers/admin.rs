@@ -11,7 +11,7 @@ use serenity::all::{
 };
 use tracing::{error, info, warn};
 
-use crate::{ADMIN, CYAN, DEFAULT_QUOTA, Database, ELO_MAX, ELO_MIN, GRAY, GREEN, Manager, ORANGE, RED, RUNNER};
+use crate::{ADMIN, CYAN, DEFAULT_QUOTA, Database, GRAY, GREEN, Manager, ORANGE, RED, RUNNER};
 use crate::commands::{parse_rank_name};
 use crate::database::repositories::Repository;
 use crate::handlers::player::{check_role, create_rank_roles, validate_rank_roles, validate_system_roles};
@@ -1740,164 +1740,6 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
     Ok(())
 }
 
-/// `/quotaset` - Set the queue quota for the current group
-///
-/// * `quota` - The new quota value (number of players required to start a game)
-pub async fn cmd_set_quota(cc: &CC<'_>, quota: i64) -> Result<()> {
-    if !check_role(cc, &Role::Runner).await? { return Ok(()); }
-
-    // Validate quota range
-    if !(2..=100).contains(&quota) {
-        let error_embed = CE::new()
-            .title("Invalid Quota")
-            .description("Quota must be between 2 and 100 players.")
-            .color(RED);
-
-        let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-
-    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-
-    // Get the group from the current channel
-    let mut manager = cc.manager.lock().await;
-    let server = match manager.get_server(guild_id) {
-        Ok(s) => s,
-        Err(e) => {
-            let error_embed = CE::new()
-                .title("Server Not Found")
-                .description(format!("Server not configured: {e}"))
-                .color(RED);
-
-            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
-        }
-    };
-
-    let group = match server.get_group(cc.intax.channel_id) {
-        Ok(g) => g,
-        Err(e) => {
-            let error_embed = CE::new()
-                .title("Group Not Found")
-                .description(format!("No queue group found in this channel: {e}"))
-                .color(RED);
-
-            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
-        }
-    };
-
-    let old_quota = group.quota;
-
-    // Update the quota in the group
-    group.quota = quota as u8;
-
-    // Update the quota in the database
-    match cc.db.set_group(
-        guild_id.get(),
-        group.channels.queue_vc.get(),
-        group.channels.dashboard.get(),
-        group.channels.queue_chat.get(),
-        group.channels.teams[0].red_vc.get(),
-        group.channels.teams[0].blu_vc.get(),
-        quota as u8,
-    ).await {
-        Ok(_) => {
-            let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-            info!("[{}] Updated quota from {} to {}", guild_name, old_quota, quota);
-
-            let success_embed = CE::new()
-                .title("Quota Updated")
-                .description(format!(
-                    "Queue quota has been changed from **{old_quota}** to **{quota}** players.\n\n\
-                    The queue will now require {quota} players before a game can start.",
-                ))
-                .color(GREEN);
-
-            let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-
-            // Update the dashboard to reflect the new quota
-            group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
-        },
-        Err(e) => {
-            let error_embed = CE::new()
-                .title("Failed to Update Quota")
-                .description(format!("Failed to save quota to database: {e}"))
-                .color(RED);
-
-            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-        }
-    }
-
-    Ok(())
-}
-
-/// `/connectadd` - Set server connection info for the current group
-///
-/// * `connect_info` - The server connect command (e.g., "connect 1.1.1.1:1234; password 1234")
-pub async fn cmd_add_connect(cc: &CC<'_>, connect_info: String) -> Result<()> {
-    if !check_role(cc, &Role::Runner).await? { return Ok(()); }
-
-    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-
-    // Get the group from the current channel
-    let mut manager = cc.manager.lock().await;
-    let server = match manager.get_server(guild_id) {
-        Ok(s) => s,
-        Err(e) => {
-            let error_embed = CE::new()
-                .title("Server Not Found")
-                .description(format!("Server not configured: {e}"))
-                .color(RED);
-
-            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
-        }
-    };
-
-    let group = match server.get_group(cc.intax.channel_id) {
-        Ok(g) => g,
-        Err(e) => {
-            let error_embed = CE::new()
-                .title("Group Not Found")
-                .description(format!("No queue group found in this channel: {e}"))
-                .color(RED);
-
-            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
-        }
-    };
-
-    // Update the connect info in the group
-    group.connect_info = Some(connect_info.clone());
-
-    let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-    info!("[{}] Set server connect info for group {}", guild_name, group.group_id);
-
-    let success_embed = CE::new()
-        .title("Server Connect Info Updated")
-        .description(format!(
-            "Server connection command has been set:\n\n```{connect_info}```\n\n\
-            This will now appear on the dashboard when players are ready to join.",
-        ))
-        .color(GREEN);
-
-    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-
-    // Update the dashboard to show the new connect info
-    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
-
-    Ok(())
-}
-
 /// Helper function to finalize group setup by loading it into manager and immediately updating dashboard
 async fn finalize_group_setup(ctx: &Context, db: &Arc<Database>, manager: &Arc<Mutex<Manager>>, guild_id: GI, dashboard_msg_id: u64) -> Result<()> {
     let guild_name = ctx.cache.guild(guild_id)
@@ -2314,54 +2156,6 @@ pub async fn cmd_rank_set_elo(cc: &CC<'_>, rank_role: String, elo: i64) -> Resul
     Ok(())
 }
 
-/// `/setplayerelo` - Set ELO value for a specific player
-///
-/// * `user` - The Discord user (mention or ID)
-/// * `elo` - The ELO value to set for this player (0-100, or -1 to clear)
-pub async fn cmd_set_player_elo(cc: &CC<'_>, user: serenity::all::User, elo: i64) -> Result<()> {
-    info!("DEBUG: cmd_set_player_elo called for user {} with elo {}", user.tag(), elo);
-    
-    // Check admin permissions
-        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
-
-    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-    let user_id = user.id;
-
-    // Validate ELO range
-    if elo != -1 && (elo < ELO_MIN as i64 || elo > ELO_MAX as i64) {
-        let error_embed = CE::new()
-            .title("Invalid ELO Value")
-            .description(format!("ELO must be between {ELO_MIN} and {ELO_MAX}, or -1 to clear ELO"))
-            .color(RED);
-        let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-        cc.intax.create_response(&cc.ctx.http, response).await?;
-        return Ok(());
-    }
-
-    // Set guild-specific ELO value
-    let elo_value = elo as u16;
-    info!("DEBUG: Setting guild ELO value {} for user {} in guild {}", elo_value, user_id, guild_id);
-    cc.db.elos.update_elo(user_id, guild_id.get(), elo_value).await?;
-
-    // Get updated player info with guild-specific ELO
-    let guild_elo = cc.db.elos.get(user_id, guild_id.get()).await?;
-    info!("DEBUG: After update - Player ELO: {}, Division: {}", guild_elo.elo, guild_elo.division.name());
-
-    let success_embed = CE::new()
-        .title("Player ELO Updated")
-        .description(format!(
-            "**{}**'s ELO set to **{}**\nCurrent division: **{}**",
-            user.tag(),
-            guild_elo.elo,
-            guild_elo.division.name()
-        ))
-        .color(GREEN);
-
-    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-    Ok(())
-}
-
 /// `/getplayerelo` - View ELO and rank information for a player
 ///
 /// * `user` - The Discord user (mention or ID, optional - defaults to command user)
@@ -2391,7 +2185,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
         }
     };
 
-    info!("DEBUG: User {} - Guild ELO: {}, Division: {}, Games: {}, Wins: {}", 
+    info!("DEBUG: User {} - Guild ELO: {}, Rank: {}, Games: {}, Wins: {}", 
           user_id, guild_elo.elo, guild_elo.division.name(), guild_elo.games, guild_elo.wins);
 
     // Get user info - if no user provided, we can't continue
@@ -2411,8 +2205,8 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
     // ELO information
     embed = embed.field("ELO Rating", format!("**{}** / 100", guild_elo.elo), true);
 
-    // Division information
-    embed = embed.field("Division", format!("**{}**", guild_elo.division.name()), true);
+    // Rank information
+    embed = embed.field("Rank", format!("**{}**", guild_elo.division.name()), true);
 
     // Stats
     let win_rate = if guild_elo.games > 0 {
@@ -2499,35 +2293,6 @@ pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
         .color(if is_enabled { GREEN } else { RED });
 
     let response = CIR::Message(CIRM::new().embed(status_embed).ephemeral(true));
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-    Ok(())
-}
-
-/// `/setplayersteam` - Set Steam ID for a specific player
-pub async fn cmd_set_player_steam(cc: &CC<'_>, user: serenity::all::User, steam_id: u64) -> Result<()> {
-    // Check admin permissions
-        if !check_role(cc, &Role::Runner).await? { return Ok(()); }
-
-    let user_id = user.id;
-    let steam_id_value = if steam_id == 0 { None } else { Some(steam_id) };
-
-    // Update Steam ID in database
-    cc.db.users.update_steam_id(&user_id, steam_id_value).await?;
-
-    let success_embed = CE::new()
-        .title("Steam ID Updated")
-        .description(format!(
-            "**{}**'s Steam ID set to **{}**",
-            user.tag(),
-            if let Some(sid) = steam_id_value {
-                format!("`{}`", sid)
-            } else {
-                "Cleared".to_string()
-            }
-        ))
-        .color(GREEN);
-
-    let response = CIR::Message(CIRM::new().embed(success_embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
     Ok(())
 }

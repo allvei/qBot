@@ -158,7 +158,7 @@ impl UserRepository {
         player.elo = guild_elo.elo;
         player.rank = guild_elo.division;
         
-        info!("DEBUG: Player guild ELO: {}, Division: {}", player.elo, player.rank.name());
+        info!("DEBUG: Player guild ELO: {}, Rank: {}", player.elo, player.rank.name());
 
         // Check if player has Discord rank that should override for new players
         use crate::handlers::player::get_player_rank;

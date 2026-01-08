@@ -1273,10 +1273,10 @@ pub async fn handle_player_settings_button(
         let response = CIR::Modal(modal);
         interaction.create_response(&ctx.http, response).await?;
     } else if button_id.starts_with("player_settings_edit_division_") {
-        let modal = CreateModal::new(format!("player_settings_modal_division_{target_user_id}"), "Edit Division")
+        let modal = CreateModal::new(format!("player_settings_modal_division_{target_user_id}"), "Edit Rank")
             .components(vec![
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Short, "Division", "division")
+                    CreateInputText::new(InputTextStyle::Short, "Rank", "division")
                         .placeholder("e.g., Gold, Silver, Bronze")
                         .value(guild_elo.division.name())
                         .required(true)
