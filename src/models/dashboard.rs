@@ -225,12 +225,12 @@ impl Group {
                 Self::gen_button(("change_expiry", "Change expiry time", BS::Secondary, true)),
             ]),
             CAR::Buttons(vec![
-                Self::gen_button(("show_settings",  "Settings", BS::Secondary, true)),
-            ]),
-            CAR::Buttons(vec![
-                Self::gen_button(("shuffle_teams", "Shuffle", BS::Secondary, is_hot)),
                 Self::gen_button(("start_match",   "Start",   BS::Success,   is_hot)),
                 Self::gen_button(("end_match",     "End",     BS::Danger,    is_live)),
+                Self::gen_button(("shuffle_teams", "Shuffle", BS::Secondary, is_hot)),
+            ]),
+            CAR::Buttons(vec![
+                Self::gen_button(("show_settings",  "Settings", BS::Secondary, true)),
             ]),
         ];
 
@@ -382,7 +382,7 @@ impl Group {
                         let elo_str = format!("[**{}**] ", player.player.elo);
                         players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
 
-                        // Build auto-remove timer list
+                        // Build timeout list
                         // Use per-instance expiry_duration if set, otherwise get user's setting
                         let expiry_duration = if let Some(duration) = player.expiry_duration {
                             duration
@@ -404,8 +404,8 @@ impl Group {
                         }
                     }
 
-                    embed = embed.field("Players",        players_field, true);
-                    embed = embed.field("Auto-remove at", timers_field,  true);
+                    embed = embed.field("Players",    players_field, true);
+                    embed = embed.field("Timeout at", timers_field,  true);
                 }
             }
         }
@@ -1150,7 +1150,6 @@ impl Group {
         // Send ephemeral message with settings embed and buttons
         let response = CIR::Message(
             CIRM::new()
-                .content("**Your current settings:**")
                 .embed(embed)
                 .components(buttons)
                 .ephemeral(true)

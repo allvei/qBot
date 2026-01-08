@@ -16,7 +16,7 @@ use crate::admin::create_group_channels;
 use crate::models::{CommandContext as CC, Role};
 use crate::repositories::Repository;
 use super::player::{check_role, create_rank_roles};
-use super::settings::{build_settings_embed, build_settings_buttons};
+use super::settings::{build_settings_embed, build_settings_buttons, build_server_settings_embed, build_server_settings_buttons, get_server_settings};
 
 /// Helper: Create a Discord role with error handling
 async fn create_role_with_error(cc: &CC<'_>, guild_id: GI, name: &str, color: u32) -> Result<Option<serenity::all::Role>> {
@@ -634,6 +634,7 @@ pub async fn cmd_setup_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 
     let mut temp_group = Group {
         group_id: 0,
+        name: None,
         quota: crate::DEFAULT_QUOTA,
         timeout: crate::DEFAULT_TIMEOUT,
         dashboard_msg: MessageId::new(1),
@@ -1006,55 +1007,152 @@ pub async fn cmd_toggle_dm(cc: &CC<'_>) -> Result<()> {
     Ok(())
 }
 
-/// `/settings` - Open personal settings menu in DMs
+/// `/settings` - Open personal settings menu as ephemeral message in current channel
 pub async fn cmd_settings(cc: &CC<'_>) -> Result<()> {
-    use serenity::all::CreateMessage as CM;
-
     let user_id = cc.intax.user.id;
 
-    // Acknowledge the command first
-    let response = CIR::Message(CIRM::new()
-        .content("Sending you the settings menu...")
-        .ephemeral(true)
-    );
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-
-    // Get current settings and user structs
+    // Get current settings
     let settings = cc.db.users.get_settings(user_id).await?;
-    let user     = cc.ctx.http.get_user(user_id).await?;
 
     // Use helper functions from settings module to build embed and buttons
     let embed   = build_settings_embed(&settings);
     let buttons = build_settings_buttons(&settings);
- 
-    // Try to send DM
-    match user.direct_message(&cc.ctx.http, CM::new().embed(embed).components(buttons)).await {
-        Ok(msg) => {
-            // Create message link for easy access
-            let message_link = format!("https://discord.com/channels/@me/{}/{}", msg.channel_id.get(), msg.id.get());
-            let success_response = EIR::new()
-                .content(format!("Settings menu sent successfully!\n[Click here to view]({message_link})"));
-            cc.intax.edit_response(&cc.ctx.http, success_response).await?;
-            // Track this message for cleanup after 10 minutes of inactivity
-            if let Some(dm_tracker) = cc.ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
-                dm_tracker.track_message(user_id, msg.channel_id, msg.id, user.tag()).await;
-            }
-            info!("Sent settings menu to user {}", user.tag());
-        }
+
+    // Send ephemeral message in the current channel
+    let response = CIR::Message(
+        CIRM::new()
+            .embed(embed)
+            .components(buttons)
+            .ephemeral(true)
+    );
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+
+    info!("Sent settings menu to user {} (ephemeral)", cc.intax.user.name);
+    Ok(())
+}
+
+/// `/serversettings` - Open server settings menu as ephemeral message (admin only)
+pub async fn cmd_server_settings(cc: &CC<'_>) -> Result<()> {
+    // Check admin permissions
+    if !check_role(cc, &Role::Admin).await? { return Ok(()); }
+
+    let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+    let guild_name = cc.ctx.cache.guild(guild_id)
+        .map(|g| g.name.clone())
+        .unwrap_or_else(|| "Server".to_string());
+
+    // Get current server settings
+    let settings = get_server_settings(&cc.db, guild_id.get()).await?;
+
+    // Build embed and buttons
+    let embed   = build_server_settings_embed(&settings, &guild_name);
+    let buttons = build_server_settings_buttons(&settings);
+
+    // Send ephemeral message in the current channel
+    let response = CIR::Message(
+        CIRM::new()
+            .embed(embed)
+            .components(buttons)
+            .ephemeral(true)
+    );
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+
+    info!("Sent server settings menu to {} (ephemeral)", cc.intax.user.name);
+    Ok(())
+}
+
+/// `/groupsettings` - Open group settings menu as ephemeral message (runner only)
+pub async fn cmd_group_settings(cc: &CC<'_>) -> Result<()> {
+    use crate::handlers::{build_group_settings_embed, build_group_settings_buttons, build_group_selector, GroupSettings};
+    
+    // Check runner permissions
+    if !check_role(cc, &Role::Runner).await? { return Ok(()); }
+
+    let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+    let channel_id = cc.intax.channel_id;
+
+    // Get the server and try to find a group
+    let mut manager = cc.manager.lock().await;
+    let server = match manager.get_server(guild_id) {
+        Ok(s) => s,
         Err(e) => {
-            warn!("Failed to send settings DM to user {}: {}", user.tag(), e);
+            let error_embed = CE::new()
+                .title("Server Not Found")
+                .description(format!("Server not configured: {e}"))
+                .color(RED);
 
-            // Update the ephemeral response with error
-            let error_embed = EIR::new().content(
-                    "I couldn't send you a DM! Please check that:\n\
-                    - You have DMs enabled in your Discord privacy settings\n\
-                    - You haven't blocked the bot\n\n\
-                    To enable DMs: User Settings → Privacy & Safety → Allow direct messages from server members"
-                );
-
-            cc.intax.edit_response(&cc.ctx.http, error_embed).await?;
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
         }
-    }
+    };
 
+    // Try to get group from current channel, or show selector if not in a group channel
+    let group = match server.get_group(channel_id) {
+        Ok(g) => g,
+        Err(_) => {
+            // Not in a group channel - check how many groups exist
+            let groups = &server.groups;
+            
+            if groups.is_empty() {
+                let error_embed = CE::new()
+                    .title("No Groups Configured")
+                    .description("No queue groups have been set up for this server.")
+                    .color(RED);
+
+                let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+                cc.intax.create_response(&cc.ctx.http, response).await?;
+                return Ok(());
+            }
+            
+            if groups.len() == 1 {
+                // Auto-select the only group
+                &groups[0]
+            } else {
+                // Multiple groups - show selector
+                let selector_embed = CE::new()
+                    .title("Select a Group")
+                    .description("Choose a group to configure:")
+                    .color(0x5865F2);
+
+                let selector = build_group_selector(groups);
+                
+                let response = CIR::Message(
+                    CIRM::new()
+                        .embed(selector_embed)
+                        .components(vec![selector])
+                        .ephemeral(true)
+                );
+                cc.intax.create_response(&cc.ctx.http, response).await?;
+                
+                info!("Sent group selector to {} (ephemeral)", cc.intax.user.name);
+                return Ok(());
+            }
+        }
+    };
+
+    let settings = GroupSettings {
+        group_id:     group.group_id,
+        name:         group.name.clone(),
+        quota:        group.quota,
+        timeout:      group.timeout,
+        connect_info: group.connect_info.clone(),
+    };
+    drop(manager);
+
+    // Build embed and buttons
+    let embed   = build_group_settings_embed(&settings);
+    let buttons = build_group_settings_buttons(settings.group_id);
+
+    // Send ephemeral message in the current channel
+    let response = CIR::Message(
+        CIRM::new()
+            .embed(embed)
+            .components(buttons)
+            .ephemeral(true)
+    );
+    cc.intax.create_response(&cc.ctx.http, response).await?;
+
+    info!("Sent group settings menu to {} (ephemeral)", cc.intax.user.name);
     Ok(())
 }

@@ -99,6 +99,7 @@ impl GroupRepository {
 
         let guild_id = result.get::<i64, _>("guild_id") as u64;
         let group_id = result.try_get::<i64, _>("group_id").unwrap_or(0) as u8;
+        let name     = result.try_get::<Option<String>, _>("name").ok().flatten();
 
         // Load teams from teams table, fallback to single team from groups table
         let teams = match self.get_teams_for_group(guild_id, group_id).await {
@@ -108,6 +109,7 @@ impl GroupRepository {
 
         let group = Group::new(
             group_id,
+            name,
             result.try_get::<i64, _>("quota")  .unwrap_or(12)  as u8,
             result.try_get::<i64, _>("timeout").unwrap_or(120) as u16,
             MI::new(dashboard_msg_id),
@@ -184,6 +186,20 @@ impl GroupRepository {
         .bind(dashboard_msg_id as i64)
         .bind(guild_id as i64)
         .bind(dashboard_channel_id as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update group name
+    pub async fn update_name(&self, guild_id: u64, group_id: u8, name: Option<&str>) -> Result<()> {
+        info!("Updating name for guild {} group {}: {:?}", guild_id, group_id, name);
+
+        sqlx::query("UPDATE groups SET name = ? WHERE guild_id = ? AND group_id = ?")
+        .bind(name)
+        .bind(guild_id as i64)
+        .bind(group_id as i64)
         .execute(&self.pool)
         .await?;
 

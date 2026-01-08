@@ -9,7 +9,7 @@ use tracing::info;
 
 use crate::models::{FileManager, Group, Player, Server};
 use migrations::DatabaseMigrations;
-use repositories::{ConfigRepository, GroupRepository, UserRepository};
+use repositories::{ConfigRepository, EloRepository, GroupRepository, UserRepository};
 
 /// Main database interface that orchestrates all repositories
 #[derive(Clone)]
@@ -18,6 +18,7 @@ pub struct Database {
     pub users:  UserRepository,
     pub groups: GroupRepository,
     pub config: ConfigRepository,
+    pub elos:   EloRepository,
 }
 
 impl Database {
@@ -46,8 +47,9 @@ impl Database {
         let users  = UserRepository  ::new(pool.clone());
         let groups = GroupRepository ::new(pool.clone());
         let config = ConfigRepository::new(pool.clone());
+        let elos   = EloRepository   ::new(pool.clone());
 
-        Ok(Database { pool, users, groups, config })
+        Ok(Database { pool, users, groups, config, elos })
     }
 
     /// Get the underlying connection pool for advanced operations

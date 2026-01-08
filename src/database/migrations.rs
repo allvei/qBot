@@ -81,7 +81,7 @@ impl DatabaseMigrations {
                     user_id                      INTEGER NOT NULL UNIQUE,
                     steam_id                        INTEGER,
                     dm_enabled                      INTEGER DEFAULT 1,
-                    auto_remove_minutes             INTEGER DEFAULT 30,
+                    timeout_length             INTEGER DEFAULT 30,
                     join_announcement               INTEGER DEFAULT 0,
                     vc_disconnect_on_leave          INTEGER DEFAULT 1,
                     announcement_color              INTEGER DEFAULT 3447003,
@@ -117,7 +117,7 @@ impl DatabaseMigrations {
 
             // Add new settings columns if missing
             if has_user_id {
-                add_column!(self, "users", "auto_remove_minutes",          "INTEGER", "30");
+                add_column!(self, "users", "timeout_length",          "INTEGER", "30");
                 add_column!(self, "users", "join_announcement",            "INTEGER", "0");
                 add_column!(self, "users", "vc_disconnect_on_leave",       "INTEGER", "1");
                 add_column!(self, "users", "announcement_color",           "INTEGER", "3447003");
@@ -155,7 +155,7 @@ impl DatabaseMigrations {
                         user_id                      INTEGER NOT NULL UNIQUE,
                         steam_id                     INTEGER,
                         dm_enabled                   INTEGER DEFAULT 1,
-                        auto_remove_minutes          INTEGER DEFAULT 0,
+                        timeout_length          INTEGER DEFAULT 0,
                         join_announcement            INTEGER DEFAULT 0,
                         vc_disconnect_on_leave       INTEGER DEFAULT 1,
                         announcement_color           INTEGER DEFAULT 3447003,
@@ -181,7 +181,7 @@ impl DatabaseMigrations {
                     let user_id: i64 = row.get("user_id");
                     let steam_id: Option<i64> = row.try_get("steam_id").ok();
                     sqlx::query("INSERT OR IGNORE
-                                 INTO users (user_id, steam_id, dm_enabled, auto_remove_minutes, join_announcement, vc_disconnect_on_leave, announcement_color, show_stats_in_announcement, notify_quota_threshold, alert_desc, alert_footer_text, alert_footer_icon, alert_footer_thumbnail, leave_alert, leave_alert_desc, leave_alert_footer_text, leave_alert_footer_icon, leave_alert_footer_thumbnail, elo)
+                                 INTO users (user_id, steam_id, dm_enabled, timeout_length, join_announcement, vc_disconnect_on_leave, announcement_color, show_stats_in_announcement, notify_quota_threshold, alert_desc, alert_footer_text, alert_footer_icon, alert_footer_thumbnail, leave_alert, leave_alert_desc, leave_alert_footer_text, leave_alert_footer_icon, leave_alert_footer_thumbnail, elo)
                                  VALUES (?, ?, 1, 0, 0, 1, 3447003, 0, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, 30)")
                         .bind(user_id)
                         .bind(steam_id)
@@ -260,13 +260,43 @@ impl DatabaseMigrations {
         Ok(())
     }
     async fn create_elo_table(&self) ->    Result<()> {
+        // Create guilds mapping table for efficient ID storage
+        if !self.check_table("guilds").await? {
+            sqlx::query(
+                "CREATE TABLE guilds (
+                    id       INTEGER PRIMARY KEY,
+                    guild_id INTEGER NOT NULL UNIQUE
+                )"
+            )
+            .execute(&self.pool)
+            .await?;
+        }
+
+        // Check if old elos table exists without the new schema
+        let needs_migration = if self.check_table("elos").await? {
+            !self.check_column("elos", "division").await?
+        } else {
+            false
+        };
+
+        if needs_migration {
+            // Drop old table and recreate with new schema
+            sqlx::query("DROP TABLE elos").execute(&self.pool).await?;
+        }
+
         if !self.check_table("elos").await? {
             sqlx::query(
                 "CREATE TABLE elos (
-                    id       INTEGER PRIMARY KEY,
-                    guild_id INTEGER NOT NULL,
-                    user_id  INTEGER NOT NULL,
-                    elo      INTEGER NOT NULL
+                    id        INTEGER PRIMARY KEY,
+                    guild_idx INTEGER NOT NULL,
+                    user_idx  INTEGER NOT NULL,
+                    elo       INTEGER NOT NULL DEFAULT 50,
+                    division  TEXT NOT NULL DEFAULT 'Apprentice',
+                    games     INTEGER NOT NULL DEFAULT 0,
+                    wins      INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE(guild_idx, user_idx),
+                    FOREIGN KEY (guild_idx) REFERENCES guilds(id),
+                    FOREIGN KEY (user_idx) REFERENCES users(id)
                 )"
             )
             .execute(&self.pool)
@@ -289,7 +319,7 @@ impl DatabaseMigrations {
             "tag",
             "steam_id",
             "dm_enabled",
-            "auto_remove_minutes",
+            "timeout_length",
             "join_announcement",
             "vc_disconnect_on_leave",
             "announcement_color",
@@ -310,6 +340,9 @@ impl DatabaseMigrations {
         Ok(())
     }
     async fn verify_groups(&self) -> Result<()> {
+        // Add name column if missing
+        add_column!(self, "groups", "name", "TEXT", "NULL");
+        
         let required_columns = vec![
             "id", "group_id", "timeout", "guild_id", "dashboard",
             "chat", "queue", "dashboard_msg", "red", "blu",
@@ -324,8 +357,11 @@ impl DatabaseMigrations {
         Ok(())
     }
     async fn verify_elos(&self)   -> Result<()> {
-        let required_columns = vec!["id", "guild_id", "user_id", "elo"];
+        let required_columns = vec!["id", "guild_idx", "user_idx", "elo", "division", "games", "wins"];
         self.verify_columns("elos", &required_columns).await?;
+        
+        let guild_columns = vec!["id", "guild_id"];
+        self.verify_columns("guilds", &guild_columns).await?;
         Ok(())
     }
 

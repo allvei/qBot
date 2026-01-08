@@ -350,6 +350,7 @@ pub async fn cmd_group_add(cc: &CC<'_>, server: &mut Server) -> Result<()> {
 
             let mut temp_group = Group {
                 group_id: 0, // Will be assigned by DB
+                name: None,
                 quota: crate::DEFAULT_QUOTA,
                 timeout: crate::DEFAULT_TIMEOUT,
                 dashboard_msg: MessageId::new(1), // Temporary, will be replaced
@@ -2138,6 +2139,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
 
     let mut temp_group = Group {
         group_id: 0,
+        name: None,
         quota: crate::DEFAULT_QUOTA,
         timeout: crate::DEFAULT_TIMEOUT,
         dashboard_msg: MessageId::new(1),
@@ -2336,26 +2338,22 @@ pub async fn cmd_set_player_elo(cc: &CC<'_>, user: serenity::all::User, elo: i64
         return Ok(());
     }
 
-    // Set ELO value
-    let elo_value = if elo == -1 { None } else { Some(elo as u16) };
-    info!("DEBUG: Setting ELO value {:?} for user {}", elo_value, user_id);
-    cc.db.users.update_elo(user_id, elo_value).await?;
+    // Set guild-specific ELO value
+    let elo_value = elo as u16;
+    info!("DEBUG: Setting guild ELO value {} for user {} in guild {}", elo_value, user_id, guild_id);
+    cc.db.elos.update_elo(user_id, guild_id.get(), elo_value).await?;
 
-    // Get updated player info
-    let mut player = cc.db.users.get(user_id).await?;
-    info!("DEBUG: After update - Player ELO: {}, Player Rank: {}", player.elo, player.rank.name());
-    if elo_value.is_some() {
-        player.update_rank_from_elo(&cc.db, guild_id.get()).await;
-        info!("DEBUG: After rank update - Player ELO: {}, Player Rank: {}", player.elo, player.rank.name());
-    }
+    // Get updated player info with guild-specific ELO
+    let guild_elo = cc.db.elos.get(user_id, guild_id.get()).await?;
+    info!("DEBUG: After update - Player ELO: {}, Division: {}", guild_elo.elo, guild_elo.division.name());
 
     let success_embed = CE::new()
         .title("Player ELO Updated")
         .description(format!(
-            "**{}**'s ELO set to **{}**\nCurrent rank: **{}**",
+            "**{}**'s ELO set to **{}**\nCurrent division: **{}**",
             user.tag(),
-            elo,
-            player.rank.name()
+            guild_elo.elo,
+            guild_elo.division.name()
         ))
         .color(GREEN);
 
@@ -2376,8 +2374,11 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
         return Ok(());
     }
 
-    // Get player info with rank from Discord roles
-    let mut player = match cc.db.users.get_with_guild_rank(user_id, &cc.ctx, guild_id.get(), &cc.db).await {
+    // Get guild-specific ELO data
+    let guild_elo = cc.db.elos.get(user_id, guild_id.get()).await?;
+    
+    // Get base player info for steam_id
+    let player = match cc.db.users.get(user_id).await {
         Ok(p) => p,
         Err(_) => {
             let error_embed = CE::new()
@@ -2390,14 +2391,8 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
         }
     };
 
-    // LOGGING: Check what's happening with rank detection
-    use crate::handlers::player::get_player_rank;
-    let detected_rank = get_player_rank(&cc.ctx, &cc.db, guild_id, user_id).await;
-    info!("DEBUG: User {} - Database ELO: {}, Detected rank: {:?}", user_id, player.elo, detected_rank);
-
-    // Update rank based on guild's configured ELO values
-    player.update_rank_from_elo(&cc.db, guild_id.get()).await;
-    info!("DEBUG: After update_rank_from_elo - Player ELO: {}, Player Rank: {}", player.elo, player.rank.name());
+    info!("DEBUG: User {} - Guild ELO: {}, Division: {}, Games: {}, Wins: {}", 
+          user_id, guild_elo.elo, guild_elo.division.name(), guild_elo.games, guild_elo.wins);
 
     // Get user info - if no user provided, we can't continue
     let user_info = user.ok_or_else(|| {
@@ -2414,15 +2409,22 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
         .color(CYAN);
 
     // ELO information
-    embed = embed.field("ELO Rating", format!("**{}** / 100", player.elo), true);
+    embed = embed.field("ELO Rating", format!("**{}** / 100", guild_elo.elo), true);
 
-    // Rank information
-    let rank_elo = player.rank.elo_from_config(&cc.db, guild_id.get()).await;
-    embed = embed.field("Current Rank", format!("**{}**", player.rank.name()), true);
+    // Division information
+    embed = embed.field("Division", format!("**{}**", guild_elo.division.name()), true);
+
+    // Stats
+    let win_rate = if guild_elo.games > 0 {
+        format!("{:.1}%", (guild_elo.wins as f64 / guild_elo.games as f64) * 100.0)
+    } else {
+        "N/A".to_string()
+    };
+    embed = embed.field("Games", format!("**{}** ({} wins, {} win rate)", guild_elo.games, guild_elo.wins, win_rate), false);
 
     // Additional info
     embed = embed.field("Discord ID", format!("`{}`", user_id), false)
-        .field("Steam ID", player.steam_id.map(|id| format!("`{}`", id)).unwrap_or_else(|| "*Not linked*".to_string()), false);
+        .field("Steam ID", player.steam_id.map(|id| format!("`{id}`")).unwrap_or_else(|| "*Not linked*".to_string()), false);
 
     let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;

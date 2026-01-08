@@ -7,6 +7,7 @@ pub mod session;
 pub mod setup_state;
 pub mod types;
 pub mod colours;
+pub mod buttons;
 
 pub use constants::*;
 pub use dashboard::*;
@@ -17,6 +18,7 @@ pub use session::*;
 pub use setup_state::*;
 pub use types::*;
 pub use colours::*;
+pub use buttons::*;
 
 // TypeMapKey for DashboardUpdateQueue (needed globally across crate)
 use std::sync::Arc;

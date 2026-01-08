@@ -125,6 +125,7 @@ impl Server {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Group {
     pub group_id:      u8,
+    pub name:          Option<String>,
     pub timeout:       u16,
     pub quota:         u8,
     pub dashboard_msg: MI,
@@ -136,6 +137,7 @@ pub struct Group {
 impl Group {
     pub fn new(
         group_id:      u8,
+        name:          Option<String>,
         quota:         u8,
         timeout:       u16,
         dashboard_msg: MI,
@@ -144,6 +146,7 @@ impl Group {
     ) -> Self {
         Self {
             group_id,
+            name,
             quota,
             timeout,
             dashboard_msg,
@@ -151,6 +154,11 @@ impl Group {
             sessions: games,
             connect_info: None,
         }
+    }
+
+    /// Get display name for the group (name or "Group {id}")
+    pub fn display_name(&self) -> String {
+        self.name.clone().unwrap_or_else(|| format!("Group {}", self.group_id))
     }
 
     pub fn create_session(&mut self) -> Result<&mut Session> {
@@ -333,9 +341,9 @@ impl Group {
         changes_made
     }
 
-    /// Check idle sessions for auto-remove timeouts and handle accordingly
+    /// Check idle sessions for timeout timeouts and handle accordingly
     /// Returns true if any changes were made that require dashboard update
-    pub async fn check_auto_remove_timeout(&mut self, db: &DB, ctx: &Context, guild_id: GI) -> bool {
+    pub async fn check_timeout(&mut self, db: &DB, ctx: &Context, guild_id: GI) -> bool {
         let mut changes_made = false;
 
         // Only check idle sessions (not hot/push/live)
@@ -363,12 +371,12 @@ impl Group {
                 // Clamp to valid range (EXPIRY_MIN to EXPIRY_MAX)
                 let expiry_secs = expiry_duration.as_secs().clamp(EXPIRY_MIN.as_secs(), EXPIRY_MAX.as_secs());
 
-                // Skip if auto-remove is disabled (below EXPIRY_MIN)
+                // Skip if timeout is disabled (below EXPIRY_MIN)
                 if expiry_secs < EXPIRY_MIN.as_secs() {
                     continue;
                 }
 
-                // Check if player has exceeded their auto-remove time
+                // Check if player has exceeded their timeout time
                 if let Ok(elapsed) = SystemTime::now().duration_since(player.joined_at) {
                     if elapsed.as_secs() >= expiry_secs {
                         info!("Auto-removing player {} after {} seconds (limit: {})",
@@ -391,14 +399,14 @@ impl Group {
                         if settings.vc_kick {
                             if let Ok(member) = guild_id.member(&ctx.http, *user_id).await {
                                 if let Err(e) = member.disconnect_from_voice(&ctx.http).await {
-                                    warn!("Failed to disconnect auto-removed player from VC: {e}");
+                                    warn!("Failed to disconnect timeoutd player from VC: {e}");
                                 }
                             }
                         }
                     }
                 }
                 changes_made = true;
-                info!("Auto-removed {} player(s) from queue", players_to_remove.len());
+                info!("Timeoutd {} player(s) from queue", players_to_remove.len());
             }
         }
 

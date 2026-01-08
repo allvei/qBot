@@ -91,7 +91,7 @@ impl EventHandler for Handler {
             info!("DM message tracker initialized with 10-minute cleanup");
         }
 
-        // Start auto-remove background task
+        // Start timeout background task
         {
             let manager   = self.manager.clone();
             let database  = self.db.clone();
@@ -110,7 +110,7 @@ impl EventHandler for Handler {
                     for server in manager_lock.servers.iter_mut() {
                         let guild_id = server.guild_id;
                         for group in server.groups.iter_mut() {
-                            if group.check_auto_remove_timeout(&database, &ctx_clone, guild_id).await {
+                            if group.check_timeout(&database, &ctx_clone, guild_id).await {
                                 // Players were removed, update dashboard
                                 group.queue_dash_update(&ctx_clone, guild_id.get()).await;
                             }
@@ -118,7 +118,7 @@ impl EventHandler for Handler {
                     }
                 }
             });
-            info!("Auto-remove background task started (checks every 60 seconds)");
+            info!("Timeout background task started (checks every 60 seconds)");
         }
 
         // Spawn console command handler in a separate task
@@ -179,11 +179,9 @@ impl EventHandler for Handler {
             cmd("setplayersteam", "Set Steam ID for a specific player")
                 .op_user("user", "The Discord user (mention or ID)", true)
                 .op_int("steam_id", "Steam ID (64-bit number)", true),
-            cmd("enableactiveelo", "Enable automatic ELO adjustments from match results"),
-            cmd("disableactiveelo", "Disable automatic ELO adjustments from match results"),
-            cmd("activeelostatus", "Check if automatic ELO adjustments are enabled"),
-            cmd("toggledm",    "Toggle DM notifications when a game is ready"),
-            cmd("settings",    "Open your personal settings menu in DMs"),
+            cmd("settings",       "Open your personal settings menu"),
+            cmd("serversettings", "Open server settings menu (admin only)"),
+            cmd("groupsettings",  "Open group settings menu (runner only)"),
         ];
 
         if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
@@ -277,13 +275,17 @@ impl EventHandler for Handler {
                         let role_type = cdo.iter().find(|opt| opt.name == "role_type").and_then(|opt| opt.value.as_str()).unwrap_or("both").to_string();
                         commands::cmd_role_remove(&cmd_ctx, role_type).await
                     }
-                    "toggledm" => {
-                        info();
-                        commands::cmd_toggle_dm(&cmd_ctx).await
-                    }
                     "settings" => {
                         info();
                         commands::cmd_settings(&cmd_ctx).await
+                    }
+                    "serversettings" => {
+                        info();
+                        commands::cmd_server_settings(&cmd_ctx).await
+                    }
+                    "groupsettings" => {
+                        info();
+                        commands::cmd_group_settings(&cmd_ctx).await
                     }
                     "setupadd" => {
                         info();
@@ -526,15 +528,6 @@ impl EventHandler for Handler {
                                     itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
                                 }
                             }
-                            "enableactiveelo" => {
-                                admin::cmd_enable_active_elo(&cmd_ctx).await
-                            }
-                            "disableactiveelo" => {
-                                admin::cmd_disable_active_elo(&cmd_ctx).await
-                            }
-                            "activeelostatus" => {
-                                admin::cmd_active_elo_status(&cmd_ctx).await
-                            }
                             "setplayersteam" => {
                                 info();
                                 if let Some(user_option) = cdo.first() {
@@ -699,11 +692,38 @@ impl EventHandler for Handler {
                     return;
                 }
 
-                // Handle settings buttons (in DMs)
+                // Handle settings buttons (user settings)
                 if itx.data.custom_id.starts_with("settings_") {
                     let result = handlers::handle_settings_button(&ctx, &itx, &self.db).await;
                     if let Err(e) = result {
                         error!("Error handling settings interaction: {e}");
+                    }
+                    return;
+                }
+
+                // Handle server settings buttons
+                if itx.data.custom_id.starts_with("server_settings_") {
+                    let result = handlers::handle_server_settings_button(&ctx, &itx, &self.db).await;
+                    if let Err(e) = result {
+                        error!("Error handling server settings interaction: {e}");
+                    }
+                    return;
+                }
+
+                // Handle group settings select menu
+                if itx.data.custom_id == "group_settings_select" {
+                    let result = handlers::handle_group_settings_select(&ctx, &itx, &self.db, &self.manager).await;
+                    if let Err(e) = result {
+                        error!("Error handling group settings select: {e}");
+                    }
+                    return;
+                }
+
+                // Handle group settings buttons
+                if itx.data.custom_id.starts_with("group_settings_") {
+                    let result = handlers::handle_group_settings_button(&ctx, &itx, &self.db, &self.manager).await;
+                    if let Err(e) = result {
+                        error!("Error handling group settings interaction: {e}");
                     }
                     return;
                 }
@@ -821,11 +841,25 @@ impl EventHandler for Handler {
                 }
             },
             Interaction::Modal(itx) => {
-                // Handle modal submissions for settings
+                // Handle modal submissions for user settings
                 if itx.data.custom_id.starts_with("settings_modal_") {
                     let result = handlers::handle_settings_modal(&ctx, &itx, &self.db).await;
                     if let Err(e) = result {
                         error!("Error handling settings modal '{}': {}", itx.data.custom_id, e);
+                    }
+                }
+                // Handle modal submissions for server settings
+                if itx.data.custom_id.starts_with("server_settings_modal_") {
+                    let result = handlers::handle_server_settings_modal(&ctx, &itx, &self.db).await;
+                    if let Err(e) = result {
+                        error!("Error handling server settings modal '{}': {}", itx.data.custom_id, e);
+                    }
+                }
+                // Handle modal submissions for group settings
+                if itx.data.custom_id.starts_with("group_settings_modal_") {
+                    let result = handlers::handle_group_settings_modal(&ctx, &itx, &self.db, &self.manager).await;
+                    if let Err(e) = result {
+                        error!("Error handling group settings modal '{}': {}", itx.data.custom_id, e);
                     }
                 }
             },
@@ -1489,7 +1523,7 @@ async fn main(
     // Init client
     let mut client = Client::builder(&token, intents)
         .event_handler(Handler {
-            db:        db.clone(),
+            db:              db.clone(),
             manager:         manager.clone(),
             dashboard_queue: Arc::new(tokio::sync::Mutex::new(None)),
         })

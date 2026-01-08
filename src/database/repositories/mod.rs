@@ -1,10 +1,12 @@
 pub mod user;
 pub mod group;
 pub mod config;
+pub mod elo;
 
 pub use user::{UserRepository, UserSettings};
 pub use group::GroupRepository;
 pub use config::ConfigRepository;
+pub use elo::{EloRepository, GuildElo};
 
 use anyhow::Result;
 use async_trait::async_trait;

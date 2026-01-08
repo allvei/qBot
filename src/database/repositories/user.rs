@@ -4,7 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serenity::all::{Context as Ctx, UserId as UI};
 use sqlx::{Row, SqlitePool};
-use tracing::{info, warn, error};
+use tracing::{error, info};
 
 use crate::{Database, Elo, Rank, DEFAULT_RANK};
 use crate::models::Player;
@@ -141,60 +141,53 @@ impl UserRepository {
         }
     }
 
-    /// Get player with rank determined from Discord roles (for display purposes)
+    /// Get player with rank determined from guild-specific ELO and Discord roles
     pub async fn get_with_guild_rank(&self, user_id: UI, ctx: &Ctx, guild_id: u64, db: &Database) -> Result<Player> {
         info!("DEBUG: get_player_with_guild_rank called for user {} in guild {}", user_id, guild_id);
         
+        // Get base player data from users table
         let result = sqlx::query("SELECT user_id, steam_id, elo, tag FROM users WHERE user_id = ?")
             .bind(user_id.get() as i64)
             .fetch_one(&self.pool)
             .await?;
 
         let mut player = Self::get_player(result);
-        info!("DEBUG: Player from database - ELO: {}, Rank: {}", player.elo, player.rank.name());
+        
+        // Get guild-specific ELO (this is the primary source now)
+        let guild_elo = db.elos.get(user_id, guild_id).await?;
+        player.elo = guild_elo.elo;
+        player.rank = guild_elo.division;
+        
+        info!("DEBUG: Player guild ELO: {}, Division: {}", player.elo, player.rank.name());
 
-        // Check if player has Discord rank that should override database ELO
+        // Check if player has Discord rank that should override for new players
         use crate::handlers::player::get_player_rank;
         if let Some(discord_rank) = get_player_rank(ctx, db, guild_id.into(), user_id).await {
             info!("DEBUG: Found Discord rank {} with ELO {}", discord_rank.name(), discord_rank.default_rank_elo());
             
-            // Check for ELO mismatch - if player has low ELO but high Discord rank, fix it
-            let discord_default_elo = discord_rank.default_rank_elo();
-            let elo_mismatch = player.elo <= 30 && discord_default_elo > 30;
-            
-            if elo_mismatch {
-                warn!("ELO MISMATCH DETECTED: Player {} has ELO {} but Discord rank {} (default ELO {}). Auto-correcting...", 
-                      user_id, player.elo, discord_rank.name(), discord_default_elo);
-                
+            // Only override if player has no games (new to this guild)
+            if guild_elo.games == 0 {
+                let discord_default_elo = discord_rank.default_rank_elo();
+                info!("DEBUG: New player in guild, using Discord rank {} with ELO {}", 
+                      discord_rank.name(), discord_default_elo);
                 player.rank = discord_rank;
                 player.elo = discord_default_elo;
                 
-                // Update the database with the corrected ELO
-                if let Err(e) = self.update_elo(user_id, Some(player.elo)).await {
-                    error!("Failed to auto-correct ELO for player {}: {}", user_id, e);
+                // Initialize their guild ELO based on Discord rank
+                if let Err(e) = db.elos.set(user_id, guild_id, player.elo, player.rank).await {
+                    error!("Failed to initialize guild ELO for player {}: {}", user_id, e);
                 } else {
-                    info!("Successfully auto-corrected ELO for player {} to {} (rank: {})", 
+                    info!("Initialized guild ELO for player {} to {} (rank: {})", 
                           user_id, player.elo, discord_rank.name());
                 }
-            } else if player.elo <= 30 {
-                info!("DEBUG: Player has low/default ELO ({}), using Discord rank {} with ELO {}", 
-                      player.elo, discord_rank.name(), discord_rank.default_rank_elo());
-                player.rank = discord_rank;
-                player.elo = discord_default_elo;
-            } else {
-                info!("DEBUG: Player has meaningful ELO ({}), keeping database ELO", player.elo);
-                player.update_rank_from_elo(db, guild_id).await;
-                info!("DEBUG: After update_rank_from_elo - Player ELO: {}, Rank: {}", player.elo, player.rank.name());
             }
-        } else {
-            info!("DEBUG: No Discord rank found, using database ELO-to-rank conversion");
-            player.update_rank_from_elo(db, guild_id).await;
-            info!("DEBUG: After update_rank_from_elo - Player ELO: {}, Rank: {}", player.elo, player.rank.name());
         }
 
         Ok(player)
     }
 
+    /// Update global ELO (legacy - prefer using EloRepository for guild-specific ELO)
+    #[deprecated(note = "Use EloRepository::update_elo for guild-specific ELO")]
     pub async fn update_elo(&self, user_id: UI, elo: Option<Elo>) -> Result<()> {
         // Ensure user exists
         let _ = self.check_user(user_id, None).await?;
@@ -258,7 +251,7 @@ impl UserRepository {
     /// Get user settings
     pub async fn get_settings(&self, user_id: UI) -> Result<UserSettings> {
         let result = sqlx::query(
-            "SELECT auto_remove_minutes, join_announcement, vc_disconnect_on_leave,
+            "SELECT timeout_length, join_announcement, vc_disconnect_on_leave,
                     announcement_color, dm_enabled, notify_quota_threshold,
                     alert_desc, alert_footer_text,
                     alert_footer_icon, alert_footer_thumbnail,
@@ -272,8 +265,8 @@ impl UserRepository {
 
         match result {
             Some(row) => {
-                let auto_remove_minutes: i64 = row.try_get("auto_remove_minutes").unwrap_or(30);
-                let minutes = if auto_remove_minutes == 0 { 30 } else { auto_remove_minutes };
+                let timeout_length: i64 = row.try_get("timeout_length").unwrap_or(30);
+                let minutes = if timeout_length == 0 { 30 } else { timeout_length };
                 Ok(UserSettings {
                     expiry_duration:              Duration::from_secs((minutes as u64) * 60),
                     join_announcement:            row.try_get::<i64, _>("join_announcement").unwrap_or(0) != 0,
@@ -281,15 +274,15 @@ impl UserRepository {
                     announcement_color:           row.try_get("announcement_color").unwrap_or(3447003),
                     dm_alerts:                    row.try_get::<i64, _>("dm_enabled").unwrap_or(1) != 0,
                     notify_quota_threshold:       row.try_get::<i64, _>("notify_quota_threshold").ok().map(|v| v as u8),
-                    alert_desc:                   row.try_get("alert_desc").ok(),
-                    alert_footer_text:            row.try_get("alert_footer_text").ok(),
-                    alert_footer_icon:            row.try_get("alert_footer_icon").ok(),
-                    alert_footer_thumbnail:       row.try_get("alert_footer_thumbnail").ok(),
+                    alert_desc:                   row.try_get::<String, _>("alert_desc").ok().filter(|s| !s.is_empty()),
+                    alert_footer_text:            row.try_get::<String, _>("alert_footer_text").ok().filter(|s| !s.is_empty()),
+                    alert_footer_icon:            row.try_get::<String, _>("alert_footer_icon").ok().filter(|s| !s.is_empty()),
+                    alert_footer_thumbnail:       row.try_get::<String, _>("alert_footer_thumbnail").ok().filter(|s| !s.is_empty()),
                     leave_alert:                  row.try_get::<i64, _>("leave_alert").unwrap_or(0) != 0,
-                    leave_alert_desc:             row.try_get("leave_alert_desc").ok(),
-                    leave_alert_footer_text:      row.try_get("leave_alert_footer_text").ok(),
-                    leave_alert_footer_icon:      row.try_get("leave_alert_footer_icon").ok(),
-                    leave_alert_footer_thumbnail: row.try_get("leave_alert_footer_thumbnail").ok(),
+                    leave_alert_desc:             row.try_get::<String, _>("leave_alert_desc").ok().filter(|s| !s.is_empty()),
+                    leave_alert_footer_text:      row.try_get::<String, _>("leave_alert_footer_text").ok().filter(|s| !s.is_empty()),
+                    leave_alert_footer_icon:      row.try_get::<String, _>("leave_alert_footer_icon").ok().filter(|s| !s.is_empty()),
+                    leave_alert_footer_thumbnail: row.try_get::<String, _>("leave_alert_footer_thumbnail").ok().filter(|s| !s.is_empty()),
                 })
             }
             None => {
@@ -304,11 +297,11 @@ impl UserRepository {
         // Ensure user exists
         let _ = self.check_user(user_id, None).await?;
 
-        let auto_remove_minutes = (settings.expiry_duration.as_secs() / 60) as i64;
+        let timeout_length = (settings.expiry_duration.as_secs() / 60) as i64;
         
         sqlx::query(
             "UPDATE users SET
-                auto_remove_minutes = ?,
+                timeout_length = ?,
                 join_announcement = ?,
                 vc_disconnect_on_leave = ?,
                 announcement_color = ?,
@@ -325,7 +318,7 @@ impl UserRepository {
                 leave_alert_footer_thumbnail = ?
              WHERE user_id = ?"
         )
-        .bind(auto_remove_minutes)
+        .bind(timeout_length)
         .bind(if settings.join_announcement { 1 } else { 0 })
         .bind(if settings.vc_kick { 1 } else { 0 })
         .bind(settings.announcement_color)
@@ -353,7 +346,7 @@ impl UserRepository {
         let _ = self.check_user(user_id, None).await?;
 
         // Validate field name to prevent SQL injection
-        let allowed_fields = ["auto_remove_minutes", "join_announcement", "vc_disconnect_on_leave", "announcement_color", "dm_enabled"];
+        let allowed_fields = ["timeout_length", "join_announcement", "vc_disconnect_on_leave", "announcement_color", "dm_enabled"];
         if !allowed_fields.contains(&field) {
             return Err(anyhow::anyhow!("Invalid setting field: {}", field));
         }
