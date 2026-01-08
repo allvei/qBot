@@ -1757,7 +1757,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
     Ok(())
 }
 
-/// `/getplayerelo` - View ELO and rank information for a player
+/// `/elo` - View ELO and rank information for a player
 ///
 /// * `user` - The Discord user (mention or ID, optional - defaults to command user)
 pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) -> Result<()> {

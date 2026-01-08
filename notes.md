@@ -33,10 +33,10 @@
 
 ### Player Management
 
-- `/buffer <user>`       - Move player to start of queue
-- `/fatkid <user>`       - Move player to end of queue
-- `/clear`               - Clear all players from queue
-- `/getplayerelo [user]` - View player ELO info
+- `/buffer <user>` - Move player to start of queue
+- `/fatkid <user>` - Move player to end of queue
+- `/clear`         - Clear all players from queue
+- `/elo [user]`    - View player ELO info
 
 ### Timeout & Alerts
 

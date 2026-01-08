@@ -138,17 +138,17 @@ impl EventHandler for Handler {
         // Register slash commands globally or for specific guild
         let cmds = vec![
             // Player commands
-            cmd("buffer",      "Move a player to the start of the queue")
+            cmd("buffer",        "Move a player to the start of the queue")
                 .op_user("user",  "User to buffer", true),
-            cmd("fatkid",      "Move a player to the end of the queue")
+            cmd("fatkid",        "Move a player to the end of the queue")
                 .op_user("user",  "User to fatkid", true),
 
-            cmd("clear",       "Clear all players from the queue"),
-            cmd("getplayerelo",  "View ELO and rank information for a player")
+            cmd("clear",         "Clear all players from the queue"),
+            cmd("elo",           "View ELO and rank information for a player")
                 .op_user("user", "The Discord user (mention or ID, optional)", false),
-            cmd("settings",       "Open your personal settings menu"),
-            cmd("config", "Open server settings menu (admin only)"),
-            cmd("editplayer", "Open player settings menu (admin only)")
+            cmd("prefs",         "Open your preferences"),
+            cmd("config",        "Open server settings"),
+            cmd("editplayer",    "Open player menu")
                 .op_user("user", "The Discord user to edit", true),
         ];
 
@@ -276,7 +276,7 @@ impl EventHandler for Handler {
                                 info();
                                 admin::cmd_clear_queue(&cmd_ctx, server).await
                             }
-                            "getplayerelo" => {
+                            "elo" => {
                                 info();
                                 if let Some(user_option) = cdo.first() {
                                     if let Some(user_id) = user_option.value.as_user_id() {
@@ -1021,7 +1021,7 @@ impl Handler {
                         continue;
                     }
 
-                    let tag = if let Ok(player) = self.db.get_user(*user_id, &ctx).await {
+                    let tag = if let Ok(player) = self.db.get_user(*user_id, ctx).await {
                         player.tag
                     } else {
                         "Unknown".to_string()

@@ -218,7 +218,7 @@ impl AsSettingsMenu for crate::database::repositories::UserSettings {
             .footer("VC Kick - kicks you from the vc when you leave the queue.")
             .row(SettingsRow::Buttons(vec![
                 SettingsButton::toggle("settings_toggle_dm", "DM alerts", self.dm_alerts),
-                SettingsButton::toggle("settings_vc_disconnect", "VC kick*", self.vc_kick),
+                SettingsButton::toggle("settings_vc_disconnect", "VC kick", self.vc_kick),
             ]))
             .row(SettingsRow::Buttons(vec![
                 SettingsButton::edit("settings_timeout", "Set timeout length"),
