@@ -1,10 +1,11 @@
 use anyhow::{Result, anyhow};
 use serenity::all::{
-    CreateEmbed                      as CE,
+    CreateEmbed as CE,
 };
 use tracing::info;
 
-use crate::GREEN;
+use crate::player::check_adm;
+use crate::{ GREEN, YELLOW };
 use crate::models::{CommandContext as CC, Role};
 use super::player::check_role;
 use super::settings::{get_server_settings};
@@ -30,7 +31,7 @@ pub async fn cmd_toggle_dm(cc: &CC<'_>) -> Result<()> {
             You will {a} receive a DM when a game is ready.\n",
             a = if new_state { "now" } else { "no longer" }
         ))
-        .color(if new_state { GREEN } else { 0xff9900 });
+        .color(if new_state { GREEN } else { YELLOW });
 
     cc.intax.create_response(&cc.ctx.http, Ephemeral::send(embed)).await?;
 
@@ -54,7 +55,7 @@ pub async fn cmd_prefs(cc: &CC<'_>) -> Result<()> {
 /// `/config` - Open server settings menu as ephemeral message (admin only)
 pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
     // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? { return Ok(()); }
+    if !check_adm(&cc).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild_name = cc.ctx.cache.guild(guild_id)
@@ -76,7 +77,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     use crate::handlers::settings::{PlayerSettings};
     
     // Check admin permissions
-    if !check_role(cc, &Role::Admin).await? { return Ok(()); }
+    if !check_adm(&cc).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
@@ -87,13 +88,13 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
         .ok_or_else(|| anyhow!("User option not found"))?;
 
     // Get player data
-    let player = cc.db.users.get(target_user).await?;
+    let player    = cc.db.users.get(target_user).await?;
     let guild_elo = cc.db.elos.get(target_user, guild_id.get()).await?;
-    let username = cc.ctx.http.get_user(target_user).await
+    let username  = cc.ctx.http.get_user(target_user).await
         .map(|u| u.name.clone())
         .unwrap_or_else(|_| target_user.to_string());
 
-    let settings = PlayerSettings {
+    let settings  = PlayerSettings {
         user_id:  target_user,
         username,
         steam_id: player.steam_id,
