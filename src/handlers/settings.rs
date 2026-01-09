@@ -565,11 +565,12 @@ pub async fn build_leave_alert_embed(
                 .replace("{name}", &display_name))
         }
         Some(_) => None, // Empty string means no description
-        None => Some(format!("<@{}> left the queue!", user_id)), // Default for new users
+        None => None,
     };
 
     // Create embed with title showing nickname + "left the queue"
     let mut embed = CE::new()
+        .title(format!("{} left the queue", display_name))
         .color(settings.announcement_color as u32);
     
     // Only add description if there is one
@@ -882,7 +883,7 @@ pub async fn handle_server_settings_button(
         "server_settings_edit_default_rank" => {
             // Show modal to edit default rank
             let (_, default_rank) = get_rank_settings(db, guild_id.get()).await?;
-            let modal = CreateModal::new("server_settings_modal_default_rank", "Edit Default Rank")
+            let modal = CreateModal::new("server_settings_modal_default_rank", "Change the default rank")
                 .components(vec![
                     CreateActionRow::InputText(
                         CreateInputText::new(InputTextStyle::Short, "Default Rank", "default_rank")

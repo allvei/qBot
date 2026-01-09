@@ -351,7 +351,7 @@ impl RankConfigDisplay {
             .title(format!("{} - Manage Ranks", self.guild_name))
             .description(description)
             .color(0x5865F2)
-            .footer(CreateEmbedFooter::new("Select a rank below to configure its Discord role"))
+            .footer(CreateEmbedFooter::new("Select a rank below to link its Discord role"))
     }
 
     pub fn build_components(&self) -> Vec<CAR> {
@@ -365,7 +365,7 @@ impl RankConfigDisplay {
                     .label(if self.dynamic_elo { "Dynamic ELO enabled" } else { "Dynamic ELO disabled" })
                     .style(if self.dynamic_elo { BS::Success } else { BS::Danger }),
                 CB::new("server_settings_edit_default_rank")
-                    .label("Edit Default Rank")
+                    .label("Change the default rank")
                     .style(BS::Secondary),
             ]),
             CAR::SelectMenu(
