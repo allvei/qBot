@@ -212,10 +212,10 @@ impl AsSettingsMenu for crate::database::repositories::UserSettings {
             if minutes == 1 { "" } else { "s" }
         );
 
-        SettingsMenu::new("qBot user settings")
+        SettingsMenu::new("qBot preferences")
             .description(timeout_desc)
             .color(self.announcement_color as u32)
-            .footer("VC Kick - kicks you from the vc when you leave the queue.")
+            .footer("VC Kick - kicks you from the voice channel when you leave the queue.")
             .row(SettingsRow::Buttons(vec![
                 SettingsButton::toggle("settings_toggle_dm", "DM alerts", self.dm_alerts),
                 SettingsButton::toggle("settings_vc_disconnect", "VC kick", self.vc_kick),

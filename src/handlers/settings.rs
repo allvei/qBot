@@ -415,7 +415,7 @@ async fn update_settings_menu_from_modal(
         if let Ok(messages) = channel.messages(&ctx.http, serenity::all::GetMessages::new().limit(10)).await {
             // Find the most recent message from the bot with the settings embed
             for msg in messages {
-                if msg.author.id == ctx.cache.current_user().id && msg.embeds.iter().any(|e| e.title.as_deref() == Some("qBot user settings")) {
+                if msg.author.id == ctx.cache.current_user().id && msg.embeds.iter().any(|e| e.title.as_deref() == Some("qBot preferences")) {
                     // Update this message
                     let mut message = msg.clone();
                     message.edit(&ctx.http, EditMessage::new().embed(embed).components(buttons)).await?;

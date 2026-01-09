@@ -220,17 +220,17 @@ impl Group {
 
         let buttons = vec![
             CAR::Buttons(vec![
-                Self::gen_button(("join_queue",    "Join",               BS::Success,   true)),
-                Self::gen_button(("leave_queue",   "Leave",              BS::Danger,    true)),
-                Self::gen_button(("change_expiry", "Change expiry time", BS::Secondary, true)),
+                Self::gen_button(("join_queue",    "Join",         BS::Success,   true)),
+                Self::gen_button(("leave_queue",   "Leave",        BS::Danger,    true)),
+                Self::gen_button(("change_expiry", "Edit timeout", BS::Secondary, true)),
             ]),
             CAR::Buttons(vec![
-                Self::gen_button(("start_match",   "Start",   BS::Success,   is_hot)),
-                Self::gen_button(("end_match",     "End",     BS::Danger,    is_live)),
-                Self::gen_button(("shuffle_teams", "Shuffle", BS::Secondary, is_hot)),
+                Self::gen_button(("start_match",   "Start",        BS::Success,   is_hot)),
+                Self::gen_button(("end_match",     "End",          BS::Danger,    is_live)),
+                Self::gen_button(("shuffle_teams", "Shuffle",      BS::Secondary, is_hot)),
             ]),
             CAR::Buttons(vec![
-                Self::gen_button(("show_settings",  "Settings", BS::Secondary, true)),
+                Self::gen_button(("show_settings",  "Preferences", BS::Secondary, true)),
             ]),
         ];
 
@@ -312,11 +312,11 @@ impl Group {
                     // For Push/Live/Pull sessions, just show status
                     let status_text = match session.status {
                         SessionStatus::Push => "Moving players to team channels...",
-                        SessionStatus::Live => "Match in progress",
+                        SessionStatus::Live => "In progress", // TODO: show time since start <t:1767979320:R>
                         SessionStatus::Pull => "Moving players back to queue...",
-                        _ => "Match active"
+                        _ => ""
                     };
-                    description.push_str(&format!("• {status_text} ({} players)\n", session.pool.len()));
+                    description.push_str(&format!("• {status_text}\n"));
                 }
             }
             description.push('\n');
@@ -405,7 +405,7 @@ impl Group {
                     }
 
                     embed = embed.field("Players",    players_field, true);
-                    embed = embed.field("Timeout at", timers_field,  true);
+                    embed = embed.field("Timeout at", timers_field,  true); // TODO: should not be displayed when player in vc
                 }
             }
         }
@@ -458,7 +458,7 @@ impl Group {
         if !actives.is_empty() {
             if let Some(next_session) = inactives.first() {
                 if !next_session.pool.is_empty() {
-                    let mut fatkid = format!("**Waiting for next game ({quota}/{}):**\n", next_session.pool.len());
+                    let mut fatkid = format!("**Waiting for next game** [**{}**]**:**\n", next_session.pool.len());
                     for player in next_session.pool.iter() {
                         // Use player's actual ELO, not rank default
                         let elo_str = format!("[**{}**] ", player.player.elo);
