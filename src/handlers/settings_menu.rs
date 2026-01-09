@@ -236,12 +236,9 @@ impl AsSettingsMenu for crate::database::repositories::UserSettings {
 
 /// Server settings with guild name for display
 pub struct ServerSettingsDisplay {
-    pub guild_name:   String,
-    pub runner_role:  Option<String>,
-    pub admin_role:   Option<String>,
-    pub dynamic_elo:  bool,
-    pub default_elo:  u16,
-    pub default_rank: String,
+    pub guild_name:  String,
+    pub runner_role: Option<String>,
+    pub admin_role:  Option<String>,
 }
 
 impl AsSettingsMenu for ServerSettingsDisplay {
@@ -264,63 +261,113 @@ impl AsSettingsMenu for ServerSettingsDisplay {
         SettingsMenu::new(format!("{} Server Settings", self.guild_name))
             .field(SettingsField::new("Runner Role", runner_display).inline(false))
             .field(SettingsField::new("Admin Role", admin_display).inline(false))
-            .field(SettingsField::new("Default ELO", self.default_elo.to_string()).inline(true))
-            .field(SettingsField::new("Default Rank", &self.default_rank).inline(true))
             .color(0x5865F2)
             .row(SettingsRow::Buttons(vec![
-                SettingsButton::toggle("server_settings_dynamic_elo", "Dynamic ELO", self.dynamic_elo),
-                SettingsButton::action("server_settings_ranks", "Rank Configuration", SettingsButtonStyle::Secondary),
+                SettingsButton::action("server_settings_roles", "Manage Roles", SettingsButtonStyle::Secondary),
+                SettingsButton::action("server_settings_ranks", "Manage Ranks", SettingsButtonStyle::Secondary),
+                SettingsButton::action("server_settings_groups", "Manage Groups", SettingsButtonStyle::Secondary),
             ]))
-            .row(SettingsRow::Buttons(vec![
-                SettingsButton::edit("server_settings_edit_default_elo", "Edit Default ELO"),
-                SettingsButton::edit("server_settings_edit_default_rank", "Edit Default Rank"),
-            ]))
-            .row(SettingsRow::Buttons(vec![
-                SettingsButton::action("server_settings_create_roles", "Create Roles", SettingsButtonStyle::Primary),
-                SettingsButton::action("server_settings_create_group", "Create Group", SettingsButtonStyle::Primary),
-            ]))
-            .row(SettingsRow::RoleSelect {
-                id: "server_settings_runner_role".to_string(),
-                placeholder: "Select Runner Role".to_string(),
-                default: runner_default,
-            })
-            .row(SettingsRow::RoleSelect {
-                id: "server_settings_admin_role".to_string(),
-                placeholder: "Select Admin Role".to_string(),
-                default: admin_default,
-            })
+    }
+}
+
+/// Role configuration display for server settings sub-menu (runner/admin roles)
+pub struct RoleConfigDisplay {
+    pub guild_name:  String,
+    pub runner_role: Option<String>,
+    pub admin_role:  Option<String>,
+}
+
+impl RoleConfigDisplay {
+    pub fn build_embed(&self) -> CE {
+        let runner_display = self.runner_role.as_ref()
+            .map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
+            .unwrap_or_else(|| "*Not configured*".to_string());
+        
+        let admin_display = self.admin_role.as_ref()
+            .map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
+            .unwrap_or_else(|| "*Not configured*".to_string());
+
+        CE::new()
+            .title(format!("{} - Manage Roles", self.guild_name))
+            .field("Runner Role", runner_display, false)
+            .field("Admin Role", admin_display, false)
+            .color(0x5865F2)
+            .footer(CreateEmbedFooter::new("Select roles below or use Create Roles to auto-generate"))
+    }
+
+    pub fn build_components(&self) -> Vec<CAR> {
+        let runner_default = self.runner_role.as_ref()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(RoleId::new);
+        let admin_default = self.admin_role.as_ref()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(RoleId::new);
+
+        vec![
+            CAR::SelectMenu(
+                CSM::new("server_settings_runner_role", CSMK::Role { default_roles: runner_default.map(|r| vec![r]) })
+                    .placeholder("Select Runner Role")
+            ),
+            CAR::SelectMenu(
+                CSM::new("server_settings_admin_role", CSMK::Role { default_roles: admin_default.map(|r| vec![r]) })
+                    .placeholder("Select Admin Role")
+            ),
+            CAR::Buttons(vec![
+                CB::new("server_settings_create_roles")
+                    .label("Create Roles")
+                    .style(BS::Primary),
+                CB::new("server_settings_roles_back")
+                    .label("Back to Server Settings")
+                    .style(BS::Secondary),
+            ]),
+        ]
     }
 }
 
 /// Rank configuration display for server settings sub-menu
 pub struct RankConfigDisplay {
-    pub guild_name:  String,
-    pub rank_roles:  Vec<(String, Option<String>)>, // (rank_name, role_ids_csv)
+    pub guild_name:   String,
+    pub rank_roles:   Vec<(String, Option<String>, u16)>, // (rank_name, role_ids_csv, elo)
+    pub dynamic_elo:  bool,
+    pub default_rank: String,
 }
 
 impl RankConfigDisplay {
     pub fn build_embed(&self) -> CE {
-        let mut embed = CE::new()
-            .title(format!("{} Rank Configuration", self.guild_name))
-            .color(0x5865F2);
-
-        for (rank_name, role_ids) in &self.rank_roles {
-            let display = role_ids.as_ref()
+        // Build compact rank list: @role - ELO
+        let mut description = String::new();
+        for (rank_name, role_ids, elo) in &self.rank_roles {
+            let role_display = role_ids.as_ref()
                 .map(|ids| ids.split(',').filter(|s| !s.is_empty()).map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
                 .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "*Not configured*".to_string());
-            embed = embed.field(rank_name, display, false);
+                .unwrap_or_else(|| format!("*@{rank_name}*"));
+            
+            let is_default = rank_name == &self.default_rank;
+            let default_marker = if is_default { " (default)" } else { "" };
+            description.push_str(&format!("{role_display} - {elo}{default_marker}\n"));
         }
 
-        embed.footer(CreateEmbedFooter::new("Select a rank below to configure its Discord role"))
+        CE::new()
+            .title(format!("{} - Manage Ranks", self.guild_name))
+            .description(description)
+            .color(0x5865F2)
+            .footer(CreateEmbedFooter::new("Select a rank below to configure its Discord role"))
     }
 
     pub fn build_components(&self) -> Vec<CAR> {
         let rank_options: Vec<(String, String)> = self.rank_roles.iter()
-            .map(|(name, _)| (name.clone(), name.to_lowercase().replace(" ", "_")))
+            .map(|(name, _, _)| (name.clone(), name.to_lowercase().replace(" ", "_")))
             .collect();
 
         vec![
+            CAR::Buttons(vec![
+                CB::new("server_settings_dynamic_elo")
+                    .label(if self.dynamic_elo { "Dynamic ELO enabled" } else { "Dynamic ELO disabled" })
+                    .style(if self.dynamic_elo { BS::Success } else { BS::Danger }),
+                CB::new("server_settings_edit_default_rank")
+                    .label("Edit Default Rank")
+                    .style(BS::Secondary),
+            ]),
             CAR::SelectMenu(
                 CSM::new("server_settings_rank_select", CSMK::String {
                     options: rank_options.iter()
@@ -378,6 +425,67 @@ impl RankRoleConfigDisplay {
                     .style(BS::Secondary),
             ]),
         ]
+    }
+}
+
+// ============================================================================
+// GroupList implementation
+// ============================================================================
+
+/// Group list display for server settings sub-menu
+pub struct GroupListDisplay {
+    pub guild_name: String,
+    pub groups:     Vec<crate::models::Group>,
+}
+
+impl GroupListDisplay {
+    pub fn build_embed(&self) -> CE {
+        let mut description = String::new();
+        
+        if self.groups.is_empty() {
+            description.push_str("*No groups configured*\n\nUse 'Create Group' to add a new group.");
+        } else {
+            for group in &self.groups {
+                let name = group.display_name();
+                let quota = group.quota;
+                let sessions = group.sessions.len();
+                description.push_str(&format!("**{}** - {quota} players, {sessions} session(s)\n", name));
+            }
+        }
+
+        CE::new()
+            .title(format!("{} - Manage Groups", self.guild_name))
+            .description(description)
+            .color(0x5865F2)
+            .footer(CreateEmbedFooter::new("Select a group below to edit"))
+    }
+
+    pub fn build_components(&self) -> Vec<CAR> {
+        let mut components = Vec::new();
+
+        // Add group selector if there are groups
+        if !self.groups.is_empty() {
+            let options: Vec<CSMO> = self.groups.iter()
+                .map(|g| CSMO::new(g.display_name(), g.group_id.to_string()))
+                .collect();
+
+            components.push(CAR::SelectMenu(
+                CSM::new("server_settings_group_select", CSMK::String { options })
+                    .placeholder("Select group to configure")
+            ));
+        }
+
+        // Add create group and back buttons
+        components.push(CAR::Buttons(vec![
+            CB::new("server_settings_create_group")
+                .label("Add a group")
+                .style(BS::Primary),
+            CB::new("server_settings_groups_back")
+                .label("Back to Server Settings")
+                .style(BS::Secondary),
+        ]));
+
+        components
     }
 }
 

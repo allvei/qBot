@@ -154,7 +154,7 @@ impl GroupRepository {
 
     /// Get all groups for a guild
     pub async fn get_groups_for_guild(&self, guild_id: u64) -> Result<Vec<Group>> {
-        let rows = sqlx::query("SELECT id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota
+        let rows = sqlx::query("SELECT id, group_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info
                                 FROM groups
                                 WHERE guild_id = ?"
         )
@@ -198,6 +198,48 @@ impl GroupRepository {
 
         sqlx::query("UPDATE groups SET name = ? WHERE guild_id = ? AND group_id = ?")
         .bind(name)
+        .bind(guild_id as i64)
+        .bind(group_id as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update group quota
+    pub async fn update_quota(&self, guild_id: u64, group_id: u8, quota: u8) -> Result<()> {
+        info!("Updating quota for guild {} group {}: {}", guild_id, group_id, quota);
+
+        sqlx::query("UPDATE groups SET quota = ? WHERE guild_id = ? AND group_id = ?")
+        .bind(quota as i64)
+        .bind(guild_id as i64)
+        .bind(group_id as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update group timeout
+    pub async fn update_timeout(&self, guild_id: u64, group_id: u8, timeout: u16) -> Result<()> {
+        info!("Updating timeout for guild {} group {}: {}", guild_id, group_id, timeout);
+
+        sqlx::query("UPDATE groups SET timeout = ? WHERE guild_id = ? AND group_id = ?")
+        .bind(timeout as i64)
+        .bind(guild_id as i64)
+        .bind(group_id as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update group connect info
+    pub async fn update_connect_info(&self, guild_id: u64, group_id: u8, connect_info: Option<&str>) -> Result<()> {
+        info!("Updating connect_info for guild {} group {}: {:?}", guild_id, group_id, connect_info);
+
+        sqlx::query("UPDATE groups SET connect_info = ? WHERE guild_id = ? AND group_id = ?")
+        .bind(connect_info)
         .bind(guild_id as i64)
         .bind(group_id as i64)
         .execute(&self.pool)

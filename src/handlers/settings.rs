@@ -603,23 +603,17 @@ pub async fn build_leave_alert_embed(
 
 /// Server settings structure for display
 pub struct ServerSettings {
-    pub runner_role:  Option<String>,
-    pub admin_role:   Option<String>,
-    pub dynamic_elo:  bool,
-    pub default_elo:  u16,
-    pub default_rank: String,
+    pub runner_role: Option<String>,
+    pub admin_role:  Option<String>,
 }
 
 /// Build server settings embed
 pub fn build_server_settings_embed(settings: &ServerSettings, guild_name: &str) -> CE {
     use crate::handlers::settings_menu::{AsSettingsMenu, ServerSettingsDisplay};
     let display = ServerSettingsDisplay {
-        guild_name:   guild_name.to_string(),
-        runner_role:  settings.runner_role.clone(),
-        admin_role:   settings.admin_role.clone(),
-        dynamic_elo:  settings.dynamic_elo,
-        default_elo:  settings.default_elo,
-        default_rank: settings.default_rank.clone(),
+        guild_name:  guild_name.to_string(),
+        runner_role: settings.runner_role.clone(),
+        admin_role:  settings.admin_role.clone(),
     };
     display.as_settings_menu().build_embed()
 }
@@ -628,12 +622,9 @@ pub fn build_server_settings_embed(settings: &ServerSettings, guild_name: &str) 
 pub fn build_server_settings_buttons(settings: &ServerSettings, guild_name: &str) -> Vec<CAR> {
     use crate::handlers::settings_menu::{AsSettingsMenu, ServerSettingsDisplay};
     let display = ServerSettingsDisplay {
-        guild_name:   guild_name.to_string(),
-        runner_role:  settings.runner_role.clone(),
-        admin_role:   settings.admin_role.clone(),
-        dynamic_elo:  settings.dynamic_elo,
-        default_elo:  settings.default_elo,
-        default_rank: settings.default_rank.clone(),
+        guild_name:  guild_name.to_string(),
+        runner_role: settings.runner_role.clone(),
+        admin_role:  settings.admin_role.clone(),
     };
     display.as_settings_menu().build_components()
 }
@@ -660,7 +651,41 @@ pub async fn handle_server_settings_button(
             let new_state = !current;
             db.config.set_config("active_elo_enabled", &new_state.to_string(), guild_id.get()).await?;
 
-            // Update the settings menu
+            // Return to rank configuration menu
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let rank_roles = get_all_rank_roles(db, guild_id.get()).await?;
+            let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id.get()).await?;
+            
+            let display = crate::handlers::settings_menu::RankConfigDisplay {
+                guild_name,
+                rank_roles,
+                dynamic_elo,
+                default_rank,
+            };
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(display.build_embed()).components(display.build_components())
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_roles" => {
+            // Show role configuration menu
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let settings = get_server_settings(db, guild_id.get()).await?;
+            
+            let display = crate::handlers::settings_menu::RoleConfigDisplay {
+                guild_name,
+                runner_role: settings.runner_role,
+                admin_role: settings.admin_role,
+            };
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(display.build_embed()).components(display.build_components())
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_roles_back" => {
+            // Go back to main server settings
             let settings = get_server_settings(db, guild_id.get()).await?;
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let embed = build_server_settings_embed(&settings, &guild_name);
@@ -682,14 +707,18 @@ pub async fn handle_server_settings_button(
                     db.config.delete_config("runner_role", guild_id.get()).await?;
                 }
 
-                // Update the settings menu
-                let settings = get_server_settings(db, guild_id.get()).await?;
+                // Return to role configuration menu
                 let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-                let embed = build_server_settings_embed(&settings, &guild_name);
-                let buttons = build_server_settings_buttons(&settings, &guild_name);
+                let settings = get_server_settings(db, guild_id.get()).await?;
+                
+                let display = crate::handlers::settings_menu::RoleConfigDisplay {
+                    guild_name,
+                    runner_role: settings.runner_role,
+                    admin_role: settings.admin_role,
+                };
 
                 let response = CIR::UpdateMessage(
-                    CIRM::new().embed(embed).components(buttons)
+                    CIRM::new().embed(display.build_embed()).components(display.build_components())
                 );
                 interaction.create_response(&ctx.http, response).await?;
             }
@@ -705,14 +734,18 @@ pub async fn handle_server_settings_button(
                     db.config.delete_config("admin_role", guild_id.get()).await?;
                 }
 
-                // Update the settings menu
-                let settings = get_server_settings(db, guild_id.get()).await?;
+                // Return to role configuration menu
                 let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-                let embed = build_server_settings_embed(&settings, &guild_name);
-                let buttons = build_server_settings_buttons(&settings, &guild_name);
+                let settings = get_server_settings(db, guild_id.get()).await?;
+                
+                let display = crate::handlers::settings_menu::RoleConfigDisplay {
+                    guild_name,
+                    runner_role: settings.runner_role,
+                    admin_role: settings.admin_role,
+                };
 
                 let response = CIR::UpdateMessage(
-                    CIRM::new().embed(embed).components(buttons)
+                    CIRM::new().embed(display.build_embed()).components(display.build_components())
                 );
                 interaction.create_response(&ctx.http, response).await?;
             }
@@ -721,10 +754,13 @@ pub async fn handle_server_settings_button(
             // Show rank configuration menu
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id.get()).await?;
+            let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id.get()).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
+                dynamic_elo,
+                default_rank,
             };
 
             let response = CIR::UpdateMessage(
@@ -771,10 +807,13 @@ pub async fn handle_server_settings_button(
             // Go back to rank list
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id.get()).await?;
+            let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id.get()).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
+                dynamic_elo,
+                default_rank,
             };
 
             let response = CIR::UpdateMessage(
@@ -840,39 +879,48 @@ pub async fn handle_server_settings_button(
             );
             interaction.create_response(&ctx.http, response).await?;
         }
-        "server_settings_edit_default_elo" => {
-            // Show modal to edit default ELO
-            let settings = get_server_settings(db, guild_id.get()).await?;
-            let modal = CreateModal::new("server_settings_modal_default_elo", "Edit Default ELO")
-                .components(vec![
-                    CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Default ELO (0-100)", "default_elo")
-                            .placeholder("e.g., 50")
-                            .value(settings.default_elo.to_string())
-                            .required(true)
-                            .min_length(1)
-                            .max_length(3)
-                    ),
-                ]);
-
-            let response = CIR::Modal(modal);
-            interaction.create_response(&ctx.http, response).await?;
-        }
         "server_settings_edit_default_rank" => {
             // Show modal to edit default rank
-            let settings = get_server_settings(db, guild_id.get()).await?;
+            let (_, default_rank) = get_rank_settings(db, guild_id.get()).await?;
             let modal = CreateModal::new("server_settings_modal_default_rank", "Edit Default Rank")
                 .components(vec![
                     CreateActionRow::InputText(
                         CreateInputText::new(InputTextStyle::Short, "Default Rank", "default_rank")
                             .placeholder("Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, Master Elite, Grandmaster")
-                            .value(settings.default_rank)
+                            .value(default_rank)
                             .required(true)
                             .max_length(20)
                     ),
                 ]);
 
             let response = CIR::Modal(modal);
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_groups" => {
+            // Show group configuration menu
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let groups = db.groups.get_groups_for_guild(guild_id.get()).await?;
+            
+            let display = crate::handlers::settings_menu::GroupListDisplay {
+                guild_name,
+                groups,
+            };
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(display.build_embed()).components(display.build_components())
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_groups_back" => {
+            // Go back to main server settings
+            let settings = get_server_settings(db, guild_id.get()).await?;
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let embed = build_server_settings_embed(&settings, &guild_name);
+            let buttons = build_server_settings_buttons(&settings, &guild_name);
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(embed).components(buttons)
+            );
             interaction.create_response(&ctx.http, response).await?;
         }
         "server_settings_create_roles" => {
@@ -931,13 +979,17 @@ pub async fn handle_server_settings_button(
                 info!("[{}] Created rank roles", guild_name);
             }
 
-            // Refresh the settings menu
+            // Return to role configuration menu
             let settings = get_server_settings(db, guild_id.get()).await?;
-            let embed = build_server_settings_embed(&settings, &guild_name);
-            let buttons = build_server_settings_buttons(&settings, &guild_name);
+            
+            let display = crate::handlers::settings_menu::RoleConfigDisplay {
+                guild_name,
+                runner_role: settings.runner_role,
+                admin_role: settings.admin_role,
+            };
 
             let response = CIR::UpdateMessage(
-                CIRM::new().embed(embed).components(buttons)
+                CIRM::new().embed(display.build_embed()).components(display.build_components())
             );
             interaction.create_response(&ctx.http, response).await?;
         }
@@ -1052,6 +1104,70 @@ pub async fn handle_server_settings_button(
                 }
             }
         }
+        "server_settings_group_select" => {
+            // Handle group selection from dropdown - show modal with all settings
+            if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
+                if let Some(group_id_str) = values.first() {
+                    if let Ok(group_id) = group_id_str.parse::<u8>() {
+                        // Find the group
+                        let groups = db.groups.get_groups_for_guild(guild_id.get()).await?;
+                        if let Some(group) = groups.iter().find(|g| g.group_id == group_id) {
+                            let modal = CreateModal::new(format!("server_settings_group_modal_{group_id}"), "Edit Group Settings")
+                                .components(vec![
+                                    CreateActionRow::InputText(
+                                        CreateInputText::new(InputTextStyle::Short, "Name", "name")
+                                            .placeholder("e.g., NA PUGs, EU Competitive")
+                                            .value(group.name.clone().unwrap_or_default())
+                                            .required(false)
+                                            .max_length(50)
+                                    ),
+                                    CreateActionRow::InputText(
+                                        CreateInputText::new(InputTextStyle::Short, "Quota (2-100)", "quota")
+                                            .placeholder("Number of players required")
+                                            .value(group.quota.to_string())
+                                            .required(true)
+                                            .min_length(1)
+                                            .max_length(3)
+                                    ),
+                                    CreateActionRow::InputText(
+                                        CreateInputText::new(InputTextStyle::Short, "Timeout (minutes)", "timeout")
+                                            .placeholder("Minutes before auto-removal")
+                                            .value(group.timeout.to_string())
+                                            .required(true)
+                                            .min_length(1)
+                                            .max_length(4)
+                                    ),
+                                    CreateActionRow::InputText(
+                                        CreateInputText::new(InputTextStyle::Paragraph, "Connect Info", "connect")
+                                            .placeholder("e.g., connect 192.168.1.1:27015; password secret")
+                                            .value(group.connect_info.clone().unwrap_or_default())
+                                            .required(false)
+                                            .max_length(500)
+                                    ),
+                                ]);
+
+                            let response = CIR::Modal(modal);
+                            interaction.create_response(&ctx.http, response).await?;
+                        }
+                    }
+                }
+            }
+        }
+        "server_settings_group_back" => {
+            // Go back to group list
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let groups = db.groups.get_groups_for_guild(guild_id.get()).await?;
+            
+            let display = crate::handlers::settings_menu::GroupListDisplay {
+                guild_name,
+                groups,
+            };
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(display.build_embed()).components(display.build_components())
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
         _ => {
             warn!("Unknown server settings button: {}", button_id);
         }
@@ -1060,25 +1176,27 @@ pub async fn handle_server_settings_button(
     Ok(())
 }
 
-/// Get all rank roles for display
-async fn get_all_rank_roles(db: &Arc<Database>, guild_id: u64) -> Result<Vec<(String, Option<String>)>> {
+/// Get all rank roles for display (name, role_ids, elo)
+async fn get_all_rank_roles(db: &Arc<Database>, guild_id: u64) -> Result<Vec<(String, Option<String>, u16)>> {
+    use crate::models::Rank;
     let ranks = [
-        ("Beginner", "beginner"),
-        ("Newcomer", "newcomer"),
-        ("Novice", "novice"),
-        ("Apprentice", "apprentice"),
-        ("Journeyman", "journeyman"),
-        ("Expert", "expert"),
-        ("Master", "master"),
-        ("Master Elite", "master_elite"),
-        ("Grandmaster", "grandmaster"),
+        ("Beginner",     "beginner",     Rank::Beginner),
+        ("Newcomer",     "newcomer",     Rank::Newcomer),
+        ("Novice",       "novice",       Rank::Novice),
+        ("Apprentice",   "apprentice",   Rank::Apprentice),
+        ("Journeyman",   "journeyman",   Rank::Journeyman),
+        ("Expert",       "expert",       Rank::Expert),
+        ("Master",       "master",       Rank::Master),
+        ("Master Elite", "master_elite", Rank::MasterElite),
+        ("Grandmaster",  "grandmaster",  Rank::Grandmaster),
     ];
 
     let mut result = Vec::new();
-    for (name, key) in ranks {
+    for (name, key, rank) in ranks {
         let config_key = format!("rank_{key}_roles");
         let role_ids = db.config.get_config_value(&config_key, guild_id).await?;
-        result.push((name.to_string(), role_ids));
+        let elo = rank.default_rank_elo();
+        result.push((name.to_string(), role_ids, elo));
     }
     Ok(result)
 }
@@ -1103,22 +1221,22 @@ fn rank_key_to_name(key: &str) -> String {
 pub async fn get_server_settings(db: &Arc<Database>, guild_id: u64) -> Result<ServerSettings> {
     let runner_role = db.config.get_config_value("runner_role", guild_id).await?;
     let admin_role = db.config.get_config_value("admin_role", guild_id).await?;
-    let dynamic_elo = db.config.get_config_value("active_elo_enabled", guild_id).await?
-        .map(|v| v.parse::<bool>().unwrap_or(false))
-        .unwrap_or(false);
-    let default_elo = db.config.get_config_value("default_elo", guild_id).await?
-        .and_then(|v| v.parse::<u16>().ok())
-        .unwrap_or(crate::models::DEFAULT_RANK.default_rank_elo());
-    let default_rank = db.config.get_config_value("default_rank", guild_id).await?
-        .unwrap_or_else(|| crate::models::DEFAULT_RANK.name().to_string());
 
     Ok(ServerSettings {
         runner_role,
         admin_role,
-        dynamic_elo,
-        default_elo,
-        default_rank,
     })
+}
+
+/// Get rank settings from database (for rank configuration menu)
+pub async fn get_rank_settings(db: &Arc<Database>, guild_id: u64) -> Result<(bool, String)> {
+    let dynamic_elo = db.config.get_config_value("active_elo_enabled", guild_id).await?
+        .map(|v| v.parse::<bool>().unwrap_or(false))
+        .unwrap_or(false);
+    let default_rank = db.config.get_config_value("default_rank", guild_id).await?
+        .unwrap_or_else(|| crate::models::DEFAULT_RANK.name().to_string());
+
+    Ok((dynamic_elo, default_rank))
 }
 
 /// Handle server settings modal submissions
@@ -1132,49 +1250,7 @@ pub async fn handle_server_settings_modal(
 
     info!("[Server Settings] {} submitted modal {}", interaction.user.name, modal_id);
 
-    if modal_id == "server_settings_modal_default_elo" {
-        let elo_str = interaction.data.components.first()
-            .and_then(|row| row.components.first())
-            .and_then(|c| {
-                if let serenity::all::ActionRowComponent::InputText(input) = c {
-                    input.value.clone()
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-
-        let elo: u16 = match elo_str.trim().parse() {
-            Ok(e) if e <= 100 => e,
-            _ => {
-                let response = CIR::Message(
-                    CIRM::new()
-                        .content("Invalid ELO. Must be between 0 and 100.")
-                        .ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
-                return Ok(());
-            }
-        };
-
-        // Save to config
-        db.config.set_config("default_elo", &elo.to_string(), guild_id.get()).await?;
-
-        // Also update default rank to match the ELO
-        let new_rank = crate::models::types::Rank::from_elo(elo, db, guild_id.get()).await;
-        db.config.set_config("default_rank", new_rank.name(), guild_id.get()).await?;
-
-        // Refresh the settings menu
-        let settings = get_server_settings(db, guild_id.get()).await?;
-        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-        let embed = build_server_settings_embed(&settings, &guild_name);
-        let buttons = build_server_settings_buttons(&settings, &guild_name);
-
-        let response = CIR::UpdateMessage(
-            CIRM::new().embed(embed).components(buttons)
-        );
-        interaction.create_response(&ctx.http, response).await?;
-    } else if modal_id == "server_settings_modal_default_rank" {
+    if modal_id == "server_settings_modal_default_rank" {
         let rank_str = interaction.data.components.first()
             .and_then(|row| row.components.first())
             .and_then(|c| {
@@ -1193,14 +1269,99 @@ pub async fn handle_server_settings_modal(
         db.config.set_config("default_rank", new_rank.name(), guild_id.get()).await?;
         db.config.set_config("default_elo", &new_elo.to_string(), guild_id.get()).await?;
 
-        // Refresh the settings menu
-        let settings = get_server_settings(db, guild_id.get()).await?;
+        // Return to rank configuration menu
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-        let embed = build_server_settings_embed(&settings, &guild_name);
-        let buttons = build_server_settings_buttons(&settings, &guild_name);
+        let rank_roles = get_all_rank_roles(db, guild_id.get()).await?;
+        let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id.get()).await?;
+        
+        let display = crate::handlers::settings_menu::RankConfigDisplay {
+            guild_name,
+            rank_roles,
+            dynamic_elo,
+            default_rank,
+        };
 
         let response = CIR::UpdateMessage(
-            CIRM::new().embed(embed).components(buttons)
+            CIRM::new().embed(display.build_embed()).components(display.build_components())
+        );
+        interaction.create_response(&ctx.http, response).await?;
+    } else if modal_id.starts_with("server_settings_group_modal_") {
+        // Handle group settings modal submission
+        let group_id: u8 = modal_id
+            .strip_prefix("server_settings_group_modal_")
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| anyhow::anyhow!("Invalid modal ID format: {}", modal_id))?;
+
+        // Extract all values from the modal
+        let mut name_value = String::new();
+        let mut quota_value = String::new();
+        let mut timeout_value = String::new();
+        let mut connect_value = String::new();
+
+        for row in &interaction.data.components {
+            for component in &row.components {
+                if let serenity::all::ActionRowComponent::InputText(input) = component {
+                    match input.custom_id.as_str() {
+                        "name" => name_value = input.value.clone().unwrap_or_default(),
+                        "quota" => quota_value = input.value.clone().unwrap_or_default(),
+                        "timeout" => timeout_value = input.value.clone().unwrap_or_default(),
+                        "connect" => connect_value = input.value.clone().unwrap_or_default(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // Parse and validate quota
+        let quota: u8 = match quota_value.trim().parse() {
+            Ok(q) if (2..=100).contains(&q) => q,
+            _ => {
+                let response = CIR::Message(
+                    CIRM::new()
+                        .content("Invalid quota. Must be between 2 and 100.")
+                        .ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+        };
+
+        // Parse and validate timeout
+        let timeout: u16 = match timeout_value.trim().parse() {
+            Ok(t) if t > 0 => t,
+            _ => {
+                let response = CIR::Message(
+                    CIRM::new()
+                        .content("Invalid timeout. Must be a positive number.")
+                        .ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+        };
+
+        let name = if name_value.trim().is_empty() { None } else { Some(name_value.trim().to_string()) };
+        let connect_info = if connect_value.trim().is_empty() { None } else { Some(connect_value.trim().to_string()) };
+
+        // Update in database
+        db.groups.update_name(guild_id.get(), group_id, name.as_deref()).await?;
+        db.groups.update_quota(guild_id.get(), group_id, quota).await?;
+        db.groups.update_timeout(guild_id.get(), group_id, timeout).await?;
+        if connect_info.is_some() || connect_value.trim().is_empty() {
+            db.groups.update_connect_info(guild_id.get(), group_id, connect_info.as_deref()).await?;
+        }
+
+        // Return to group list
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+        let groups = db.groups.get_groups_for_guild(guild_id.get()).await?;
+        
+        let display = crate::handlers::settings_menu::GroupListDisplay {
+            guild_name,
+            groups,
+        };
+
+        let response = CIR::UpdateMessage(
+            CIRM::new().embed(display.build_embed()).components(display.build_components())
         );
         interaction.create_response(&ctx.http, response).await?;
     } else {
