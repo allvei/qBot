@@ -121,17 +121,48 @@ impl Server {
     }
 }
 
+/// Team balancing method for generating teams
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TeamBalanceMethod {
+    #[default]
+    Bch,
+    Average,
+}
+
+impl TeamBalanceMethod {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Bch => "BCH",
+            Self::Average => "Average",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "average" => Self::Average,
+            _ => Self::Bch,
+        }
+    }
+}
+
+impl std::fmt::Display for TeamBalanceMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 // Group
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Group {
-    pub group_id:      u8,
-    pub name:          Option<String>,
-    pub timeout:       u16,
-    pub quota:         u8,
-    pub dashboard_msg: MI,
-    pub channels:      Channels,
-    pub sessions:      Vec<Session>,
-    pub connect_info:  Option<String>,
+    pub group_id:            u8,
+    pub name:                Option<String>,
+    pub timeout:             u16,
+    pub quota:               u8,
+    pub dashboard_msg:       MI,
+    pub channels:            Channels,
+    pub sessions:            Vec<Session>,
+    pub connect_info:        Option<String>,
+    pub team_balance_method: TeamBalanceMethod,
 }
 
 impl Group {
@@ -153,6 +184,7 @@ impl Group {
             channels,
             sessions: games,
             connect_info: None,
+            team_balance_method: TeamBalanceMethod::default(),
         }
     }
 

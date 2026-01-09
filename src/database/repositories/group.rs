@@ -5,7 +5,7 @@ use sqlx::{Row, SqlitePool};
 use tracing::{info, warn};
 
 use super::Repository;
-use crate::models::{Channels, Group, TeamChannel};
+use crate::models::{Channels, Group, TeamBalanceMethod, TeamChannel};
 
 /// Configuration for creating or updating a group
 pub struct GroupConfig {
@@ -101,6 +101,10 @@ impl GroupRepository {
         let group_id     = result.try_get::<i64, _>("group_id").unwrap_or(0) as u8;
         let name         = result.try_get::<Option<String>, _>("name").ok().flatten();
         let connect_info = result.try_get::<Option<String>, _>("connect_info").ok().flatten();
+        let team_balance_method_str = result.try_get::<Option<String>, _>("team_balance_method").ok().flatten();
+        let team_balance_method = team_balance_method_str
+            .map(|s| TeamBalanceMethod::from_str(&s))
+            .unwrap_or_default();
 
         // Load teams from teams table, fallback to single team from groups table
         let teams = match self.get_teams_for_group(guild_id, group_id).await {
@@ -118,6 +122,7 @@ impl GroupRepository {
             Vec::new(),
         );
         group.connect_info = connect_info;
+        group.team_balance_method = team_balance_method;
 
         Ok(group)
     }
@@ -242,6 +247,20 @@ impl GroupRepository {
 
         sqlx::query("UPDATE groups SET connect_info = ? WHERE guild_id = ? AND group_id = ?")
         .bind(connect_info)
+        .bind(guild_id as i64)
+        .bind(group_id as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update group team balance method
+    pub async fn update_team_balance_method(&self, guild_id: u64, group_id: u8, method: TeamBalanceMethod) -> Result<()> {
+        info!("Updating team_balance_method for guild {} group {}: {}", guild_id, group_id, method);
+
+        sqlx::query("UPDATE groups SET team_balance_method = ? WHERE guild_id = ? AND group_id = ?")
+        .bind(method.as_str())
         .bind(guild_id as i64)
         .bind(group_id as i64)
         .execute(&self.pool)

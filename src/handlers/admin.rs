@@ -1668,6 +1668,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
         },
         sessions: vec![],
         connect_info: None,
+        team_balance_method: crate::models::TeamBalanceMethod::default(),
     };
 
     // Publish dashboard to get message ID

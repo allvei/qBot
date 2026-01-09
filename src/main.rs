@@ -462,6 +462,15 @@ impl EventHandler for Handler {
                     return;
                 }
 
+                // Handle group settings team balance method select
+                if itx.data.custom_id.starts_with("group_settings_balance_") {
+                    let result = handlers::handle_group_settings_balance_select(&ctx, &itx, &self.db, &self.manager).await;
+                    if let Err(e) = result {
+                        error!("Error handling group settings balance select: {e}");
+                    }
+                    return;
+                }
+
                 // Handle group settings buttons
                 if itx.data.custom_id.starts_with("group_settings_") {
                     let result = handlers::handle_group_settings_button(&ctx, &itx, &self.db, &self.manager).await;

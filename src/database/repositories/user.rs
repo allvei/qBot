@@ -4,11 +4,46 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serenity::all::{Context as Ctx, UserId as UI};
 use sqlx::{Row, SqlitePool};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{Database, Elo, Rank, DEFAULT_RANK};
 use crate::models::Player;
 use super::Repository;
+
+const ALERT_LINE_WIDTH: usize = 70;
+const ALERT_MAX_LINES: usize = 6;
+
+/// Truncate alert message to fit within display constraints.
+/// Max 6 lines, 70 chars per line. Newlines ceiling the current line to 70 chars.
+fn truncate_alert_message(s: &str) -> String {
+    let mut result = String::new();
+    let mut line_count = 0;
+    let mut line_chars = 0;
+
+    for ch in s.chars() {
+        if line_count >= ALERT_MAX_LINES {
+            break;
+        }
+
+        if ch == '\n' {
+            result.push(ch);
+            line_count += 1;
+            line_chars = 0;
+        } else {
+            if line_chars >= ALERT_LINE_WIDTH {
+                line_count += 1;
+                if line_count >= ALERT_MAX_LINES {
+                    break;
+                }
+                line_chars = 0;
+            }
+            result.push(ch);
+            line_chars += 1;
+        }
+    }
+
+    result
+}
 
 #[derive(Clone)]
 pub struct UserRepository {
@@ -267,6 +302,47 @@ impl UserRepository {
             Some(row) => {
                 let timeout_length: i64 = row.try_get("timeout_length").unwrap_or(30);
                 let minutes = if timeout_length == 0 { 30 } else { timeout_length };
+
+                // Load alert descriptions and truncate if too long
+                let raw_alert_desc: Option<String> = row.try_get::<String, _>("alert_desc").ok().filter(|s| !s.is_empty());
+                let raw_leave_alert_desc: Option<String> = row.try_get::<String, _>("leave_alert_desc").ok().filter(|s| !s.is_empty());
+
+                let alert_desc = raw_alert_desc.as_ref().map(|s| {
+                    let truncated = truncate_alert_message(s);
+                    if truncated.len() < s.len() {
+                        warn!("Truncated alert_desc for user {}: {} -> {} chars", user_id, s.len(), truncated.len());
+                    }
+                    truncated
+                }).filter(|s| !s.is_empty());
+
+                let leave_alert_desc = raw_leave_alert_desc.as_ref().map(|s| {
+                    let truncated = truncate_alert_message(s);
+                    if truncated.len() < s.len() {
+                        warn!("Truncated leave_alert_desc for user {}: {} -> {} chars", user_id, s.len(), truncated.len());
+                    }
+                    truncated
+                }).filter(|s| !s.is_empty());
+
+                // If truncation occurred, update the database
+                let alert_truncated = raw_alert_desc.as_ref().map(|s| truncate_alert_message(s).len() < s.len()).unwrap_or(false);
+                let leave_truncated = raw_leave_alert_desc.as_ref().map(|s| truncate_alert_message(s).len() < s.len()).unwrap_or(false);
+
+                if alert_truncated {
+                    let _ = sqlx::query("UPDATE users SET alert_desc = ? WHERE user_id = ?")
+                        .bind(&alert_desc)
+                        .bind(user_id.get() as i64)
+                        .execute(&self.pool)
+                        .await;
+                }
+
+                if leave_truncated {
+                    let _ = sqlx::query("UPDATE users SET leave_alert_desc = ? WHERE user_id = ?")
+                        .bind(&leave_alert_desc)
+                        .bind(user_id.get() as i64)
+                        .execute(&self.pool)
+                        .await;
+                }
+
                 Ok(UserSettings {
                     expiry_duration:              Duration::from_secs((minutes as u64) * 60),
                     join_announcement:            row.try_get::<i64, _>("join_announcement").unwrap_or(0) != 0,
@@ -274,12 +350,12 @@ impl UserRepository {
                     announcement_color:           row.try_get("announcement_color").unwrap_or(3447003),
                     dm_alerts:                    row.try_get::<i64, _>("dm_enabled").unwrap_or(1) != 0,
                     notify_quota_threshold:       row.try_get::<i64, _>("notify_quota_threshold").ok().map(|v| v as u8),
-                    alert_desc:                   row.try_get::<String, _>("alert_desc").ok().filter(|s| !s.is_empty()),
+                    alert_desc,
                     alert_footer_text:            row.try_get::<String, _>("alert_footer_text").ok().filter(|s| !s.is_empty()),
                     alert_footer_icon:            row.try_get::<String, _>("alert_footer_icon").ok().filter(|s| !s.is_empty()),
                     alert_footer_thumbnail:       row.try_get::<String, _>("alert_footer_thumbnail").ok().filter(|s| !s.is_empty()),
                     leave_alert:                  row.try_get::<i64, _>("leave_alert").unwrap_or(0) != 0,
-                    leave_alert_desc:             row.try_get::<String, _>("leave_alert_desc").ok().filter(|s| !s.is_empty()),
+                    leave_alert_desc,
                     leave_alert_footer_text:      row.try_get::<String, _>("leave_alert_footer_text").ok().filter(|s| !s.is_empty()),
                     leave_alert_footer_icon:      row.try_get::<String, _>("leave_alert_footer_icon").ok().filter(|s| !s.is_empty()),
                     leave_alert_footer_thumbnail: row.try_get::<String, _>("leave_alert_footer_thumbnail").ok().filter(|s| !s.is_empty()),

@@ -258,6 +258,13 @@ impl DatabaseMigrations {
                     .execute(&self.pool)
                     .await?;
             }
+
+            // Add team_balance_method column if missing
+            if !self.check_column("groups", "team_balance_method").await? {
+                sqlx::query("ALTER TABLE groups ADD COLUMN team_balance_method TEXT DEFAULT 'BCH'")
+                    .execute(&self.pool)
+                    .await?;
+            }
         }
         Ok(())
     }

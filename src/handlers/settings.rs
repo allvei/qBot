@@ -1021,6 +1021,7 @@ pub async fn handle_server_settings_button(
                         },
                         sessions: vec![],
                         connect_info: None,
+                        team_balance_method: crate::models::TeamBalanceMethod::default(),
                     };
 
                     // Publish the dashboard to get the actual message ID
@@ -1378,35 +1379,38 @@ pub async fn handle_server_settings_modal(
 
 /// Group settings structure for display
 pub struct GroupSettings {
-    pub group_id:     u8,
-    pub name:         Option<String>,
-    pub quota:        u8,
-    pub timeout:      u16,
-    pub connect_info: Option<String>,
+    pub group_id:            u8,
+    pub name:                Option<String>,
+    pub quota:               u8,
+    pub timeout:             u16,
+    pub connect_info:        Option<String>,
+    pub team_balance_method: crate::models::TeamBalanceMethod,
 }
 
 /// Build group settings embed
 pub fn build_group_settings_embed(settings: &GroupSettings) -> CE {
     use crate::handlers::settings_menu::{AsSettingsMenu, GroupSettingsDisplay};
     let display = GroupSettingsDisplay {
-        group_id:     settings.group_id,
-        name:         settings.name.clone(),
-        quota:        settings.quota,
-        timeout:      settings.timeout,
-        connect_info: settings.connect_info.clone(),
+        group_id:            settings.group_id,
+        name:                settings.name.clone(),
+        quota:               settings.quota,
+        timeout:             settings.timeout,
+        connect_info:        settings.connect_info.clone(),
+        team_balance_method: settings.team_balance_method,
     };
     display.as_settings_menu().build_embed()
 }
 
 /// Build group settings buttons with group_id embedded in custom_id
-pub fn build_group_settings_buttons(group_id: u8) -> Vec<CAR> {
+pub fn build_group_settings_buttons(group_id: u8, team_balance_method: crate::models::TeamBalanceMethod) -> Vec<CAR> {
     use crate::handlers::settings_menu::{AsSettingsMenu, GroupSettingsDisplay};
     let display = GroupSettingsDisplay {
         group_id,
-        name:         None,
-        quota:        0,
-        timeout:      0,
-        connect_info: None,
+        name:                None,
+        quota:               0,
+        timeout:             0,
+        connect_info:        None,
+        team_balance_method,
     };
     display.as_settings_menu().build_components()
 }
@@ -1456,11 +1460,12 @@ pub async fn handle_group_settings_button(
             .clone()
     };
     let settings = GroupSettings {
-        group_id:     group.group_id,
-        name:         group.name.clone(),
-        quota:        group.quota,
-        timeout:      group.timeout,
-        connect_info: group.connect_info.clone(),
+        group_id:            group.group_id,
+        name:                group.name.clone(),
+        quota:               group.quota,
+        timeout:             group.timeout,
+        connect_info:        group.connect_info.clone(),
+        team_balance_method: group.team_balance_method,
     };
     drop(manager_lock);
 
@@ -1563,15 +1568,16 @@ pub async fn handle_group_settings_select(
     drop(manager_lock);
 
     let settings = GroupSettings {
-        group_id:     group.group_id,
-        name:         group.name.clone(),
-        quota:        group.quota,
-        timeout:      group.timeout,
-        connect_info: group.connect_info.clone(),
+        group_id:            group.group_id,
+        name:                group.name.clone(),
+        quota:               group.quota,
+        timeout:             group.timeout,
+        connect_info:        group.connect_info.clone(),
+        team_balance_method: group.team_balance_method,
     };
 
     let embed = build_group_settings_embed(&settings);
-    let buttons = build_group_settings_buttons(settings.group_id);
+    let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
 
     let response = CIR::UpdateMessage(
         CIRM::new().embed(embed).components(buttons)
@@ -1636,15 +1642,16 @@ pub async fn handle_group_settings_modal(
 
         // Get updated settings and refresh the menu
         let settings = GroupSettings {
-            group_id:     group.group_id,
-            name:         group.name.clone(),
-            quota:        group.quota,
-            timeout:      group.timeout,
-            connect_info: group.connect_info.clone(),
+            group_id:            group.group_id,
+            name:                group.name.clone(),
+            quota:               group.quota,
+            timeout:             group.timeout,
+            connect_info:        group.connect_info.clone(),
+            team_balance_method: group.team_balance_method,
         };
 
         let embed = build_group_settings_embed(&settings);
-        let buttons = build_group_settings_buttons(settings.group_id);
+        let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
 
         let response = CIR::UpdateMessage(
             CIRM::new().embed(embed).components(buttons)
@@ -1695,15 +1702,16 @@ pub async fn handle_group_settings_modal(
 
         // Get updated settings and refresh the menu
         let settings = GroupSettings {
-            group_id:     group.group_id,
-            name:         group.name.clone(),
-            quota:        group.quota,
-            timeout:      group.timeout,
-            connect_info: group.connect_info.clone(),
+            group_id:            group.group_id,
+            name:                group.name.clone(),
+            quota:               group.quota,
+            timeout:             group.timeout,
+            connect_info:        group.connect_info.clone(),
+            team_balance_method: group.team_balance_method,
         };
 
         let embed = build_group_settings_embed(&settings);
-        let buttons = build_group_settings_buttons(settings.group_id);
+        let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
 
         let response = CIR::UpdateMessage(
             CIRM::new().embed(embed).components(buttons)
@@ -1740,15 +1748,16 @@ pub async fn handle_group_settings_modal(
 
         // Get updated settings and refresh the menu
         let settings = GroupSettings {
-            group_id:     group.group_id,
-            name:         group.name.clone(),
-            quota:        group.quota,
-            timeout:      group.timeout,
-            connect_info: group.connect_info.clone(),
+            group_id:            group.group_id,
+            name:                group.name.clone(),
+            quota:               group.quota,
+            timeout:             group.timeout,
+            connect_info:        group.connect_info.clone(),
+            team_balance_method: group.team_balance_method,
         };
 
         let embed = build_group_settings_embed(&settings);
-        let buttons = build_group_settings_buttons(settings.group_id);
+        let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
 
         let response = CIR::UpdateMessage(
             CIRM::new().embed(embed).components(buttons)
@@ -1781,15 +1790,16 @@ pub async fn handle_group_settings_modal(
 
         // Get updated settings and refresh the menu
         let settings = GroupSettings {
-            group_id:     group.group_id,
-            name:         group.name.clone(),
-            quota:        group.quota,
-            timeout:      group.timeout,
-            connect_info: group.connect_info.clone(),
+            group_id:            group.group_id,
+            name:                group.name.clone(),
+            quota:               group.quota,
+            timeout:             group.timeout,
+            connect_info:        group.connect_info.clone(),
+            team_balance_method: group.team_balance_method,
         };
 
         let embed = build_group_settings_embed(&settings);
-        let buttons = build_group_settings_buttons(settings.group_id);
+        let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
 
         let response = CIR::UpdateMessage(
             CIRM::new().embed(embed).components(buttons)
@@ -1798,6 +1808,72 @@ pub async fn handle_group_settings_modal(
     } else {
         warn!("Unknown group settings modal: {}", modal_id);
     }
+
+    Ok(())
+}
+
+/// Handle group settings team balance method selection
+pub async fn handle_group_settings_balance_select(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    db: &Arc<Database>,
+    manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
+) -> Result<()> {
+    let guild_id = interaction.guild_id.expect("Guild ID not found");
+    let custom_id = &interaction.data.custom_id;
+
+    info!("[Group Settings] {} selected team balance method", interaction.user.name);
+
+    // Extract group_id from custom_id (format: group_settings_balance_<group_id>)
+    let group_id: u8 = custom_id
+        .rsplit('_')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!("Invalid custom_id format: {}", custom_id))?;
+
+    // Extract selected value
+    let method_str = match &interaction.data.kind {
+        serenity::all::ComponentInteractionDataKind::StringSelect { values } => {
+            values.first()
+                .ok_or_else(|| anyhow::anyhow!("No value selected"))?
+                .clone()
+        }
+        _ => return Err(anyhow::anyhow!("Expected string select interaction")),
+    };
+
+    let method = crate::models::TeamBalanceMethod::from_str(&method_str);
+
+    // Update in-memory and database
+    let mut manager_lock = manager.lock().await;
+    let group = {
+        let server = manager_lock.get_server(guild_id)?;
+        server.groups.iter_mut()
+            .find(|g| g.group_id == group_id)
+            .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?
+    };
+
+    group.team_balance_method = method;
+
+    // Update in database
+    db.groups.update_team_balance_method(guild_id.get(), group_id, method).await?;
+
+    // Get updated settings and refresh the menu
+    let settings = GroupSettings {
+        group_id:            group.group_id,
+        name:                group.name.clone(),
+        quota:               group.quota,
+        timeout:             group.timeout,
+        connect_info:        group.connect_info.clone(),
+        team_balance_method: group.team_balance_method,
+    };
+
+    let embed = build_group_settings_embed(&settings);
+    let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+
+    let response = CIR::UpdateMessage(
+        CIRM::new().embed(embed).components(buttons)
+    );
+    interaction.create_response(&ctx.http, response).await?;
 
     Ok(())
 }

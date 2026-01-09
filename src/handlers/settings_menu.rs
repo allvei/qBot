@@ -495,11 +495,12 @@ impl GroupListDisplay {
 
 /// Group settings for display
 pub struct GroupSettingsDisplay {
-    pub group_id:     u8,
-    pub name:         Option<String>,
-    pub quota:        u8,
-    pub timeout:      u16,
-    pub connect_info: Option<String>,
+    pub group_id:            u8,
+    pub name:                Option<String>,
+    pub quota:               u8,
+    pub timeout:             u16,
+    pub connect_info:        Option<String>,
+    pub team_balance_method: crate::models::TeamBalanceMethod,
 }
 
 impl AsSettingsMenu for GroupSettingsDisplay {
@@ -518,6 +519,7 @@ impl AsSettingsMenu for GroupSettingsDisplay {
             .field(SettingsField::new("Quota", format!("{} players", self.quota)))
             .field(SettingsField::new("Timeout", format!("{} minutes", self.timeout)))
             .field(SettingsField::new("Connect Info", connect_display).inline(false))
+            .field(SettingsField::new("Team Balance", self.team_balance_method.as_str()))
             .color(0x5865F2)
             .row(SettingsRow::Buttons(vec![
                 SettingsButton::edit(format!("group_settings_edit_name_{gid}"), "Edit Name"),
@@ -527,6 +529,14 @@ impl AsSettingsMenu for GroupSettingsDisplay {
             .row(SettingsRow::Buttons(vec![
                 SettingsButton::edit(format!("group_settings_edit_connect_{gid}"), "Edit Connect Info"),
             ]))
+            .row(SettingsRow::StringSelect {
+                id: format!("group_settings_balance_{gid}"),
+                placeholder: "Select team balance method...".to_string(),
+                options: vec![
+                    ("BCH".to_string(), "bch".to_string()),
+                    ("Average".to_string(), "average".to_string()),
+                ],
+            })
     }
 }
 
