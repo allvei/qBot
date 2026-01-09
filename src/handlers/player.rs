@@ -29,54 +29,38 @@ async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI) -> Option<Membe
 
 /// Get player's rank from their Discord roles
 pub async fn get_player_rank(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<Rank> {
-    info!("DEBUG: get_player_rank called for user {} in guild {}", user_id, guild_id);
-    
-    let member = match get_member_cached(ctx, guild_id, user_id).await {
-        Some(m) => {
-            info!("DEBUG: Found member {} with {} roles", m.user.tag(), m.roles.len());
-            m
-        },
-        None => {
-            warn!("DEBUG: Could not find member {} in guild {}", user_id, guild_id);
-            return None;
-        }
-    };
+    let member = get_member_cached(ctx, guild_id, user_id).await?;
 
-    // Check all member roles and find the highest matching rank
+    // Load rank mappings once for this guild
+    let mappings = Rank::load_rank_mappings(db, guild_id.get()).await;
+
+    // Find highest rank among member's roles
     let mut highest_rank: Option<Rank> = None;
-    info!("DEBUG: Checking {} roles for rank matches", member.roles.len());
-    
-    for (index, role_id) in member.roles.iter().enumerate() {
-        info!("DEBUG: Checking role {}: {}", index, role_id);
-        match Rank::from_role_id(*role_id, db, guild_id.get()).await {
-            Ok(rank) => {
-                info!("DEBUG: Role {} matches rank {}", role_id, rank.name());
-                highest_rank = match highest_rank {
-                    Some(current) => {
-                        // Compare ELO values to find highest rank
-                        if rank.default_rank_elo() > current.default_rank_elo() {
-                            info!("DEBUG: Upgrading from {} to {} (ELO: {} -> {})", 
-                                  current.name(), rank.name(), current.default_rank_elo(), rank.default_rank_elo());
-                            Some(rank)
-                        } else {
-                            info!("DEBUG: Keeping current {} over {} (ELO: {} >= {})", 
-                                  current.name(), rank.name(), current.default_rank_elo(), rank.default_rank_elo());
-                            Some(current)
-                        }
-                    }
-                    None => {
-                        info!("DEBUG: First rank found: {} (ELO: {})", rank.name(), rank.default_rank_elo());
-                        Some(rank)
-                    }
-                };
-            },
-            Err(e) => {
-                info!("DEBUG: Role {} does not match any rank: {}", role_id, e);
-            }
-        };
+    for role_id in &member.roles {
+        if let Some(rank) = Rank::from_role_id_cached(*role_id, &mappings) {
+            highest_rank = match highest_rank {
+                Some(current) if rank.default_rank_elo() > current.default_rank_elo() => Some(rank),
+                Some(current) => Some(current),
+                None => Some(rank),
+            };
+        }
     }
-    
-    info!("DEBUG: Final rank for user {}: {:?}", user_id, highest_rank);
+
+    highest_rank
+}
+
+/// Get player's rank from their Discord roles using pre-loaded mappings (no DB calls)
+pub fn get_player_rank_cached(member: &Member, mappings: &[(Rank, Vec<serenity::all::RoleId>)]) -> Option<Rank> {
+    let mut highest_rank: Option<Rank> = None;
+    for role_id in &member.roles {
+        if let Some(rank) = Rank::from_role_id_cached(*role_id, mappings) {
+            highest_rank = match highest_rank {
+                Some(current) if rank.default_rank_elo() > current.default_rank_elo() => Some(rank),
+                Some(current) => Some(current),
+                None => Some(rank),
+            };
+        }
+    }
     highest_rank
 }
 

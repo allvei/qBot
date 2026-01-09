@@ -401,4 +401,37 @@ impl Rank {
         }
         all_ids
     }
+
+    /// Load all rank-to-role mappings for a guild in a single pass.
+    /// Returns a Vec of (Rank, Vec<RoleId>) pairs for efficient lookups.
+    pub async fn load_rank_mappings(db: &Database, guild_id: u64) -> Vec<(Rank, Vec<RoleId>)> {
+        let ranks = [
+            Rank::Beginner,
+            Rank::Newcomer,
+            Rank::Novice,
+            Rank::Apprentice,
+            Rank::Journeyman,
+            Rank::Expert,
+            Rank::Master,
+            Rank::MasterElite,
+            Rank::Grandmaster,
+        ];
+
+        let mut mappings = Vec::with_capacity(ranks.len());
+        for rank in ranks {
+            let role_ids = rank.role_ids(db, guild_id).await;
+            mappings.push((rank, role_ids));
+        }
+        mappings
+    }
+
+    /// Find rank from role ID using pre-loaded mappings (no DB calls)
+    pub fn from_role_id_cached(role_id: RoleId, mappings: &[(Rank, Vec<RoleId>)]) -> Option<Rank> {
+        for (rank, role_ids) in mappings {
+            if role_ids.contains(&role_id) {
+                return Some(*rank);
+            }
+        }
+        None
+    }
 }
