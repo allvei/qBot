@@ -12,3 +12,6 @@ bch.md
 AUTO_LEAVE_IMPLEMENTATION.md
 OPTIMIZATION_PLAN.md
 ANNOUNCEMENT_CUSTOMIZATION.md
+trends_api.md
+Cargo.lock
+/.windsurf
