@@ -33,7 +33,7 @@ impl GroupRepository {
         let result = sqlx::query(
             "INSERT INTO groups (guild_id, dashboard, chat, queue, dashboard_msg, red, blu, quota)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             RETURNING id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, quota"
+             RETURNING id, group_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, quota, connect_info"
         )
         .bind(guild_id                    as i64)
         .bind(config.dashboard_channel_id as i64)
@@ -55,7 +55,7 @@ impl GroupRepository {
         let result = sqlx::query("UPDATE groups
                                   SET guild_id = ?, dashboard = ?, chat = ?, red = ?, blu = ?, quota = ?
                                   WHERE queue = ?
-                                  RETURNING id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota"
+                                  RETURNING id, group_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info"
         )
         .bind(guild_id                    as i64)
         .bind(config.dashboard_channel_id as i64)
@@ -97,9 +97,10 @@ impl GroupRepository {
         let blu       = CI::new(blu_id);
         let dashboard = CI::new(dashboard_id);
 
-        let guild_id = result.get::<i64, _>("guild_id") as u64;
-        let group_id = result.try_get::<i64, _>("group_id").unwrap_or(0) as u8;
-        let name     = result.try_get::<Option<String>, _>("name").ok().flatten();
+        let guild_id     = result.get::<i64, _>("guild_id") as u64;
+        let group_id     = result.try_get::<i64, _>("group_id").unwrap_or(0) as u8;
+        let name         = result.try_get::<Option<String>, _>("name").ok().flatten();
+        let connect_info = result.try_get::<Option<String>, _>("connect_info").ok().flatten();
 
         // Load teams from teams table, fallback to single team from groups table
         let teams = match self.get_teams_for_group(guild_id, group_id).await {
@@ -107,7 +108,7 @@ impl GroupRepository {
             _ => vec![TeamChannel::new(red, blu)], // Fallback to groups table red/blu
         };
 
-        let group = Group::new(
+        let mut group = Group::new(
             group_id,
             name,
             result.try_get::<i64, _>("quota")  .unwrap_or(12)  as u8,
@@ -116,6 +117,7 @@ impl GroupRepository {
             Channels::new(chat, queue, teams, dashboard),
             Vec::new(),
         );
+        group.connect_info = connect_info;
 
         Ok(group)
     }
@@ -272,7 +274,7 @@ impl Repository<Group, u8> for GroupRepository {
     }
 
     async fn get_by_id(&self, group_id: u8) -> Result<Group> {
-        let result = sqlx::query("SELECT id, group_id, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota
+        let result = sqlx::query("SELECT id, group_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info
                                   FROM groups WHERE group_id = ?"
         )
         .bind(group_id as i64)
