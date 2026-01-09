@@ -199,6 +199,7 @@ impl DatabaseMigrations {
             sqlx::query(&format!("CREATE TABLE groups (
                     id                INTEGER PRIMARY KEY,
                     group_id          INTEGER DEFAULT 0,
+                    name              TEXT,
                     timeout           INTEGER DEFAULT {DEFAULT_TIMEOUT},
                     guild_id          INTEGER NOT NULL,
                     dashboard         INTEGER NOT NULL,
@@ -209,7 +210,8 @@ impl DatabaseMigrations {
                     blu               INTEGER NOT NULL,
                     game              INTEGER DEFAULT 0,
                     game_increment    INTEGER DEFAULT 0,
-                    quota             INTEGER DEFAULT {DEFAULT_QUOTA}
+                    quota             INTEGER DEFAULT {DEFAULT_QUOTA},
+                    connect_info      TEXT
                 )"
             ))
             .execute(&self.pool)
@@ -224,6 +226,7 @@ impl DatabaseMigrations {
                     "CREATE TABLE groups (
                         id                INTEGER PRIMARY KEY,
                         group_id          INTEGER DEFAULT 0,
+                        name              TEXT,
                         timeout           INTEGER DEFAULT {DEFAULT_TIMEOUT},
                         guild_id          INTEGER NOT NULL,
                         dashboard         INTEGER NOT NULL,
@@ -234,11 +237,26 @@ impl DatabaseMigrations {
                         blu               INTEGER NOT NULL,
                         game              INTEGER DEFAULT 0,
                         game_increment    INTEGER DEFAULT 0,
-                        quota             INTEGER DEFAULT {DEFAULT_QUOTA}
+                        quota             INTEGER DEFAULT {DEFAULT_QUOTA},
+                        connect_info      TEXT
                     )"
                 ))
                 .execute(&self.pool)
                 .await?;
+            }
+
+            // Add name column if missing
+            if !self.check_column("groups", "name").await? {
+                sqlx::query("ALTER TABLE groups ADD COLUMN name TEXT")
+                    .execute(&self.pool)
+                    .await?;
+            }
+
+            // Add connect_info column if missing
+            if !self.check_column("groups", "connect_info").await? {
+                sqlx::query("ALTER TABLE groups ADD COLUMN connect_info TEXT")
+                    .execute(&self.pool)
+                    .await?;
             }
         }
         Ok(())
