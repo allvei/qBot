@@ -610,7 +610,10 @@ impl EventHandler for Handler {
                     }
                 }
                 // Handle modal submissions for server settings
-                if itx.data.custom_id.starts_with("server_settings_modal_") {
+                if itx.data.custom_id.starts_with("server_settings_modal_") 
+                    || itx.data.custom_id.starts_with("server_settings_rank_modal_")
+                    || itx.data.custom_id.starts_with("server_settings_group_modal_") 
+                {
                     let result = handlers::handle_server_settings_modal(&ctx, &itx, &self.db).await;
                     if let Err(e) = result {
                         error!("Error handling server settings modal '{}': {}", itx.data.custom_id, e);

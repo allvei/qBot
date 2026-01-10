@@ -531,8 +531,9 @@ pub struct UserSettings {
 
 impl Default for UserSettings {
     fn default() -> Self {
+        use crate::models::constants::EXPIRY_DEFAULT;
         Self {
-            expiry_duration:              Duration::from_secs(30 * 60), // Default 30 minutes
+            expiry_duration:              EXPIRY_DEFAULT, // 120 minutes
             join_announcement:            false,
             vc_auto_leave:                false,
             vc_auto_join:                 false,

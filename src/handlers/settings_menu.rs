@@ -534,7 +534,7 @@ impl AsSettingsMenu for GroupSettingsDisplay {
         SettingsMenu::new(format!("{name_display} Settings"))
             .field(SettingsField::new("Name", name_display.clone()))
             .field(SettingsField::new("Quota", format!("{} players", self.quota)))
-            .field(SettingsField::new("Timeout", format!("{} minutes", self.timeout)))
+            .field(SettingsField::new("Hot Join Timeout", format!("{} seconds", self.timeout)))
             .field(SettingsField::new("Connect Info", connect_display).inline(false))
             .field(SettingsField::new("Team Balance", self.team_balance_method.as_str()))
             .color(0x5865F2)

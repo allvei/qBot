@@ -8,7 +8,7 @@ use std::time::SystemTime;
 
 use tokio::sync::Mutex;
 use anyhow::{anyhow, Error, Result};
-use crate::{Database as DB, GREEN, Manager, ORANGE, Rank, models::constants::{ACTIVE_ELO_ENABLED_BY_DEFAULT, DEFAULT_TIMEOUT, EXPIRY_MAX, EXPIRY_MIN}};
+use crate::{Database as DB, GREEN, Manager, ORANGE, Rank, models::constants::{ACTIVE_ELO_ENABLED_BY_DEFAULT, DEFAULT_HOT_JOIN_TIMEOUT, EXPIRY_MAX, EXPIRY_MIN}};
 use serde::{Deserialize, Serialize};
 use serenity::{all::{
     ChannelId as CI, Context, CreateEmbed,
@@ -299,7 +299,7 @@ impl Group {
                 use tokio::time::{sleep, Duration};
 
                 // Wait for the deadline
-                sleep(Duration::from_secs(DEFAULT_TIMEOUT as u64)).await;
+                sleep(Duration::from_secs(DEFAULT_HOT_JOIN_TIMEOUT as u64)).await;
 
                 // Check if players have joined, remove those who haven't
                 let mut manager_lock = mgr.lock().await;
@@ -326,7 +326,7 @@ impl Group {
         // Find hot sessions that have timed out
         let hot_sessions: Vec<usize> = self.sessions.iter().enumerate()
             .filter_map(|(idx, s)| {
-                if s.is_hot_timeout(DEFAULT_TIMEOUT as u64) {
+                if s.is_hot_timeout(DEFAULT_HOT_JOIN_TIMEOUT as u64) {
                     Some(idx)
                 } else {
                     None

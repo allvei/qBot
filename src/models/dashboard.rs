@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Error, Result};
 use std::{collections::HashSet, sync::Arc, time::{Duration, SystemTime}};
-use crate::{QueueToggleType, log_queue_toggle, models::constants::DEFAULT_TIMEOUT};
+use crate::{QueueToggleType, log_queue_toggle, models::constants::DEFAULT_HOT_JOIN_TIMEOUT};
 use serenity::{all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
     CreateEmbed as CE, CreateMessage as CM, CreateInteractionResponse as CIR,
@@ -295,7 +295,7 @@ impl Group {
                         if let Some(ready_at) = session.ready_at {
                             if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
                                 let ready_timestamp = duration_since_epoch.as_secs();
-                                let deadline_timestamp = ready_timestamp + DEFAULT_TIMEOUT as u64;
+                                let deadline_timestamp = ready_timestamp + DEFAULT_HOT_JOIN_TIMEOUT as u64;
                                 description.push_str(&format!("Join deadline: <t:{deadline_timestamp}:R>\n"));
                                 description.push_str("Missing players will be removed. Overflow players will take their spots.\n\n");
                             }
@@ -339,7 +339,7 @@ impl Group {
                         if let Some(ready_at) = current_session.ready_at {
                             if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
                                 let ready_timestamp = duration_since_epoch.as_secs();
-                                let deadline_timestamp = ready_timestamp + DEFAULT_TIMEOUT as u64;
+                                let deadline_timestamp = ready_timestamp + DEFAULT_HOT_JOIN_TIMEOUT as u64;
                                 description.push_str(&format!("Join deadline: <t:{deadline_timestamp}:R>\n"));
                                 description.push_str("Missing players will be removed. Overflow players will take their spots.\n\n");
                             }
@@ -951,18 +951,68 @@ impl Group {
 
     /// Handles the end match button - directly ends the match
     async fn dash_end(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
-        // Check if there's an active game to end
-        let has_active_game = self.sessions.iter().any(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live);
+        use serenity::all::CreateMessage;
+        use std::time::SystemTime;
 
-        if !has_active_game {
+        // Check if there's an active game to end
+        let active_session = self.sessions.iter()
+            .find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live);
+
+        if active_session.is_none() {
             cc.reply("No active match to end.").await?;
             return Ok(());
         }
+
+        // Capture match info before pulling
+        let active_session = active_session.unwrap();
+        let match_duration = active_session.started_at
+            .and_then(|started| SystemTime::now().duration_since(started).ok())
+            .map(|d| d.as_secs());
+        let quota = self.quota as usize;
+        let (team_red, team_blu) = get_sorted_teams(&active_session.pool, quota);
+
+        // Build match summary embed
+        let mut embed = CE::new()
+            .title("Match Ended")
+            .color(0x5865F2);
+
+        // Format duration
+        if let Some(secs) = match_duration {
+            let mins = secs / 60;
+            let remaining_secs = secs % 60;
+            embed = embed.field("Duration", format!("{}m {}s", mins, remaining_secs), true);
+        }
+
+        // Format teams with players and ELO
+        let format_team = |team: &[crate::models::SessionPlayer]| -> String {
+            if team.is_empty() {
+                return "*No players*".to_string();
+            }
+            team.iter()
+                .map(|p| format!("<@{}> ({})", p.player.user_id, p.player.elo))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let red_avg_elo: u16 = if team_red.is_empty() { 0 } else {
+            (team_red.iter().map(|p| p.player.elo as u32).sum::<u32>() / team_red.len() as u32) as u16
+        };
+        let blu_avg_elo: u16 = if team_blu.is_empty() { 0 } else {
+            (team_blu.iter().map(|p| p.player.elo as u32).sum::<u32>() / team_blu.len() as u32) as u16
+        };
+
+        embed = embed
+            .field(format!("RED (avg {})", red_avg_elo), format_team(&team_red), true)
+            .field(format!("BLU (avg {})", blu_avg_elo), format_team(&team_blu), true);
 
         // Defer update now that we're going to end the match
         cc.defer_update().await?;
 
         let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+
+        // Post match summary to queue chat
+        let queue_chat = self.channels.queue_chat;
+        let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
 
         // Move players back to queue channel (Hot/Live → Pull → Idle)
         match self.pull(cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await {

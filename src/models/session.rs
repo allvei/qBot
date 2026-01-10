@@ -12,10 +12,12 @@ use crate::models::Player;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
-    pub status:   SessionStatus,
-    pub pool:     Vec<SessionPlayer>,
+    pub status:     SessionStatus,
+    pub pool:       Vec<SessionPlayer>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ready_at: Option<SystemTime>,
+    pub ready_at:   Option<SystemTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<SystemTime>,
 }
 
 impl Session {
@@ -51,6 +53,7 @@ impl Session {
             status,
             pool,
             ready_at: None,
+            started_at: None,
         }
     }
 
@@ -71,8 +74,9 @@ impl Session {
 
     /// Set the session to idle and clear team assignments
     pub fn idle(&mut self) {
-        self.status   = SessionStatus::Idle;
-        self.ready_at = None;
+        self.status     = SessionStatus::Idle;
+        self.ready_at   = None;
+        self.started_at = None;
         // Clear team assignments and VC join tracking when going back to idle
         for player in &mut self.pool {
             player.team = None;
@@ -93,8 +97,11 @@ impl Session {
     /// Set the session to push
     pub fn push(&mut self) {self.status = SessionStatus::Push;}
 
-    /// Set the session to live
-    pub fn live(&mut self) {self.status = SessionStatus::Live;}
+    /// Set the session to live and record start time
+    pub fn live(&mut self) {
+        self.status = SessionStatus::Live;
+        self.started_at = Some(SystemTime::now());
+    }
 
     /// Set the session to pull
     pub fn pull(&mut self) {self.status = SessionStatus::Pull;}
@@ -102,9 +109,10 @@ impl Session {
     /// Create an empty session
     pub fn empty() -> Self {
         Self {
-            status:   SessionStatus::Idle,
-            pool:     Vec::new(),
-            ready_at: None,
+            status:     SessionStatus::Idle,
+            pool:       Vec::new(),
+            ready_at:   None,
+            started_at: None,
         }
     }
 

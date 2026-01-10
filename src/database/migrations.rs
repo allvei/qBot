@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sqlx::{Row, SqlitePool};
 
-use crate::DEFAULT_TIMEOUT;
+use crate::DEFAULT_HOT_JOIN_TIMEOUT;
 
 /// Adds a column to a table if it doesn't exist
 /// 
@@ -202,7 +202,7 @@ impl DatabaseMigrations {
                     id                INTEGER PRIMARY KEY,
                     group_id          INTEGER DEFAULT 0,
                     name              TEXT,
-                    timeout           INTEGER DEFAULT {DEFAULT_TIMEOUT},
+                    timeout           INTEGER DEFAULT {DEFAULT_HOT_JOIN_TIMEOUT},
                     guild_id          INTEGER NOT NULL,
                     dashboard         INTEGER NOT NULL,
                     chat              INTEGER NOT NULL,
@@ -229,7 +229,7 @@ impl DatabaseMigrations {
                         id                INTEGER PRIMARY KEY,
                         group_id          INTEGER DEFAULT 0,
                         name              TEXT,
-                        timeout           INTEGER DEFAULT {DEFAULT_TIMEOUT},
+                        timeout           INTEGER DEFAULT {DEFAULT_HOT_JOIN_TIMEOUT},
                         guild_id          INTEGER NOT NULL,
                         dashboard         INTEGER NOT NULL,
                         chat              INTEGER NOT NULL,

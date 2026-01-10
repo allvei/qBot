@@ -214,12 +214,24 @@ impl RankRepository {
 
     /// Add a new rank at a position (shifts existing ranks up)
     pub async fn add_rank(&self, guild_id: u64, position: u8, name: &str, elo: u16) -> Result<()> {
-        // Shift existing ranks at or above this position up by 1
-        sqlx::query("UPDATE ranks SET position = position + 1 WHERE guild_id = ? AND position >= ?")
+        // Get all positions that need to shift (in descending order)
+        let positions: Vec<i64> = sqlx::query_scalar(
+            "SELECT position FROM ranks WHERE guild_id = ? AND position >= ? ORDER BY position DESC"
+        )
             .bind(guild_id as i64)
             .bind(position as i64)
-            .execute(&self.pool)
+            .fetch_all(&self.pool)
             .await?;
+
+        // Shift each position up by 1, starting from highest to avoid UNIQUE conflicts
+        for pos in positions {
+            sqlx::query("UPDATE ranks SET position = ? WHERE guild_id = ? AND position = ?")
+                .bind(pos + 1)
+                .bind(guild_id as i64)
+                .bind(pos)
+                .execute(&self.pool)
+                .await?;
+        }
 
         // Insert new rank
         sqlx::query("INSERT INTO ranks (guild_id, position, name, elo) VALUES (?, ?, ?, ?)")

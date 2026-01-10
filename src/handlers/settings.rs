@@ -1156,7 +1156,7 @@ pub async fn handle_server_settings_button(
                         group_id: 0,
                         name: None,
                         quota: crate::DEFAULT_QUOTA,
-                        timeout: crate::DEFAULT_TIMEOUT,
+                        timeout: crate::DEFAULT_HOT_JOIN_TIMEOUT,
                         dashboard_msg: MessageId::new(1),
                         channels: Channels {
                             queue_chat: queue_channel,
@@ -1280,12 +1280,12 @@ pub async fn handle_server_settings_button(
                                             .max_length(3)
                                     ),
                                     CreateActionRow::InputText(
-                                        CreateInputText::new(InputTextStyle::Short, "Timeout (minutes)", "timeout")
-                                            .placeholder("Minutes before auto-removal")
+                                        CreateInputText::new(InputTextStyle::Short, "Hot Join Timeout (seconds)", "timeout")
+                                            .placeholder("Seconds for missing players to join VC")
                                             .value(group.timeout.to_string())
                                             .required(true)
                                             .min_length(1)
-                                            .max_length(4)
+                                            .max_length(3)
                                     ),
                                     CreateActionRow::InputText(
                                         CreateInputText::new(InputTextStyle::Paragraph, "Connect Info", "connect")
@@ -1808,15 +1808,15 @@ pub async fn handle_group_settings_button(
         let response = CIR::Modal(modal);
         interaction.create_response(&ctx.http, response).await?;
     } else if button_id.starts_with("group_settings_edit_timeout_") {
-        let modal = CreateModal::new(format!("group_settings_modal_timeout_{group_id}"), "Set Timeout")
+        let modal = CreateModal::new(format!("group_settings_modal_timeout_{group_id}"), "Set Hot Join Timeout")
             .components(vec![
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Short, "Timeout (minutes)", "timeout")
-                        .placeholder("Minutes before auto-removal from queue")
+                    CreateInputText::new(InputTextStyle::Short, "Timeout (seconds)", "timeout")
+                        .placeholder("Seconds for missing players to join VC when queue goes hot")
                         .value(settings.timeout.to_string())
                         .required(true)
                         .min_length(1)
-                        .max_length(4)
+                        .max_length(3)
                 ),
             ]);
 
@@ -1942,13 +1942,8 @@ pub async fn handle_group_settings_modal(
             Some(name_str.trim().to_string())
         };
 
-        // Update in-memory
+        // Update in-memory and build settings while holding lock
         group.name = name.clone();
-
-        // Update in database
-        db.groups.update_name(guild_id.get(), group.group_id, name.as_deref()).await?;
-
-        // Get updated settings and refresh the menu
         let settings = GroupSettings {
             group_id:            group.group_id,
             name:                group.name.clone(),
@@ -1957,6 +1952,10 @@ pub async fn handle_group_settings_modal(
             connect_info:        group.connect_info.clone(),
             team_balance_method: group.team_balance_method,
         };
+        drop(manager_lock);
+
+        // Update in database (after releasing lock)
+        db.groups.update_name(guild_id.get(), group_id, name.as_deref()).await?;
 
         let embed = build_group_settings_embed(&settings);
         let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);

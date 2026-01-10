@@ -1655,7 +1655,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
         group_id: 0,
         name: None,
         quota: crate::DEFAULT_QUOTA,
-        timeout: crate::DEFAULT_TIMEOUT,
+        timeout: crate::DEFAULT_HOT_JOIN_TIMEOUT,
         dashboard_msg: MessageId::new(1),
         channels: Channels {
             queue_chat: queue_channel,
