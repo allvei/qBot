@@ -31,37 +31,49 @@ async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI) -> Option<Membe
 pub async fn get_player_rank(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<Rank> {
     let member = get_member_cached(ctx, guild_id, user_id).await?;
 
-    // Load rank mappings once for this guild
+    // Load rank mappings once for this guild (ordered by position, low to high)
     let mappings = Rank::load_rank_mappings(db, guild_id.get()).await;
 
-    // Find highest rank among member's roles
-    let mut highest_rank: Option<Rank> = None;
+    // Collect all matching ranks for this member
+    let mut matched_ranks: Vec<Rank> = Vec::new();
     for role_id in &member.roles {
         if let Some(rank) = Rank::from_role_id_cached(*role_id, &mappings) {
-            highest_rank = match highest_rank {
-                Some(current) if rank.default_rank_elo() > current.default_rank_elo() => Some(rank),
-                Some(current) => Some(current),
-                None => Some(rank),
-            };
+            matched_ranks.push(rank);
         }
     }
 
-    highest_rank
+    if matched_ranks.len() > 1 {
+        warn!(
+            "User {} has multiple rank roles: {:?}",
+            member.user.name,
+            matched_ranks.iter().map(|r| r.name()).collect::<Vec<_>>()
+        );
+    }
+
+    // Return highest rank (highest position = highest rank)
+    matched_ranks.into_iter().max_by_key(|r| r.position())
 }
 
 /// Get player's rank from their Discord roles using pre-loaded mappings (no DB calls)
 pub fn get_player_rank_cached(member: &Member, mappings: &[(Rank, Vec<serenity::all::RoleId>)]) -> Option<Rank> {
-    let mut highest_rank: Option<Rank> = None;
+    // Collect all matching ranks for this member
+    let mut matched_ranks: Vec<Rank> = Vec::new();
     for role_id in &member.roles {
         if let Some(rank) = Rank::from_role_id_cached(*role_id, mappings) {
-            highest_rank = match highest_rank {
-                Some(current) if rank.default_rank_elo() > current.default_rank_elo() => Some(rank),
-                Some(current) => Some(current),
-                None => Some(rank),
-            };
+            matched_ranks.push(rank);
         }
     }
-    highest_rank
+
+    if matched_ranks.len() > 1 {
+        warn!(
+            "User {} has multiple rank roles: {:?}",
+            member.user.name,
+            matched_ranks.iter().map(|r| r.name()).collect::<Vec<_>>()
+        );
+    }
+
+    // Return highest rank (highest position = highest rank)
+    matched_ranks.into_iter().max_by_key(|r| r.position())
 }
 
 /// Get or assign player rank - creates ranks if needed and assigns default rank if player has no rank
@@ -209,21 +221,20 @@ pub async fn validate_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec
                 .collect();
 
             if !matching_roles.is_empty() {
-                // Found one or more roles matching this rank! Auto-save all of them to config
-                let role_ids: Vec<String> = matching_roles.iter()
+                // Found one or more roles matching this rank! Auto-save all of them to ranks table
+                let role_ids: Vec<serenity::all::RoleId> = matching_roles.iter()
                     .map(|r| {
-                        info!("Found existing role '{}' matching {}, saving to config",
+                        info!("Found existing role '{}' matching {}, saving to ranks table",
                             r.name, rank.name());
-                        r.id.get().to_string()
+                        r.id
                     })
                     .collect();
 
-                // Save all role IDs as comma-separated list to the database config
-                let role_ids_str = role_ids.join(",");
-                if let Err(e) = db.config.set_config(rank.config_key(), &role_ids_str, guild_id.get()).await {
-                    warn!("Failed to save found roles for {} to config: {}", rank.name(), e);
+                // Save role IDs to the ranks table
+                if let Err(e) = db.ranks.update_rank_role_ids(guild_id.get(), rank.position(), &role_ids).await {
+                    warn!("Failed to save found roles for {} to ranks: {}", rank.name(), e);
                 } else {
-                    info!("Saved {} role IDs to config ({}): {}", rank.name(), matching_roles.len(), role_ids_str);
+                    info!("Saved {} role IDs to ranks table ({})", rank.name(), matching_roles.len());
                 }
             } else {
                 // No roles exist by ID or name match
@@ -239,10 +250,8 @@ pub async fn validate_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec
 pub async fn create_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec<String>> {
     use serenity::all::Colour;
     use serenity::builder::EditRole;
-    use std::collections::HashMap;
 
     let mut created_roles = Vec::new();
-    let mut rank_id_map: HashMap<&str, Vec<u64>> = HashMap::new();
 
     // Get all guild roles to check which are missing
     let guild_roles = ctx.http.get_guild_roles(guild_id).await?;
@@ -321,23 +330,17 @@ pub async fn create_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec<S
             role_ids_for_rank = existing_ids.iter().map(|id| id.get()).collect();
         }
 
-        // Store role IDs for this rank if any exist
+        // Save role IDs for this rank to the ranks table
         if !role_ids_for_rank.is_empty() {
-            rank_id_map.insert(rank.config_key(), role_ids_for_rank);
-        }
-    }
-
-    // Save all rank role IDs to database config
-    for (config_key, role_ids) in rank_id_map {
-        let role_ids_str = role_ids.iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-        if let Err(e) = db.config.set_config(config_key, &role_ids_str, guild_id.get()).await {
-            warn!("[{}] Failed to save rank config {}: {}", guild_name, config_key, e);
-        } else {
-            info!("[{}] Saved rank {}: {}", guild_name, config_key, role_ids_str);
+            let role_ids: Vec<serenity::all::RoleId> = role_ids_for_rank.iter()
+                .map(|id| serenity::all::RoleId::new(*id))
+                .collect();
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+            if let Err(e) = db.ranks.update_rank_role_ids(guild_id.get(), rank.position(), &role_ids).await {
+                warn!("[{}] Failed to save rank {}: {}", guild_name, rank.name(), e);
+            } else {
+                info!("[{}] Saved rank {} role IDs", guild_name, rank.name());
+            }
         }
     }
 

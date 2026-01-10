@@ -191,35 +191,47 @@ pub enum Rank {
 
 #[allow(non_snake_case, unreachable_patterns)]
 impl Rank {
-    /// Get config key for this rank's role IDs
-    pub fn config_key(&self) -> &'static str {
+    /// Get position index (0-8) for this rank
+    pub fn position(&self) -> u8 {
         match self {
-            Rank::Beginner    => "rank_beginner_roles",
-            Rank::Newcomer    => "rank_newcomer_roles",
-            Rank::Novice      => "rank_novice_roles",
-            Rank::Apprentice  => "rank_apprentice_roles",
-            Rank::Journeyman  => "rank_journeyman_roles",
-            Rank::Expert      => "rank_expert_roles",
-            Rank::Master      => "rank_master_roles",
-            Rank::MasterElite => "rank_master_elite_roles",
-            Rank::Grandmaster => "rank_grandmaster_roles",
+            Rank::Beginner    => 0,
+            Rank::Newcomer    => 1,
+            Rank::Novice      => 2,
+            Rank::Apprentice  => 3,
+            Rank::Journeyman  => 4,
+            Rank::Expert      => 5,
+            Rank::Master      => 6,
+            Rank::MasterElite => 7,
+            Rank::Grandmaster => 8,
         }
     }
 
-    /// Get all Discord role IDs that map to this rank from config
-    /// Format: comma-separated role IDs, e.g., "1234567890,9876543210"
-    /// Returns empty vector if no config is set (roles need to be created)
+    /// Create rank from position index
+    pub fn from_position(position: u8) -> Option<Rank> {
+        match position {
+            0 => Some(Rank::Beginner),
+            1 => Some(Rank::Newcomer),
+            2 => Some(Rank::Novice),
+            3 => Some(Rank::Apprentice),
+            4 => Some(Rank::Journeyman),
+            5 => Some(Rank::Expert),
+            6 => Some(Rank::Master),
+            7 => Some(Rank::MasterElite),
+            8 => Some(Rank::Grandmaster),
+            _ => None,
+        }
+    }
+
+    /// Get all Discord role IDs that map to this rank from ranks table
     pub async fn role_ids(&self, db: &Database, guild_id: u64) -> Vec<RoleId> {
-        if let Ok(Some(value)) = db.config.get_config_value(self.config_key(), guild_id).await {
-            value.split(',')
-                .filter_map(|s| s.trim().parse::<u64>().ok())
-                .map(RoleId::new)
-                .collect()
+        if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id, self.position()).await {
+            guild_rank.role_ids
         } else {
             Vec::new()
         }
     }
 
+    /// Get default name for this rank (fallback when DB not available)
     pub fn name(&self) -> &'static str {
         match self {
             Rank::Beginner    => "Beginner",
@@ -231,6 +243,15 @@ impl Rank {
             Rank::Master      => "Master",
             Rank::MasterElite => "Master Elite",
             Rank::Grandmaster => "Grandmaster",
+        }
+    }
+
+    /// Get configurable name from DB, falling back to default
+    pub async fn name_from_db(&self, db: &Database, guild_id: u64) -> String {
+        if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id, self.position()).await {
+            guild_rank.name
+        } else {
+            self.name().to_string()
         }
     }
 
@@ -249,21 +270,7 @@ impl Rank {
         }
     }
 
-    pub fn elo(&self) -> u32 {
-        match self {
-            Rank::Beginner    => 10,
-            Rank::Newcomer    => 30,
-            Rank::Novice      => 40,
-            Rank::Apprentice  => 50,
-            Rank::Journeyman  => 65,
-            Rank::Expert      => 75,
-            Rank::Master      => 85,
-            Rank::MasterElite => 90,
-            Rank::Grandmaster => 95,
-        }
-    }
-
-    /// Get default ELO for this rank (renamed from elo for clarity)
+    /// Get default ELO for this rank (fallback when DB not available)
     pub fn default_rank_elo(&self) -> Elo {
         match self {
             Rank::Beginner    => 10,
@@ -293,37 +300,17 @@ impl Rank {
         }
     }
 
-    /// Determine rank from ELO value using simple comparison with config
+    /// Determine rank from ELO value using guild-configured values
     pub async fn from_elo(elo: Elo, db: &Database, guild_id: u64) -> Rank {
-        // Check each rank in order - if ELO >= rank_elo and < next_rank_elo, that's the rank
-        for rank in [
-            Rank::Beginner,
-            Rank::Newcomer,
-            Rank::Novice,
-            Rank::Apprentice,
-            Rank::Journeyman,
-            Rank::Expert,
-            Rank::Master,
-            Rank::MasterElite,
-        ] {
-            let current_elo = rank.elo_from_config(db, guild_id).await as Elo;
-            let next_elo = match rank.next_rank() {
-                Some(next_rank) => next_rank.elo_from_config(db, guild_id).await as Elo,
-                None => 101, // Grandmaster max is 100, use 101 as upper bound
-            };
-            
-            if elo >= current_elo && elo < next_elo {
-                return rank;
-            }
+        if let Ok(Some(guild_rank)) = db.ranks.rank_from_elo(guild_id, elo).await {
+            Rank::from_position(guild_rank.position).unwrap_or(Rank::Journeyman)
+        } else {
+            Rank::from_elo_default(elo)
         }
-        
-        // If ELO is >= Grandmaster (95) or above max (100), return Grandmaster
-        Rank::Grandmaster
     }
 
     /// Determine rank from ELO value using default values (fallback)
     pub fn from_elo_default(elo: Elo) -> Rank {
-        // Check each rank in order - if ELO >= rank_elo and < next_rank_elo, that's the rank
         for rank in [
             Rank::Beginner,
             Rank::Newcomer,
@@ -335,94 +322,47 @@ impl Rank {
             Rank::MasterElite,
         ] {
             let current_elo = rank.default_rank_elo();
-            let next_elo = rank.next_rank().map(|r| r.default_rank_elo()).unwrap_or(101); // Grandmaster max is 100, use 101 as upper bound
+            let next_elo = rank.next_rank().map(|r| r.default_rank_elo()).unwrap_or(101);
             
             if elo >= current_elo && elo < next_elo {
                 return rank;
             }
         }
-        
-        // If ELO is >= Grandmaster (95) or above max (100), return Grandmaster
         Rank::Grandmaster
     }
 
-    /// Get ELO value from config, falling back to default if not set
-    pub async fn elo_from_config(&self, db: &Database, guild_id: u64) -> u32 {
-        let config_key = format!("rank_{}_elo", self.name().to_lowercase().replace(" ", "_"));
-
-        if let Ok(Some(value)) = db.config.get_config_value(&config_key, guild_id).await {
-            if let Ok(elo) = value.parse::<u32>() {
-                return elo;
-            }
+    /// Get ELO value from DB, falling back to default if not set
+    pub async fn elo_from_db(&self, db: &Database, guild_id: u64) -> Elo {
+        if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id, self.position()).await {
+            guild_rank.elo
+        } else {
+            self.default_rank_elo()
         }
-
-        // Fall back to default ELO
-        self.elo()
     }
 
-    /// Convert a Discord RoleId to a Rank enum using guild config
-    /// Supports multiple Discord roles mapping to the same rank (EU/NA/Retired variants)
+    /// Convert a Discord RoleId to a Rank enum using guild ranks table
     pub async fn from_role_id(role_id: RoleId, db: &Database, guild_id: u64) -> Result<Rank, Error> {
-        // Check each rank's role IDs
-        for rank in [
-            Rank::Beginner,
-            Rank::Newcomer,
-            Rank::Novice,
-            Rank::Apprentice,
-            Rank::Journeyman,
-            Rank::Expert,
-            Rank::Master,
-            Rank::MasterElite,
-            Rank::Grandmaster,
-        ] {
-            if rank.role_ids(db, guild_id).await.contains(&role_id) {
+        if let Ok(Some(guild_rank)) = db.ranks.rank_from_role_id(guild_id, role_id).await {
+            if let Some(rank) = Rank::from_position(guild_rank.position) {
                 return Ok(rank);
             }
         }
-
         Err(anyhow!("Role ID not found in any rank"))
     }
 
-    /// Get all rank role IDs from config (including all regional and retired variants)
+    /// Get all rank role IDs from DB
     pub async fn all_role_ids(db: &Database, guild_id: u64) -> Vec<RoleId> {
-        let mut all_ids = Vec::new();
-        for rank in [
-            Rank::Beginner,
-            Rank::Newcomer,
-            Rank::Novice,
-            Rank::Apprentice,
-            Rank::Journeyman,
-            Rank::Expert,
-            Rank::Master,
-            Rank::MasterElite,
-            Rank::Grandmaster,
-        ] {
-            all_ids.extend(rank.role_ids(db, guild_id).await);
-        }
-        all_ids
+        db.ranks.all_role_ids(guild_id).await.unwrap_or_default()
     }
 
     /// Load all rank-to-role mappings for a guild in a single pass.
-    /// Returns a Vec of (Rank, Vec<RoleId>) pairs for efficient lookups.
     pub async fn load_rank_mappings(db: &Database, guild_id: u64) -> Vec<(Rank, Vec<RoleId>)> {
-        let ranks = [
-            Rank::Beginner,
-            Rank::Newcomer,
-            Rank::Novice,
-            Rank::Apprentice,
-            Rank::Journeyman,
-            Rank::Expert,
-            Rank::Master,
-            Rank::MasterElite,
-            Rank::Grandmaster,
-        ];
-
-        let mut mappings = Vec::with_capacity(ranks.len());
-        for rank in ranks {
-            let role_ids = rank.role_ids(db, guild_id).await;
-            mappings.push((rank, role_ids));
-        }
-        mappings
+        let guild_ranks = db.ranks.get_or_init_ranks(guild_id).await.unwrap_or_default();
+        guild_ranks.into_iter()
+            .filter_map(|gr| {
+                Rank::from_position(gr.position).map(|rank| (rank, gr.role_ids))
+            })
+            .collect()
     }
 
     /// Find rank from role ID using pre-loaded mappings (no DB calls)
