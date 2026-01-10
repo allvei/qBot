@@ -78,8 +78,8 @@ impl EloRepository {
         Ok(result.get("id"))
     }
 
-    /// Get a player's ELO for a specific guild
-    pub async fn get(&self, user_id: UI, guild_id: u64) -> Result<GuildElo> {
+    /// Get a player's ELO for a specific guild (returns None if no record exists)
+    pub async fn get_if_exists(&self, user_id: UI, guild_id: u64) -> Result<Option<GuildElo>> {
         let guild_idx = self.get_or_create_guild_idx(guild_id).await?;
         let user_idx = self.get_or_create_user_idx(user_id).await?;
 
@@ -98,18 +98,20 @@ impl EloRepository {
                 let games: i64 = row.get("games");
                 let wins: i64 = row.get("wins");
 
-                Ok(GuildElo {
+                Ok(Some(GuildElo {
                     elo:      elo as u16,
                     division: Self::parse_division(&division_str),
                     games:    games as u32,
                     wins:     wins as u32,
-                })
+                }))
             }
-            None => {
-                // No ELO record for this guild yet, return default
-                Ok(GuildElo::default())
-            }
+            None => Ok(None),
         }
+    }
+
+    /// Get a player's ELO for a specific guild (returns default if no record)
+    pub async fn get(&self, user_id: UI, guild_id: u64) -> Result<GuildElo> {
+        Ok(self.get_if_exists(user_id, guild_id).await?.unwrap_or_default())
     }
 
     /// Set a player's ELO for a specific guild (creates if not exists)

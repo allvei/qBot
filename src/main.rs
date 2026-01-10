@@ -873,44 +873,40 @@ impl EventHandler for Handler {
                                             }
                                         };
 
-                                        // Get guild-specific ELO (region-specific)
-                                        let guild_elo = self.db.elos.get(user_id, server.get()).await.unwrap_or_default();
+                                        // Get guild-specific ELO if exists
+                                        let existing_elo = self.db.elos.get_if_exists(user_id, server.get()).await.ok().flatten();
                                         
-                                        // Determine the valid ELO range for the Discord rank
-                                        let rank_min_elo = discord_rank.default_rank_elo();
+                                        // Get the valid ELO range for the Discord rank
+                                        let rank_min_elo = discord_rank.elo_from_db(&self.db, server.get()).await;
                                         let rank_max_elo = discord_rank.next_rank()
                                             .map(|r| r.default_rank_elo())
                                             .unwrap_or(101);
                                         
-                                        if guild_elo.games == 0 {
-                                            // New player in this guild - use Discord rank's default ELO
-                                            info!("DEBUG: Voice join - New player {} in guild, setting ELO to {} from Discord rank {}", 
-                                                  user_id, rank_min_elo, discord_rank.name());
-                                            player.elo = rank_min_elo;
-                                            player.rank = discord_rank;
-                                            
-                                            // Initialize guild-specific ELO
-                                            if let Err(e) = self.db.elos.set(user_id, server.get(), player.elo, player.rank).await {
-                                                warn!("Failed to initialize guild ELO: {}", e);
-                                            }
-                                        } else if guild_elo.elo < rank_min_elo || guild_elo.elo >= rank_max_elo {
-                                            // ELO is outside the Discord rank's range - shift to match rank
-                                            info!("DEBUG: Voice join - Player {} ELO {} outside rank {} range [{}, {}), shifting to {}", 
-                                                  user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo, rank_min_elo);
-                                            player.elo = rank_min_elo;
-                                            player.rank = discord_rank;
-                                            
-                                            // Update guild-specific ELO
-                                            if let Err(e) = self.db.elos.set(user_id, server.get(), player.elo, player.rank).await {
-                                                warn!("Failed to update guild ELO: {}", e);
+                                        if let Some(guild_elo) = existing_elo {
+                                            if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
+                                                // ELO is within the Discord rank's range - keep it
+                                                info!("Voice join - Player {} ELO {} within {} range [{}, {}), keeping", 
+                                                      user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo);
+                                                player.elo = guild_elo.elo;
+                                            } else {
+                                                // ELO is outside the Discord rank's range - reset to rank default
+                                                info!("Voice join - Player {} ELO {} outside {} range [{}, {}), resetting to {}", 
+                                                      user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo, rank_min_elo);
+                                                player.elo = rank_min_elo;
+                                                if let Err(e) = self.db.elos.set(user_id, server.get(), player.elo, discord_rank).await {
+                                                    warn!("Failed to update guild ELO: {}", e);
+                                                }
                                             }
                                         } else {
-                                            // ELO is within the Discord rank's range - keep it
-                                            info!("DEBUG: Voice join - Player {} ELO {} within rank {} range [{}, {}), keeping", 
-                                                  user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo);
-                                            player.elo = guild_elo.elo;
-                                            player.rank = discord_rank;
+                                            // No ELO record - new player, use Discord rank's default ELO
+                                            info!("Voice join - New player {} in guild, setting ELO to {} from Discord rank {}", 
+                                                  user_id, rank_min_elo, discord_rank.name());
+                                            player.elo = rank_min_elo;
+                                            if let Err(e) = self.db.elos.set(user_id, server.get(), player.elo, discord_rank).await {
+                                                warn!("Failed to initialize guild ELO: {}", e);
+                                            }
                                         }
+                                        player.rank = discord_rank;
                                         
                                         // Use queue_player_with_vc_status to set in_queue_vc BEFORE quota check/notification
                                         let queue_ctx = pf_pug_bot::models::server::QueueContext {

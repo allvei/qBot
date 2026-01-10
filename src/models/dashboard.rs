@@ -651,44 +651,40 @@ impl Group {
                         Err(_) => cc.db.new_user(user_id, cc.ctx).await?,
                     };
 
-                    // Get guild-specific ELO (region-specific)
-                    let guild_elo = cc.db.elos.get(user_id, guild_id.get()).await.unwrap_or_default();
+                    // Get guild-specific ELO if exists
+                    let existing_elo = cc.db.elos.get_if_exists(user_id, guild_id.get()).await.ok().flatten();
                     
-                    // Determine the valid ELO range for the Discord rank
-                    let rank_min_elo = discord_rank.default_rank_elo();
+                    // Get the valid ELO range for the player's Discord rank
+                    let rank_min_elo = discord_rank.elo_from_db(&cc.db, guild_id.get()).await;
                     let rank_max_elo = discord_rank.next_rank()
                         .map(|r| r.default_rank_elo())
                         .unwrap_or(101);
                     
-                    if guild_elo.games == 0 {
-                        // New player in this guild - use Discord rank's default ELO
-                        info!("DEBUG: Dashboard - New player {} in guild, setting ELO to {} from Discord rank {}", 
-                              user_id, rank_min_elo, discord_rank.name());
-                        player.elo = rank_min_elo;
-                        player.rank = discord_rank;
-                        
-                        // Initialize guild-specific ELO
-                        if let Err(e) = cc.db.elos.set(user_id, guild_id.get(), player.elo, player.rank).await {
-                            warn!("Failed to initialize guild ELO: {}", e);
-                        }
-                    } else if guild_elo.elo < rank_min_elo || guild_elo.elo >= rank_max_elo {
-                        // ELO is outside the Discord rank's range - shift to match rank
-                        info!("DEBUG: Dashboard - Player {} ELO {} outside rank {} range [{}, {}), shifting to {}", 
-                              user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo, rank_min_elo);
-                        player.elo = rank_min_elo;
-                        player.rank = discord_rank;
-                        
-                        // Update guild-specific ELO
-                        if let Err(e) = cc.db.elos.set(user_id, guild_id.get(), player.elo, player.rank).await {
-                            warn!("Failed to update guild ELO: {}", e);
+                    if let Some(guild_elo) = existing_elo {
+                        if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
+                            // ELO is within the Discord rank's range - keep it
+                            info!("Player {} ELO {} within {} range [{}, {}), keeping", 
+                                  user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo);
+                            player.elo = guild_elo.elo;
+                        } else {
+                            // ELO is outside the Discord rank's range - reset to rank default
+                            info!("Player {} ELO {} outside {} range [{}, {}), resetting to {}", 
+                                  user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo, rank_min_elo);
+                            player.elo = rank_min_elo;
+                            if let Err(e) = cc.db.elos.set(user_id, guild_id.get(), player.elo, discord_rank).await {
+                                warn!("Failed to update guild ELO: {}", e);
+                            }
                         }
                     } else {
-                        // ELO is within the Discord rank's range - keep it
-                        info!("DEBUG: Dashboard - Player {} ELO {} within rank {} range [{}, {}), keeping", 
-                              user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo);
-                        player.elo = guild_elo.elo;
-                        player.rank = discord_rank;
+                        // No ELO record - new player, use Discord rank's default ELO
+                        info!("New player {} in guild, setting ELO to {} from Discord rank {}", 
+                              user_id, rank_min_elo, discord_rank.name());
+                        player.elo = rank_min_elo;
+                        if let Err(e) = cc.db.elos.set(user_id, guild_id.get(), player.elo, discord_rank).await {
+                            warn!("Failed to initialize guild ELO: {}", e);
+                        }
                     }
+                    player.rank = discord_rank;
 
                     // Fetch discord tag from component user for performance (avoid extra API call)
                     player.tag = cc.component.user.tag();

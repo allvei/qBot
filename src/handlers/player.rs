@@ -28,30 +28,47 @@ async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI) -> Option<Membe
 }
 
 /// Get player's rank from their Discord roles
+/// If player has multiple rank roles, removes the lower ones and keeps the highest
 pub async fn get_player_rank(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<Rank> {
     let member = get_member_cached(ctx, guild_id, user_id).await?;
 
     // Load rank mappings once for this guild (ordered by position, low to high)
     let mappings = Rank::load_rank_mappings(db, guild_id.get()).await;
 
-    // Collect all matching ranks for this member
-    let mut matched_ranks: Vec<Rank> = Vec::new();
+    // Collect all matching ranks and their role IDs for this member
+    let mut matched: Vec<(Rank, serenity::all::RoleId)> = Vec::new();
     for role_id in &member.roles {
         if let Some(rank) = Rank::from_role_id_cached(*role_id, &mappings) {
-            matched_ranks.push(rank);
+            matched.push((rank, *role_id));
         }
     }
 
-    if matched_ranks.len() > 1 {
+    if matched.len() > 1 {
+        // Sort by position (highest first)
+        matched.sort_by(|a, b| b.0.position().cmp(&a.0.position()));
+        
+        let highest_rank = matched[0].0;
         warn!(
-            "User {} has multiple rank roles: {:?}",
+            "User {} has multiple rank roles: {:?}, keeping {} and removing lower ranks",
             member.user.name,
-            matched_ranks.iter().map(|r| r.name()).collect::<Vec<_>>()
+            matched.iter().map(|(r, _)| r.name()).collect::<Vec<_>>(),
+            highest_rank.name()
         );
+        
+        // Remove all lower rank roles (skip the first/highest one)
+        for (rank, role_id) in matched.iter().skip(1) {
+            if let Err(e) = member.remove_role(&ctx.http, role_id).await {
+                warn!("Failed to remove {} role from {}: {}", rank.name(), member.user.name, e);
+            } else {
+                info!("Removed duplicate lower rank {} from {}", rank.name(), member.user.name);
+            }
+        }
+        
+        return Some(highest_rank);
     }
 
-    // Return highest rank (highest position = highest rank)
-    matched_ranks.into_iter().max_by_key(|r| r.position())
+    // Return the single rank if found
+    matched.into_iter().next().map(|(rank, _)| rank)
 }
 
 /// Get player's rank from their Discord roles using pre-loaded mappings (no DB calls)
