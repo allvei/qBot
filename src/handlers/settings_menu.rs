@@ -215,13 +215,13 @@ impl AsSettingsMenu for crate::database::repositories::UserSettings {
         SettingsMenu::new("qBot preferences")
             .description(timeout_desc)
             .color(self.announcement_color as u32)
-            .footer("VC Kick - kicks you from the voice channel when you leave the queue.")
-            .row(SettingsRow::Buttons(vec![
-                SettingsButton::toggle("settings_toggle_dm", "DM alerts", self.dm_alerts),
-                SettingsButton::toggle("settings_vc_disconnect", "VC kick", self.vc_kick),
-            ]))
             .row(SettingsRow::Buttons(vec![
                 SettingsButton::edit("settings_timeout", "Set timeout length"),
+                SettingsButton::toggle("settings_toggle_dm", "DM alerts", self.dm_alerts),
+                ]))
+            .row(SettingsRow::Buttons(vec![
+                SettingsButton::toggle("settings_vc_auto_join", "VC auto-join", self.vc_auto_join),
+                SettingsButton::toggle("settings_vc_auto_leave", "VC auto-leave", self.vc_auto_leave),
             ]))
             .row(SettingsRow::Buttons(vec![
                 SettingsButton::edit("settings_edit_alert", "Edit join alert"),
@@ -390,6 +390,8 @@ pub struct RankRoleConfigDisplay {
     pub guild_name: String,
     pub rank_name:  String,
     pub rank_key:   String,
+    pub position:   u8,
+    pub elo:        u16,
     pub role_ids:   Option<String>,
 }
 
@@ -402,19 +404,26 @@ impl RankRoleConfigDisplay {
 
         CE::new()
             .title(format!("{} - {} Rank", self.guild_name, self.rank_name))
-            .field("Current Role(s)", display, false)
+            .field("Name", &self.rank_name, true)
+            .field("ELO Threshold", self.elo.to_string(), true)
+            .field("Discord Role(s)", display, false)
             .color(0x5865F2)
-            .footer(CreateEmbedFooter::new("Select a role below to set for this rank"))
+            .footer(CreateEmbedFooter::new("Edit name/ELO or select a Discord role to link"))
     }
 
     pub fn build_components(&self) -> Vec<CAR> {
         vec![
+            CAR::Buttons(vec![
+                CB::new(format!("server_settings_rank_edit_{}", self.position))
+                    .label("Edit Name & ELO")
+                    .style(BS::Primary),
+            ]),
             CAR::SelectMenu(
                 CSM::new(
                     format!("server_settings_rank_role_{}", self.rank_key),
                     CSMK::Role { default_roles: None }
                 )
-                .placeholder(format!("Select role for {}", self.rank_name))
+                .placeholder(format!("Select Discord role for {}", self.rank_name))
             ),
             CAR::Buttons(vec![
                 CB::new(format!("server_settings_rank_clear_{}", self.rank_key))
@@ -583,6 +592,7 @@ impl AsSettingsMenu for PlayerSettingsDisplay {
             ]))
             .row(SettingsRow::Buttons(vec![
                 SettingsButton::edit(format!("player_settings_edit_division_{uid}"), "Edit Rank"),
+                SettingsButton::edit(format!("player_settings_edit_alerts_{uid}"), "Edit Alerts"),
             ]))
     }
 }

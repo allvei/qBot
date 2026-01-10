@@ -165,10 +165,25 @@ pub async fn handle_settings_button(
                 interaction.create_response(&ctx.http, response).await?;
             }
         }
-        "settings_vc_disconnect" => {
+        "settings_vc_auto_leave" => {
             // Toggle VC disconnect preference
             let mut settings = db.users.get_prefs(user_id).await?;
-            settings.vc_kick = !settings.vc_kick;
+            settings.vc_auto_leave = !settings.vc_auto_leave;
+            db.users.update_settings(user_id, &settings).await?;
+
+            // Acknowledge and update the settings menu directly (no popup)
+            let embed = build_settings_embed(&settings);
+            let buttons = build_settings_buttons(&settings);
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(embed).components(buttons)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "settings_vc_auto_join" => {
+            // Toggle VC auto-queue preference
+            let mut settings = db.users.get_prefs(user_id).await?;
+            settings.vc_auto_join = !settings.vc_auto_join;
             db.users.update_settings(user_id, &settings).await?;
 
             // Acknowledge and update the settings menu directly (no popup)
@@ -263,6 +278,8 @@ pub async fn handle_settings_modal(
     interaction: &ModalInteraction,
     db: &Arc<Database>,
 ) -> Result<()> {
+    use crate::database::repositories::is_valid_user_text;
+
     let user_id = interaction.user.id;
     let modal_id = &interaction.data.custom_id;
 
@@ -276,11 +293,23 @@ pub async fn handle_settings_modal(
             // Get all input values from the modal
             let mut settings = db.users.get_prefs(user_id).await?;
 
-            // Extract values from modal components
+            // Extract and validate values from modal components
             for (idx, action_row) in interaction.data.components.iter().enumerate() {
                 if let Some(serenity::all::ActionRowComponent::InputText(input)) = action_row.components.first() {
                     if let Some(value) = &input.value {
                         let trimmed = value.trim();
+
+                        // Validate text fields for allowed characters (skip color and URL fields)
+                        if (idx == 1 || idx == 2) && !trimmed.is_empty() && !is_valid_user_text(trimmed) {
+                            let field_name = if idx == 1 { "Message" } else { "Footer text" };
+                            let response = CIR::Message(
+                                CIRM::new()
+                                    .content(format!("**Error:** {} contains invalid characters. Only ASCII printable and extended characters are allowed.", field_name))
+                                    .ephemeral(true)
+                            );
+                            interaction.create_response(&ctx.http, response).await?;
+                            return Ok(());
+                        }
 
                         match idx {
                             0 => {
@@ -325,11 +354,23 @@ pub async fn handle_settings_modal(
             // Get all input values from the modal
             let mut settings = db.users.get_prefs(user_id).await?;
 
-            // Extract values from modal components
+            // Extract and validate values from modal components
             for (idx, action_row) in interaction.data.components.iter().enumerate() {
                 if let Some(serenity::all::ActionRowComponent::InputText(input)) = action_row.components.first() {
                     if let Some(value) = &input.value {
                         let trimmed = value.trim();
+
+                        // Validate text fields for allowed characters (skip color and URL fields)
+                        if (idx == 1 || idx == 2) && !trimmed.is_empty() && !is_valid_user_text(trimmed) {
+                            let field_name = if idx == 1 { "Description" } else { "Footer text" };
+                            let response = CIR::Message(
+                                CIRM::new()
+                                    .content(format!("**Error:** {} contains invalid characters. Only ASCII printable and extended characters are allowed.", field_name))
+                                    .ephemeral(true)
+                            );
+                            interaction.create_response(&ctx.http, response).await?;
+                            return Ok(());
+                        }
 
                         match idx {
                             0 => {
@@ -786,21 +827,30 @@ pub async fn handle_server_settings_button(
             if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
                 if let Some(rank_key) = values.first() {
                     let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-                    let rank_name = rank_key_to_name(rank_key);
-                    let config_key = format!("rank_{rank_key}_roles");
-                    let role_ids = db.config.get_config_value(&config_key, guild_id.get()).await?;
+                    
+                    // Get rank from DB by position
+                    let position = rank_key_to_position(rank_key);
+                    if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id.get(), position).await {
+                        let role_ids_str = if guild_rank.role_ids.is_empty() {
+                            None
+                        } else {
+                            Some(guild_rank.role_ids.iter().map(|id| id.get().to_string()).collect::<Vec<_>>().join(","))
+                        };
 
-                    let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
-                        guild_name,
-                        rank_name,
-                        rank_key: rank_key.clone(),
-                        role_ids,
-                    };
+                        let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
+                            guild_name,
+                            rank_name: guild_rank.name,
+                            rank_key: rank_key.clone(),
+                            position,
+                            elo: guild_rank.elo,
+                            role_ids: role_ids_str,
+                        };
 
-                    let response = CIR::UpdateMessage(
-                        CIRM::new().embed(display.build_embed()).components(display.build_components())
-                    );
-                    interaction.create_response(&ctx.http, response).await?;
+                        let response = CIR::UpdateMessage(
+                            CIRM::new().embed(display.build_embed()).components(display.build_components())
+                        );
+                        interaction.create_response(&ctx.http, response).await?;
+                    }
                 }
             }
         }
@@ -826,59 +876,99 @@ pub async fn handle_server_settings_button(
             // Handle rank role selection
             let rank_key = button_id.strip_prefix("server_settings_rank_role_").unwrap();
             if let serenity::all::ComponentInteractionDataKind::RoleSelect { values } = &interaction.data.kind {
-                let config_key = format!("rank_{rank_key}_roles");
+                let position = rank_key_to_position(rank_key);
                 
                 if let Some(role_id) = values.first() {
-                    // Get existing roles and add new one
-                    let existing = db.config.get_config_value(&config_key, guild_id.get()).await?.unwrap_or_default();
-                    let mut role_ids: Vec<String> = existing.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
-                    let new_id = role_id.get().to_string();
-                    if !role_ids.contains(&new_id) {
-                        role_ids.push(new_id);
-                    }
-                    let role_ids_str = role_ids.join(",");
-                    db.config.set_config(&config_key, &role_ids_str, guild_id.get()).await?;
+                    // Add role to rank in DB
+                    db.ranks.add_role_id(guild_id.get(), position, *role_id).await?;
 
                     // Refresh the rank role config view
                     let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-                    let rank_name = rank_key_to_name(rank_key);
-                    let role_ids = db.config.get_config_value(&config_key, guild_id.get()).await?;
+                    
+                    if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id.get(), position).await {
+                        let role_ids_str = if guild_rank.role_ids.is_empty() {
+                            None
+                        } else {
+                            Some(guild_rank.role_ids.iter().map(|id| id.get().to_string()).collect::<Vec<_>>().join(","))
+                        };
 
-                    let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
-                        guild_name,
-                        rank_name,
-                        rank_key: rank_key.to_string(),
-                        role_ids,
-                    };
+                        let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
+                            guild_name,
+                            rank_name: guild_rank.name,
+                            rank_key: rank_key.to_string(),
+                            position,
+                            elo: guild_rank.elo,
+                            role_ids: role_ids_str,
+                        };
 
-                    let response = CIR::UpdateMessage(
-                        CIRM::new().embed(display.build_embed()).components(display.build_components())
-                    );
-                    interaction.create_response(&ctx.http, response).await?;
+                        let response = CIR::UpdateMessage(
+                            CIRM::new().embed(display.build_embed()).components(display.build_components())
+                        );
+                        interaction.create_response(&ctx.http, response).await?;
+                    }
                 }
             }
         }
         _ if button_id.starts_with("server_settings_rank_clear_") => {
             // Clear rank role configuration
             let rank_key = button_id.strip_prefix("server_settings_rank_clear_").unwrap();
-            let config_key = format!("rank_{rank_key}_roles");
-            db.config.delete_config(&config_key, guild_id.get()).await?;
+            let position = rank_key_to_position(rank_key);
+            
+            // Clear role IDs in DB
+            db.ranks.update_rank_role_ids(guild_id.get(), position, &[]).await?;
 
             // Refresh the rank role config view
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let rank_name = rank_key_to_name(rank_key);
+            
+            if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id.get(), position).await {
+                let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
+                    guild_name,
+                    rank_name: guild_rank.name,
+                    rank_key: rank_key.to_string(),
+                    position,
+                    elo: guild_rank.elo,
+                    role_ids: None,
+                };
 
-            let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
-                guild_name,
-                rank_name,
-                rank_key: rank_key.to_string(),
-                role_ids: None,
-            };
+                let response = CIR::UpdateMessage(
+                    CIRM::new().embed(display.build_embed()).components(display.build_components())
+                );
+                interaction.create_response(&ctx.http, response).await?;
+            }
+        }
+        _ if button_id.starts_with("server_settings_rank_edit_") => {
+            // Handle rank name/ELO edit button
+            let position_str = button_id.strip_prefix("server_settings_rank_edit_").unwrap();
+            if let Ok(position) = position_str.parse::<u8>() {
+                if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id.get(), position).await {
+                    use serenity::all::{CreateModal, CreateActionRow, CreateInputText, InputTextStyle};
+                    
+                    let modal = CreateModal::new(
+                        format!("server_settings_rank_modal_{}", position),
+                        format!("Edit {} Rank", guild_rank.name)
+                    )
+                    .components(vec![
+                        CreateActionRow::InputText(
+                            CreateInputText::new(InputTextStyle::Short, "Rank Name", "name")
+                                .placeholder("e.g., Beginner, Expert, Champion")
+                                .value(&guild_rank.name)
+                                .required(true)
+                                .max_length(30)
+                        ),
+                        CreateActionRow::InputText(
+                            CreateInputText::new(InputTextStyle::Short, "ELO Threshold (0-100)", "elo")
+                                .placeholder("Minimum ELO for this rank")
+                                .value(guild_rank.elo.to_string())
+                                .required(true)
+                                .min_length(1)
+                                .max_length(3)
+                        ),
+                    ]);
 
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(display.build_embed()).components(display.build_components())
-            );
-            interaction.create_response(&ctx.http, response).await?;
+                    let response = CIR::Modal(modal);
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
         }
         "server_settings_edit_default_rank" => {
             // Show modal to edit default rank
@@ -1180,26 +1270,19 @@ pub async fn handle_server_settings_button(
 
 /// Get all rank roles for display (name, role_ids, elo)
 async fn get_all_rank_roles(db: &Arc<Database>, guild_id: u64) -> Result<Vec<(String, Option<String>, u16)>> {
-    use crate::models::Rank;
-    let ranks = [
-        ("Beginner",     "beginner",     Rank::Beginner),
-        ("Newcomer",     "newcomer",     Rank::Newcomer),
-        ("Novice",       "novice",       Rank::Novice),
-        ("Apprentice",   "apprentice",   Rank::Apprentice),
-        ("Journeyman",   "journeyman",   Rank::Journeyman),
-        ("Expert",       "expert",       Rank::Expert),
-        ("Master",       "master",       Rank::Master),
-        ("Master Elite", "master_elite", Rank::MasterElite),
-        ("Grandmaster",  "grandmaster",  Rank::Grandmaster),
-    ];
-
-    let mut result = Vec::new();
-    for (name, key, rank) in ranks {
-        let config_key = format!("rank_{key}_roles");
-        let role_ids = db.config.get_config_value(&config_key, guild_id).await?;
-        let elo = rank.default_rank_elo();
-        result.push((name.to_string(), role_ids, elo));
-    }
+    let guild_ranks = db.ranks.get_or_init_ranks(guild_id).await?;
+    
+    let result: Vec<(String, Option<String>, u16)> = guild_ranks.into_iter()
+        .map(|gr| {
+            let role_ids_str = if gr.role_ids.is_empty() {
+                None
+            } else {
+                Some(gr.role_ids.iter().map(|id| id.get().to_string()).collect::<Vec<_>>().join(","))
+            };
+            (gr.name, role_ids_str, gr.elo)
+        })
+        .collect();
+    
     Ok(result)
 }
 
@@ -1216,6 +1299,22 @@ fn rank_key_to_name(key: &str) -> String {
         "master_elite" => "Master Elite".to_string(),
         "grandmaster"  => "Grandmaster".to_string(),
         _              => key.to_string(),
+    }
+}
+
+/// Convert rank key to position index
+fn rank_key_to_position(key: &str) -> u8 {
+    match key {
+        "beginner"     => 0,
+        "newcomer"     => 1,
+        "novice"       => 2,
+        "apprentice"   => 3,
+        "journeyman"   => 4,
+        "expert"       => 5,
+        "master"       => 6,
+        "master_elite" => 7,
+        "grandmaster"  => 8,
+        _              => 4, // Default to journeyman
     }
 }
 
@@ -1252,7 +1351,69 @@ pub async fn handle_server_settings_modal(
 
     info!("[Server Settings] {} submitted modal {}", interaction.user.name, modal_id);
 
-    if modal_id == "server_settings_modal_default_rank" {
+    if modal_id.starts_with("server_settings_rank_modal_") {
+        // Handle rank name/ELO edit modal
+        let position: u8 = modal_id
+            .strip_prefix("server_settings_rank_modal_")
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| anyhow::anyhow!("Invalid modal ID format: {}", modal_id))?;
+
+        let mut name_value = String::new();
+        let mut elo_value = String::new();
+
+        for row in &interaction.data.components {
+            for component in &row.components {
+                if let serenity::all::ActionRowComponent::InputText(input) = component {
+                    match input.custom_id.as_str() {
+                        "name" => name_value = input.value.clone().unwrap_or_default(),
+                        "elo" => elo_value = input.value.clone().unwrap_or_default(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        let name = name_value.trim();
+        if name.is_empty() {
+            let response = CIR::Message(
+                CIRM::new().content("Rank name cannot be empty.").ephemeral(true)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+
+        let elo: u16 = match elo_value.trim().parse() {
+            Ok(e) if e <= 100 => e,
+            _ => {
+                let response = CIR::Message(
+                    CIRM::new().content("Invalid ELO. Must be between 0 and 100.").ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+        };
+
+        // Update rank in DB
+        db.ranks.update_rank_name(guild_id.get(), position, name).await?;
+        db.ranks.update_rank_elo(guild_id.get(), position, elo).await?;
+
+        // Return to rank configuration menu
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+        let rank_roles = get_all_rank_roles(db, guild_id.get()).await?;
+        let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id.get()).await?;
+        
+        let display = crate::handlers::settings_menu::RankConfigDisplay {
+            guild_name,
+            rank_roles,
+            dynamic_elo,
+            default_rank,
+        };
+
+        let response = CIR::UpdateMessage(
+            CIRM::new().embed(display.build_embed()).components(display.build_components())
+        );
+        interaction.create_response(&ctx.http, response).await?;
+    } else if modal_id == "server_settings_modal_default_rank" {
         let rank_str = interaction.data.components.first()
             .and_then(|row| row.components.first())
             .and_then(|c| {
@@ -1990,6 +2151,45 @@ pub async fn handle_player_settings_button(
 
         let response = CIR::Modal(modal);
         interaction.create_response(&ctx.http, response).await?;
+    } else if button_id.starts_with("player_settings_edit_alerts_") {
+        // Get target user's current alert settings
+        let user_settings = db.users.get_prefs(target_uid).await?;
+        
+        let modal = CreateModal::new(format!("player_settings_modal_alerts_{target_user_id}"), "Edit Player Alerts")
+            .components(vec![
+                CreateActionRow::InputText(
+                    CreateInputText::new(InputTextStyle::Short, "HEX Color", "announcement_color")
+                        .placeholder("e.g., 3447003 or FF5733")
+                        .value(format!("{:06X}", user_settings.announcement_color))
+                        .required(false)
+                        .min_length(6)
+                        .max_length(6)
+                ),
+                CreateActionRow::InputText(
+                    CreateInputText::new(InputTextStyle::Paragraph, "Join Alert Message", "alert_desc")
+                        .placeholder("e.g., Kafri: defense")
+                        .value(user_settings.alert_desc.unwrap_or_default())
+                        .required(false)
+                        .max_length(2000)
+                ),
+                CreateActionRow::InputText(
+                    CreateInputText::new(InputTextStyle::Short, "Join Alert Footer", "alert_footer_text")
+                        .placeholder("e.g., Good luck!")
+                        .value(user_settings.alert_footer_text.unwrap_or_default())
+                        .required(false)
+                        .max_length(2048)
+                ),
+                CreateActionRow::InputText(
+                    CreateInputText::new(InputTextStyle::Paragraph, "Leave Alert Message", "leave_alert_desc")
+                        .placeholder("e.g., See you next time!")
+                        .value(user_settings.leave_alert_desc.unwrap_or_default())
+                        .required(false)
+                        .max_length(2000)
+                ),
+            ]);
+
+        let response = CIR::Modal(modal);
+        interaction.create_response(&ctx.http, response).await?;
     } else {
         warn!("Unknown player settings button: {}", button_id);
     }
@@ -2193,6 +2393,64 @@ pub async fn handle_player_settings_modal(
             CIRM::new().embed(embed).components(buttons)
         );
         interaction.create_response(&ctx.http, response).await?;
+    } else if modal_id.starts_with("player_settings_modal_alerts_") {
+        // Extract values from modal components
+        let mut user_settings = db.users.get_prefs(target_uid).await?;
+
+        for (idx, action_row) in interaction.data.components.iter().enumerate() {
+            if let Some(serenity::all::ActionRowComponent::InputText(input)) = action_row.components.first() {
+                if let Some(value) = &input.value {
+                    let trimmed = value.trim();
+                    match idx {
+                        0 => {
+                            // Color field
+                            if !trimmed.is_empty() {
+                                let hex_str = trimmed.trim_start_matches('#');
+                                if let Ok(color) = i64::from_str_radix(hex_str, 16) {
+                                    if (0..=0xFFFFFF).contains(&color) {
+                                        user_settings.announcement_color = color;
+                                    }
+                                }
+                            }
+                        },
+                        1 => user_settings.alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                        2 => user_settings.alert_footer_text = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                        3 => user_settings.leave_alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // Update target user's settings
+        db.users.update_settings(target_uid, &user_settings).await?;
+
+        // Refresh the player settings menu
+        let player = db.users.get(target_uid).await?;
+        let guild_elo = db.elos.get(target_uid, guild_id.get()).await?;
+        let username = ctx.http.get_user(target_uid).await
+            .map(|u| u.name.clone())
+            .unwrap_or_else(|_| target_user_id.to_string());
+
+        let settings = PlayerSettings {
+            user_id:  target_uid,
+            username,
+            steam_id: player.steam_id,
+            elo:      guild_elo.elo,
+            division: guild_elo.division.name().to_string(),
+            games:    guild_elo.games,
+            wins:     guild_elo.wins,
+        };
+
+        let embed = build_player_settings_embed(&settings);
+        let buttons = build_player_settings_buttons(target_uid);
+
+        let response = CIR::UpdateMessage(
+            CIRM::new().embed(embed).components(buttons)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+
+        info!("[Player Settings] Updated alerts for user {}", target_uid);
     } else {
         warn!("Unknown player settings modal: {}", modal_id);
     }
