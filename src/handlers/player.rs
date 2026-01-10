@@ -189,6 +189,7 @@ pub async fn validate_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec
     let guild_role_ids: Vec<_> = guild_roles.iter().map(|r| r.id).collect();
 
     // Check each rank to see if it has any roles configured or existing
+    // Process more specific ranks first (MasterElite before Master) to avoid false matches
     for rank in [
         Rank::Beginner,
         Rank::Newcomer,
@@ -196,8 +197,8 @@ pub async fn validate_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec
         Rank::Apprentice,
         Rank::Journeyman,
         Rank::Expert,
+        Rank::MasterElite,  // Check before Master to avoid "Master Elite" matching "Master"
         Rank::Master,
-        Rank::MasterElite,
         Rank::Grandmaster,
     ] {
         let configured_ids = rank.role_ids(db, guild_id.get()).await;
@@ -212,11 +213,17 @@ pub async fn validate_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec
             let matching_roles: Vec<_> = guild_roles.iter()
                 .filter(|r| {
                     let role_name_lower = r.name.to_lowercase();
-                    // Match if role name contains rank name as a complete word (not substring)
-                    // This catches: "Journeyman", "Journeyman EU", "Retired Journeyman"
-                    // But prevents: "Master" matching "Grandmaster" or "Master Elite"
-                    role_name_lower.split(|c: char| !c.is_alphanumeric())
-                        .any(|word| word == rank_name)
+                    let words: Vec<&str> = role_name_lower.split(|c: char| !c.is_alphanumeric())
+                        .filter(|w| !w.is_empty())
+                        .collect();
+                    
+                    // For "Master", exclude roles that also contain "Elite" (those are "Master Elite")
+                    if rank_name == "master" && words.contains(&"elite") {
+                        return false;
+                    }
+                    
+                    // Match if role name contains rank name as a complete word
+                    words.contains(&rank_name.as_str())
                 })
                 .collect();
 
@@ -282,9 +289,17 @@ pub async fn create_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec<S
             let matching_roles: Vec<_> = guild_roles.iter()
                 .filter(|r| {
                     let role_name_lower = r.name.to_lowercase();
-                    // Match whole words only to prevent "Master" matching "Grandmaster" or "Master Elite"
-                    role_name_lower.split(|c: char| !c.is_alphanumeric())
-                        .any(|word| word == rank_name)
+                    let words: Vec<&str> = role_name_lower.split(|c: char| !c.is_alphanumeric())
+                        .filter(|w| !w.is_empty())
+                        .collect();
+                    
+                    // For "Master", exclude roles that also contain "Elite" (those are "Master Elite")
+                    if rank_name == "master" && words.contains(&"elite") {
+                        return false;
+                    }
+                    
+                    // Match if role name contains rank name as a complete word
+                    words.contains(&rank_name.as_str())
                 })
                 .collect();
 
