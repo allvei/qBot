@@ -823,33 +823,33 @@ pub async fn handle_server_settings_button(
             interaction.create_response(&ctx.http, response).await?;
         }
         "server_settings_rank_select" => {
-            // Handle rank selection from dropdown
+            // Handle rank selection from dropdown (value is now position)
             if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
-                if let Some(rank_key) = values.first() {
-                    let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-                    
-                    // Get rank from DB by position
-                    let position = rank_key_to_position(rank_key);
-                    if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id.get(), position).await {
-                        let role_ids_str = if guild_rank.role_ids.is_empty() {
-                            None
-                        } else {
-                            Some(guild_rank.role_ids.iter().map(|id| id.get().to_string()).collect::<Vec<_>>().join(","))
-                        };
+                if let Some(position_str) = values.first() {
+                    if let Ok(position) = position_str.parse::<u8>() {
+                        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                        
+                        if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id.get(), position).await {
+                            let role_ids_str = if guild_rank.role_ids.is_empty() {
+                                None
+                            } else {
+                                Some(guild_rank.role_ids.iter().map(|id| id.get().to_string()).collect::<Vec<_>>().join(","))
+                            };
 
-                        let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
-                            guild_name,
-                            rank_name: guild_rank.name,
-                            rank_key: rank_key.clone(),
-                            position,
-                            elo: guild_rank.elo,
-                            role_ids: role_ids_str,
-                        };
+                            let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
+                                guild_name,
+                                rank_name: guild_rank.name,
+                                rank_key: position_str.clone(),
+                                position,
+                                elo: guild_rank.elo,
+                                role_ids: role_ids_str,
+                            };
 
-                        let response = CIR::UpdateMessage(
-                            CIRM::new().embed(display.build_embed()).components(display.build_components())
-                        );
-                        interaction.create_response(&ctx.http, response).await?;
+                            let response = CIR::UpdateMessage(
+                                CIRM::new().embed(display.build_embed()).components(display.build_components())
+                            );
+                            interaction.create_response(&ctx.http, response).await?;
+                        }
                     }
                 }
             }
@@ -873,14 +873,14 @@ pub async fn handle_server_settings_button(
             interaction.create_response(&ctx.http, response).await?;
         }
         _ if button_id.starts_with("server_settings_rank_role_") => {
-            // Handle rank role selection
-            let rank_key = button_id.strip_prefix("server_settings_rank_role_").unwrap();
-            if let serenity::all::ComponentInteractionDataKind::RoleSelect { values } = &interaction.data.kind {
-                let position = rank_key_to_position(rank_key);
-                
-                if let Some(role_id) = values.first() {
-                    // Add role to rank in DB
-                    db.ranks.add_role_id(guild_id.get(), position, *role_id).await?;
+            // Handle rank role selection (multi-select supported)
+            let position_str = button_id.strip_prefix("server_settings_rank_role_").unwrap();
+            if let Ok(position) = position_str.parse::<u8>() {
+                if let serenity::all::ComponentInteractionDataKind::RoleSelect { values } = &interaction.data.kind {
+                    // Add all selected roles to rank in DB
+                    for role_id in values {
+                        db.ranks.add_role_id(guild_id.get(), position, *role_id).await?;
+                    }
 
                     // Refresh the rank role config view
                     let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
@@ -895,7 +895,7 @@ pub async fn handle_server_settings_button(
                         let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
                             guild_name,
                             rank_name: guild_rank.name,
-                            rank_key: rank_key.to_string(),
+                            rank_key: position_str.to_string(),
                             position,
                             elo: guild_rank.elo,
                             role_ids: role_ids_str,
@@ -910,30 +910,30 @@ pub async fn handle_server_settings_button(
             }
         }
         _ if button_id.starts_with("server_settings_rank_clear_") => {
-            // Clear rank role configuration
-            let rank_key = button_id.strip_prefix("server_settings_rank_clear_").unwrap();
-            let position = rank_key_to_position(rank_key);
-            
-            // Clear role IDs in DB
-            db.ranks.update_rank_role_ids(guild_id.get(), position, &[]).await?;
+            // Clear rank role configuration (unlink roles without deleting them)
+            let position_str = button_id.strip_prefix("server_settings_rank_clear_").unwrap();
+            if let Ok(position) = position_str.parse::<u8>() {
+                // Clear role IDs in DB
+                db.ranks.update_rank_role_ids(guild_id.get(), position, &[]).await?;
 
-            // Refresh the rank role config view
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            
-            if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id.get(), position).await {
-                let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
-                    guild_name,
-                    rank_name: guild_rank.name,
-                    rank_key: rank_key.to_string(),
-                    position,
-                    elo: guild_rank.elo,
-                    role_ids: None,
-                };
+                // Refresh the rank role config view
+                let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                
+                if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id.get(), position).await {
+                    let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
+                        guild_name,
+                        rank_name: guild_rank.name,
+                        rank_key: position_str.to_string(),
+                        position,
+                        elo: guild_rank.elo,
+                        role_ids: None,
+                    };
 
-                let response = CIR::UpdateMessage(
-                    CIRM::new().embed(display.build_embed()).components(display.build_components())
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                    let response = CIR::UpdateMessage(
+                        CIRM::new().embed(display.build_embed()).components(display.build_components())
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                }
             }
         }
         _ if button_id.starts_with("server_settings_rank_edit_") => {
@@ -968,6 +968,64 @@ pub async fn handle_server_settings_button(
                     let response = CIR::Modal(modal);
                     interaction.create_response(&ctx.http, response).await?;
                 }
+            }
+        }
+        "server_settings_rank_add" => {
+            // Show modal to add a new rank
+            use serenity::all::{CreateModal, CreateActionRow, CreateInputText, InputTextStyle};
+            
+            let modal = CreateModal::new("server_settings_rank_modal_add", "Add New Rank")
+                .components(vec![
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Short, "Rank Name", "name")
+                            .placeholder("e.g., Champion, Legend, Elite")
+                            .required(true)
+                            .max_length(30)
+                    ),
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Short, "ELO Threshold (0-100)", "elo")
+                            .placeholder("Minimum ELO for this rank")
+                            .required(true)
+                            .min_length(1)
+                            .max_length(3)
+                    ),
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Short, "Create Discord Role? (yes/no)", "create_role")
+                            .placeholder("yes = create new role, no = link existing later")
+                            .value("no")
+                            .required(true)
+                            .max_length(3)
+                    ),
+                ]);
+
+            let response = CIR::Modal(modal);
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        _ if button_id.starts_with("server_settings_rank_delete_") => {
+            // Remove rank from DB (does NOT delete Discord role)
+            let position_str = button_id.strip_prefix("server_settings_rank_delete_").unwrap();
+            if let Ok(position) = position_str.parse::<u8>() {
+                // Delete rank from DB
+                db.ranks.delete_rank(guild_id.get(), position).await?;
+                
+                info!("[Server Settings] {} deleted rank at position {}", interaction.user.name, position);
+
+                // Return to rank list
+                let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                let rank_roles = get_all_rank_roles(db, guild_id.get()).await?;
+                let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id.get()).await?;
+                
+                let display = crate::handlers::settings_menu::RankConfigDisplay {
+                    guild_name,
+                    rank_roles,
+                    dynamic_elo,
+                    default_rank,
+                };
+
+                let response = CIR::UpdateMessage(
+                    CIRM::new().embed(display.build_embed()).components(display.build_components())
+                );
+                interaction.create_response(&ctx.http, response).await?;
             }
         }
         "server_settings_edit_default_rank" => {
@@ -1351,7 +1409,96 @@ pub async fn handle_server_settings_modal(
 
     info!("[Server Settings] {} submitted modal {}", interaction.user.name, modal_id);
 
-    if modal_id.starts_with("server_settings_rank_modal_") {
+    if modal_id == "server_settings_rank_modal_add" {
+        // Handle add new rank modal
+        let mut name_value = String::new();
+        let mut elo_value = String::new();
+        let mut create_role_value = String::new();
+
+        for row in &interaction.data.components {
+            for component in &row.components {
+                if let serenity::all::ActionRowComponent::InputText(input) = component {
+                    match input.custom_id.as_str() {
+                        "name" => name_value = input.value.clone().unwrap_or_default(),
+                        "elo" => elo_value = input.value.clone().unwrap_or_default(),
+                        "create_role" => create_role_value = input.value.clone().unwrap_or_default(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        let name = name_value.trim();
+        if name.is_empty() {
+            let response = CIR::Message(
+                CIRM::new().content("Rank name cannot be empty.").ephemeral(true)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+
+        let elo: u16 = match elo_value.trim().parse() {
+            Ok(e) if e <= 100 => e,
+            _ => {
+                let response = CIR::Message(
+                    CIRM::new().content("Invalid ELO. Must be between 0 and 100.").ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+        };
+
+        // Find the correct position based on ELO (insert in sorted order)
+        let existing_ranks = db.ranks.get_or_init_ranks(guild_id.get()).await?;
+        let position = existing_ranks.iter()
+            .position(|r| r.elo > elo)
+            .unwrap_or(existing_ranks.len()) as u8;
+
+        // Add rank to DB
+        db.ranks.add_rank(guild_id.get(), position, name, elo).await?;
+        info!("[Server Settings] {} added rank '{}' at position {} with ELO {}", interaction.user.name, name, position, elo);
+
+        // Optionally create Discord role
+        let create_role = create_role_value.trim().to_lowercase();
+        if create_role == "yes" || create_role == "y" {
+            use serenity::all::Colour;
+            use serenity::builder::EditRole;
+
+            let role_builder = EditRole::new()
+                .name(name)
+                .colour(Colour::from_rgb(100, 100, 100))
+                .hoist(true)
+                .mentionable(false);
+
+            match guild_id.create_role(&ctx.http, role_builder).await {
+                Ok(created_role) => {
+                    // Link the new role to the rank
+                    db.ranks.add_role_id(guild_id.get(), position, created_role.id).await?;
+                    info!("[Server Settings] Created Discord role '{}' for rank", name);
+                },
+                Err(e) => {
+                    warn!("[Server Settings] Failed to create Discord role: {}", e);
+                }
+            }
+        }
+
+        // Return to rank configuration menu
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+        let rank_roles = get_all_rank_roles(db, guild_id.get()).await?;
+        let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id.get()).await?;
+        
+        let display = crate::handlers::settings_menu::RankConfigDisplay {
+            guild_name,
+            rank_roles,
+            dynamic_elo,
+            default_rank,
+        };
+
+        let response = CIR::UpdateMessage(
+            CIRM::new().embed(display.build_embed()).components(display.build_components())
+        );
+        interaction.create_response(&ctx.http, response).await?;
+    } else if modal_id.starts_with("server_settings_rank_modal_") {
         // Handle rank name/ELO edit modal
         let position: u8 = modal_id
             .strip_prefix("server_settings_rank_modal_")

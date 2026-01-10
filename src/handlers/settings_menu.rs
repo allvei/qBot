@@ -355,8 +355,9 @@ impl RankConfigDisplay {
     }
 
     pub fn build_components(&self) -> Vec<CAR> {
-        let rank_options: Vec<(String, String)> = self.rank_roles.iter()
-            .map(|(name, _, _)| (name.clone(), name.to_lowercase().replace(" ", "_")))
+        let rank_options: Vec<(String, u8)> = self.rank_roles.iter()
+            .enumerate()
+            .map(|(idx, (name, _, _))| (name.clone(), idx as u8))
             .collect();
 
         vec![
@@ -371,12 +372,15 @@ impl RankConfigDisplay {
             CAR::SelectMenu(
                 CSM::new("server_settings_rank_select", CSMK::String {
                     options: rank_options.iter()
-                        .map(|(label, value)| CSMO::new(label, value))
+                        .map(|(label, pos)| CSMO::new(label, pos.to_string()))
                         .collect()
                 })
                 .placeholder("Select rank to configure")
             ),
             CAR::Buttons(vec![
+                CB::new("server_settings_rank_add")
+                    .label("Add Rank")
+                    .style(BS::Success),
                 CB::new("server_settings_ranks_back")
                     .label("Back to Server Settings")
                     .style(BS::Secondary),
@@ -420,14 +424,18 @@ impl RankRoleConfigDisplay {
             ]),
             CAR::SelectMenu(
                 CSM::new(
-                    format!("server_settings_rank_role_{}", self.rank_key),
+                    format!("server_settings_rank_role_{}", self.position),
                     CSMK::Role { default_roles: None }
                 )
-                .placeholder(format!("Select Discord role for {}", self.rank_name))
+                .placeholder(format!("Link Discord roles to {}", self.rank_name))
+                .max_values(25)
             ),
             CAR::Buttons(vec![
-                CB::new(format!("server_settings_rank_clear_{}", self.rank_key))
-                    .label("Clear Role")
+                CB::new(format!("server_settings_rank_clear_{}", self.position))
+                    .label("Clear Linked Roles")
+                    .style(BS::Danger),
+                CB::new(format!("server_settings_rank_delete_{}", self.position))
+                    .label("Remove Rank")
                     .style(BS::Danger),
                 CB::new("server_settings_rank_back")
                     .label("Back to Ranks")
