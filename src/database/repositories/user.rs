@@ -57,13 +57,20 @@ fn truncate_footer_text(s: &str) -> String {
     truncate_text(s, FOOTER_LINE_WIDTH, FOOTER_MAX_LINES)
 }
 
-/// Check if a string contains only allowed characters (ASCII printable + extended).
+/// Check if a string contains only allowed characters (ASCII printable + extended + emojis).
 /// Returns true if valid, false if contains disallowed characters.
 pub fn is_valid_user_text(s: &str) -> bool {
     s.chars().all(|c| {
         let code = c as u32;
-        // ASCII printable (0x20-0x7E) + newline/tab + extended ASCII (0x80-0xFF)
-        (0x20..=0x7E).contains(&code) || c == '\n' || c == '\t' || (0x80..=0xFF).contains(&code)
+        // ASCII printable (0x20-0x7E) + newline/tab + extended ASCII (0x80-0xFF) + Unicode emojis
+        (0x20..=0x7E).contains(&code) 
+            || c == '\n' 
+            || c == '\t' 
+            || (0x80..=0xFF).contains(&code)
+            || (0x1F300..=0x1FAFF).contains(&code)  // Emojis (Miscellaneous Symbols, Emoticons, etc.)
+            || (0x2600..=0x27BF).contains(&code)    // Misc symbols, Dingbats
+            || (0xFE00..=0xFE0F).contains(&code)    // Variation selectors
+            || (0x200D..=0x200D).contains(&code)    // Zero-width joiner (for compound emojis)
     })
 }
 
