@@ -774,7 +774,7 @@ impl Group {
                 // Check user's VC disconnect preference
                 let settings = cc.db.users.get_prefs(user_id).await.unwrap_or_default();
 
-                if settings.vc_kick {
+                if settings.vc_auto_leave {
 
                     // Acknowledge button press before disconnecting
                     cc.defer_update().await?;
