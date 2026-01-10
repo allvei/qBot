@@ -836,7 +836,13 @@ impl EventHandler for Handler {
                                 }
                             }
                         } else {
-                            // Player not in session yet, add them
+                            // Player not in session yet - check if they want auto-queue
+                            let user_prefs = self.db.users.get_prefs(user_id).await.unwrap_or_default();
+                            if !user_prefs.vc_auto_join {
+                                // User has disabled VC auto-queue, don't add them
+                                return;
+                            }
+
                             // Ensure a session exists before trying to add player
                             if group.get_inactives().is_empty() {
                                 warn!("No idle sessions present when player {} joined VC, creating one", tag);

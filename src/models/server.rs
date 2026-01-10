@@ -428,7 +428,7 @@ impl Group {
                     
                     // Optionally: disconnect from VC if vc_kick is enabled
                     if let Ok(settings) = db.users.get_prefs(*user_id).await {
-                        if settings.vc_kick {
+                        if settings.vc_auto_leave {
                             if let Ok(member) = guild_id.member(&ctx.http, *user_id).await {
                                 if let Err(e) = member.disconnect_from_voice(&ctx.http).await {
                                     warn!("Failed to disconnect timeoutd player from VC: {e}");

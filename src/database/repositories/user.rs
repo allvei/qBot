@@ -10,18 +10,20 @@ use crate::{Database, Elo, Rank, DEFAULT_RANK};
 use crate::models::Player;
 use super::Repository;
 
-const ALERT_LINE_WIDTH: usize = 70;
-const ALERT_MAX_LINES: usize = 6;
+const ALERT_LINE_WIDTH:  usize = 70;
+const ALERT_MAX_LINES:   usize = 6;
+const FOOTER_LINE_WIDTH: usize = 100;
+const FOOTER_MAX_LINES:  usize = 2;
 
-/// Truncate alert message to fit within display constraints.
-/// Max 6 lines, 70 chars per line. Newlines ceiling the current line to 70 chars.
-fn truncate_alert_message(s: &str) -> String {
+/// Truncate text to fit within display constraints.
+/// Newlines ceiling the current line to line_width chars.
+fn truncate_text(s: &str, line_width: usize, max_lines: usize) -> String {
     let mut result = String::new();
     let mut line_count = 0;
     let mut line_chars = 0;
 
     for ch in s.chars() {
-        if line_count >= ALERT_MAX_LINES {
+        if line_count >= max_lines {
             break;
         }
 
@@ -30,9 +32,9 @@ fn truncate_alert_message(s: &str) -> String {
             line_count += 1;
             line_chars = 0;
         } else {
-            if line_chars >= ALERT_LINE_WIDTH {
+            if line_chars >= line_width {
                 line_count += 1;
-                if line_count >= ALERT_MAX_LINES {
+                if line_count >= max_lines {
                     break;
                 }
                 line_chars = 0;
@@ -43,6 +45,35 @@ fn truncate_alert_message(s: &str) -> String {
     }
 
     result
+}
+
+/// Truncate alert message to fit within display constraints.
+fn truncate_alert_message(s: &str) -> String {
+    truncate_text(s, ALERT_LINE_WIDTH, ALERT_MAX_LINES)
+}
+
+/// Truncate footer text to fit within display constraints.
+fn truncate_footer_text(s: &str) -> String {
+    truncate_text(s, FOOTER_LINE_WIDTH, FOOTER_MAX_LINES)
+}
+
+/// Check if a string contains only allowed characters (ASCII printable + extended).
+/// Returns true if valid, false if contains disallowed characters.
+pub fn is_valid_user_text(s: &str) -> bool {
+    s.chars().all(|c| {
+        let code = c as u32;
+        // ASCII printable (0x20-0x7E) + newline/tab + extended ASCII (0x80-0xFF)
+        (0x20..=0x7E).contains(&code) || c == '\n' || c == '\t' || (0x80..=0xFF).contains(&code)
+    })
+}
+
+/// Sanitize user text by removing disallowed characters.
+/// Keeps ASCII printable, newline, tab, and extended ASCII (0x80-0xFF).
+pub fn sanitize_user_text(s: &str) -> String {
+    s.chars().filter(|&c| {
+        let code = c as u32;
+        (0x20..=0x7E).contains(&code) || c == '\n' || c == '\t' || (0x80..=0xFF).contains(&code)
+    }).collect()
 }
 
 #[derive(Clone)]
@@ -286,7 +317,7 @@ impl UserRepository {
     /// Get user settings
     pub async fn get_prefs(&self, user_id: UI) -> Result<UserSettings> {
         let result = sqlx::query(
-            "SELECT timeout_length, join_announcement, vc_disconnect_on_leave,
+            "SELECT timeout_length, join_announcement, vc_disconnect_on_leave, vc_auto_queue,
                     announcement_color, dm_enabled, notify_quota_threshold,
                     alert_desc, alert_footer_text,
                     alert_footer_icon, alert_footer_thumbnail,
@@ -306,6 +337,8 @@ impl UserRepository {
                 // Load alert descriptions and truncate if too long
                 let raw_alert_desc: Option<String> = row.try_get::<String, _>("alert_desc").ok().filter(|s| !s.is_empty());
                 let raw_leave_alert_desc: Option<String> = row.try_get::<String, _>("leave_alert_desc").ok().filter(|s| !s.is_empty());
+                let raw_alert_footer: Option<String> = row.try_get::<String, _>("alert_footer_text").ok().filter(|s| !s.is_empty());
+                let raw_leave_alert_footer: Option<String> = row.try_get::<String, _>("leave_alert_footer_text").ok().filter(|s| !s.is_empty());
 
                 let alert_desc = raw_alert_desc.as_ref().map(|s| {
                     let truncated = truncate_alert_message(s);
@@ -323,9 +356,27 @@ impl UserRepository {
                     truncated
                 }).filter(|s| !s.is_empty());
 
+                let alert_footer_text = raw_alert_footer.as_ref().map(|s| {
+                    let truncated = truncate_footer_text(s);
+                    if truncated.len() < s.len() {
+                        warn!("Truncated alert_footer_text for user {}: {} -> {} chars", user_id, s.len(), truncated.len());
+                    }
+                    truncated
+                }).filter(|s| !s.is_empty());
+
+                let leave_alert_footer_text = raw_leave_alert_footer.as_ref().map(|s| {
+                    let truncated = truncate_footer_text(s);
+                    if truncated.len() < s.len() {
+                        warn!("Truncated leave_alert_footer_text for user {}: {} -> {} chars", user_id, s.len(), truncated.len());
+                    }
+                    truncated
+                }).filter(|s| !s.is_empty());
+
                 // If truncation occurred, update the database
                 let alert_truncated = raw_alert_desc.as_ref().map(|s| truncate_alert_message(s).len() < s.len()).unwrap_or(false);
                 let leave_truncated = raw_leave_alert_desc.as_ref().map(|s| truncate_alert_message(s).len() < s.len()).unwrap_or(false);
+                let footer_truncated = raw_alert_footer.as_ref().map(|s| truncate_footer_text(s).len() < s.len()).unwrap_or(false);
+                let leave_footer_truncated = raw_leave_alert_footer.as_ref().map(|s| truncate_footer_text(s).len() < s.len()).unwrap_or(false);
 
                 if alert_truncated {
                     let _ = sqlx::query("UPDATE users SET alert_desc = ? WHERE user_id = ?")
@@ -343,20 +394,37 @@ impl UserRepository {
                         .await;
                 }
 
+                if footer_truncated {
+                    let _ = sqlx::query("UPDATE users SET alert_footer_text = ? WHERE user_id = ?")
+                        .bind(&alert_footer_text)
+                        .bind(user_id.get() as i64)
+                        .execute(&self.pool)
+                        .await;
+                }
+
+                if leave_footer_truncated {
+                    let _ = sqlx::query("UPDATE users SET leave_alert_footer_text = ? WHERE user_id = ?")
+                        .bind(&leave_alert_footer_text)
+                        .bind(user_id.get() as i64)
+                        .execute(&self.pool)
+                        .await;
+                }
+
                 Ok(UserSettings {
                     expiry_duration:              Duration::from_secs((minutes as u64) * 60),
                     join_announcement:            row.try_get::<i64, _>("join_announcement").unwrap_or(0) != 0,
-                    vc_kick:                      row.try_get::<i64, _>("vc_disconnect_on_leave").unwrap_or(1) != 0,
+                    vc_auto_leave:                      row.try_get::<i64, _>("vc_disconnect_on_leave").unwrap_or(1) != 0,
+                    vc_auto_join:                row.try_get::<i64, _>("vc_auto_queue").unwrap_or(1) != 0,
                     announcement_color:           row.try_get("announcement_color").unwrap_or(3447003),
                     dm_alerts:                    row.try_get::<i64, _>("dm_enabled").unwrap_or(1) != 0,
                     notify_quota_threshold:       row.try_get::<i64, _>("notify_quota_threshold").ok().map(|v| v as u8),
                     alert_desc,
-                    alert_footer_text:            row.try_get::<String, _>("alert_footer_text").ok().filter(|s| !s.is_empty()),
+                    alert_footer_text,
                     alert_footer_icon:            row.try_get::<String, _>("alert_footer_icon").ok().filter(|s| !s.is_empty()),
                     alert_footer_thumbnail:       row.try_get::<String, _>("alert_footer_thumbnail").ok().filter(|s| !s.is_empty()),
                     leave_alert:                  row.try_get::<i64, _>("leave_alert").unwrap_or(0) != 0,
                     leave_alert_desc,
-                    leave_alert_footer_text:      row.try_get::<String, _>("leave_alert_footer_text").ok().filter(|s| !s.is_empty()),
+                    leave_alert_footer_text,
                     leave_alert_footer_icon:      row.try_get::<String, _>("leave_alert_footer_icon").ok().filter(|s| !s.is_empty()),
                     leave_alert_footer_thumbnail: row.try_get::<String, _>("leave_alert_footer_thumbnail").ok().filter(|s| !s.is_empty()),
                 })
@@ -380,6 +448,7 @@ impl UserRepository {
                 timeout_length = ?,
                 join_announcement = ?,
                 vc_disconnect_on_leave = ?,
+                vc_auto_queue = ?,
                 announcement_color = ?,
                 dm_enabled = ?,
                 notify_quota_threshold = ?,
@@ -396,7 +465,8 @@ impl UserRepository {
         )
         .bind(timeout_length)
         .bind(if settings.join_announcement { 1 } else { 0 })
-        .bind(if settings.vc_kick { 1 } else { 0 })
+        .bind(if settings.vc_auto_leave { 1 } else { 0 })
+        .bind(if settings.vc_auto_join { 1 } else { 0 })
         .bind(settings.announcement_color)
         .bind(if settings.dm_alerts { 1 } else { 0 })
         .bind(settings.notify_quota_threshold.map(|v| v as i64))
@@ -443,7 +513,8 @@ impl UserRepository {
 pub struct UserSettings {
     pub expiry_duration:                Duration,
     pub join_announcement:              bool,
-    pub vc_kick:                        bool,
+    pub vc_auto_leave:                        bool,
+    pub vc_auto_join:                  bool,
     pub announcement_color:             i64,
     pub dm_alerts:                      bool,
     pub notify_quota_threshold:         Option<u8>,
@@ -463,7 +534,8 @@ impl Default for UserSettings {
         Self {
             expiry_duration:              Duration::from_secs(30 * 60), // Default 30 minutes
             join_announcement:            false,
-            vc_kick:                      true,
+            vc_auto_leave:                false,
+            vc_auto_join:                 false,
             announcement_color:           3447003, // Discord blurple
             dm_alerts:                    true,
             notify_quota_threshold:       None,
