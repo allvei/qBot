@@ -12,5 +12,4 @@ bch.md
 trends_api.md
 Cargo.lock
 /.windsurf
-notes.md
 rustfmt.toml
