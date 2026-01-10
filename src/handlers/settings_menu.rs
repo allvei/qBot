@@ -334,17 +334,21 @@ pub struct RankConfigDisplay {
 
 impl RankConfigDisplay {
     pub fn build_embed(&self) -> CE {
-        // Build compact rank list: @role - ELO
+        // Build compact rank list: ELO rank (same format as dashboard player list)
         let mut description = String::new();
         for (rank_name, role_ids, elo) in &self.rank_roles {
             let role_display = role_ids.as_ref()
                 .map(|ids| ids.split(',').filter(|s| !s.is_empty()).map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| format!("*@{rank_name}*"));
+                .filter(|s| !s.is_empty());
             
             let is_default = rank_name == &self.default_rank;
             let default_marker = if is_default { " (default)" } else { "" };
-            description.push_str(&format!("{role_display} - {elo}{default_marker}\n"));
+            
+            if let Some(roles) = role_display {
+                description.push_str(&format!("{elo} {rank_name} ({roles}){default_marker}\n"));
+            } else {
+                description.push_str(&format!("{elo} {rank_name}{default_marker}\n"));
+            }
         }
 
         CE::new()
