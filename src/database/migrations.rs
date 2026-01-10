@@ -39,6 +39,7 @@ impl DatabaseMigrations {
         self.create_groups_table().await?;
         self.create_teams_table() .await?;
         self.create_elo_table()   .await?;
+        self.create_ranks_table() .await?;
         Ok(())
     }
     pub async fn verify_schemas(&self) -> Result<()> {
@@ -120,6 +121,7 @@ impl DatabaseMigrations {
                 add_column!(self, "users", "timeout_length",               "INTEGER", "30");
                 add_column!(self, "users", "join_announcement",            "INTEGER", "0");
                 add_column!(self, "users", "vc_disconnect_on_leave",       "INTEGER", "1");
+                add_column!(self, "users", "vc_auto_queue",                "INTEGER", "1");
                 add_column!(self, "users", "announcement_color",           "INTEGER", "3447003");
                 add_column!(self, "users", "show_stats_in_announcement",   "INTEGER", "0");
                 add_column!(self, "users", "notify_quota_threshold",       "INTEGER", "NULL");
@@ -387,6 +389,25 @@ impl DatabaseMigrations {
         
         let guild_columns = vec!["id", "guild_id"];
         self.verify_columns("guilds", &guild_columns).await?;
+        Ok(())
+    }
+
+    async fn create_ranks_table(&self) -> Result<()> {
+        if !self.check_table("ranks").await? {
+            sqlx::query(
+                "CREATE TABLE ranks (
+                    id       INTEGER PRIMARY KEY,
+                    guild_id INTEGER NOT NULL,
+                    position INTEGER NOT NULL,
+                    name     TEXT NOT NULL,
+                    elo      INTEGER NOT NULL,
+                    role_ids TEXT,
+                    UNIQUE(guild_id, position)
+                )"
+            )
+            .execute(&self.pool)
+            .await?;
+        }
         Ok(())
     }
 

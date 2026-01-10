@@ -2,11 +2,13 @@ pub mod user;
 pub mod group;
 pub mod config;
 pub mod elo;
+pub mod rank;
 
-pub use user::{UserRepository, UserSettings};
+pub use user::{UserRepository, UserSettings, is_valid_user_text};
 pub use group::GroupRepository;
 pub use config::ConfigRepository;
 pub use elo::{EloRepository, GuildElo};
+pub use rank::{RankRepository, GuildRank};
 
 use anyhow::Result;
 use async_trait::async_trait;
