@@ -656,9 +656,16 @@ impl Group {
                     
                     // Get the valid ELO range for the player's Discord rank
                     let rank_min_elo = discord_rank.elo_from_db(&cc.db, guild_id.get()).await;
-                    let rank_max_elo = discord_rank.next_rank()
-                        .map(|r| r.default_rank_elo())
-                        .unwrap_or(101);
+                    let next_rank = discord_rank.next_rank();
+                    let rank_max_elo = if let Some(nr) = next_rank {
+                        nr.elo_from_db(&cc.db, guild_id.get()).await
+                    } else {
+                        101
+                    };
+                    
+                    info!("DEBUG: discord_rank={} (pos {}), rank_min_elo={}, next_rank={:?}, rank_max_elo={}",
+                          discord_rank.name(), discord_rank.position(), rank_min_elo, 
+                          next_rank.map(|r| r.name()), rank_max_elo);
                     
                     if let Some(guild_elo) = existing_elo {
                         if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
