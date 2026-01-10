@@ -1,66 +1,26 @@
 # Todo
 
-## Testing
-
-### Settings Menus
-
-- `/prefs` - Open personal settings menu
-  - Toggle DM alerts
-  - Toggle VC kick
-  - Set timeout length
-  - Edit join/leave alerts
-- `/config` - Open server settings menu (admin)
-  - Toggle Dynamic ELO
-  - Set runner role
-  - Set admin role
-  - Edit default ELO
-  - Edit default rank
-  - Rank configuration
-  - Group management (add/edit/remove groups)
-- `/editplayer <user>` - Open player settings menu (admin)
-  - Edit Steam ID
-  - Edit ELO
-  - Edit Rank
-
-### Queue & Game Flow
-
-- Dashboard "Add" button      - Join queue
-- Dashboard "Leave" button    - Leave queue
-- Dashboard "Settings" button - Open settings
-- Queue fills to quota        - Session goes Hot
-- Teams generated             - Players moved to team VCs
-- Game ends                   - Players pulled back, session resets
-
-### Player Management
-
-- `/buffer [user]` - Move player to start of queue
-- `/fatkid [user]` - Move player to end of queue
-- `/clear`         - Clear all players from queue
-- `/elo [user]`    - View player ELO info
-
-### Timeout & Alerts
-
-- Player timeout - Auto-remove after configured time
-- Join alert     - Custom embed on player join
-- Leave alert    - Custom embed on player leave
-- DM alerts      - Notify player when game ready
-
-### Edge Cases
-
-- Player leaves during Hot phase
-- Player disconnects from VC during game
-- Multiple groups in same server
-- Role permissions (runner vs admin vs regular user)
-
 ## Priority
 
-- Edit groups via /config
-  - Edit a group
-  - Add a new group
-    - Create new channels OR link existing channels
-  - Remove a group
-- Add right click user actions
-  - Edit player
+- Add remove group button
+- Add method for creating selection menus that use buttons if less than 3 options, otherwise a list.
+- Make pretty:
+  - Dashboard
+  - Preferences
+  - Menu
+  - Match summary
+- Dashboard
+  - Show time since start
+  - Don't show time left if in vc.
+  - Before quitting app, mark bot as offline
+  - Connect info
+- Notifications
+  - DM when game is close to ready
+- Queue
+  - Prevent multiple fatkids, count +1 on a player for each time
+- Rank name = role name
+- Config bool for role management (auto fix, auto assign to new players, etc)
+- Dynamic team channels
 
 ## Secondary
 

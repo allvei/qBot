@@ -15,7 +15,7 @@ use crate::models::{ComponentContext as CC, DashboardQueueKey, Group, SessionSta
 async fn format_team_field(team: &[crate::models::SessionPlayer], db: &crate::Database, guild_id: u64) -> String {
     let mut lines = Vec::new();
     for player in team {
-        lines.push(format!("[**{}**] <@{}>", player.player.elo, player.player.user_id));
+        lines.push(format!("‹**{}**› <@{}>", player.player.elo, player.player.user_id));
     }
     lines.join("\n")
 }
@@ -303,7 +303,7 @@ impl Group {
 
                         description.push_str("**Missing players:**\n");
                         for player in players_never_joined {
-                            let elo_str = format!("[**{}**] ", player.player.elo);
+                            let elo_str = format!("‹**{}**› ", player.player.elo);
                             description.push_str(&format!("  • {elo_str}<@{}>\n", player.player.user_id));
                         }
                         description.push_str("\n\n");
@@ -347,7 +347,7 @@ impl Group {
 
                         description.push_str("**Missing players:**\n");
                         for player in players_never_joined {
-                            let elo_str = format!("[**{}**] ", player.player.elo);
+                            let elo_str = format!("‹**{}**› ", player.player.elo);
                             description.push_str(&format!("  • {elo_str}<@{}>\n", player.player.user_id));
                         }
                         description.push_str("\n\n");
@@ -379,7 +379,7 @@ impl Group {
 
                     for player in current_session.pool.iter() {
                         // Build player list with ELO - use player's actual ELO
-                        let elo_str = format!("[**{}**] ", player.player.elo);
+                        let elo_str = format!("‹**{}**› ", player.player.elo);
                         players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
 
                         // Build timeout list
@@ -404,8 +404,8 @@ impl Group {
                         }
                     }
 
-                    embed = embed.field("Players",    players_field, true);
-                    embed = embed.field("Timeout at", timers_field,  true); // TODO: should not be displayed when player in vc
+                    embed = embed.field("Players", players_field, true);
+                    embed = embed.field("Timeout", timers_field,  true); // TODO: should not be displayed when player in vc
                 }
             }
         }
@@ -437,7 +437,7 @@ impl Group {
                     let mut fatkid = format!("**Waiting for next game ({overflow_count}/{quota}):**\n");
                     for player in current_session.pool.iter().skip(quota) {
                         // Use player's actual ELO, not rank default
-                        let elo_str = format!("[**{}**] ", player.player.elo);
+                        let elo_str = format!("‹**{}**› ", player.player.elo);
                         fatkid.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
                     }
                     embed = embed.field("\u{200B}", fatkid, false); // Full-width field
@@ -458,10 +458,10 @@ impl Group {
         if !actives.is_empty() {
             if let Some(next_session) = inactives.first() {
                 if !next_session.pool.is_empty() {
-                    let mut fatkid = format!("**Waiting for next game** [**{}**]**:**\n", next_session.pool.len());
+                    let mut fatkid = format!("**Waiting for next game** ‹**{}**›**:**\n", next_session.pool.len());
                     for player in next_session.pool.iter() {
                         // Use player's actual ELO, not rank default
-                        let elo_str = format!("[**{}**] ", player.player.elo);
+                        let elo_str = format!("‹**{}**› ", player.player.elo);
                         fatkid.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
                     }
                     embed = embed.field("\u{200B}", fatkid, false); // Full-width field
@@ -968,7 +968,7 @@ impl Group {
 
         // Capture match info before pulling
         let active_session = active_session.unwrap();
-        let match_duration = active_session.started_at
+        let match_time     = active_session.started_at
             .and_then(|started| SystemTime::now().duration_since(started).ok())
             .map(|d| d.as_secs());
         let quota = self.quota as usize;
@@ -980,10 +980,10 @@ impl Group {
             .color(0x5865F2);
 
         // Format duration
-        if let Some(secs) = match_duration {
+        if let Some(secs) = match_time {
             let mins = secs / 60;
             let remaining_secs = secs % 60;
-            embed = embed.field("Duration", format!("{}m {}s", mins, remaining_secs), true);
+            embed = embed.field("Time", format!("{}m {}s", mins, remaining_secs), true);
         }
 
         // Format teams with players and ELO
@@ -992,7 +992,7 @@ impl Group {
                 return "*No players*".to_string();
             }
             team.iter()
-                .map(|p| format!("<@{}> ({})", p.player.user_id, p.player.elo))
+                .map(|p| format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id))
                 .collect::<Vec<_>>()
                 .join("\n")
         };
@@ -1005,8 +1005,8 @@ impl Group {
         };
 
         embed = embed
-            .field(format!("RED (avg {})", red_avg_elo), format_team(&team_red), true)
-            .field(format!("BLU (avg {})", blu_avg_elo), format_team(&team_blu), true);
+            .field(format!("🔴 RED (avg {})", red_avg_elo), format_team(&team_red), true)
+            .field(format!("🔵 BLU (avg {})", blu_avg_elo), format_team(&team_blu), true);
 
         // Defer update now that we're going to end the match
         cc.defer_update().await?;
