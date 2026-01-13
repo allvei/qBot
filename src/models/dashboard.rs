@@ -4,7 +4,7 @@ use crate::{QueueToggleType, log_queue_toggle, models::constants::DEFAULT_HOT_JO
 use serenity::{all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
     CreateEmbed as CE, CreateMessage as CM, CreateInteractionResponse as CIR,
-    CreateInteractionResponseMessage as CIRM, EditMessage, Message,
+    CreateInteractionResponseMessage as CIRM, EditMessage, Message, GuildId as GI,
 }};
 use tracing::{error, info, warn};
 use tokio::sync::mpsc;
@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use crate::models::{ComponentContext as CC, DashboardQueueKey, Group, SessionStatus};
 
 /// Helper function to format team players as a string for embed fields
-async fn format_team_field(team: &[crate::models::SessionPlayer], db: &crate::Database, guild_id: u64) -> String {
+async fn format_team_field(team: &[crate::models::SessionPlayer], _db: &crate::Database, guild_id: GI) -> String {
     let mut lines = Vec::new();
     for player in team {
         lines.push(format!("‹**{}**› <@{}>", player.player.elo, player.player.user_id));
@@ -254,7 +254,7 @@ impl Group {
         msg.is_ok()
     }
 
-    pub async fn dash_publish(&mut self, ctx: &Context, channel: CI, db: &crate::Database, guild_id: u64) -> Result<(), Error>{
+    pub async fn dash_publish(&mut self, ctx: &Context, channel: CI, db: &crate::Database, guild_id: GI) -> Result<(), Error>{
         // Create new dashboard message (don't check if it exists - caller should check)
         let msg = channel.send_message(&ctx.http, self.dash_init(db, guild_id).await?).await;
         if let Ok(msg) = msg {
@@ -268,7 +268,7 @@ impl Group {
     }
 
     /// Builds dashboard embed and components based on current group state
-    pub async fn build_dashboard_content(&self, db: &crate::Database, guild_id: u64) -> Result<(CE, Vec<CAR>)> {
+    pub async fn build_dashboard_content(&self, db: &crate::Database, guild_id: GI) -> Result<(CE, Vec<CAR>)> {
         let quota     = self.quota as usize;
         let inactives = self.get_inactives();
         let actives   = self.get_actives();
@@ -554,7 +554,7 @@ impl Group {
     }
 
     /// Initializes a dashboard based on current group state
-    pub async fn dash_init(&mut self, db: &crate::Database, guild_id: u64) -> Result<CM> {
+    pub async fn dash_init(&mut self, db: &crate::Database, guild_id: GI) -> Result<CM> {
         let (embed, buttons) = self.build_dashboard_content(db, guild_id).await?;
         let message = CM::new().embed(embed).components(buttons);
         Ok(message)
@@ -594,7 +594,7 @@ impl Group {
 
     /// Queue a dashboard update (non-blocking, batched)
     /// Requires guild_id to be passed since Group doesn't store it
-    pub async fn queue_dash_update(&self, ctx: &Context, guild_id: u64) {
+    pub async fn queue_dash_update(&self, ctx: &Context, guild_id: GI) {
         //
         // Try to get queue from context data using the key from models module
         let data = ctx.data.read().await;
@@ -639,11 +639,11 @@ impl Group {
         cc.defer_update().await?;
         //
 
-        // Get or assign player's rank (auto-creates ranks and assigns Apprentice if needed)
+        // Get or assign player's rank (auto-creates ranks and assigns default if needed)
         use crate::handlers::player::get_or_assign_player_rank;
         if let Some(guild_id) = cc.component.guild_id {
             //
-            match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user_id).await {
+            match get_or_assign_player_rank(&cc.db, guild_id, user_id).await {
                 Ok(discord_rank) => {
                     // Get base player info
                     let mut player = match cc.db.get_user(user_id, cc.ctx).await {
@@ -652,13 +652,13 @@ impl Group {
                     };
 
                     // Get guild-specific ELO if exists
-                    let existing_elo = cc.db.elos.get_if_exists(user_id, guild_id.get()).await.ok().flatten();
+                    let existing_elo = cc.db.elos.get_if_exists(user_id, guild_id).await.ok().flatten();
                     
                     // Get the valid ELO range for the player's Discord rank
-                    let rank_min_elo = discord_rank.elo_from_db(&cc.db, guild_id.get()).await;
+                    let rank_min_elo = discord_rank.elo_from_db(&cc.db, guild_id).await;
                     let next_rank = discord_rank.next_rank();
                     let rank_max_elo = if let Some(nr) = next_rank {
-                        nr.elo_from_db(&cc.db, guild_id.get()).await
+                        nr.elo_from_db(&cc.db, guild_id).await
                     } else {
                         101
                     };
@@ -678,7 +678,7 @@ impl Group {
                             info!("Player {} ELO {} outside {} range [{}, {}), resetting to {}", 
                                   user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo, rank_min_elo);
                             player.elo = rank_min_elo;
-                            if let Err(e) = cc.db.elos.set(user_id, guild_id.get(), player.elo, discord_rank).await {
+                            if let Err(e) = cc.db.elos.set(user_id, guild_id, player.elo, discord_rank).await {
                                 warn!("Failed to update guild ELO: {}", e);
                             }
                         }
@@ -687,7 +687,7 @@ impl Group {
                         info!("New player {} in guild, setting ELO to {} from Discord rank {}", 
                               user_id, rank_min_elo, discord_rank.name());
                         player.elo = rank_min_elo;
-                        if let Err(e) = cc.db.elos.set(user_id, guild_id.get(), player.elo, discord_rank).await {
+                        if let Err(e) = cc.db.elos.set(user_id, guild_id, player.elo, discord_rank).await {
                             warn!("Failed to initialize guild ELO: {}", e);
                         }
                     }
@@ -742,7 +742,7 @@ impl Group {
 
         // Update dashboard to reflect changes
         //
-        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
+        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
         //
 
         Ok(())
@@ -868,7 +868,7 @@ impl Group {
         }
 
         // Update dashboard to reflect changes (queue count now only shown in dashboard)
-        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
+        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
 
         Ok(())
     }
@@ -900,7 +900,7 @@ impl Group {
         self.generate_teams(cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
 
         // Update dashboard to show new teams
-        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
+        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
 
         Ok(())
     }
@@ -942,7 +942,7 @@ impl Group {
             Ok(_) => {
                 info!("Players moved to team channels and game is now live");
                 // Update dashboard to reflect Live status
-                self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
+                self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
                 Ok(())
             }
             Err(e) => {
@@ -1167,7 +1167,7 @@ impl Group {
         cc.component.create_response(&cc.ctx.http, response).await?;
 
         // Update the dashboard
-        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap().get()).await;
+        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
 
         Ok(())
     }
@@ -1237,7 +1237,7 @@ impl Group {
 /// Request to update a specific group's dashboard
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct DashboardUpdateRequest {
-    pub guild_id: u64,
+    pub guild_id: GI,
     pub group_id: u64,
 }
 
@@ -1266,7 +1266,7 @@ impl DashboardUpdateQueue {
     }
 
     /// Request a dashboard update for a specific group
-    pub fn request_update(&self, guild_id: u64, group_id: u64) {
+    pub fn request_update(&self, guild_id: GI, group_id: u64) {
         let request = DashboardUpdateRequest { guild_id, group_id };
         if let Err(e) = self.sender.send(request) {
             warn!("Failed to queue dashboard update: {e}");
@@ -1356,7 +1356,7 @@ impl DashboardUpdateQueue {
                 let (channel_id, dashboard_channel_id, message_id, embed, buttons, guild_name, pool_size) = {
                     let mut manager_lock = manager.lock().await;
 
-                    let server = match manager_lock.get_server(serenity::all::GuildId::new(guild_id)) {
+                    let server = match manager_lock.get_server(guild_id) {
                         Ok(s) => s,
                         Err(e) => {
                             warn!("Failed to get server for dashboard update: {e}");
@@ -1380,11 +1380,11 @@ impl DashboardUpdateQueue {
 
                     // Refresh player ranks from Discord to ensure dashboard shows current ranks
                     // This prevents desync when players are promoted while sitting in queue
-                    group.refresh_player_ranks(&ctx, serenity::all::GuildId::new(guild_id), &database).await;
+                    group.refresh_player_ranks(&ctx, guild_id, &database).await;
 
                     // Validate VC status to ensure accurate display of who is in voice chat
                     // This prevents desync where flags don't match Discord's actual voice states
-                    group.validate_vc_status(&ctx, serenity::all::GuildId::new(guild_id)).await;
+                    group.validate_vc_status(&ctx, guild_id).await;
 
                     // Get dashboard message info
                     let channel_id = group.channels.dashboard;
@@ -1424,7 +1424,7 @@ impl DashboardUpdateQueue {
 
                                     // Update the stored message ID in memory
                                     let mut manager_lock = manager.lock().await;
-                                    if let Ok(server) = manager_lock.get_server(serenity::all::GuildId::new(guild_id)) {
+                                    if let Ok(server) = manager_lock.get_server(guild_id) {
                                         if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id as u8) {
                                             group.dashboard_msg = new_msg.id;
                                         }

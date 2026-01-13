@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use serenity::all::{ChannelId as CI, MessageId as MI};
+use serenity::all::{ChannelId as CI, MessageId as MI, GuildId as GI};
 use sqlx::{Row, SqlitePool};
 use tracing::{info, warn};
 
@@ -27,7 +27,7 @@ impl GroupRepository {
         Self { pool }
     }
 
-    pub async fn create_group(&self, guild_id: u64, dashboard_msg: u64, config: GroupConfig) -> Result<Group> {
+    pub async fn create_group(&self, guild_id: GI, dashboard_msg: u64, config: GroupConfig) -> Result<Group> {
         info!("Creating new group with queue: {}", config.queue_vc_id);
 
         let result = sqlx::query(
@@ -35,7 +35,7 @@ impl GroupRepository {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING id, group_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, quota, connect_info"
         )
-        .bind(guild_id                    as i64)
+        .bind(guild_id.get()              as i64)
         .bind(config.dashboard_channel_id as i64)
         .bind(config.chat_channel_id      as i64)
         .bind(config.queue_vc_id          as i64)
@@ -49,7 +49,7 @@ impl GroupRepository {
         self.build_group_from_row_async(&result).await
     }
 
-    pub async fn update_group(&self, guild_id: u64, config: GroupConfig) -> Result<Group> {
+    pub async fn update_group(&self, guild_id: GI, config: GroupConfig) -> Result<Group> {
         info!("Updating group with queue_id: {}", config.queue_vc_id);
 
         let result = sqlx::query("UPDATE groups
@@ -57,7 +57,7 @@ impl GroupRepository {
                                   WHERE queue = ?
                                   RETURNING id, group_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info"
         )
-        .bind(guild_id                    as i64)
+        .bind(guild_id.get()                    as i64)
         .bind(config.dashboard_channel_id as i64)
         .bind(config.chat_channel_id      as i64)
         .bind(config.red_vc_id            as i64)
@@ -97,7 +97,7 @@ impl GroupRepository {
         let blu       = CI::new(blu_id);
         let dashboard = CI::new(dashboard_id);
 
-        let guild_id     = result.get::<i64, _>("guild_id") as u64;
+        let guild_id     = GI::new(result.get::<i64, _>("guild_id") as u64);
         let group_id     = result.try_get::<i64, _>("group_id").unwrap_or(0) as u8;
         let name         = result.try_get::<Option<String>, _>("name").ok().flatten();
         let connect_info = result.try_get::<Option<String>, _>("connect_info").ok().flatten();
@@ -113,6 +113,7 @@ impl GroupRepository {
         };
 
         let mut group = Group::new(
+            guild_id,
             group_id,
             name,
             result.try_get::<i64, _>("quota")  .unwrap_or(12)  as u8,
@@ -134,9 +135,9 @@ impl GroupRepository {
         Ok(team)
     }
 
-    pub async fn get_teams_for_group(&self, guild_id: u64, group_id: u8) -> Result<Vec<TeamChannel>> {
+    pub async fn get_teams_for_group(&self, guild_id: GI, group_id: u8) -> Result<Vec<TeamChannel>> {
         let rows = sqlx::query("SELECT red, blu FROM teams WHERE guild_id = ? AND group_id = ?")
-        .bind(guild_id as i64)
+        .bind(guild_id.get() as i64)
         .bind(group_id as i64)
         .fetch_all(&self.pool)
         .await?;
@@ -150,9 +151,9 @@ impl GroupRepository {
     }
 
     /// Check if a group exists for a guild
-    pub async fn group_exists_for_guild(&self, guild_id: u64) -> Result<bool> {
+    pub async fn group_exists_for_guild(&self, guild_id: GI) -> Result<bool> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM groups WHERE guild_id = ?")
-        .bind(guild_id as i64)
+        .bind(guild_id.get() as i64)
         .fetch_one(&self.pool)
         .await?;
 
@@ -160,12 +161,12 @@ impl GroupRepository {
     }
 
     /// Get all groups for a guild
-    pub async fn get_groups_for_guild(&self, guild_id: u64) -> Result<Vec<Group>> {
+    pub async fn get_groups_for_guild(&self, guild_id: GI) -> Result<Vec<Group>> {
         let rows = sqlx::query("SELECT id, group_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info
                                 FROM groups
                                 WHERE guild_id = ?"
         )
-        .bind(guild_id as i64)
+        .bind(guild_id.get() as i64)
         .fetch_all(&self.pool)
         .await?;
 
@@ -186,12 +187,12 @@ impl GroupRepository {
     }
 
     /// Update dashboard message ID for a group by its dashboard channel ID
-    pub async fn update_dashboard_msg(&self, guild_id: u64, dashboard_channel_id: u64, dashboard_msg_id: u64) -> Result<()> {
+    pub async fn update_dashboard_msg(&self, guild_id: GI, dashboard_channel_id: u64, dashboard_msg_id: u64) -> Result<()> {
         info!("Updating dashboard message ID for guild {} dashboard channel {}", guild_id, dashboard_channel_id);
 
         sqlx::query("UPDATE groups SET dashboard_msg = ? WHERE guild_id = ? AND dashboard = ?")
         .bind(dashboard_msg_id as i64)
-        .bind(guild_id as i64)
+        .bind(guild_id.get() as i64)
         .bind(dashboard_channel_id as i64)
         .execute(&self.pool)
         .await?;
@@ -200,12 +201,12 @@ impl GroupRepository {
     }
 
     /// Update group name
-    pub async fn update_name(&self, guild_id: u64, group_id: u8, name: Option<&str>) -> Result<()> {
+    pub async fn update_name(&self, guild_id: GI, group_id: u8, name: Option<&str>) -> Result<()> {
         info!("Updating name for guild {} group {}: {:?}", guild_id, group_id, name);
 
         sqlx::query("UPDATE groups SET name = ? WHERE guild_id = ? AND group_id = ?")
         .bind(name)
-        .bind(guild_id as i64)
+        .bind(guild_id.get() as i64)
         .bind(group_id as i64)
         .execute(&self.pool)
         .await?;
@@ -214,12 +215,12 @@ impl GroupRepository {
     }
 
     /// Update group quota
-    pub async fn update_quota(&self, guild_id: u64, group_id: u8, quota: u8) -> Result<()> {
+    pub async fn update_quota(&self, guild_id: GI, group_id: u8, quota: u8) -> Result<()> {
         info!("Updating quota for guild {} group {}: {}", guild_id, group_id, quota);
 
         sqlx::query("UPDATE groups SET quota = ? WHERE guild_id = ? AND group_id = ?")
         .bind(quota as i64)
-        .bind(guild_id as i64)
+        .bind(guild_id.get() as i64)
         .bind(group_id as i64)
         .execute(&self.pool)
         .await?;
@@ -228,12 +229,12 @@ impl GroupRepository {
     }
 
     /// Update group timeout
-    pub async fn update_timeout(&self, guild_id: u64, group_id: u8, timeout: u16) -> Result<()> {
+    pub async fn update_timeout(&self, guild_id: GI, group_id: u8, timeout: u16) -> Result<()> {
         info!("Updating timeout for guild {} group {}: {}", guild_id, group_id, timeout);
 
         sqlx::query("UPDATE groups SET timeout = ? WHERE guild_id = ? AND group_id = ?")
         .bind(timeout as i64)
-        .bind(guild_id as i64)
+        .bind(guild_id.get() as i64)
         .bind(group_id as i64)
         .execute(&self.pool)
         .await?;
@@ -242,12 +243,12 @@ impl GroupRepository {
     }
 
     /// Update group connect info
-    pub async fn update_connect_info(&self, guild_id: u64, group_id: u8, connect_info: Option<&str>) -> Result<()> {
+    pub async fn update_connect_info(&self, guild_id: GI, group_id: u8, connect_info: Option<&str>) -> Result<()> {
         info!("Updating connect_info for guild {} group {}: {:?}", guild_id, group_id, connect_info);
 
         sqlx::query("UPDATE groups SET connect_info = ? WHERE guild_id = ? AND group_id = ?")
         .bind(connect_info)
-        .bind(guild_id as i64)
+        .bind(guild_id.get() as i64)
         .bind(group_id as i64)
         .execute(&self.pool)
         .await?;
@@ -256,12 +257,12 @@ impl GroupRepository {
     }
 
     /// Update group team balance method
-    pub async fn update_team_balance_method(&self, guild_id: u64, group_id: u8, method: TeamBalanceMethod) -> Result<()> {
+    pub async fn update_team_balance_method(&self, guild_id: GI, group_id: u8, method: TeamBalanceMethod) -> Result<()> {
         info!("Updating team_balance_method for guild {} group {}: {}", guild_id, group_id, method);
 
         sqlx::query("UPDATE groups SET team_balance_method = ? WHERE guild_id = ? AND group_id = ?")
         .bind(method.as_str())
-        .bind(guild_id as i64)
+        .bind(guild_id.get() as i64)
         .bind(group_id as i64)
         .execute(&self.pool)
         .await?;
@@ -274,6 +275,7 @@ impl GroupRepository {
 impl Repository<Group, u8> for GroupRepository {
     async fn create(&self, group: &Group) -> Result<Group> {
         // Extract values from the group struct
+        let guild_id      = group.guild_id;
         let dashboard_ch  = group.channels.dashboard .get();
         let dashboard_msg = group.dashboard_msg      .get();
         let chat          = group.channels.queue_chat.get();
@@ -289,7 +291,7 @@ impl Repository<Group, u8> for GroupRepository {
             blu_vc_id:            blu,
             quota:                group.quota,
         };
-        self.create_group(0, dashboard_msg, config).await
+        self.create_group(guild_id, dashboard_msg, config).await
     }
 
     async fn get_by_id(&self, group_id: u8) -> Result<Group> {
@@ -304,6 +306,7 @@ impl Repository<Group, u8> for GroupRepository {
     }
 
     async fn update(&self, group: &Group) -> Result<Group> {
+        let guild_id     = group.guild_id;
         let dashboard_ch = group.channels.dashboard .get();
         let chat         = group.channels.queue_chat.get();
         let queue        = group.channels.queue_vc  .get();
@@ -318,7 +321,7 @@ impl Repository<Group, u8> for GroupRepository {
             blu_vc_id:            blu,
             quota:                group.quota,
         };
-        self.update_group(0, config).await
+        self.update_group(guild_id, config).await
     }
 
     async fn delete(&self, group_id: u8) -> Result<()> {

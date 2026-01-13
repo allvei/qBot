@@ -1,6 +1,7 @@
 use anyhow::Result;
 use sqlx::SqlitePool;
 use tracing::{error, info, warn};
+use serenity::all::GuildId as GI;
 
 use super::migrations::DatabaseMigrations;
 use super::repositories::GroupRepository;
@@ -116,15 +117,13 @@ impl DatabaseValidator {
             .await?;
 
         for guild_id in guild_ids {
-            let guild_id_u64 = guild_id as u64;
-
             // Check if guild has at least one properly configured group
-            match self.group_repo.get_groups_for_guild(guild_id_u64).await {
+            match self.group_repo.get_groups_for_guild(GI::new(guild_id as u64)).await {
                 Ok(groups) => {
                     if groups.is_empty() {
                         report.warnings.push(format!("Guild {guild_id} has no groups configured"));
                     } else {
-                        report.guild_groups.insert(guild_id_u64, groups.len());
+                        report.guild_groups.insert(guild_id as u64, groups.len());
                         info!("Guild {guild_id} has {} group(s) configured", groups.len());
                     }
                 },
@@ -180,7 +179,7 @@ impl DatabaseValidator {
     }
 
     /// Create a default group for a guild
-    pub async fn create_default_group(&self, guild_id: u64) -> Result<()> {
+    pub async fn create_default_group(&self, guild_id: GI) -> Result<()> {
         self.migrations.init_first_group(guild_id).await
     }
 }

@@ -115,7 +115,7 @@ impl EventHandler for Handler {
                         for group in server.groups.iter_mut() {
                             if group.check_timeout(&database, &ctx_clone, guild_id).await {
                                 // Players were removed, update dashboard
-                                group.queue_dash_update(&ctx_clone, guild_id.get()).await;
+                                group.queue_dash_update(&ctx_clone, guild_id).await;
                             }
                         }
                     }
@@ -159,7 +159,7 @@ impl EventHandler for Handler {
 
     /// When the bot is connected to a new guild
     async fn guild_create(&self,ctx: Context, guild: Guild, _is_new: Option<bool>,) {
-        let guild_id = guild.id.get();
+        let guild_id = guild.id;
         match self.db.get_config(guild_id).await {
             Ok(_config) => {
                 // Load groups from database into manager
@@ -339,7 +339,7 @@ impl EventHandler for Handler {
                     let is_admin = match member {
                         Some(member) => {
                             // Get admin role from database config
-                            match self.db.config.get_config_value("admin_role", guild_id.get()).await {
+                            match self.db.config.get_config_value("admin_role", guild_id).await {
                                 Ok(Some(admin_role_str)) => {
                                     if let Ok(admin_role_id) = admin_role_str.parse::<u64>() {
                                         let admin_role = serenity::all::RoleId::new(admin_role_id);
@@ -503,7 +503,7 @@ impl EventHandler for Handler {
 
                         // Get the message ID from the interaction
                         let message_id = itx.message.id;
-                        let guild_id_u64 = guild_id.get();
+                        let guild_id_u64 = guild_id;
                         let channel_id_u64 = channel_id.get();
                         let message_id_u64 = message_id.get();
 
@@ -735,7 +735,7 @@ impl EventHandler for Handler {
                 if should_regenerate {
                     group.generate_teams(&ctx, server, Some(&self.db)).await;
                 }
-                group.queue_dash_update(&ctx, server.get()).await;
+                group.queue_dash_update(&ctx, server).await;
             },
             VoiceStateUpdate::Connected => {
                 // Player addition is handled in the later section (lines 680+)
@@ -788,7 +788,7 @@ impl EventHandler for Handler {
                         group.generate_teams(&ctx, server, Some(&self.db)).await;
                     }
                     // Queue count now only displayed in dashboard
-                    group.queue_dash_update(&ctx, server.get()).await;
+                    group.queue_dash_update(&ctx, server).await;
                 }
             },
             VoiceStateUpdate::Reconnected => {
@@ -835,7 +835,7 @@ impl EventHandler for Handler {
                                 // This removes them from the "Missing players" list
                                 if was_hot && was_missing {
                                     info!("{} joined VC during hot session, updating dashboard", tag);
-                                    group.queue_dash_update(&ctx, server.get()).await;
+                                    group.queue_dash_update(&ctx, server).await;
                                 }
                             }
                         } else {
@@ -857,9 +857,9 @@ impl EventHandler for Handler {
 
                             // Now we're guaranteed to have a session
                             {
-                                // Get or assign player rank (auto-creates ranks and assigns Apprentice if needed)
+                                // Get or assign player rank (auto-creates ranks and assigns default if needed)
                                 use pf_pug_bot::handlers::player::get_or_assign_player_rank;
-                                match get_or_assign_player_rank(&ctx, &self.db, server, user_id).await {
+                                match get_or_assign_player_rank(&self.db, server, user_id).await {
                                     Ok(discord_rank) => {
                                         // Get base player info
                                         let mut player = match self.db.get_user(user_id, &ctx).await {
@@ -874,13 +874,13 @@ impl EventHandler for Handler {
                                         };
 
                                         // Get guild-specific ELO if exists
-                                        let existing_elo = self.db.elos.get_if_exists(user_id, server.get()).await.ok().flatten();
+                                        let existing_elo = self.db.elos.get_if_exists(user_id, server).await.ok().flatten();
                                         
                                         // Get the valid ELO range for the Discord rank
-                                        let rank_min_elo = discord_rank.elo_from_db(&self.db, server.get()).await;
+                                        let rank_min_elo = discord_rank.elo_from_db(&self.db, server).await;
                                         let next_rank = discord_rank.next_rank();
                                         let rank_max_elo = if let Some(nr) = next_rank {
-                                            nr.elo_from_db(&self.db, server.get()).await
+                                            nr.elo_from_db(&self.db, server).await
                                         } else {
                                             101
                                         };
@@ -896,7 +896,7 @@ impl EventHandler for Handler {
                                                 info!("Voice join - Player {} ELO {} outside {} range [{}, {}), resetting to {}", 
                                                       user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo, rank_min_elo);
                                                 player.elo = rank_min_elo;
-                                                if let Err(e) = self.db.elos.set(user_id, server.get(), player.elo, discord_rank).await {
+                                                if let Err(e) = self.db.elos.set(user_id, server, player.elo, discord_rank).await {
                                                     warn!("Failed to update guild ELO: {}", e);
                                                 }
                                             }
@@ -905,7 +905,7 @@ impl EventHandler for Handler {
                                             info!("Voice join - New player {} in guild, setting ELO to {} from Discord rank {}", 
                                                   user_id, rank_min_elo, discord_rank.name());
                                             player.elo = rank_min_elo;
-                                            if let Err(e) = self.db.elos.set(user_id, server.get(), player.elo, discord_rank).await {
+                                            if let Err(e) = self.db.elos.set(user_id, server, player.elo, discord_rank).await {
                                                 warn!("Failed to initialize guild ELO: {}", e);
                                             }
                                         }
@@ -929,7 +929,7 @@ impl EventHandler for Handler {
                                             log_queue_toggle(&guild_name, &group_name, &tag, QueueToggleType::VJ);
                                         }
 
-                                        group.queue_dash_update(&ctx, server.get()).await;
+                                        group.queue_dash_update(&ctx, server).await;
                                     },
                                     Err(e) => {
                                         warn!("{} failed to get or assign rank: {}", tag, e);
@@ -940,7 +940,7 @@ impl EventHandler for Handler {
 
                         if group.check_hot_timeout(&ctx, server).await {
                             info!("Hot session timeout detected, updating dashboard");
-                            group.queue_dash_update(&ctx, server.get()).await;
+                            group.queue_dash_update(&ctx, server).await;
                         }
                     }
                 },
@@ -1036,7 +1036,7 @@ impl Handler {
                         "Unknown".to_string()
                     };
 
-                    match get_or_assign_player_rank(ctx, &self.db, guild.id, *user_id).await {
+                    match get_or_assign_player_rank(&self.db, guild.id, *user_id).await {
                         Ok(rank) => {
                             let player = Player::add(*user_id, tag, None, rank);
                             players_to_add.push(player);
@@ -1089,7 +1089,7 @@ impl Handler {
                                     // Player has stored ELO, keep their ELO and only update rank if it makes sense
                                     info!("DEBUG: Existing VC - Player {} has custom ELO {}, keeping it instead of Discord rank ELO {}", player.user_id, player.elo, player.rank.default_rank_elo());
                                     // Don't override rank - keep whatever rank matches their current ELO
-                                    player.update_rank_from_elo(&self.db, guild.id.get()).await;
+                                    player.update_rank_from_elo(&self.db, guild.id).await;
                                 }
                             }
                             player
@@ -1130,7 +1130,7 @@ impl Handler {
                 }
 
                 // Update the dashboard to reflect the new users
-                group.queue_dash_update(ctx, guild.id.get()).await;
+                group.queue_dash_update(ctx, guild.id).await;
             }
         }
     }
@@ -1202,7 +1202,7 @@ impl Handler {
 
             // Check if dashboard already exists
             if group.has_dashboard(ctx).await {
-                group.queue_dash_update(ctx, guild.id.get()).await;
+                group.queue_dash_update(ctx, guild.id).await;
                 continue;
             }
 
@@ -1210,14 +1210,14 @@ impl Handler {
             let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
 
             // Create dashboard in the dashboard channel
-            match group.dash_publish(ctx, channel_id, &self.db, guild.id.get()).await {
+            match group.dash_publish(ctx, channel_id, &self.db, guild.id).await {
                 Ok(_) => {
                     info!("Dashboard created successfully for channel {}", channel_name);
 
                     // Persist the dashboard message ID to database
                     let dashboard_msg_id = group.dashboard_msg.get();
                     if let Err(e) = self.db.groups.update_dashboard_msg(
-                        guild.id.get(),
+                        guild.id,
                         channel_id.get(),
                         dashboard_msg_id
                     ).await {

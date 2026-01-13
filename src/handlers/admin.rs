@@ -12,9 +12,9 @@ use serenity::all::{
 use tracing::{error, info, warn};
 
 use crate::player::{check_adm, check_run};
-use crate::{CYAN, DEFAULT_QUOTA, Database, GRAY, GREEN, Manager, ORANGE, RED};
+use crate::{CYAN, DEFAULT_QUOTA, Database, GREEN, Manager, ORANGE, RED};
 use crate::database::repositories::Repository;
-use crate::handlers::player::{create_rank_roles, validate_rank_roles, validate_system_roles};
+use crate::handlers::player::validate_system_roles;
 use crate::models::{CommandContext as CC, Server, SETUP_STATE};
 
 /// `/config`
@@ -25,12 +25,12 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
         if !check_run(cc).await? { return Ok(()); }
 
     if let Some(val,) = value {
-        cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found").get()).await?;
+        cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found")).await?;
         let embed    = CE::new().title("Config Updated").description(format!("Set `{key}` = `{val}`"));
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
     } else {
-        let config = match cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found").get()).await {
+        let config = match cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found")).await {
             Ok(cfg) => cfg,
             Err(e) => {
                 let err_embed = CE::new().title("Failed to Load Config").description(format!("Error: {e}\nPlease create a config using `/config`."));
@@ -63,7 +63,7 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
     // Check admin permissions
         if !check_run(cc).await? { return Ok(()); }
 
-    let guild_id = cc.intax.guild_id.expect("Guild ID not found").get();
+    let guild_id = cc.intax.guild_id.expect("Guild ID not found");
 
     // If no parameters, show current role configuration
     if role_type.is_empty() && role.is_none() {
@@ -334,7 +334,7 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
     let group = guild.get_group(channel)?;
 
     // Create and send dashboard
-    group.dash_publish(cc.ctx, channel, &cc.db, guild_id.get()).await?;
+    group.dash_publish(cc.ctx, channel, &cc.db, guild_id).await?;
 
     cc.reply("Dashboard created/updated successfully!").await?;
 
@@ -834,18 +834,18 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
     let dashboard_msg_id = dashboard_message.id.get();
 
     // Save role configurations to database
-    if let Err(e) = db.config.set_config("runner_role", &runner_role.to_string(), guild_id.get()).await {
+    if let Err(e) = db.config.set_config("runner_role", &runner_role.to_string(), guild_id).await {
         warn!("Failed to save runner_role config: {e}");
     }
-    if let Err(e) = db.config.set_config("admin_role", &admin_role.to_string(), guild_id.get()).await {
+    if let Err(e) = db.config.set_config("admin_role", &admin_role.to_string(), guild_id).await {
         warn!("Failed to save admin_role config: {e}");
     }
 
-    // Create/validate rank roles
+    // Initialize default ranks in database
     let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-    info!("[{}] Creating/validating rank roles", guild_name);
-    if let Err(e) = crate::handlers::player::create_rank_roles(ctx, db, guild_id).await {
-        warn!("[{}] Failed to create rank roles: {}", guild_name, e);
+    info!("[{}] Initializing default ranks", guild_name);
+    if let Err(e) = db.ranks.init_default_ranks(guild_id).await {
+        warn!("[{}] Failed to initialize default ranks: {}", guild_name, e);
     }
 
     // Create the group configuration in database
@@ -858,7 +858,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
         quota: crate::DEFAULT_QUOTA,
     };
     match db.groups.create_group(
-        guild_id.get(),
+        guild_id,
         dashboard_msg_id,
         group_config,
     ).await {
@@ -1149,18 +1149,18 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
     let admin_role        = role_id;
 
     // Save role configurations to database
-    if let Err(e) = db.config.set_config("runner_role", &runner_role.to_string(), guild_id.get()).await {
+    if let Err(e) = db.config.set_config("runner_role", &runner_role.to_string(), guild_id).await {
         warn!("Failed to save runner_role config: {e}");
     }
-    if let Err(e) = db.config.set_config("admin_role", &admin_role.to_string(), guild_id.get()).await {
+    if let Err(e) = db.config.set_config("admin_role", &admin_role.to_string(), guild_id).await {
         warn!("Failed to save admin_role config: {e}");
     }
 
-    // Create/validate rank roles
+    // Initialize default ranks in database
     let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-    info!("[{}] Creating/validating rank roles", guild_name);
-    if let Err(e) = create_rank_roles(ctx, db, guild_id).await {
-        warn!("[{}] Failed to create rank roles: {}", guild_name, e);
+    info!("[{}] Initializing default ranks", guild_name);
+    if let Err(e) = db.ranks.init_default_ranks(guild_id).await {
+        warn!("[{}] Failed to initialize default ranks: {}", guild_name, e);
     }
 
     // Create the group configuration in database with actual dashboard message ID
@@ -1173,7 +1173,7 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
         quota: DEFAULT_QUOTA,
     };
     match db.groups.create_group(
-        guild_id.get(),
+        guild_id,
         dashboard_msg_id, // Real dashboard message ID from step 1
         group_config,
     ).await {
@@ -1248,23 +1248,13 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
         }
     };
 
-    // Check for missing rank roles
-    let missing_rank_roles = match validate_rank_roles(cc.ctx, &cc.db, guild_id).await {
-        Ok(roles) => roles,
-        Err(e) => {
-            let error_embed = CE::new()
-                .title("Error")
-                .description(format!("Failed to check rank roles: {e}"))
-                .color(RED);
-
-            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
-        }
-    };
+    // Initialize default ranks if needed
+    if let Err(e) = cc.db.ranks.init_default_ranks(guild_id).await {
+        warn!("Failed to initialize default ranks: {e}");
+    }
 
     // Build response based on what's missing
-    if missing_system_roles.is_empty() && missing_rank_roles.is_empty() {
+    if missing_system_roles.is_empty() {
         // All roles exist
         let success_embed = CE::new()
             .title("All Roles Configured")
@@ -1275,139 +1265,49 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
         cc.intax.create_response(&cc.ctx.http, response).await?;
     } else {
         // Build description for missing roles
-        let mut description = String::new();
-
-        if !missing_system_roles.is_empty() {
-            let system_list = missing_system_roles.join(", ");
-            description.push_str(&format!(
-                "**Missing System Roles:**\n{system_list}\n\n\
-                 System roles should be created manually and assigned appropriate permissions.\n\n",
-            ));
-        }
-
-        if !missing_rank_roles.is_empty() {
-            let rank_list = missing_rank_roles.join(", ");
-            description.push_str(&format!(
-                "**Missing Rank Roles:**\n{rank_list}\n\n\
-                Would you like me to create these rank roles automatically?\n\n\
-                 Note: The roles will be created but you may need to adjust their permissions and position in the role hierarchy.",
-            ));
-        }
+        let system_list = missing_system_roles.join(", ");
+        let description = format!(
+            "**Missing System Roles:**\n{system_list}\n\n\
+             System roles should be created manually and assigned appropriate permissions.",
+        );
 
         let embed = CE::new()
             .title("Missing Roles")
             .description(description)
             .color(ORANGE);
 
-        // Only add create button if there are rank roles to create
-        if !missing_rank_roles.is_empty() {
-            use serenity::all::{CreateButton, ButtonStyle};
-            let yes_button = CreateButton::new("create_rank_roles_yes")
-                .label("Create Rank Roles")
-                .style(ButtonStyle::Success);
-
-            let no_button = CreateButton::new("create_rank_roles_no")
-                .label("Cancel")
-                .style(ButtonStyle::Secondary);
-
-            let buttons = CAR::Buttons(vec![yes_button, no_button]);
-
-            let response = CIR::Message(
-                CIRM::new()
-                    .embed(embed)
-                    .components(vec![buttons])
-                    .ephemeral(true)
-            );
-
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-        } else {
-            // No rank roles to create, just show the message
-            let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-        }
+        // Just show the message (no rank role creation needed anymore)
+        let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
+        cc.intax.create_response(&cc.ctx.http, response).await?;
     }
 
     Ok(())
 }
 
-/// Handle rank role creation confirmation button
-pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, interaction: &CX, create: bool) -> Result<()> {
+/// Handle rank role creation confirmation button (deprecated - ranks are now ELO-based only)
+pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, interaction: &CX, _create: bool) -> Result<()> {
     let guild_id = match interaction.guild_id {
         Some(id) => id,
         None => return Err(anyhow!("Guild ID not found - this command must be run in a server"))
     };
 
-    if !create {
-        // User cancelled
-        let cancel_embed = CE::new()
-            .title("Cancelled")
-            .description("Rank role creation was cancelled.")
-            .color(GRAY);
-
-        let response = CIR::UpdateMessage(
-            CIRM::new()
-                .embed(cancel_embed)
-                .components(vec![])
-        );
-
-        interaction.create_response(&ctx.http, response).await?;
-        return Ok(());
+    // Initialize default ranks in database
+    if let Err(e) = db.ranks.init_default_ranks(guild_id).await {
+        warn!("Failed to initialize default ranks: {e}");
     }
 
-    // Create the missing roles
-    let created_roles = match create_rank_roles(ctx, db, guild_id).await {
-        Ok(roles) => roles,
-        Err(e) => {
-            let error_embed = CE::new()
-                .title("Error")
-                .description(format!("Failed to create rank roles: {e}"))
-                .color(RED);
+    let embed = CE::new()
+        .title("Ranks Initialized")
+        .description("Default ranks have been initialized in the database. Ranks are now ELO-based and do not require Discord roles.")
+        .color(GREEN);
 
-            let response = CIR::UpdateMessage(
-                CIRM::new()
-                    .embed(error_embed)
-                    .components(vec![])
-            );
+    let response = CIR::UpdateMessage(
+        CIRM::new()
+            .embed(embed)
+            .components(vec![])
+    );
 
-            interaction.create_response(&ctx.http, response).await?;
-            return Ok(());
-        }
-    };
-
-    if created_roles.is_empty() {
-        let embed = CE::new()
-            .title("No Roles Created")
-            .description("All rank roles already exist in this server.")
-            .color(CYAN);
-
-        let response = CIR::UpdateMessage(
-            CIRM::new()
-                .embed(embed)
-                .components(vec![])
-        );
-
-        interaction.create_response(&ctx.http, response).await?;
-    } else {
-        let created_list = created_roles.join(", ");
-        let success_embed = CE::new()
-            .title("Rank Roles Created")
-            .description(format!(
-                "Successfully created the following rank roles:\n**{created_list}**\n\n\
-                You may want to:\n\
-                • Adjust role positions in Server Settings\n\
-                • Configure role permissions\n\
-                • Assign roles to existing members",
-            ))
-            .color(GREEN);
-
-        let response = CIR::UpdateMessage(
-            CIRM::new()
-                .embed(success_embed)
-                .components(vec![])
-        );
-
-        interaction.create_response(&ctx.http, response).await?;
-    }
+    interaction.create_response(&ctx.http, response).await?;
 
     Ok(())
 }
@@ -1419,7 +1319,7 @@ async fn finalize_group_setup(ctx: &Context, db: &Arc<Database>, manager: &Arc<M
         .unwrap_or_else(|| "Unknown".to_string());
 
     // Load the group from database
-    match db.groups.get_groups_for_guild(guild_id.get()).await {
+    match db.groups.get_groups_for_guild(guild_id).await {
         Ok(groups) if !groups.is_empty() => {
             let new_group = groups.into_iter()
                 .find(|g| g.dashboard_msg.get() == dashboard_msg_id)
@@ -1652,6 +1552,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
     use serenity::all::MessageId;
 
     let mut temp_group = Group {
+        guild_id,
         group_id: 0,
         name: None,
         quota: crate::DEFAULT_QUOTA,
@@ -1672,21 +1573,21 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
     };
 
     // Publish dashboard to get message ID
-    match temp_group.dash_publish(ctx, dashboard_channel, db, guild_id.get()).await {
+    match temp_group.dash_publish(ctx, dashboard_channel, db, guild_id).await {
         Ok(_) => {
             let dashboard_msg_id = temp_group.dashboard_msg.get();
 
             // Save to database
             let group_config = crate::database::repositories::group::GroupConfig {
                 dashboard_channel_id: dashboard_channel.get(),
-                chat_channel_id: queue_channel.get(),
-                queue_vc_id: queue_vc_channel.get(),
-                red_vc_id: red_channel.get(),
-                blu_vc_id: blue_channel.get(),
-                quota: crate::DEFAULT_QUOTA,
+                chat_channel_id:      queue_channel    .get(),
+                queue_vc_id:          queue_vc_channel .get(),
+                red_vc_id:            red_channel      .get(),
+                blu_vc_id:            blue_channel     .get(),
+                quota:                crate::DEFAULT_QUOTA,
             };
             match db.groups.create_group(
-                guild_id.get(),
+                guild_id,
                 dashboard_msg_id,
                 group_config,
             ).await {
@@ -1771,7 +1672,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
     }
 
     // Get guild-specific ELO data
-    let guild_elo = cc.db.elos.get(user_id, guild_id.get()).await?;
+    let guild_elo = cc.db.elos.get(user_id, guild_id).await?;
     
     // Get base player info for steam_id
     let player = match cc.db.users.get(user_id).await {
@@ -1835,7 +1736,7 @@ pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     
     // Enable active ELO in config
-    cc.db.config.set_config("active_elo_enabled", "true", guild_id.get()).await?;
+    cc.db.config.set_config("active_elo_enabled", "true", guild_id).await?;
 
     let success_embed = CE::new()
         .title("Active ELO Enabled")
@@ -1855,7 +1756,7 @@ pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     
     // Disable active ELO in config
-    cc.db.config.set_config("active_elo_enabled", "false", guild_id.get()).await?;
+    cc.db.config.set_config("active_elo_enabled", "false", guild_id).await?;
 
     let success_embed = CE::new()
         .title("Active ELO Disabled")
@@ -1875,7 +1776,7 @@ pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     
     // Check current status
-    let is_enabled = match cc.db.config.get_config_value("active_elo_enabled", guild_id.get()).await {
+    let is_enabled = match cc.db.config.get_config_value("active_elo_enabled", guild_id).await {
         Ok(Some(value)) => value.parse::<bool>().unwrap_or(crate::ACTIVE_ELO_ENABLED_BY_DEFAULT),
         Ok(None) => crate::ACTIVE_ELO_ENABLED_BY_DEFAULT,
         Err(_) => crate::ACTIVE_ELO_ENABLED_BY_DEFAULT,
@@ -1974,7 +1875,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
         group.generate_teams(cc.ctx, guild_id, Some(&cc.db)).await;
     }
 
-    group.queue_dash_update(cc.ctx, guild_id.get()).await;
+    group.queue_dash_update(cc.ctx, guild_id).await;
 
     let success_embed = CE::new()
         .title("Player Buffered")
@@ -2059,7 +1960,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
         group.generate_teams(cc.ctx, guild_id, Some(&cc.db)).await;
     }
 
-    group.queue_dash_update(cc.ctx, guild_id.get()).await;
+    group.queue_dash_update(cc.ctx, guild_id).await;
 
     let success_embed = CE::new()
         .title("Player Fatkidded")
@@ -2103,7 +2004,7 @@ pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
     };
 
     // Update the dashboard
-    group.queue_dash_update(cc.ctx, guild_id.get()).await;
+    group.queue_dash_update(cc.ctx, guild_id).await;
 
     let success_embed = CE::new()
         .title("Queue Cleared")

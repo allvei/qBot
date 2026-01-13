@@ -24,9 +24,9 @@ pub async fn cmd_toggle_dm(cc: &CC<'_>) -> Result<()> {
     };
 
     let embed = CE::new()
-        .title("DM Notifications Updated")
+        .title("DM Alerts Updated")
         .description(format!(
-            "{status_emoji} DM notifications are now **{status_text}**\n\n\
+            "{status_emoji} DM alerts are now **{status_text}**\n\n\
             You will {a} receive a DM when a game is ready.\n",
             a = if new_state { "now" } else { "no longer" }
         ))
@@ -62,7 +62,7 @@ pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
         .unwrap_or_else(|| "Server".to_string());
 
     // Get current server settings
-    let settings = get_server_settings(&cc.db, guild_id.get()).await?;
+    let settings = get_server_settings(&cc.db, guild_id).await?;
 
     // Send ephemeral message in the current channel
     cc.intax.create_response(&cc.ctx.http, Ephemeral::send_config(&settings, &guild_name)).await?;
@@ -87,9 +87,9 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
         .ok_or_else(|| anyhow!("User option not found"))?;
 
     // Get player data
-    let player    = cc.db.users.get(target_user).await?;
-    let guild_elo = cc.db.elos.get(target_user, guild_id.get()).await?;
-    let username  = cc.ctx.http.get_user(target_user).await
+    let player    = cc.db.users.get(target_user)          .await?;
+    let guild_elo = cc.db.elos .get(target_user, guild_id).await?;
+    let username  = cc.ctx.http.get_user(target_user)     .await
         .map(|u| u.name.clone())
         .unwrap_or_else(|_| target_user.to_string());
 

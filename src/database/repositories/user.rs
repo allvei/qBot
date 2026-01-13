@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serenity::all::{Context as Ctx, UserId as UI};
+use serenity::all::{Context as Ctx, UserId as UI, GuildId as GI};
 use sqlx::{Row, SqlitePool};
 use tracing::{error, info, warn};
 
@@ -100,7 +100,7 @@ impl UserRepository {
         }
     }
 
-    pub async fn get_with_tag(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
+    pub async fn get_with_tag(&self, user_id: UI, _ctx: &Ctx) -> Result<Player> {
         let result = sqlx::query("SELECT id, user_id, tag, steam_id, elo FROM users WHERE user_id = ?")
         .bind(user_id.get() as i64)
         .fetch_one(&self.pool)
@@ -215,7 +215,7 @@ impl UserRepository {
     }
 
     /// Get player with rank determined from guild-specific ELO and Discord roles
-    pub async fn get_with_guild_rank(&self, user_id: UI, ctx: &Ctx, guild_id: u64, db: &Database) -> Result<Player> {
+    pub async fn get_with_guild_rank(&self, user_id: UI, _ctx: &Ctx, guild_id: GI, db: &Database) -> Result<Player> {
         info!("DEBUG: get_player_with_guild_rank called for user {} in guild {}", user_id, guild_id);
         
         // Get base player data from users table
@@ -233,26 +233,21 @@ impl UserRepository {
         
         info!("DEBUG: Player guild ELO: {}, Rank: {}", player.elo, player.rank.name());
 
-        // Check if player has Discord rank that should override for new players
-        use crate::handlers::player::get_player_rank;
-        if let Some(discord_rank) = get_player_rank(ctx, db, guild_id.into(), user_id).await {
-            info!("DEBUG: Found Discord rank {} with ELO {}", discord_rank.name(), discord_rank.default_rank_elo());
+        // For new players (no games), initialize with default rank
+        if guild_elo.games == 0 && player.elo == 0 {
+            let default_rank = crate::DEFAULT_RANK;
+            let default_elo  = default_rank.default_rank_elo();
+            info!("DEBUG: New player in guild, using default rank {} with ELO {}", 
+                  default_rank.name(), default_elo);
+            player.rank = default_rank;
+            player.elo  = default_elo;
             
-            // Only override if player has no games (new to this guild)
-            if guild_elo.games == 0 {
-                let discord_default_elo = discord_rank.default_rank_elo();
-                info!("DEBUG: New player in guild, using Discord rank {} with ELO {}", 
-                      discord_rank.name(), discord_default_elo);
-                player.rank = discord_rank;
-                player.elo = discord_default_elo;
-                
-                // Initialize their guild ELO based on Discord rank
-                if let Err(e) = db.elos.set(user_id, guild_id, player.elo, player.rank).await {
-                    error!("Failed to initialize guild ELO for player {}: {}", user_id, e);
-                } else {
-                    info!("Initialized guild ELO for player {} to {} (rank: {})", 
-                          user_id, player.elo, discord_rank.name());
-                }
+            // Initialize their guild ELO
+            if let Err(e) = db.elos.set(user_id, guild_id, player.elo, player.rank).await {
+                error!("Failed to initialize guild ELO for player {}: {}", user_id, e);
+            } else {
+                info!("Initialized guild ELO for player {} to {} (rank: {})", 
+                      user_id, player.elo, default_rank.name());
             }
         }
 
@@ -342,9 +337,9 @@ impl UserRepository {
                 let minutes = if timeout_length == 0 { 30 } else { timeout_length };
 
                 // Load alert descriptions and truncate if too long
-                let raw_alert_desc: Option<String> = row.try_get::<String, _>("alert_desc").ok().filter(|s| !s.is_empty());
-                let raw_leave_alert_desc: Option<String> = row.try_get::<String, _>("leave_alert_desc").ok().filter(|s| !s.is_empty());
-                let raw_alert_footer: Option<String> = row.try_get::<String, _>("alert_footer_text").ok().filter(|s| !s.is_empty());
+                let raw_alert_desc:         Option<String> = row.try_get::<String, _>("alert_desc")             .ok().filter(|s| !s.is_empty());
+                let raw_leave_alert_desc:   Option<String> = row.try_get::<String, _>("leave_alert_desc")       .ok().filter(|s| !s.is_empty());
+                let raw_alert_footer:       Option<String> = row.try_get::<String, _>("alert_footer_text")      .ok().filter(|s| !s.is_empty());
                 let raw_leave_alert_footer: Option<String> = row.try_get::<String, _>("leave_alert_footer_text").ok().filter(|s| !s.is_empty());
 
                 let alert_desc = raw_alert_desc.as_ref().map(|s| {
@@ -379,11 +374,11 @@ impl UserRepository {
                     truncated
                 }).filter(|s| !s.is_empty());
 
-                // If truncation occurred, update the database
-                let alert_truncated = raw_alert_desc.as_ref().map(|s| truncate_alert_message(s).len() < s.len()).unwrap_or(false);
-                let leave_truncated = raw_leave_alert_desc.as_ref().map(|s| truncate_alert_message(s).len() < s.len()).unwrap_or(false);
-                let footer_truncated = raw_alert_footer.as_ref().map(|s| truncate_footer_text(s).len() < s.len()).unwrap_or(false);
-                let leave_footer_truncated = raw_leave_alert_footer.as_ref().map(|s| truncate_footer_text(s).len() < s.len()).unwrap_or(false);
+                // If truncation occurred, update the database  
+                let alert_truncated        = raw_alert_desc        .as_ref().map(|s| truncate_alert_message(s).len() < s.len()).unwrap_or(false);
+                let leave_truncated        = raw_leave_alert_desc  .as_ref().map(|s| truncate_alert_message(s).len() < s.len()).unwrap_or(false);
+                let footer_truncated       = raw_alert_footer      .as_ref().map(|s| truncate_footer_text(s)  .len() < s.len()).unwrap_or(false);
+                let leave_footer_truncated = raw_leave_alert_footer.as_ref().map(|s| truncate_footer_text(s)  .len() < s.len()).unwrap_or(false);
 
                 if alert_truncated {
                     let _ = sqlx::query("UPDATE users SET alert_desc = ? WHERE user_id = ?")

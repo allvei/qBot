@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use anyhow::{Error, anyhow};
 use serde::{Deserialize, Serialize};
 use serenity::all::{
     CommandInteraction, ComponentInteraction, Context,
     CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM,
-    RoleId, UserId,
+    UserId, GuildId as GI,
 };
 use sqlx::prelude::{FromRow};
 use tokio::sync::Mutex;
@@ -153,7 +152,7 @@ impl Player {
     }
 
     /// Update rank based on ELO using configurable values
-    pub async fn update_rank_from_elo(&mut self, db: &Database, guild_id: u64) {
+    pub async fn update_rank_from_elo(&mut self, db: &Database, guild_id: GI) {
             self.rank = Rank::from_elo(self.elo, db, guild_id).await;
     }
 
@@ -222,15 +221,6 @@ impl Rank {
         }
     }
 
-    /// Get all Discord role IDs that map to this rank from ranks table
-    pub async fn role_ids(&self, db: &Database, guild_id: u64) -> Vec<RoleId> {
-        if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id, self.position()).await {
-            guild_rank.role_ids
-        } else {
-            Vec::new()
-        }
-    }
-
     /// Get default name for this rank (fallback when DB not available)
     pub fn name(&self) -> &'static str {
         match self {
@@ -247,8 +237,8 @@ impl Rank {
     }
 
     /// Get configurable name from DB, falling back to default
-    pub async fn name_from_db(&self, db: &Database, guild_id: u64) -> String {
-        if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id, self.position()).await {
+    pub async fn name_from_db(&self, db: &Database, guild_id: GI) -> String {
+        if let Ok(Some(guild_rank)) = db.ranks.get_rank_by_name(guild_id, self.name()).await {
             guild_rank.name
         } else {
             self.name().to_string()
@@ -301,9 +291,9 @@ impl Rank {
     }
 
     /// Determine rank from ELO value using guild-configured values
-    pub async fn from_elo(elo: Elo, db: &Database, guild_id: u64) -> Rank {
+    pub async fn from_elo(elo: Elo, db: &Database, guild_id: GI) -> Rank {
         if let Ok(Some(guild_rank)) = db.ranks.rank_from_elo(guild_id, elo).await {
-            Rank::from_position(guild_rank.position).unwrap_or(Rank::Journeyman)
+            Rank::from_name(&guild_rank.name)
         } else {
             Rank::from_elo_default(elo)
         }
@@ -332,46 +322,11 @@ impl Rank {
     }
 
     /// Get ELO value from DB, falling back to default if not set
-    pub async fn elo_from_db(&self, db: &Database, guild_id: u64) -> Elo {
-        if let Ok(Some(guild_rank)) = db.ranks.get_rank(guild_id, self.position()).await {
+    pub async fn elo_from_db(&self, db: &Database, guild_id: GI) -> Elo {
+        if let Ok(Some(guild_rank)) = db.ranks.get_rank_by_name(guild_id, self.name()).await {
             guild_rank.elo
         } else {
             self.default_rank_elo()
         }
-    }
-
-    /// Convert a Discord RoleId to a Rank enum using guild ranks table
-    pub async fn from_role_id(role_id: RoleId, db: &Database, guild_id: u64) -> Result<Rank, Error> {
-        if let Ok(Some(guild_rank)) = db.ranks.rank_from_role_id(guild_id, role_id).await {
-            if let Some(rank) = Rank::from_position(guild_rank.position) {
-                return Ok(rank);
-            }
-        }
-        Err(anyhow!("Role ID not found in any rank"))
-    }
-
-    /// Get all rank role IDs from DB
-    pub async fn all_role_ids(db: &Database, guild_id: u64) -> Vec<RoleId> {
-        db.ranks.all_role_ids(guild_id).await.unwrap_or_default()
-    }
-
-    /// Load all rank-to-role mappings for a guild in a single pass.
-    pub async fn load_rank_mappings(db: &Database, guild_id: u64) -> Vec<(Rank, Vec<RoleId>)> {
-        let guild_ranks = db.ranks.get_or_init_ranks(guild_id).await.unwrap_or_default();
-        guild_ranks.into_iter()
-            .filter_map(|gr| {
-                Rank::from_position(gr.position).map(|rank| (rank, gr.role_ids))
-            })
-            .collect()
-    }
-
-    /// Find rank from role ID using pre-loaded mappings (no DB calls)
-    pub fn from_role_id_cached(role_id: RoleId, mappings: &[(Rank, Vec<RoleId>)]) -> Option<Rank> {
-        for (rank, role_ids) in mappings {
-            if role_ids.contains(&role_id) {
-                return Some(*rank);
-            }
-        }
-        None
     }
 }

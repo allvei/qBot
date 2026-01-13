@@ -3,7 +3,7 @@ pub mod repositories;
 pub mod validator;
 
 use anyhow::Result;
-use serenity::all::{Context as Ctx, UserId as UI};
+use serenity::all::{Context as Ctx, UserId as UI, GuildId as GI};
 use sqlx::SqlitePool;
 use tracing::info;
 
@@ -85,7 +85,7 @@ impl Database {
     #[allow(clippy::too_many_arguments)]
     pub async fn new_group(
         &self,
-        guild_id:      u64,
+        guild_id:      GI,
         dashboard:     u64,
         chat:          u64,
         queue:         u64,
@@ -109,7 +109,7 @@ impl Database {
     #[allow(clippy::too_many_arguments)]
     pub async fn set_group(
         &self,
-        guild_id:      u64,
+        guild_id:      GI,
         queue_id:      u64,
         dashboard:     u64,
         chat:          u64,
@@ -129,19 +129,19 @@ impl Database {
     }
 
     /// Sets a configuration value
-    pub async fn set_config(&self, key: &str, value: &str, guild_id: u64) -> Result<()> {
+    pub async fn set_config(&self, key: &str, value: &str, guild_id: GI) -> Result<()> {
         self.config.set_config(key, value, guild_id).await
     }
 
     /// Gets configuration map for a guild
-    pub async fn get_config_map(&self, guild_id: u64) -> Result<std::collections::HashMap<String, String>> {
+    pub async fn get_config_map(&self, guild_id: GI) -> Result<std::collections::HashMap<String, String>> {
         self.config.get_config_map(guild_id).await
     }
 
     /// Gets configuration for a guild
-    pub async fn get_config(&self, guild_id: u64) -> Result<Server> {
+    pub async fn get_config(&self, guild_id: GI) -> Result<Server> {
         // For now, return a simple Guild with the guild_id
         // The actual configuration is handled through get_config_map
-        Ok(Server::empty(serenity::all::GuildId::new(guild_id), "Unknown".to_string()))
+        Ok(Server::empty(guild_id, "Unknown".to_string()))
     }
 }

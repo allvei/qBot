@@ -327,43 +327,30 @@ impl RoleConfigDisplay {
 /// Rank configuration display for server settings sub-menu
 pub struct RankConfigDisplay {
     pub guild_name:   String,
-    pub rank_roles:   Vec<(String, Option<String>, u16)>, // (rank_name, role_ids_csv, elo)
+    pub rank_roles:   Vec<(String, u16, RoleId)>, // (rank_name, elo, role_id)
     pub dynamic_elo:  bool,
     pub default_rank: String,
 }
 
 impl RankConfigDisplay {
     pub fn build_embed(&self) -> CE {
-        // Build compact rank list: ELO rank (same format as dashboard player list)
+        // Build compact rank list: ELO rank <@&role_id> (default)
         let mut description = String::new();
-        for (rank_name, role_ids, elo) in &self.rank_roles {
-            let role_display = role_ids.as_ref()
-                .map(|ids| ids.split(',').filter(|s| !s.is_empty()).map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
-                .filter(|s| !s.is_empty());
-            
+        for (rank_name, elo, role_id) in &self.rank_roles {
             let is_default = rank_name == &self.default_rank;
             let default_marker = if is_default { " (default)" } else { "" };
-            
-            if let Some(roles) = role_display {
-                description.push_str(&format!("{elo} {rank_name} ({roles}){default_marker}\n"));
-            } else {
-                description.push_str(&format!("{elo} {rank_name}{default_marker}\n"));
-            }
+            let role_display = format!(" <@&{}>", role_id.get());
+            description.push_str(&format!("‹**{elo}**› {rank_name}{role_display}{default_marker}\n"));
         }
 
         CE::new()
             .title(format!("{} - Manage Ranks", self.guild_name))
             .description(description)
             .color(0x5865F2)
-            .footer(CreateEmbedFooter::new("Select a rank below to link its Discord role"))
+            .footer(CreateEmbedFooter::new("Select a rank below to edit its name, ELO, or linked role"))
     }
 
     pub fn build_components(&self) -> Vec<CAR> {
-        let rank_options: Vec<(String, u8)> = self.rank_roles.iter()
-            .enumerate()
-            .map(|(idx, (name, _, _))| (name.clone(), idx as u8))
-            .collect();
-
         vec![
             CAR::Buttons(vec![
                 CB::new("server_settings_dynamic_elo")
@@ -375,8 +362,8 @@ impl RankConfigDisplay {
             ]),
             CAR::SelectMenu(
                 CSM::new("server_settings_rank_select", CSMK::String {
-                    options: rank_options.iter()
-                        .map(|(label, pos)| CSMO::new(label, pos.to_string()))
+                    options: self.rank_roles.iter()
+                        .map(|(name, _, _)| CSMO::new(name, name.clone()))
                         .collect()
                 })
                 .placeholder("Select rank to configure")
@@ -393,52 +380,44 @@ impl RankConfigDisplay {
     }
 }
 
-/// Single rank role configuration
+/// Single rank configuration with Discord role linking
 pub struct RankRoleConfigDisplay {
     pub guild_name: String,
     pub rank_name:  String,
     pub rank_key:   String,
-    pub position:   u8,
     pub elo:        u16,
-    pub role_ids:   Option<String>,
+    pub role_id:    RoleId,
 }
 
 impl RankRoleConfigDisplay {
     pub fn build_embed(&self) -> CE {
-        let display = self.role_ids.as_ref()
-            .map(|ids| ids.split(',').filter(|s| !s.is_empty()).map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "*Not configured*".to_string());
+        let role_display = format!("<@&{}>", self.role_id.get());
 
         CE::new()
             .title(format!("{} - {} Rank", self.guild_name, self.rank_name))
             .field("Name", &self.rank_name, true)
             .field("ELO Threshold", self.elo.to_string(), true)
-            .field("Discord Role(s)", display, false)
+            .field("Discord Role", role_display, true)
             .color(0x5865F2)
-            .footer(CreateEmbedFooter::new("Edit name/ELO or select a Discord role to link"))
+            .footer(CreateEmbedFooter::new("Edit name, ELO, or link a Discord role"))
     }
 
     pub fn build_components(&self) -> Vec<CAR> {
         vec![
-            CAR::Buttons(vec![
-                CB::new(format!("server_settings_rank_edit_{}", self.position))
-                    .label("Edit Name & ELO")
-                    .style(BS::Primary),
-            ]),
             CAR::SelectMenu(
                 CSM::new(
-                    format!("server_settings_rank_role_{}", self.position),
-                    CSMK::Role { default_roles: None }
+                    format!("server_settings_rank_role_{}", self.rank_key),
+                    CSMK::Role { default_roles: Some(vec![self.role_id]) }
                 )
-                .placeholder(format!("Link Discord roles to {}", self.rank_name))
-                .max_values(25)
+                .placeholder("Link Discord Role")
+                .min_values(0)
+                .max_values(1)
             ),
             CAR::Buttons(vec![
-                CB::new(format!("server_settings_rank_clear_{}", self.position))
-                    .label("Clear Linked Roles")
-                    .style(BS::Danger),
-                CB::new(format!("server_settings_rank_delete_{}", self.position))
+                CB::new(format!("server_settings_rank_edit_{}", self.rank_key))
+                    .label("Edit Name & ELO")
+                    .style(BS::Primary),
+                CB::new(format!("server_settings_rank_delete_{}", self.rank_key))
                     .label("Remove Rank")
                     .style(BS::Danger),
                 CB::new("server_settings_rank_back")

@@ -27,356 +27,28 @@ async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI) -> Option<Membe
     }
 }
 
-/// Get player's rank from their Discord roles
-/// If player has multiple rank roles, removes the lower ones and keeps the highest
-pub async fn get_player_rank(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<Rank> {
-    let member = get_member_cached(ctx, guild_id, user_id).await?;
-
-    // Load rank mappings once for this guild (ordered by position, low to high)
-    let mappings = Rank::load_rank_mappings(db, guild_id.get()).await;
-
-    // Collect all matching ranks and their role IDs for this member
-    let mut matched: Vec<(Rank, serenity::all::RoleId)> = Vec::new();
-    for role_id in &member.roles {
-        if let Some(rank) = Rank::from_role_id_cached(*role_id, &mappings) {
-            matched.push((rank, *role_id));
-        }
+/// Get player's rank from their ELO in the database
+pub async fn get_player_rank(db: &DB, guild_id: GI, user_id: UI) -> Option<Rank> {
+    // Get player's ELO from the elos table
+    match db.elos.get(user_id, guild_id).await {
+        Ok(guild_elo) => Some(guild_elo.division),
+        Err(_) => None,
     }
-
-    if matched.len() > 1 {
-        // Sort by position (highest first)
-        matched.sort_by(|a, b| b.0.position().cmp(&a.0.position()));
-        
-        let highest_rank = matched[0].0;
-        warn!(
-            "User {} has multiple rank roles: {:?}, keeping {} and removing lower ranks",
-            member.user.name,
-            matched.iter().map(|(r, _)| r.name()).collect::<Vec<_>>(),
-            highest_rank.name()
-        );
-        
-        // Remove all lower rank roles (skip the first/highest one)
-        for (rank, role_id) in matched.iter().skip(1) {
-            if let Err(e) = member.remove_role(&ctx.http, role_id).await {
-                warn!("Failed to remove {} role from {}: {}", rank.name(), member.user.name, e);
-            } else {
-                info!("Removed duplicate lower rank {} from {}", rank.name(), member.user.name);
-            }
-        }
-        
-        return Some(highest_rank);
-    }
-
-    // Return the single rank if found
-    matched.into_iter().next().map(|(rank, _)| rank)
 }
 
-/// Get player's rank from their Discord roles using pre-loaded mappings (no DB calls)
-pub fn get_player_rank_cached(member: &Member, mappings: &[(Rank, Vec<serenity::all::RoleId>)]) -> Option<Rank> {
-    // Collect all matching ranks for this member
-    let mut matched_ranks: Vec<Rank> = Vec::new();
-    for role_id in &member.roles {
-        if let Some(rank) = Rank::from_role_id_cached(*role_id, mappings) {
-            matched_ranks.push(rank);
-        }
-    }
-
-    if matched_ranks.len() > 1 {
-        warn!(
-            "User {} has multiple rank roles: {:?}",
-            member.user.name,
-            matched_ranks.iter().map(|r| r.name()).collect::<Vec<_>>()
-        );
-    }
-
-    // Return highest rank (highest position = highest rank)
-    matched_ranks.into_iter().max_by_key(|r| r.position())
-}
-
-/// Get or assign player rank - creates ranks if needed and assigns default rank if player has no rank
-pub async fn get_or_assign_player_rank(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Result<Rank> {
-    // First check if player already has a rank
-    if let Some(rank) = get_player_rank(ctx, db, guild_id, user_id).await {
+/// Get or assign player rank - returns existing rank or assigns default
+pub async fn get_or_assign_player_rank(db: &DB, guild_id: GI, user_id: UI) -> Result<Rank> {
+    // Check if player already has a rank in the elos table
+    if let Some(rank) = get_player_rank(db, guild_id, user_id).await {
         return Ok(rank);
     }
 
-    // Player has no rank - check if rank roles exist
-    let missing_roles = validate_rank_roles(ctx, db, guild_id).await?;
-
-    // If ranks are missing, create them
-    if !missing_roles.is_empty() {
-        info!("Rank roles missing, creating them automatically for guild {}", guild_id);
-        create_rank_roles(ctx, db, guild_id).await?;
-    }
-
-    // Get the default rank role ID from config
-    let default_role_ids = DEFAULT_RANK.role_ids(db, guild_id.get()).await;
-
-    if default_role_ids.is_empty() {
-        return Err(anyhow!("Failed to find {} role after creation", DEFAULT_RANK.name()));
-    }
-
-    let default_role_id = default_role_ids[0];
-
-    // Assign default rank role to the player
-    match guild_id.member(&ctx.http, user_id).await {
-        Ok(member) => {
-            let username = member.user.tag();
-            match member.add_role(&ctx.http, default_role_id).await {
-                Ok(_) => {
-                    info!("Assigned {} rank to user {}", DEFAULT_RANK.name(), username);
-                    Ok(DEFAULT_RANK)
-                },
-                Err(e) => {
-                    warn!("Failed to assign {} role to user {}: {}", DEFAULT_RANK.name(), username, e);
-                    Err(anyhow!("Failed to assign {} rank: {}", DEFAULT_RANK.name(), e))
-                }
-            }
-        },
-        Err(e) => {
-            warn!("Failed to fetch member {} in guild {}: {}", user_id, guild_id, e);
-            Err(anyhow!("Failed to fetch member: {e}"))
-        }
-    }
-}
-
-/// Update a player's rank and synchronize Discord roles
-/// Removes old rank roles and adds new rank role
-pub async fn update_player_rank_with_roles(
-    ctx: &Ctx,
-    db: &DB,
-    guild_id: GI,
-    user_id: UI,
-    old_rank: Rank,
-    new_rank: Rank,
-) -> Result<()> {
-    if old_rank == new_rank {
-        return Ok(());
-    }
-
-    let member = match get_member_cached(ctx, guild_id, user_id).await {
-        Some(m) => m,
-        None => return Err(anyhow!("Could not find member {} in guild {}", user_id, guild_id)),
-    };
-
-    // Get role IDs for old and new ranks
-    let old_role_ids = old_rank.role_ids(db, guild_id.get()).await;
-    let new_role_ids = new_rank.role_ids(db, guild_id.get()).await;
-
-    // Remove old rank roles that the member has
-    for role_id in &old_role_ids {
-        if member.roles.contains(role_id) {
-            if let Err(e) = member.remove_role(&ctx.http, role_id).await {
-                warn!("Failed to remove {} role from {}: {}", old_rank.name(), member.user.tag(), e);
-            } else {
-                info!("Removed {} role from {}", old_rank.name(), member.user.tag());
-            }
-        }
-    }
-
-    // Add new rank role (use first configured role)
-    if let Some(new_role_id) = new_role_ids.first() {
-        if !member.roles.contains(new_role_id) {
-            if let Err(e) = member.add_role(&ctx.http, new_role_id).await {
-                warn!("Failed to add {} role to {}: {}", new_rank.name(), member.user.tag(), e);
-            } else {
-                info!("Added {} role to {}", new_rank.name(), member.user.tag());
-            }
-        }
-    } else {
-        warn!("No role configured for rank {} in guild {}", new_rank.name(), guild_id);
-    }
-
-    Ok(())
-}
-
-/// Validate that the server has rank roles configured
-pub async fn validate_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec<String>> {
-    let mut missing_roles = Vec::new();
-
-    // Get all guild roles
-    let guild_roles = match ctx.http.get_guild_roles(guild_id).await {
-        Ok(roles) => roles,
-        Err(e) => {
-            warn!("Failed to fetch guild roles: {e}");
-            return Err(anyhow!("Failed to fetch guild roles"));
-        }
-    };
-
-    let guild_role_ids: Vec<_> = guild_roles.iter().map(|r| r.id).collect();
-
-    // Check each rank to see if it has any roles configured or existing
-    // Process more specific ranks first (MasterElite before Master) to avoid false matches
-    for rank in [
-        Rank::Beginner,
-        Rank::Newcomer,
-        Rank::Novice,
-        Rank::Apprentice,
-        Rank::Journeyman,
-        Rank::Expert,
-        Rank::MasterElite,  // Check before Master to avoid "Master Elite" matching "Master"
-        Rank::Master,
-        Rank::Grandmaster,
-    ] {
-        let configured_ids = rank.role_ids(db, guild_id.get()).await;
-
-        // Check if this rank has any roles that exist in the guild by ID
-        let has_role_by_id = configured_ids.iter().any(|id| guild_role_ids.contains(id));
-
-        if !has_role_by_id {
-            // Fallback: search for ALL roles that contain the rank name as a whole word (case-insensitive)
-            // This handles variants like "Journeyman", "Journeyman EU", "Journeyman NA", "Retired Journeyman"
-            let rank_name = rank.name().to_lowercase();
-            let matching_roles: Vec<_> = guild_roles.iter()
-                .filter(|r| {
-                    let role_name_lower = r.name.to_lowercase();
-                    let words: Vec<&str> = role_name_lower.split(|c: char| !c.is_alphanumeric())
-                        .filter(|w| !w.is_empty())
-                        .collect();
-                    
-                    // For "Master", exclude roles that also contain "Elite" (those are "Master Elite")
-                    if rank_name == "master" && words.contains(&"elite") {
-                        return false;
-                    }
-                    
-                    // Match if role name contains rank name as a complete word
-                    words.contains(&rank_name.as_str())
-                })
-                .collect();
-
-            if !matching_roles.is_empty() {
-                // Found one or more roles matching this rank! Auto-save all of them to ranks table
-                let role_ids: Vec<serenity::all::RoleId> = matching_roles.iter()
-                    .map(|r| {
-                        info!("Found existing role '{}' matching {}, saving to ranks table",
-                            r.name, rank.name());
-                        r.id
-                    })
-                    .collect();
-
-                // Save role IDs to the ranks table
-                if let Err(e) = db.ranks.update_rank_role_ids(guild_id.get(), rank.position(), &role_ids).await {
-                    warn!("Failed to save found roles for {} to ranks: {}", rank.name(), e);
-                } else {
-                    info!("Saved {} role IDs to ranks table ({})", rank.name(), matching_roles.len());
-                }
-            } else {
-                // No roles exist by ID or name match
-                missing_roles.push(rank.name().to_string());
-            }
-        }
-    }
-
-    Ok(missing_roles)
-}
-
-/// Create missing rank roles in the guild
-pub async fn create_rank_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec<String>> {
-    use serenity::all::Colour;
-    use serenity::builder::EditRole;
-
-    let mut created_roles = Vec::new();
-
-    // Get all guild roles to check which are missing
-    let guild_roles = ctx.http.get_guild_roles(guild_id).await?;
-    let guild_role_ids: Vec<_> = guild_roles.iter().map(|r| r.id).collect();
-
-    // Check each rank and create missing roles (in reverse order so GM is at top)
-    for rank in [
-        Rank::Grandmaster,
-        Rank::MasterElite,
-        Rank::Master,
-        Rank::Expert,
-        Rank::Journeyman,
-        Rank::Apprentice,
-        Rank::Novice,
-        Rank::Newcomer,
-        Rank::Beginner,
-    ] {
-        let existing_ids = rank.role_ids(db, guild_id.get()).await;
-        let mut role_ids_for_rank = Vec::new();
-
-        // Check if this rank has any roles in the guild by ID
-        let has_role_by_id = existing_ids.iter().any(|id| guild_role_ids.contains(id));
-
-        if !has_role_by_id {
-            // Check if ANY roles contain this rank name as a whole word (case-insensitive)
-            // This handles variants like "Journeyman", "Journeyman EU", "Journeyman NA", "Retired Journeyman"
-            let rank_name = rank.name().to_lowercase();
-            let matching_roles: Vec<_> = guild_roles.iter()
-                .filter(|r| {
-                    let role_name_lower = r.name.to_lowercase();
-                    let words: Vec<&str> = role_name_lower.split(|c: char| !c.is_alphanumeric())
-                        .filter(|w| !w.is_empty())
-                        .collect();
-                    
-                    // For "Master", exclude roles that also contain "Elite" (those are "Master Elite")
-                    if rank_name == "master" && words.contains(&"elite") {
-                        return false;
-                    }
-                    
-                    // Match if role name contains rank name as a complete word
-                    words.contains(&rank_name.as_str())
-                })
-                .collect();
-
-            if !matching_roles.is_empty() {
-                // Found existing role(s) matching this rank, use them instead of creating
-                for role in matching_roles {
-                    info!("Found existing role '{}' matching {} during creation", role.name, rank.name());
-                    role_ids_for_rank.push(role.id.get());
-                }
-            } else {
-                // No role exists for this rank by ID or name, create one
-            let color = match rank {
-                Rank::Beginner    => Colour::from_rgb(150, 150, 150), // Gray
-                Rank::Newcomer    => Colour::from_rgb(205, 220, 57),  // Yellow-Green
-                Rank::Novice      => Colour::from_rgb(139, 195, 74),  // Light Green
-                Rank::Apprentice  => Colour::from_rgb(76 , 175, 80),  // Green
-                Rank::Journeyman  => Colour::from_rgb(33 , 150, 243), // Blue
-                Rank::Expert      => Colour::from_rgb(103, 58,  183), // Deep Purple
-                Rank::Master      => Colour::from_rgb(156, 39,  176), // Purple
-                Rank::MasterElite => Colour::from_rgb(233, 30,  99),  // Pink
-                Rank::Grandmaster => Colour::from_rgb(255, 215, 0),   // Gold
-            };
-
-            let role_builder = EditRole::new()
-                .name(rank.name())
-                .colour(color)
-                .hoist(true)  // Display role members separately in the member list
-                .mentionable(false);
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-            match guild_id.create_role(&ctx.http, role_builder).await {
-                Ok(created_role) => {
-                    info!("[{}] Added rank: {}", guild_name, rank.name());
-                    created_roles.push(rank.name().to_string());
-                    role_ids_for_rank.push(created_role.id.get());
-                },
-                Err(_e) => {
-                    warn!("[{}] Failed to create rank: {}", guild_name, rank.name());
-                }
-            }
-            }
-        } else {
-            // Keep existing role IDs
-            role_ids_for_rank = existing_ids.iter().map(|id| id.get()).collect();
-        }
-
-        // Save role IDs for this rank to the ranks table
-        if !role_ids_for_rank.is_empty() {
-            let role_ids: Vec<serenity::all::RoleId> = role_ids_for_rank.iter()
-                .map(|id| serenity::all::RoleId::new(*id))
-                .collect();
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-            if let Err(e) = db.ranks.update_rank_role_ids(guild_id.get(), rank.position(), &role_ids).await {
-                warn!("[{}] Failed to save rank {}: {}", guild_name, rank.name(), e);
-            } else {
-                info!("[{}] Saved rank {} role IDs", guild_name, rank.name());
-            }
-        }
-    }
-
-    Ok(created_roles)
+    // Player has no rank - assign default
+    let default_elo = DEFAULT_RANK.default_rank_elo();
+    db.elos.set(user_id, guild_id, default_elo, DEFAULT_RANK).await?;
+    
+    info!("Assigned default rank {} (ELO {}) to user {}", DEFAULT_RANK.name(), default_elo, user_id);
+    Ok(DEFAULT_RANK)
 }
 
 /// Validate that runner and admin roles are configured
@@ -397,7 +69,7 @@ pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<V
         let role_key = role.config_key();
 
         // Check if role is configured
-        let configured_role_id = role.id(db, guild_id.get()).await;
+        let configured_role_id = role.id(db, guild_id).await;
 
         let has_role = if let Some(role_id) = configured_role_id {
             // Check if the configured role still exists in the guild
@@ -417,7 +89,7 @@ pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<V
 
                 // Save this role ID to the database config
                 let role_id_str = found.id.get().to_string();
-                if let Err(e) = db.config.set_config(role_key, &role_id_str, guild_id.get()).await {
+                if let Err(e) = db.config.set_config(role_key, &role_id_str, guild_id).await {
                     warn!("Failed to save found role {} to config: {}", role.name(), e);
                 } else {
                     info!("Saved {} role ID to config: {}", role.name(), role_id_str);
@@ -464,7 +136,7 @@ pub async fn check_role(cc: &CmC<'_>, role: &Role) -> Result<bool> {
         }
 
         // Check configured roles (supports multiple)
-        let role_ids = role.ids(&cc.db, guild_id.get()).await;
+        let role_ids = role.ids(&cc.db, guild_id).await;
         if !role_ids.is_empty() {
             // User has the role if they have ANY of the configured roles
             if role_ids.iter().any(|role_id| member.roles.contains(role_id)) {
@@ -515,7 +187,7 @@ pub async fn check_component_role(cc: &CC<'_>, role: &Role) -> Result<bool> {
         }
 
         // Check configured roles (supports multiple)
-        let role_ids = role.ids(&cc.db, guild_id.get()).await;
+        let role_ids = role.ids(&cc.db, guild_id).await;
         if !role_ids.is_empty() {
             // User has the role if they have ANY of the configured roles
             return Ok(role_ids.iter().any(|role_id| member.roles.contains(role_id)));
@@ -572,7 +244,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
             cc.reply(&format!("Left the queue! ({queue_count}/{} players)", group.quota)).await?;
         }
 
-        group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
+        group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
 
         return Ok(());
     }
@@ -587,8 +259,8 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         }
     };
 
-    // Get or assign player rank (auto-creates ranks and assigns Apprentice if needed)
-    let rank = match get_or_assign_player_rank(cc.ctx, &cc.db, guild_id, user).await {
+    // Get or assign player rank (assigns default if needed)
+    let rank = match get_or_assign_player_rank(&cc.db, guild_id, user).await {
         Ok(rank) => rank,
         Err(e) => {
             cc.reply(&format!("Failed to get or assign rank: {e}. Please contact an admin.")).await?;
@@ -630,7 +302,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
                     // Player has stored ELO, keep their ELO and only update rank if it makes sense
                     info!("DEBUG: Player {} has custom ELO {}, keeping it instead of Discord rank ELO {}", user, player.elo, rank.default_rank_elo());
                     // Don't override rank - keep whatever rank matches their current ELO
-                    player.update_rank_from_elo(&cc.db, guild_id.get()).await;
+                    player.update_rank_from_elo(&cc.db, guild_id).await;
                 }
             }
             player
@@ -685,7 +357,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
             group.hot(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await?;
         }
 
-        group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
+        group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
     }
 
     // Always acknowledge (silently if already in queue)
@@ -696,7 +368,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     cc.reply(&format!("Joined the queue! ({current_queue}/{} players)", group.quota)).await?;
 
     // Update dashboard
-    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
+    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
 
     Ok(())
 }
@@ -791,7 +463,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     );
 
     // Update dashboard
-    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
+    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
 
     cc.reply(&embed_content).await?;
     Ok(())
@@ -828,7 +500,7 @@ pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     hot_game.push();
 
     // Update dashboard
-    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap().get()).await;
+    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
 
     cc.reply("Game accepted! Players moved to team channels.").await?;
 

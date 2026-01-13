@@ -108,7 +108,7 @@ impl Server {
 
     /// Check if active ELO is enabled for this server
     pub async fn is_active_elo_enabled(&self, db: &DB) -> Result<bool> {
-        match db.config.get_config_value("active_elo_enabled", self.guild_id.get()).await {
+        match db.config.get_config_value("active_elo_enabled", self.guild_id).await {
             Ok(Some(value)) => {
                 match value.parse::<bool>() {
                     Ok(enabled) => Ok(enabled),
@@ -154,6 +154,7 @@ impl std::fmt::Display for TeamBalanceMethod {
 // Group
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Group {
+    pub guild_id:            GI,
     pub group_id:            u8,
     pub name:                Option<String>,
     pub timeout:             u16,
@@ -167,6 +168,7 @@ pub struct Group {
 
 impl Group {
     pub fn new(
+        guild_id:      GI,
         group_id:      u8,
         name:          Option<String>,
         quota:         u8,
@@ -176,6 +178,7 @@ impl Group {
         games:         Vec<Session>,
     ) -> Self {
         Self {
+            guild_id,
             group_id,
             name,
             quota,
@@ -291,7 +294,7 @@ impl Group {
         }
 
         // Spawn a targeted deadline timer for this hot session
-        if let (Some(gid), Some(mgr)) = (guild_id, manager) {
+        if let (Some(guild_id), Some(mgr)) = (guild_id, manager) {
             let group_id = self.group_id;
             let ctx_clone = ctx.clone();
 
@@ -303,11 +306,11 @@ impl Group {
 
                 // Check if players have joined, remove those who haven't
                 let mut manager_lock = mgr.lock().await;
-                if let Ok(server) = manager_lock.get_server(gid) {
+                if let Ok(server) = manager_lock.get_server(guild_id) {
                     if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
-                        if group.check_hot_timeout(&ctx_clone, gid).await {
+                        if group.check_hot_timeout(&ctx_clone, guild_id).await {
                             info!("Deadline timer fired: removed timed-out players from group {}", group_id);
-                            group.queue_dash_update(&ctx_clone, gid.get()).await;
+                            group.queue_dash_update(&ctx_clone, guild_id).await;
                         }
                     }
                 }
@@ -517,7 +520,7 @@ impl Group {
             }
         }
 
-        self.queue_dash_update(ctx, guild_id.get()).await;
+        self.queue_dash_update(ctx, guild_id).await;
         Ok(())
 
     }
@@ -590,17 +593,17 @@ impl Group {
             self.hot(ctx, Some(guild_id), Some(db), manager).await?;
         }
 
-        self.queue_dash_update(ctx, guild_id.get()).await;
+        self.queue_dash_update(ctx, guild_id).await;
         Ok(())
     }
 
     /// Update player ranks from Discord roles for all players in the session
-    pub async fn refresh_player_ranks(&mut self, ctx: &Context, guild_id: GI, db: &DB) {
+    pub async fn refresh_player_ranks(&mut self, _ctx: &Context, guild_id: GI, db: &DB) {
         use crate::handlers::player::get_player_rank;
 
         for session in &mut self.sessions {
             for player in &mut session.pool {
-                if let Some(updated_rank) = get_player_rank(ctx, db, guild_id, player.player.user_id).await {
+                if let Some(updated_rank) = get_player_rank(db, guild_id, player.player.user_id).await {
                     player.player.rank = updated_rank;
                 }
             }
@@ -766,7 +769,7 @@ impl Group {
         }
 
         // Update dashboard to show the new teams
-        self.queue_dash_update(ctx, guild_id.get()).await;
+        self.queue_dash_update(ctx, guild_id).await;
     }
 
     pub async fn queue_player(
@@ -930,7 +933,7 @@ impl Group {
 
     pub async fn add_player(&mut self, session: &mut Session, player: Player, rank: Rank, ctx: &Context, guild_id: GI) {
         session.add_player(player);
-        self.queue_dash_update(ctx, guild_id.get()).await;
+        self.queue_dash_update(ctx, guild_id).await;
     }
 
     /// Checks if this group contains the given channel_id in any of its channels
@@ -1075,13 +1078,13 @@ impl Role {
     }
 
     /// Get the Discord role ID from database configuration (legacy single role)
-    pub async fn id(&self, db: &DB, guild_id: u64) -> Option<RI> {
+    pub async fn id(&self, db: &DB, guild_id: GI) -> Option<RI> {
         let ids = self.ids(db, guild_id).await;
         ids.first().copied()
     }
 
     /// Get all Discord role IDs from database configuration (supports multiple roles)
-    pub async fn ids(&self, db: &DB, guild_id: u64) -> Vec<RI> {
+    pub async fn ids(&self, db: &DB, guild_id: GI) -> Vec<RI> {
         if let Ok(Some(value)) = db.config.get_config_value(self.config_key(), guild_id).await {
             // Support comma-separated role IDs
             value.split(',')

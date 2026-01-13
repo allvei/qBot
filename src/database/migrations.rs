@@ -1,5 +1,6 @@
 use anyhow::Result;
 use sqlx::{Row, SqlitePool};
+use serenity::all::GuildId as GI;
 
 use crate::DEFAULT_HOT_JOIN_TIMEOUT;
 
@@ -47,7 +48,8 @@ impl DatabaseMigrations {
         self.verify_users() .await?;
         self.verify_groups().await?;
         self.verify_teams() .await?;
-        self.verify_elos()   .await?;
+        self.verify_elos()  .await?;
+        self.verify_ranks() .await?;
         Ok(())
     }
 
@@ -331,6 +333,64 @@ impl DatabaseMigrations {
         }
         Ok(())
     }
+    async fn create_ranks_table(&self) ->  Result<()> {
+        // Check if old schema exists (has position or role_ids columns)
+        let needs_migration = if self.check_table("ranks").await? {
+            self.check_column("ranks", "position").await? || self.check_column("ranks", "role_ids").await?
+        } else {
+            false
+        };
+
+        if needs_migration {
+            // Migrate old data to new schema
+            let old_data: Vec<(i64, String, i64)> = sqlx::query_as(
+                "SELECT guild_id, name, elo FROM ranks"
+            )
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
+
+            sqlx::query("DROP TABLE ranks").execute(&self.pool).await?;
+
+            sqlx::query(
+                "CREATE TABLE ranks (
+                    id       INTEGER PRIMARY KEY,
+                    guild_id INTEGER NOT NULL,
+                    name     TEXT    NOT NULL,
+                    elo      INTEGER NOT NULL,
+                    role_id  INTEGER NOT NULL
+                )"
+            )
+            .execute(&self.pool)
+            .await?;
+
+            // Restore data
+            for (guild_id, name, elo) in old_data {
+                let _ = sqlx::query(
+                    "INSERT OR IGNORE INTO ranks (guild_id, name, elo) VALUES (?, ?, ?)"
+                )
+                .bind(guild_id)
+                .bind(&name)
+                .bind(elo)
+                .execute(&self.pool)
+                .await;
+            }
+        } else if !self.check_table("ranks").await? {
+            sqlx::query(
+                "CREATE TABLE ranks (
+                    id       INTEGER PRIMARY KEY,
+                    guild_id INTEGER NOT NULL,
+                    name     TEXT    NOT NULL,
+                    elo      INTEGER NOT NULL,
+                    role_id  INTEGER NOT NULL
+                )"
+            )
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(())
+    }
 
     // SCHEMA VALIDATIONS
 
@@ -386,28 +446,11 @@ impl DatabaseMigrations {
     async fn verify_elos(&self)   -> Result<()> {
         let required_columns = vec!["id", "guild_idx", "user_idx", "elo", "division", "games", "wins"];
         self.verify_columns("elos", &required_columns).await?;
-        
-        let guild_columns = vec!["id", "guild_id"];
-        self.verify_columns("guilds", &guild_columns).await?;
         Ok(())
     }
-
-    async fn create_ranks_table(&self) -> Result<()> {
-        if !self.check_table("ranks").await? {
-            sqlx::query(
-                "CREATE TABLE ranks (
-                    id       INTEGER PRIMARY KEY,
-                    guild_id INTEGER NOT NULL,
-                    position INTEGER NOT NULL,
-                    name     TEXT NOT NULL,
-                    elo      INTEGER NOT NULL,
-                    role_ids TEXT,
-                    UNIQUE(guild_id, position)
-                )"
-            )
-            .execute(&self.pool)
-            .await?;
-        }
+    async fn verify_ranks(&self)  -> Result<()> {
+        let required_columns = vec!["id", "guild_id", "name", "elo", "role_id"];
+        self.verify_columns("ranks", &required_columns).await?;
         Ok(())
     }
 
@@ -425,15 +468,14 @@ impl DatabaseMigrations {
         }
         Ok(())
     }
-
     /// Create a default group entry for a guild if none exists
-    pub async fn init_first_group(&self, guild_id: u64) -> Result<()> {
+    pub async fn init_first_group(&self, guild_id: GI) -> Result<()> {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*)
             FROM groups
             WHERE guild_id = ?"
         )
-        .bind(guild_id as i64)
+        .bind(guild_id.get() as i64)
         .fetch_one(&self.pool)
         .await?;
 
@@ -441,14 +483,13 @@ impl DatabaseMigrations {
             sqlx::query("INSERT INTO groups (group_id, guild_id, dashboard, chat, queue, red, blu)
                         VALUES (1, ?, 1, 1, 1, 1, 1)"
             )
-            .bind(guild_id as i64)
+            .bind(guild_id.get() as i64)
             .execute(&self.pool)
             .await?;
         }
 
         Ok(())
     }
-
     /// Check if table exists
     async fn check_table(&self, table_name: &str) -> Result<bool> {
         let result = sqlx::query(
@@ -460,7 +501,6 @@ impl DatabaseMigrations {
 
         Ok(!result.is_empty())
     }
-
     /// Check if column exists in table
     async fn check_column(&self, table_name: &str, column_name: &str) -> Result<bool> {
         let existing_cols: Vec<String> = sqlx::query(&format!("PRAGMA table_info({table_name})"))
@@ -472,7 +512,6 @@ impl DatabaseMigrations {
 
         Ok(existing_cols.contains(&column_name.to_string()))
     }
-
     /// Check if a unique constraint exists on a column
     async fn check_unique(&self, table: &str, _column: &str) -> Result<bool> {
         let index_info = sqlx::query(&format!("PRAGMA index_list({table})"))
@@ -488,5 +527,4 @@ impl DatabaseMigrations {
         });
         Ok(has_unique)
     }
-
 }

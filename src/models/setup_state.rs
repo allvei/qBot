@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use serenity::all::{GuildId, UserId};
+use serenity::all::{GuildId as GI, UserId};
 
 /// Temporary storage for setup configuration state
 #[derive(Debug, Clone)]
 pub struct SetupConfig {
-    pub guild_id:          u64,
+    pub guild_id:          GI,
     pub dashboard_channel: Option<u64>,
     pub dashboard_msg_id:  Option<u64>,
     pub queue_channel:     Option<u64>,
@@ -25,7 +25,7 @@ struct SetupEntry {
 }
 
 impl SetupConfig {
-    pub fn new(guild_id: u64) -> Self {
+    pub fn new(guild_id: GI) -> Self {
         Self {
             guild_id,
             dashboard_channel: None,
@@ -51,7 +51,7 @@ impl SetupConfig {
 /// Manages temporary setup configurations for users
 #[derive(Debug)]
 pub struct SetupStateManager {
-    states: Mutex<HashMap<(UserId, GuildId), SetupEntry>>,
+    states: Mutex<HashMap<(UserId, GI), SetupEntry>>,
 }
 
 impl SetupStateManager {
@@ -61,9 +61,9 @@ impl SetupStateManager {
         }
     }
 
-    pub fn start_setup(&self, user_id: UserId, guild_id: GuildId) -> SetupConfig {
+    pub fn start_setup(&self, user_id: UserId, guild_id: GI) -> SetupConfig {
         let key    = (user_id, guild_id);
-        let config = SetupConfig::new(guild_id.get());
+        let config = SetupConfig::new(guild_id);
 
         if let Ok(mut states) = self.states.lock() {
             let entry = SetupEntry {
@@ -79,7 +79,7 @@ impl SetupStateManager {
         config
     }
 
-    pub fn get_setup(&self, user_id: UserId, guild_id: GuildId) -> Option<SetupConfig> {
+    pub fn get_setup(&self, user_id: UserId, guild_id: GI) -> Option<SetupConfig> {
         if let Ok(states) = self.states.lock() {
             states.get(&(user_id, guild_id)).map(|entry| entry.config.clone())
         } else {
@@ -87,7 +87,7 @@ impl SetupStateManager {
         }
     }
 
-    pub fn update_setup<F>(&self, user_id: UserId, guild_id: GuildId, updater: F) -> Option<SetupConfig>
+    pub fn update_setup<F>(&self, user_id: UserId, guild_id: GI, updater: F) -> Option<SetupConfig>
     where
         F: FnOnce(&mut SetupConfig),
     {
@@ -105,7 +105,7 @@ impl SetupStateManager {
         }
     }
 
-    pub fn complete_setup(&self, user_id: UserId, guild_id: GuildId) -> Option<SetupConfig> {
+    pub fn complete_setup(&self, user_id: UserId, guild_id: GI) -> Option<SetupConfig> {
         let key = (user_id, guild_id);
 
         if let Ok(mut states) = self.states.lock() {
@@ -116,7 +116,7 @@ impl SetupStateManager {
     }
 
     /// Internal cleanup that assumes lock is already held
-    fn cleanup_expired_internal(states: &mut HashMap<(UserId, GuildId), SetupEntry>) {
+    fn cleanup_expired_internal(states: &mut HashMap<(UserId, GI), SetupEntry>) {
         const EXPIRY_DURATION: Duration = Duration::from_secs(30 * 60); // 30 minutes
         let now = Instant::now();
 
