@@ -21,9 +21,6 @@ pub const EXPIRY_DEFAULT:                Duration = Duration::from_secs(120 * 60
 pub const EXPIRY_MAX:                    Duration = Duration::from_secs(4 * 60 * 60); // 4 hours
 pub const EXPIRY_MIN:                    Duration = Duration::from_secs(30 * 60);     // 30 minutes
 pub const DEFAULT_RANK:                  Rank     = Rank::Newcomer;
-pub const DEFAULT_ELO:                   Elo      = 30;
-pub const ELO_MIN:                       Elo      = 0;
-pub const ELO_MAX:                       Elo      = 1000;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct ConfigFormat {

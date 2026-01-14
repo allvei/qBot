@@ -1,7 +1,7 @@
+use serenity::all::{ChannelId, Http, MessageId, UserId};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use serenity::all::{ChannelId, MessageId, UserId, Http};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -29,7 +29,13 @@ impl DmMessageTracker {
     }
 
     /// Track a new DM message
-    pub async fn track_message(&self, user_id: UserId, channel_id: ChannelId, message_id: MessageId, username: String) {
+    pub async fn track_message(
+        &self,
+        user_id: UserId,
+        channel_id: ChannelId,
+        message_id: MessageId,
+        username: String,
+    ) {
         let mut sessions = self.sessions.write().await;
 
         if let Some(session) = sessions.get_mut(&user_id) {
@@ -37,12 +43,15 @@ impl DmMessageTracker {
             session.last_activity = SystemTime::now();
             session.username = username; // Update username in case it changed
         } else {
-            sessions.insert(user_id, UserDmSession {
-                channel_id,
-                message_ids: vec![message_id],
-                last_activity: SystemTime::now(),
-                username,
-            });
+            sessions.insert(
+                user_id,
+                UserDmSession {
+                    channel_id,
+                    message_ids: vec![message_id],
+                    last_activity: SystemTime::now(),
+                    username,
+                },
+            );
         }
     }
 
@@ -92,12 +101,18 @@ impl DmMessageTracker {
                 if elapsed.as_secs() >= INACTIVITY_TIMEOUT_SECS {
                     // Delete all tracked messages
                     for message_id in &session.message_ids {
-                        match http.delete_message(session.channel_id, *message_id, None).await {
+                        match http
+                            .delete_message(session.channel_id, *message_id, None)
+                            .await
+                        {
                             Ok(_) => {
                                 info!("[DM/{}] Deleted message", session.username);
                             }
                             Err(e) => {
-                                warn!("[DM/{}] Failed to delete message ID {}: {e}", session.username, message_id);
+                                warn!(
+                                    "[DM/{}] Failed to delete message ID {}: {e}",
+                                    session.username, message_id
+                                );
                             }
                         }
                     }

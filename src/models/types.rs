@@ -97,7 +97,7 @@ impl ComponentContext<'_> {
     }
 }
 
-/// Player ELO rating (0-100 scale)
+/// Player ELO rating (0+ scale)
 pub type Elo = u16;
 
 // ============================================================================

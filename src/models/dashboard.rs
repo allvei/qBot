@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use crate::models::{ComponentContext as CC, DashboardQueueKey, Group, SessionStatus};
 
 /// Helper function to format team players as a string for embed fields
-async fn format_team_field(team: &[crate::models::SessionPlayer], _db: &crate::Database, guild_id: GI) -> String {
+async fn format_team_field(team: &[crate::models::SessionPlayer], _db: &crate::Database, _guild_id: GI) -> String {
     let mut lines = Vec::new();
     for player in team {
         lines.push(format!("‹**{}**› <@{}>", player.player.elo, player.player.user_id));
@@ -382,25 +382,29 @@ impl Group {
                         let elo_str = format!("‹**{}**› ", player.player.elo);
                         players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
 
-                        // Build timeout list
-                        // Use per-instance expiry_duration if set, otherwise get user's setting
-                        let expiry_duration = if let Some(duration) = player.expiry_duration {
-                            duration
-                        } else if let Ok(settings) = db.users.get_prefs(player.player.user_id).await {
-                            settings.expiry_duration
+                        // Build timeout list - show "In voice" for players in VC
+                        if player.in_queue_vc {
+                            timers_field.push_str("In voice\n");
                         } else {
-                            std::time::Duration::ZERO
-                        };
+                            // Use per-instance expiry_duration if set, otherwise get user's setting
+                            let expiry_duration = if let Some(duration) = player.expiry_duration {
+                                duration
+                            } else if let Ok(settings) = db.users.get_prefs(player.player.user_id).await {
+                                settings.expiry_duration
+                            } else {
+                                std::time::Duration::ZERO
+                            };
 
-                        if expiry_duration.as_secs() > 0 {
-                            if let Ok(join_time) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
-                                let expiry_timestamp = join_time.as_secs() + expiry_duration.as_secs();
-                                timers_field.push_str(&format!("<t:{}:R>\n", expiry_timestamp));
+                            if expiry_duration.as_secs() > 0 {
+                                if let Ok(join_time) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
+                                    let expiry_timestamp = join_time.as_secs() + expiry_duration.as_secs();
+                                    timers_field.push_str(&format!("<t:{}:R>\n", expiry_timestamp));
+                                } else {
+                                    timers_field.push_str("-\n");
+                                }
                             } else {
                                 timers_field.push_str("-\n");
                             }
-                        } else {
-                            timers_field.push_str("-\n");
                         }
                     }
 
@@ -448,6 +452,13 @@ impl Group {
         // Add team fields for active sessions
         for session in &actives {
             if session.pool.len() >= quota {
+                // Add session start time if available
+                if let Some(started_at) = session.started_at {
+                    if let Ok(timestamp) = started_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
+                        embed = embed.field("Session started", format!("<t:{}:R>", timestamp.as_secs()), false);
+                    }
+                }
+                
                 let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
                 embed = embed.field("🔴 RED", format_team_field(&team_red, db, guild_id).await, true);
                 embed = embed.field("🔵 BLU", format_team_field(&team_blu, db, guild_id).await, true);
@@ -599,7 +610,7 @@ impl Group {
         // Try to get queue from context data using the key from models module
         let data = ctx.data.read().await;
         if let Some(queue) = data.get::<DashboardQueueKey>() {
-            queue.request_update(guild_id, self.group_id as u64);
+            queue.lock().await.request_update(guild_id, self.group_id as u64);
             //
         } else {
             warn!("Dashboard queue not initialized in Context");
@@ -639,100 +650,114 @@ impl Group {
         cc.defer_update().await?;
         //
 
-        // Get or assign player's rank (auto-creates ranks and assigns default if needed)
-        use crate::handlers::player::get_or_assign_player_rank;
+        // Get player's rank from Discord roles first, then fallback to database/default
+        use crate::handlers::player::{get_user_rank_from_discord_roles, get_or_assign_player_rank};
         if let Some(guild_id) = cc.component.guild_id {
+            // First try to get rank from Discord roles
+            let discord_rank = if let Some(role_based_rank) = get_user_rank_from_discord_roles(cc.ctx, &cc.db, guild_id, user_id).await {
+                info!("DEBUG: User {} has Discord role for rank {}", user_id, role_based_rank.name());
+                role_based_rank
+            } else {
+                // No Discord rank roles found, get or assign from database/default
+                match get_or_assign_player_rank(&cc.db, guild_id, user_id).await {
+                    Ok(rank) => {
+                        info!("DEBUG: User {} assigned rank {} from database/default", user_id, rank.name());
+                        rank
+                    },
+                    Err(e) => {
+                        error!("Failed to get or assign rank for user {}: {}", user_id, e);
+                        return Ok(());
+                    }
+                }
+            };
+
+            // Get base player info
+            let mut player = match cc.db.get_user(user_id, cc.ctx).await {
+                Ok(p) => p,
+                Err(_) => cc.db.new_user(user_id, cc.ctx).await?,
+            };
+
+            // Get guild-specific ELO if exists
+            let existing_elo = cc.db.elos.get_if_exists(user_id, guild_id).await.ok().flatten();
+            
+            // Get the valid ELO range for the player's Discord rank
+            let rank_min_elo = discord_rank.elo_from_db(&cc.db, guild_id).await;
+            let next_rank    = discord_rank.next_rank();
+            let rank_max_elo = if let Some(nr) = next_rank {
+                nr.elo_from_db(&cc.db, guild_id).await
+            } else {
+                101
+            };
+            
+            info!("DEBUG: discord_rank={} (pos {}), rank_min_elo={}, next_rank={:?}, rank_max_elo={}",
+                  discord_rank.name(), discord_rank.position(), rank_min_elo, 
+                  next_rank.map(|r| r.name()), rank_max_elo);
+            
+            if let Some(guild_elo) = existing_elo {
+                if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
+                    // ELO is within the Discord rank's range - keep it
+                    info!("Player {} ELO {} within {} range [{}, {}), keeping", 
+                          user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo);
+                    player.elo = guild_elo.elo;
+                } else {
+                    // ELO is outside the Discord rank's range - reset to rank default
+                    info!("Player {} ELO {} outside {} range [{}, {}), resetting to {}", 
+                          user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo, rank_min_elo);
+                    player.elo = rank_min_elo;
+                    if let Err(e) = cc.db.elos.set(user_id, guild_id, player.elo, discord_rank).await {
+                        warn!("Failed to update guild ELO: {}", e);
+                    }
+                }
+            } else {
+                // No ELO record - new player, use Discord rank's default ELO
+                info!("New player {} in guild, setting ELO to {} from Discord rank {}", 
+                      user_id, rank_min_elo, discord_rank.name());
+                player.elo = rank_min_elo;
+                if let Err(e) = cc.db.elos.set(user_id, guild_id, player.elo, discord_rank).await {
+                    warn!("Failed to initialize guild ELO: {}", e);
+                }
+            }
+            player.rank = discord_rank;
+
+            // Fetch discord tag from component user for performance (avoid extra API call)
+            player.tag = cc.component.user.tag();
+
+            // Save rank for announcement (player will be moved)
+            let player_rank = discord_rank;
+
             //
-            match get_or_assign_player_rank(&cc.db, guild_id, user_id).await {
-                Ok(discord_rank) => {
-                    // Get base player info
-                    let mut player = match cc.db.get_user(user_id, cc.ctx).await {
-                        Ok(p) => p,
-                        Err(_) => cc.db.new_user(user_id, cc.ctx).await?,
-                    };
+            if let Err(e) = self.queue_player(player, discord_rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
+                warn!("Failed to queue player: {e}");
+            } else {
+                // Check and send DM alerts if threshold is met
+                if let Err(e) = self.check_and_send_dm_alerts(cc.ctx, &cc.db).await {
+                    warn!("Failed to send DM alerts: {e}");
+                }
+                
+                //
+                // Log successful queue join via button
+                let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                let group_name = cc.ctx.cache.channel(dashboard_channel)
+                    .map(|ch| ch.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
+                log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ);
 
-                    // Get guild-specific ELO if exists
-                    let existing_elo = cc.db.elos.get_if_exists(user_id, guild_id).await.ok().flatten();
-                    
-                    // Get the valid ELO range for the player's Discord rank
-                    let rank_min_elo = discord_rank.elo_from_db(&cc.db, guild_id).await;
-                    let next_rank = discord_rank.next_rank();
-                    let rank_max_elo = if let Some(nr) = next_rank {
-                        nr.elo_from_db(&cc.db, guild_id).await
-                    } else {
-                        101
-                    };
-                    
-                    info!("DEBUG: discord_rank={} (pos {}), rank_min_elo={}, next_rank={:?}, rank_max_elo={}",
-                          discord_rank.name(), discord_rank.position(), rank_min_elo, 
-                          next_rank.map(|r| r.name()), rank_max_elo);
-                    
-                    if let Some(guild_elo) = existing_elo {
-                        if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
-                            // ELO is within the Discord rank's range - keep it
-                            info!("Player {} ELO {} within {} range [{}, {}), keeping", 
-                                  user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo);
-                            player.elo = guild_elo.elo;
-                        } else {
-                            // ELO is outside the Discord rank's range - reset to rank default
-                            info!("Player {} ELO {} outside {} range [{}, {}), resetting to {}", 
-                                  user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo, rank_min_elo);
-                            player.elo = rank_min_elo;
-                            if let Err(e) = cc.db.elos.set(user_id, guild_id, player.elo, discord_rank).await {
-                                warn!("Failed to update guild ELO: {}", e);
-                            }
-                        }
-                    } else {
-                        // No ELO record - new player, use Discord rank's default ELO
-                        info!("New player {} in guild, setting ELO to {} from Discord rank {}", 
-                              user_id, rank_min_elo, discord_rank.name());
-                        player.elo = rank_min_elo;
-                        if let Err(e) = cc.db.elos.set(user_id, guild_id, player.elo, discord_rank).await {
-                            warn!("Failed to initialize guild ELO: {}", e);
-                        }
-                    }
-                    player.rank = discord_rank;
+                // Send join announcement using shared function
+                if let Ok(settings) = cc.db.users.get_prefs(user_id).await {
+                    use serenity::all::CreateMessage;
+                    use crate::handlers::settings::build_join_announcement_embed;
 
-                    // Fetch discord tag from component user for performance (avoid extra API call)
-                    player.tag = cc.component.user.tag();
+                    let embed = build_join_announcement_embed(
+                        cc.ctx,
+                        user_id,
+                        Some(guild_id),
+                        &settings,
+                        player_rank.name()
+                    ).await;
 
-                    // Save rank for announcement (player will be moved)
-                    let player_rank = discord_rank;
-
-                    //
-                    if let Err(e) = self.queue_player(player, discord_rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
-                        warn!("Failed to queue player: {e}");
-                    } else {
-                        //
-                        // Log successful queue join via button
-                        let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-                        let group_name = cc.ctx.cache.channel(dashboard_channel)
-                            .map(|ch| ch.name.clone())
-                            .unwrap_or_else(|| "Unknown".to_string());
-                        let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
-                        log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ);
-
-                        // Send join announcement using shared function
-                        if let Ok(settings) = cc.db.users.get_prefs(user_id).await {
-                            use serenity::all::CreateMessage;
-                            use crate::handlers::settings::build_join_announcement_embed;
-
-                            let embed = build_join_announcement_embed(
-                                cc.ctx,
-                                user_id,
-                                Some(guild_id),
-                                &settings,
-                                player_rank.name()
-                            ).await;
-
-                            let queue_chat = self.channels.queue_chat;
-                            let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
-                        }
-                    }
-                },
-                Err(e) => {
-                    warn!("Failed to get/assign rank: {e}");
-                    return Ok(());
+                    let queue_chat = self.channels.queue_chat;
+                    let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
                 }
             }
         } else {
@@ -1353,7 +1378,7 @@ impl DashboardUpdateQueue {
                 // Acquire lock briefly to get CURRENT dashboard data
                 // This ensures we always show the latest state, regardless of how many
                 // update requests were queued - they all get collapsed into this one update
-                let (channel_id, dashboard_channel_id, message_id, embed, buttons, guild_name, pool_size) = {
+                let (channel_id, dashboard_channel_id, message_id, embed, buttons, guild_name, _pool_size) = {
                     let mut manager_lock = manager.lock().await;
 
                     let server = match manager_lock.get_server(guild_id) {

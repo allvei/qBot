@@ -25,10 +25,16 @@ pub use embeds::*;
 // TypeMapKey for DashboardUpdateQueue (needed globally across crate)
 use std::sync::Arc;
 use serenity::prelude::TypeMapKey;
+use tokio::sync::Mutex;
 
 pub struct DashboardQueueKey;
 impl TypeMapKey for DashboardQueueKey {
-    type Value = Arc<DashboardUpdateQueue>;
+    type Value = Arc<Mutex<DashboardUpdateQueue>>;
+}
+
+pub struct GuildKey;
+impl TypeMapKey for GuildKey {
+    type Value = Arc<Mutex<crate::models::Manager>>;
 }
 
 pub struct DmTrackerKey;

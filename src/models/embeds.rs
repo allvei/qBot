@@ -1,4 +1,4 @@
-use serenity::all::{CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, UserId};
+use serenity::all::{ButtonStyle as BS, CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, UserId};
 use crate::handlers::{build_settings_buttons, build_settings_embed};
 use crate::handlers::settings::{PlayerSettings, ServerSettings, build_player_settings_buttons, build_player_settings_embed, build_server_settings_buttons, build_server_settings_embed};
 use crate::repositories::UserSettings;
@@ -27,5 +27,11 @@ impl Ephemeral {
         let embed   = build_player_settings_embed(settings);
         let buttons = build_player_settings_buttons(user_id);
         CIR::Message(CIRM::new().embed(embed).components(buttons).ephemeral(true))
+    }
+
+    pub fn back(id: impl Into<String>) -> CB {
+        CB::new(id.into())
+            .label("Back")
+            .style(BS::Secondary)
     }
 }

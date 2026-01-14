@@ -164,6 +164,9 @@ pub struct Group {
     pub sessions:            Vec<Session>,
     pub connect_info:        Option<String>,
     pub team_balance_method: TeamBalanceMethod,
+    pub dm_alert_enabled:    bool,
+    pub dm_alert_threshold:  u8,
+    pub dm_alert_users:      Vec<UI>,
 }
 
 impl Group {
@@ -188,6 +191,9 @@ impl Group {
             sessions: games,
             connect_info: None,
             team_balance_method: TeamBalanceMethod::default(),
+            dm_alert_enabled: false,
+            dm_alert_threshold: 0,
+            dm_alert_users: Vec::new(),
         }
     }
 
@@ -241,9 +247,72 @@ impl Group {
     }
 
     /// Get session index (position in Vec) for logging purposes
-    /// Returns None if session is not found in the group
     pub fn get_session_index(&self, session: &Session) -> Option<usize> {
         self.sessions.iter().position(|s| std::ptr::eq(s, session))
+    }
+
+    /// Check and send DM alerts when queue reaches threshold
+    pub async fn check_and_send_dm_alerts(&self, ctx: &serenity::all::Context, db: &crate::Database) -> Result<()> {
+        // Get the current queue size from the first inactive session
+        if let Some(session) = self.get_inactives().first() {
+            let current_size = session.pool.len() as u8;
+            
+            // Check all users in the session for their personal alert preferences
+            for session_player in &session.pool {
+                let user_id = session_player.player.user_id;
+                
+                // Get user's personal settings
+                if let Ok(user_settings) = db.users.get_prefs(user_id).await {
+                    // Check if user has DM alerts enabled
+                    if user_settings.dm_alerts {
+                        // Check for per-group threshold first, then fallback to legacy
+                        let user_threshold = user_settings.group_quota_thresholds
+                            .get(&(self.guild_id.get(), self.group_id))
+                            .or(user_settings.notify_quota_threshold.as_ref());
+                        
+                        if let Some(threshold) = user_threshold {
+                            // Check if we've reached or exceeded the user's threshold
+                            if current_size >= *threshold {
+                                if let Err(e) = self.send_personal_dm_alert(ctx, user_id, current_size, *threshold).await {
+                                    warn!("Failed to send DM alert to user {}: {}", user_id, e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Send a personal DM alert to a specific user based on their threshold
+    async fn send_personal_dm_alert(&self, ctx: &serenity::all::Context, user_id: serenity::all::UserId, current_size: u8, user_threshold: u8) -> Result<()> {
+        use serenity::all::{CreateMessage, CreateEmbed, CreateEmbedFooter};
+
+        let user = ctx.http.get_user(user_id).await?;
+        let guild_name = ctx.cache.guild(self.guild_id)
+            .map(|g| g.name.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        let embed = CreateEmbed::new()
+            .title("🎮 Queue Alert")
+            .description(format!(
+                "The queue for **{}** in **{}** now has **{}/{}** players!",
+                self.display_name(),
+                guild_name,
+                current_size,
+                self.quota
+            ))
+            .color(0x00FF00) // Green color
+            .field("Players Needed", format!("{}", self.quota.saturating_sub(current_size)), true)
+            .field("Your Threshold", format!("{} players", user_threshold), true)
+            .footer(CreateEmbedFooter::new("You're getting this because you set a quota alert in your preferences!"));
+
+        user.direct_message(&ctx.http, CreateMessage::new().embed(embed)).await?;
+
+        info!("Sent personal DM alert to {} for {} queue ({} players, threshold: {})", user.name, self.display_name(), current_size, user_threshold);
+        Ok(())
     }
 
     pub fn get_games_by_status_mut(&mut self, status: &SessionStatus) -> Vec<&mut Session> {
@@ -650,7 +719,7 @@ impl Group {
         }
     }
 
-    pub async fn generate_teams(&mut self, ctx: &Context, guild_id: GI, db: Option<&DB>) {
+    pub async fn generate_teams(&mut self, ctx: &Context, guild_id: GI, _db: Option<&DB>) {
         use itertools::Itertools;
 
         let quota = self.quota as usize;
@@ -733,11 +802,11 @@ impl Group {
             let original_blu = blu_indices.clone();
 
             // For each ELO group with multiple players, shuffle them across teams
-            for (elo, indices) in &mut elo_groups {
+            for (_elo, indices) in &mut elo_groups {
                 if indices.len() > 1 {
                     // Count how many of this ELO are on each team (using ORIGINAL assignments)
                     let red_count = indices.iter().filter(|&&i| original_red.contains(&i)).count();
-                    let blu_count = indices.iter().filter(|&&i| original_blu.contains(&i)).count();
+                    let _blu_count = indices.iter().filter(|&&i| original_blu.contains(&i)).count();
 
                     // Shuffle the indices with this ELO
                     indices.shuffle(&mut rng);
@@ -786,7 +855,7 @@ impl Group {
         self.queue_player_with_vc_status(player, rank, queue_ctx, false).await
     }
 
-    pub async fn queue_player_with_vc_status(&mut self, player: Player, rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
+    pub async fn queue_player_with_vc_status(&mut self, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
         let player_id = player.user_id;
         let quota = self.quota as usize;
         let session = self.get_queue().await?;
@@ -931,7 +1000,7 @@ impl Group {
 
     }
 
-    pub async fn add_player(&mut self, session: &mut Session, player: Player, rank: Rank, ctx: &Context, guild_id: GI) {
+    pub async fn add_player(&mut self, session: &mut Session, player: Player, _rank: Rank, ctx: &Context, guild_id: GI) {
         session.add_player(player);
         self.queue_dash_update(ctx, guild_id).await;
     }
