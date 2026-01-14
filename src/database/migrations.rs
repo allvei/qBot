@@ -269,6 +269,27 @@ impl DatabaseMigrations {
                     .execute(&self.pool)
                     .await?;
             }
+
+            // Add dm_alert_enabled column if missing
+            if !self.check_column("groups", "dm_alert_enabled").await? {
+                sqlx::query("ALTER TABLE groups ADD COLUMN dm_alert_enabled INTEGER DEFAULT 0")
+                    .execute(&self.pool)
+                    .await?;
+            }
+
+            // Add dm_alert_threshold column if missing
+            if !self.check_column("groups", "dm_alert_threshold").await? {
+                sqlx::query("ALTER TABLE groups ADD COLUMN dm_alert_threshold INTEGER DEFAULT 0")
+                    .execute(&self.pool)
+                    .await?;
+            }
+
+            // Add dm_alert_users column if missing (JSON array of user IDs)
+            if !self.check_column("groups", "dm_alert_users").await? {
+                sqlx::query("ALTER TABLE groups ADD COLUMN dm_alert_users TEXT DEFAULT '[]'")
+                    .execute(&self.pool)
+                    .await?;
+            }
         }
         Ok(())
     }
@@ -289,27 +310,16 @@ impl DatabaseMigrations {
         Ok(())
     }
     async fn create_elo_table(&self) ->    Result<()> {
-        // Create guilds mapping table for efficient ID storage
-        if !self.check_table("guilds").await? {
-            sqlx::query(
-                "CREATE TABLE guilds (
-                    id       INTEGER PRIMARY KEY,
-                    guild_id INTEGER NOT NULL UNIQUE
-                )"
-            )
-            .execute(&self.pool)
-            .await?;
-        }
-
-        // Check if old elos table exists without the new schema
+        // Check if old elos table exists with foreign key constraints
         let needs_migration = if self.check_table("elos").await? {
-            !self.check_column("elos", "division").await?
+            // Check if it has foreign key constraints
+            self.check_column("elos", "division").await?
         } else {
             false
         };
 
         if needs_migration {
-            // Drop old table and recreate with new schema
+            // Drop old table and recreate without foreign keys
             sqlx::query("DROP TABLE elos").execute(&self.pool).await?;
         }
 
@@ -317,15 +327,13 @@ impl DatabaseMigrations {
             sqlx::query(
                 "CREATE TABLE elos (
                     id        INTEGER PRIMARY KEY,
-                    guild_idx INTEGER NOT NULL,
-                    user_idx  INTEGER NOT NULL,
+                    guild_id INTEGER NOT NULL,
+                    user_id  INTEGER NOT NULL,
                     elo       INTEGER NOT NULL DEFAULT 50,
                     division  TEXT    NOT NULL DEFAULT 'Apprentice',
                     games     INTEGER NOT NULL DEFAULT 0,
                     wins      INTEGER NOT NULL DEFAULT 0,
-                    UNIQUE(guild_idx, user_idx),
-                    FOREIGN KEY (guild_idx) REFERENCES guilds(id),
-                    FOREIGN KEY (user_idx) REFERENCES users(id)
+                    UNIQUE(guild_id, user_id)
                 )"
             )
             .execute(&self.pool)
@@ -444,7 +452,7 @@ impl DatabaseMigrations {
         Ok(())
     }
     async fn verify_elos(&self)   -> Result<()> {
-        let required_columns = vec!["id", "guild_idx", "user_idx", "elo", "division", "games", "wins"];
+        let required_columns = vec!["id", "guild_id", "user_id", "elo", "division", "games", "wins"];
         self.verify_columns("elos", &required_columns).await?;
         Ok(())
     }
