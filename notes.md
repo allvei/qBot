@@ -3,7 +3,10 @@
 ## Priority
 
 - Add remove group button
-- Add method for creating selection menus that use buttons if less than 3 options, otherwise a list.
+- Add a special method for creating selection menus:
+  - Use a list if const LIST_THRESHOLD => options.len()
+  - Use buttons if options.len() < LIST_THRESHOLD
+  - Auto select option if only one option
 - Make pretty:
   - Dashboard
   - Preferences
