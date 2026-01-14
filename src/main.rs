@@ -10,6 +10,7 @@ use pf_pug_bot::{Player, RED, commands};
 use serenity::all::{
     Client, GatewayIntents, EventHandler, Ready, Guild,Interaction,
     VoiceState, Command, Context, User, CommandOptionType as COT,
+    CreateEmbed, EditMessage,
 };
 use serenity::prelude::TypeMapKey;
 use serenity::async_trait;
@@ -76,7 +77,7 @@ impl EventHandler for Handler {
             let mut queue_lock = self.dashboard_queue.lock().await;
             if queue_lock.is_none() {
                 let queue = DashboardUpdateQueue::new(ctx.clone(), self.manager.clone(), self.db.clone());
-                let queue_arc = Arc::new(queue.clone());
+                let queue_arc = Arc::new(tokio::sync::Mutex::new(queue.clone()));
                 *queue_lock = Some(queue);
 
                 // Store in Context data for global access
@@ -585,8 +586,8 @@ impl EventHandler for Handler {
                     manager:   &self.manager,
                 };
 
-                let button_id = &itx.data.custom_id;
-                let user_id = itx.user.id;
+                let _button_id = &itx.data.custom_id;
+                let _user_id = itx.user.id;
 
                 let result = group.dash_handle_button_interaction(&comp_ctx).await;
 
@@ -712,8 +713,31 @@ impl EventHandler for Handler {
                     if !sesh.is_active() {
                         let was_hot = sesh.is_hot();
 
-                        // Remove player from session when they disconnect
-                        sesh.remove_player(user_id);
+                        // Check if player has auto-leave disabled
+                        let should_remove_player = if let Ok(settings) = self.db.users.get_prefs(user_id).await {
+                            if settings.vc_auto_leave {
+                                // Auto-leave enabled - remove player from queue
+                                true
+                            } else {
+                                // Auto-leave disabled - reset timeout and keep player in queue
+                                if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+                                    // Reset the join time to restart the timeout
+                                    player.joined_at = std::time::SystemTime::now();
+                                    // Mark as not in VC anymore
+                                    player.in_queue_vc = false;
+                                    info!("Reset timeout for {} after leaving VC (auto-leave disabled)", tag);
+                                }
+                                false
+                            }
+                        } else {
+                            // Default to removing player if settings can't be retrieved
+                            true
+                        };
+
+                        if should_remove_player {
+                            // Remove player from session when they disconnect
+                            sesh.remove_player(user_id);
+                        }
 
                         // If session was hot and still has enough players, regenerate teams
                         if was_hot && sesh.pool.len() >= quota {
@@ -764,8 +788,31 @@ impl EventHandler for Handler {
                         if !sesh.is_active() {
                             let was_hot = sesh.is_hot();
 
-                            // Remove player from session when they move out of queue VC
-                            sesh.remove_player(user_id);
+                            // Check if player has auto-leave disabled
+                            let should_remove_player = if let Ok(settings) = self.db.users.get_prefs(user_id).await {
+                                if settings.vc_auto_leave {
+                                    // Auto-leave enabled - remove player from queue
+                                    true
+                                } else {
+                                    // Auto-leave disabled - reset timeout and keep player in queue
+                                    if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+                                        // Reset the join time to restart the timeout
+                                        player.joined_at = std::time::SystemTime::now();
+                                        // Mark as not in VC anymore
+                                        player.in_queue_vc = false;
+                                        info!("Reset timeout for {} after leaving VC (auto-leave disabled)", tag);
+                                    }
+                                    false
+                                }
+                            } else {
+                                // Default to removing player if settings can't be retrieved
+                                true
+                            };
+
+                            if should_remove_player {
+                                // Remove player from session when they move out of queue VC
+                                sesh.remove_player(user_id);
+                            }
 
                             // If session was hot and still has enough players, regenerate teams
                             if was_hot && sesh.pool.len() >= quota {
@@ -805,7 +852,7 @@ impl EventHandler for Handler {
         // Note: Join logging is done inside the queue VC check below to avoid logging unrelated channel joins
 
         // Get player data
-        let player = match self.db.get_user(user_id, &ctx).await {
+        let _player = match self.db.get_user(user_id, &ctx).await {
             Ok(user) => user,
             Err(_) => match self.db.new_user(user_id, &ctx).await {
                     Ok(new_user) => new_user,
@@ -921,6 +968,11 @@ impl EventHandler for Handler {
                                         if let Err(e) = group.queue_player_with_vc_status(player.clone(), discord_rank, queue_ctx, true).await {
                                             error!("Failed to add player to queue: {e}");
                                         } else {
+                                            // Check and send DM alerts if threshold is met
+                                            if let Err(e) = group.check_and_send_dm_alerts(&ctx, &self.db).await {
+                                                warn!("Failed to send DM alerts: {e}");
+                                            }
+                                            
                                             // Log successful queue join via voice channel
                                             let guild_name = ctx.cache.guild(server).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
                                             let group_name = ctx.cache.channel(group.channels.dashboard)
@@ -1294,9 +1346,100 @@ async fn main(
     // Set the manager in the client data for global access
     client.data.write().await.insert::<GuildKey>(manager.clone());
 
+    // Set up signal handling for graceful shutdown
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+    
+    // Clone necessary data for signal handler
+    let manager_for_shutdown = manager.clone();
+    let cache_for_shutdown = client.cache.clone();
+    let http_for_shutdown = client.http.clone();
+    
+    // Spawn signal handler task
+    tokio::spawn(async move {
+        use tokio::signal;
+        
+        // Wait for either SIGINT (Ctrl+C) or SIGTERM
+        let sigint = async {
+            signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");
+        };
+        
+        let sigterm = async {
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{signal, SignalKind};
+                let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+                sigterm.recv().await;
+                #[cfg(not(unix))]
+                {
+                    // On non-Unix systems, we'll never receive SIGTERM
+                    std::future::pending::<()>().await;
+                }
+            }
+        };
+        
+        // Wait for either signal
+        tokio::select! {
+            _ = sigint => {
+                info!("Received Ctrl+C, shutting down gracefully...");
+            }
+            _ = sigterm => {
+                info!("Received SIGTERM, shutting down gracefully...");
+            }
+        }
+        
+        // Mark all dashboards as offline before shutting down
+        if let Ok(mut manager_lock) = manager_for_shutdown.try_lock() {
+            info!("Marking all dashboards as offline...");
+            
+            for server in &mut manager_lock.servers {
+                let guild_id = server.guild_id;
+                let guild_name = cache_for_shutdown.guild(guild_id)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                
+                for group in &mut server.groups {
+                    // Create offline dashboard embed
+                    use serenity::all::CreateEmbedFooter;
+                    
+                    let offline_embed = CreateEmbed::new()
+                        .title("🔴 Bot Offline")
+                        .description("The PUG bot is currently offline. Please try again later.")
+                        .color(0xFF0000) // Red color
+                        .footer(CreateEmbedFooter::new(format!("Bot shut down at {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"))));
+                    
+                    // Try to update the existing dashboard message
+                    let channel_id = group.channels.dashboard;
+                    let message_id = group.dashboard_msg;
+                    
+                    match channel_id.edit_message(&http_for_shutdown, message_id, EditMessage::new().embed(offline_embed)).await {
+                        Ok(_) => {
+                            info!("[{}] Marked dashboard for group {} as offline", guild_name, group.group_id);
+                        }
+                        Err(e) => {
+                            warn!("[{}] Failed to update dashboard for group {}: {}", guild_name, group.group_id, e);
+                        }
+                    }
+                }
+            }
+        } else {
+            warn!("Could not acquire manager lock for graceful shutdown");
+        }
+        
+        // Send shutdown signal to main task
+        let _ = shutdown_tx.send(());
+    });
+
     // Start listening for events by starting a single shard
-    if let Err(why) = client.start().await {
-        error!("Client error: {:?}", why);
+    // Use select! to handle both client events and shutdown signal
+    tokio::select! {
+        result = client.start() => {
+            if let Err(why) = result {
+                error!("Client error: {:?}", why);
+            }
+        }
+        _ = shutdown_rx => {
+            info!("Shutting down client...");
+        }
     }
 
     Ok(())
