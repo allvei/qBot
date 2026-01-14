@@ -340,7 +340,7 @@ impl EventHandler for Handler {
                     let is_admin = match member {
                         Some(member) => {
                             // Get admin role from database config
-                            match self.db.config.get_config_value("admin_role", guild_id).await {
+                            match self.db.config.get_config_item("admin_role", guild_id).await {
                                 Ok(Some(admin_role_str)) => {
                                     if let Ok(admin_role_id) = admin_role_str.parse::<u64>() {
                                         let admin_role = serenity::all::RoleId::new(admin_role_id);

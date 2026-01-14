@@ -67,8 +67,8 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
 
     // If no parameters, show current role configuration
     if role_type.is_empty() && role.is_none() {
-        let runner_role = cc.db.config.get_config_value("runner_role", guild_id).await?;
-        let admin_role = cc.db.config.get_config_value("admin_role", guild_id).await?;
+        let runner_role = cc.db.config.get_config_item("runner_role", guild_id).await?;
+        let admin_role = cc.db.config.get_config_item("admin_role", guild_id).await?;
 
         let role_text = format!(
             "**Current Role Configuration:**\n\
@@ -132,7 +132,7 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
         cc.intax.create_response(&cc.ctx.http, response).await?;
     } else {
         // Show current value for this role type
-        let current_role = cc.db.config.get_config_value(role_key, guild_id).await?;
+        let current_role = cc.db.config.get_config_item(role_key, guild_id).await?;
 
         let embed = CE::new()
             .title(format!("{role_type} Role"))
@@ -1709,7 +1709,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
         .color(CYAN);
 
     // ELO information
-    embed = embed.field("ELO Rating", format!("**{}** / 100", guild_elo.elo), true);
+    embed = embed.field("ELO Rating", format!("**{}**", guild_elo.elo), true);
 
     // Rank information
     embed = embed.field("Rank", format!("**{}**", guild_elo.division.name()), true);
@@ -1779,7 +1779,7 @@ pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     
     // Check current status
-    let is_enabled = match cc.db.config.get_config_value("active_elo_enabled", guild_id).await {
+    let is_enabled = match cc.db.config.get_config_item("active_elo_enabled", guild_id).await {
         Ok(Some(value)) => value.parse::<bool>().unwrap_or(crate::ACTIVE_ELO_ENABLED_BY_DEFAULT),
         Ok(None) => crate::ACTIVE_ELO_ENABLED_BY_DEFAULT,
         Err(_) => crate::ACTIVE_ELO_ENABLED_BY_DEFAULT,

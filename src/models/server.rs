@@ -108,7 +108,7 @@ impl Server {
 
     /// Check if active ELO is enabled for this server
     pub async fn is_active_elo_enabled(&self, db: &DB) -> Result<bool> {
-        match db.config.get_config_value("active_elo_enabled", self.guild_id).await {
+        match db.config.get_config_item("active_elo_enabled", self.guild_id).await {
             Ok(Some(value)) => {
                 match value.parse::<bool>() {
                     Ok(enabled) => Ok(enabled),
@@ -1154,7 +1154,7 @@ impl Role {
 
     /// Get all Discord role IDs from database configuration (supports multiple roles)
     pub async fn ids(&self, db: &DB, guild_id: GI) -> Vec<RI> {
-        if let Ok(Some(value)) = db.config.get_config_value(self.config_key(), guild_id).await {
+        if let Ok(Some(value)) = db.config.get_config_item(self.config_key(), guild_id).await {
             // Support comma-separated role IDs
             value.split(',')
                 .filter_map(|s| s.trim().parse::<u64>().ok())

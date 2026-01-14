@@ -74,7 +74,7 @@ pub async fn get_or_assign_player_rank(db: &DB, guild_id: GI, user_id: UI) -> Re
     // The dashboard.rs code should call get_user_rank_from_discord_roles first.
     
     // Fallback to server's configured default rank
-    let default_rank_name = db.config.get_config_value("default_rank", guild_id).await?
+    let default_rank_name = db.config.get_config_item("default_rank", guild_id).await?
         .unwrap_or_else(|| crate::models::DEFAULT_RANK.name().to_string());
     
     // Find the configured default rank in the database

@@ -801,7 +801,7 @@ pub async fn handle_server_settings_button(
     match button_id.as_str() {
         "server_settings_dynamic_elo" => {
             // Toggle dynamic ELO
-            let current = db.config.get_config_value("active_elo_enabled", guild_id).await?
+            let current = db.config.get_config_item("active_elo_enabled", guild_id).await?
                 .map(|v| v.parse::<bool>().unwrap_or(false))
                 .unwrap_or(false);
             
@@ -1168,22 +1168,32 @@ pub async fn handle_server_settings_button(
                 interaction.create_response(&ctx.http, response).await?;
             }
         }
-        "server_settings_edit_default_rank" => {
-            // Show modal to edit default rank
-            let (_, default_rank) = get_rank_settings(db, guild_id).await?;
-            let modal = CreateModal::new("server_settings_modal_default_rank", "Change the default rank")
-                .components(vec![
-                    CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Default Rank", "default_rank")
-                            .placeholder("Beginner, Newcomer, Novice, Apprentice, Journeyman, Expert, Master, Master Elite, Grandmaster")
-                            .value(default_rank)
-                            .required(true)
-                            .max_length(20)
-                    ),
-                ]);
+        "server_settings_default_rank_select" => {
+            if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
+                if let Some(rank_name) = values.first() {
+                    let new_rank = crate::models::types::Rank::from_name(rank_name.trim());
+                    let new_elo = new_rank.default_rank_elo();
 
-            let response = CIR::Modal(modal);
-            interaction.create_response(&ctx.http, response).await?;
+                    db.config.set_config("default_rank", new_rank.name(), guild_id).await?;
+                    db.config.set_config("default_elo", &new_elo.to_string(), guild_id).await?;
+
+                    let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                    let rank_roles = get_all_rank_roles(db, guild_id).await?;
+                    let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id).await?;
+                    
+                    let display = crate::handlers::settings_menu::RankConfigDisplay {
+                        guild_name,
+                        rank_roles,
+                        dynamic_elo,
+                        default_rank,
+                    };
+
+                    let response = CIR::UpdateMessage(
+                        CIRM::new().embed(display.build_embed()).components(display.build_components())
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
         }
         "server_settings_groups" => {
             // Show group configuration menu
@@ -1220,7 +1230,7 @@ pub async fn handle_server_settings_button(
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
 
             // Create Runner role if not configured
-            let runner_role = db.config.get_config_value("runner_role", guild_id).await?;
+            let runner_role = db.config.get_config_item("runner_role", guild_id).await?;
             if runner_role.is_none() {
                 match guild_id.create_role(&ctx.http,
                     EditRole::new()
@@ -1241,7 +1251,7 @@ pub async fn handle_server_settings_button(
             }
 
             // Create Admin role if not configured
-            let admin_role = db.config.get_config_value("admin_role", guild_id).await?;
+            let admin_role = db.config.get_config_item("admin_role", guild_id).await?;
             if admin_role.is_none() {
                 match guild_id.create_role(&ctx.http,
                     EditRole::new()
@@ -1527,16 +1537,16 @@ async fn get_all_rank_roles(db: &Arc<Database>, guild_id: GI) -> Result<Vec<(Str
 /// Convert rank key to display name
 fn rank_key_to_name(key: &str) -> String {
     match key {
-        "beginner"     => "Beginner".to_string(),
-        "newcomer"     => "Newcomer".to_string(),
-        "novice"       => "Novice".to_string(),
-        "apprentice"   => "Apprentice".to_string(),
-        "journeyman"   => "Journeyman".to_string(),
-        "expert"       => "Expert".to_string(),
-        "master"       => "Master".to_string(),
+        "beginner"     => "Beginner"    .to_string(),
+        "newcomer"     => "Newcomer"    .to_string(),
+        "novice"       => "Novice"      .to_string(),
+        "apprentice"   => "Apprentice"  .to_string(),
+        "journeyman"   => "Journeyman"  .to_string(),
+        "expert"       => "Expert"      .to_string(),
+        "master"       => "Master"      .to_string(),
         "master_elite" => "Master Elite".to_string(),
-        "grandmaster"  => "Grandmaster".to_string(),
-        _              => key.to_string(),
+        "grandmaster"  => "Grandmaster" .to_string(),
+        _              => key           .to_string(),
     }
 }
 
@@ -1558,8 +1568,8 @@ fn rank_key_to_position(key: &str) -> u8 {
 
 /// Get server settings from database
 pub async fn get_server_settings(db: &Arc<Database>, guild_id: GI) -> Result<ServerSettings> {
-    let runner_role = db.config.get_config_value("runner_role", guild_id).await?;
-    let admin_role = db.config.get_config_value("admin_role", guild_id).await?;
+    let runner_role = db.config.get_config_item("runner_role", guild_id).await?;
+    let admin_role = db.config.get_config_item("admin_role", guild_id).await?;
 
     Ok(ServerSettings {
         runner_role,
@@ -1569,10 +1579,10 @@ pub async fn get_server_settings(db: &Arc<Database>, guild_id: GI) -> Result<Ser
 
 /// Get rank settings from database (for rank configuration menu)
 pub async fn get_rank_settings(db: &Arc<Database>, guild_id: GI) -> Result<(bool, String)> {
-    let dynamic_elo = db.config.get_config_value("active_elo_enabled", guild_id).await?
+    let dynamic_elo = db.config.get_config_item("active_elo_enabled", guild_id).await?
         .map(|v| v.parse::<bool>().unwrap_or(false))
         .unwrap_or(false);
-    let default_rank = db.config.get_config_value("default_rank", guild_id).await?
+    let default_rank = db.config.get_config_item("default_rank", guild_id).await?
         .unwrap_or_else(|| crate::models::DEFAULT_RANK.name().to_string());
 
     Ok((dynamic_elo, default_rank))
@@ -1814,41 +1824,6 @@ pub async fn handle_server_settings_modal(
         // Update rank in DB using name instead of position
         db.ranks.update_rank_name(guild_id, old_rank_name, new_name).await?;
         db.ranks.update_rank_elo(guild_id, new_name, elo).await?;
-
-        // Return to rank configuration menu
-        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-        let rank_roles = get_all_rank_roles(db, guild_id).await?;
-        let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id).await?;
-        
-        let display = crate::handlers::settings_menu::RankConfigDisplay {
-            guild_name,
-            rank_roles,
-            dynamic_elo,
-            default_rank,
-        };
-
-        let response = CIR::UpdateMessage(
-            CIRM::new().embed(display.build_embed()).components(display.build_components())
-        );
-        interaction.create_response(&ctx.http, response).await?;
-    } else if modal_id == "server_settings_modal_default_rank" {
-        let rank_str = interaction.data.components.first()
-            .and_then(|row| row.components.first())
-            .and_then(|c| {
-                if let serenity::all::ActionRowComponent::InputText(input) = c {
-                    input.value.clone()
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-
-        let new_rank = crate::models::types::Rank::from_name(rank_str.trim());
-        let new_elo = new_rank.default_rank_elo();
-
-        // Save both to config
-        db.config.set_config("default_rank", new_rank.name(), guild_id).await?;
-        db.config.set_config("default_elo", &new_elo.to_string(), guild_id).await?;
 
         // Return to rank configuration menu
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());

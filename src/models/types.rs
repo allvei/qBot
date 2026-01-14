@@ -9,7 +9,7 @@ use serenity::all::{
 use sqlx::prelude::{FromRow};
 use tokio::sync::Mutex;
 
-use crate::{RED, DEFAULT_RANK};
+use crate::RED;
 use crate::database::Database;
 use crate::models::{
     Manager as GameManager, Role,
@@ -118,12 +118,14 @@ pub struct Player {
 
 impl Player {
     pub fn default(user_id: UserId, tag: String, steam_id: Option<u64>) -> Player {
+        let rank = Rank::Apprentice;
+        let elo = rank.default_rank_elo();
         Player {
             user_id,
             tag,
             steam_id,
-            rank: DEFAULT_RANK,
-            elo:  DEFAULT_RANK.default_rank_elo(),
+            rank,
+            elo,
             role: None,
         }
     }

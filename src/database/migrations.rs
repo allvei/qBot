@@ -1,21 +1,23 @@
+use std::fmt::Display;
 use anyhow::Result;
-use sqlx::{Row, SqlitePool};
-use serenity::all::GuildId as GI;
+use sqlx::{Error, Row, SqlitePool};
+use serenity::{all::GuildId as GI};
 
 use crate::DEFAULT_HOT_JOIN_TIMEOUT;
 
-/// Adds a column to a table if it doesn't exist
-/// 
-/// # Arguments
-/// 
-/// * `table`   - The name of the table to add the column to
-/// * `name`    - The name of the column to add
-/// * `type`    - The type of the column to add
-/// * `default` - The default value of the column to add
 macro_rules! add_column {
     ($self:ident, $table:literal, $name:literal, $type:literal, $default:literal) => {
         if !$self.check_column($table, $name).await? {
             sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {} {} DEFAULT {}", $table, $name, $type, $default))
+                .execute(&$self.pool).await?;
+        }
+    };
+}
+
+macro_rules! add_column_not_null {
+    ($self:ident, $table:literal, $name:literal, $type:literal, $default:literal) => {
+        if !$self.check_column($table, $name).await? {
+            sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {} {} NOT NULL DEFAULT {}", $table, $name, $type, $default))
                 .execute(&$self.pool).await?;
         }
     };
@@ -59,20 +61,18 @@ impl DatabaseMigrations {
         if !self.check_table("config").await? {
             sqlx::query(
                 "CREATE TABLE config (
-                    guild       INTEGER NOT NULL,
-                    key         TEXT NOT NULL,
-                    value       TEXT,
-                    description TEXT,
-                    PRIMARY KEY(guild, key)
+                    guild_id     INTEGER NOT NULL,
+                    runner_id    TEXT,
+                    admin_id     TEXT,
+                    active_elo   INTEGER,
+                    default_rank INTEGER,
+                    PRIMARY KEY(guild_id)
                 )"
             )
             .execute(&self.pool)
             .await?;
-        } else if !self.check_column("config", "guild").await? {
-            sqlx::query("ALTER TABLE config
-                         ADD COLUMN guild INTEGER NOT NULL DEFAULT 0")
-                .execute(&self.pool)
-                .await?;
+        } else if !self.check_column("config", "guild_id").await? {
+            add_column_not_null!(self, "config", "guild_id", "INTEGER", "0");
         }
         Ok(())
     }
@@ -80,8 +80,7 @@ impl DatabaseMigrations {
         if !self.check_table("users").await? {
             sqlx::query(
                 "CREATE TABLE users (
-                    id                              INTEGER PRIMARY KEY,
-                    user_id                         INTEGER NOT NULL UNIQUE,
+                    user_id                         INTEGER PRIMARY KEY,
                     steam_id                        INTEGER,
                     dm_enabled                      INTEGER DEFAULT 1,
                     timeout_length                  INTEGER DEFAULT 30,
@@ -113,9 +112,7 @@ impl DatabaseMigrations {
 
             // Add dm_enabled column if missing
             if has_user_id && !has_dm_enabled {
-                sqlx::query("ALTER TABLE users ADD COLUMN dm_enabled INTEGER DEFAULT 1")
-                    .execute(&self.pool)
-                    .await?;
+                add_column!(self, "users", "dm_enabled", "INTEGER", "1");
             }
 
             // Add new settings columns if missing
@@ -155,8 +152,7 @@ impl DatabaseMigrations {
                 sqlx::query("DROP TABLE users").execute(&self.pool).await?;
                 sqlx::query(
                     "CREATE TABLE users (
-                        id                           INTEGER PRIMARY KEY,
-                        user_id                      INTEGER NOT NULL UNIQUE,
+                        user_id                      INTEGER PRIMARY KEY,
                         steam_id                     INTEGER,
                         dm_enabled                   INTEGER DEFAULT 1,
                         timeout_length               INTEGER DEFAULT 0,
@@ -184,9 +180,9 @@ impl DatabaseMigrations {
                 for row in backup_data {
                     let user_id: i64 = row.get("user_id");
                     let steam_id: Option<i64> = row.try_get("steam_id").ok();
-                    sqlx::query("INSERT OR IGNORE
-                                 INTO users (user_id, steam_id, dm_enabled, timeout_length, join_announcement, vc_disconnect_on_leave, announcement_color, show_stats_in_announcement, notify_quota_threshold, alert_desc, alert_footer_text, alert_footer_icon, alert_footer_thumbnail, leave_alert, leave_alert_desc, leave_alert_footer_text, leave_alert_footer_icon, leave_alert_footer_thumbnail, elo)
-                                 VALUES (?, ?, 1, 0, 0, 1, 3447003, 0, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, 30)")
+                    sqlx::query("INSERT OR IGNORE INTO users (user_id, steam_id, dm_enabled, timeout_length, join_announcement, vc_disconnect_on_leave, announcement_color, show_stats_in_announcement, notify_quota_threshold, alert_desc, alert_footer_text, alert_footer_icon, alert_footer_thumbnail, leave_alert, leave_alert_desc, leave_alert_footer_text, leave_alert_footer_icon, leave_alert_footer_thumbnail, elo)
+                                 VALUES (?, ?, 1, 0, 0, 1, 3447003, 0, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, 30)
+                                 ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id")
                         .bind(user_id)
                         .bind(steam_id)
                         .execute(&self.pool)
@@ -403,10 +399,11 @@ impl DatabaseMigrations {
     // SCHEMA VALIDATIONS
 
     async fn verify_config(&self) -> Result<()> {
-        let required_columns = vec!["guild", "key", "value", "description"];
+        let required_columns = vec!["guild_id", "key", "value", "description"];
         self.verify_columns("config", &required_columns).await?;
         Ok(())
     }
+
     async fn verify_users(&self)  -> Result<()> {
         let required_columns = vec![
             "id",

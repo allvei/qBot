@@ -6,7 +6,7 @@ use serenity::all::{Context as Ctx, UserId as UI, GuildId as GI};
 use sqlx::{Row, SqlitePool};
 use tracing::{error, info, warn};
 
-use crate::{Database, Elo, Rank, DEFAULT_RANK};
+use crate::{Database, Elo, Rank};
 use crate::models::Player;
 use super::Repository;
 
@@ -94,14 +94,14 @@ impl UserRepository {
     }
 
     pub async fn get(&self, user_id: UI) -> Result<Player> {
-        match sqlx::query("SELECT id, user_id, tag, steam_id, elo FROM users WHERE user_id = ?").bind(user_id.get() as i64).fetch_one(&self.pool).await {
+        match sqlx::query("SELECT user_id, tag, steam_id, elo FROM users WHERE user_id = ?").bind(user_id.get() as i64).fetch_one(&self.pool).await {
             Ok(result) => Ok(Self::get_player(result)),
             Err(e) => Err(e.into()),
         }
     }
 
     pub async fn get_with_tag(&self, user_id: UI, _ctx: &Ctx) -> Result<Player> {
-        let result = sqlx::query("SELECT id, user_id, tag, steam_id, elo FROM users WHERE user_id = ?")
+        let result = sqlx::query("SELECT user_id, tag, steam_id, elo FROM users WHERE user_id = ?")
         .bind(user_id.get() as i64)
         .fetch_one(&self.pool)
         .await?;
@@ -199,21 +199,6 @@ impl UserRepository {
         player
     }
 
-    fn get_rank(rank: Option<String>) -> Rank {
-        match rank {
-            Some(val) if val == "Beginner"    => Rank::Beginner,
-            Some(val) if val == "Newcomer"    => Rank::Newcomer,
-            Some(val) if val == "Novice"      => Rank::Novice,
-            Some(val) if val == "Apprentice"  => Rank::Apprentice,
-            Some(val) if val == "Journeyman"  => Rank::Journeyman,
-            Some(val) if val == "Expert"      => Rank::Expert,
-            Some(val) if val == "Master"      => Rank::Master,
-            Some(val) if val == "MasterElite" => Rank::MasterElite,
-            Some(val) if val == "Grandmaster" => Rank::Grandmaster,
-            _                                 => DEFAULT_RANK,
-        }
-    }
-
     /// Get player with rank determined from guild-specific ELO and Discord roles
     pub async fn get_with_guild_rank(&self, user_id: UI, _ctx: &Ctx, guild_id: GI, db: &Database) -> Result<Player> {
         info!("DEBUG: get_player_with_guild_rank called for user {} in guild {}", user_id, guild_id);
@@ -235,11 +220,31 @@ impl UserRepository {
 
         // For new players (no games), initialize with default rank
         if guild_elo.games == 0 && player.elo == 0 {
-            let default_rank = crate::DEFAULT_RANK;
-            let default_elo  = default_rank.default_rank_elo();
+            let default_rank_name = db.config.get_config_item("default_rank", guild_id).await?
+                .unwrap_or_else(|| crate::models::DEFAULT_RANK.name().to_string());
+            
+            // Find the configured default rank in the database
+            let default_guild_rank = match db.ranks.get_rank_by_name(guild_id, &default_rank_name).await? {
+                Some(rank) => rank,
+                None => {
+                    // Fallback to hardcoded default if configured rank doesn't exist
+                    warn!("Configured default rank '{}' not found in database, using hardcoded default", default_rank_name);
+                    let fallback_elo = crate::models::DEFAULT_RANK.default_rank_elo();
+                    db.elos.set(user_id, guild_id, fallback_elo, crate::models::DEFAULT_RANK).await?;
+                    info!("Assigned fallback default rank {} (ELO {}) to user {}", crate::models::DEFAULT_RANK.name(), fallback_elo, user_id);
+                    player.rank = crate::models::DEFAULT_RANK;
+                    player.elo = fallback_elo;
+                    return Ok(player);
+                }
+            };
+            
+            // Convert the guild rank's ELO to the appropriate Rank enum
+            let assigned_rank = Rank::from_elo(default_guild_rank.elo, db, guild_id).await;
+            let default_elo = default_guild_rank.elo;
+            
             info!("DEBUG: New player in guild, using default rank {} with ELO {}", 
-                  default_rank.name(), default_elo);
-            player.rank = default_rank;
+                  assigned_rank.name(), default_elo);
+            player.rank = assigned_rank;
             player.elo  = default_elo;
             
             // Initialize their guild ELO
@@ -247,7 +252,7 @@ impl UserRepository {
                 error!("Failed to initialize guild ELO for player {}: {}", user_id, e);
             } else {
                 info!("Initialized guild ELO for player {} to {} (rank: {})", 
-                      user_id, player.elo, default_rank.name());
+                      user_id, player.elo, assigned_rank.name());
             }
         }
 

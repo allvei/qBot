@@ -162,7 +162,7 @@ impl DatabaseValidator {
 
     /// Remove duplicate users
     async fn remove_duplicate_users(&self) -> Result<i64> {
-        let result = sqlx::query("DELETE FROM users WHERE id NOT IN (SELECT MIN(id) FROM users GROUP BY user_id )")
+        let result = sqlx::query("DELETE FROM users WHERE user_id NOT IN (SELECT MIN(user_id) FROM users GROUP BY user_id )")
         .execute(&self.pool)
         .await?;
 

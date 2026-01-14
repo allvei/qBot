@@ -11,6 +11,8 @@ use crate::Elo;
 
 use super::types::Rank;
 
+pub const DEFAULT_RANK: Rank = Rank::Apprentice;
+
 pub const ACTIVE_ELO_ENABLED_BY_DEFAULT: bool     = false;
 pub const DEFAULT_QUOTA:                 u8       = 8;
 pub const DEFAULT_HOT_JOIN_TIMEOUT:      u16      = 120; // Seconds for players to join VC when queue goes hot
@@ -20,7 +22,6 @@ pub const INACTIVITY_TIMEOUT_SECS:       u64      = 600; // 10 minutes
 pub const EXPIRY_DEFAULT:                Duration = Duration::from_secs(120 * 60);    // 120 minutes default user queue expiry
 pub const EXPIRY_MAX:                    Duration = Duration::from_secs(4 * 60 * 60); // 4 hours
 pub const EXPIRY_MIN:                    Duration = Duration::from_secs(30 * 60);     // 30 minutes
-pub const DEFAULT_RANK:                  Rank     = Rank::Newcomer;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct ConfigFormat {

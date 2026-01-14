@@ -449,14 +449,29 @@ impl RankConfigDisplay {
                 CB::new("server_settings_dynamic_elo")
                     .label(if self.dynamic_elo { "Dynamic ELO enabled" } else { "Dynamic ELO disabled" })
                     .style(if self.dynamic_elo { BS::Success } else { BS::Danger }),
-                CB::new("server_settings_edit_default_rank")
-                    .label("Change the default rank")
-                    .style(BS::Secondary),
             ]),
         ];
 
-        // Only add rank selection menu if there are valid ranks
+        // Only add rank selection menus if there are valid ranks
         if !self.rank_roles.is_empty() {
+            components.push(
+                CAR::SelectMenu(
+                    CSM::new("server_settings_default_rank_select", CSMK::String {
+                        options: self.rank_roles.iter()
+                            .map(|(name, _, _)| {
+                                let label = if name == &self.default_rank {
+                                    format!("{} (current default)", name)
+                                } else {
+                                    name.clone()
+                                };
+                                CSMO::new(label, name.clone())
+                            })
+                            .collect()
+                    })
+                    .placeholder("Set default rank")
+                )
+            );
+            
             components.push(
                 CAR::SelectMenu(
                     CSM::new("server_settings_rank_select", CSMK::String {
@@ -546,7 +561,7 @@ pub struct GroupListDisplay {
 impl GroupListDisplay {
     pub fn build_embed(&self) -> CE {
         let mut description = String::new();
-        description.push_str("Active groups:\n\n");
+        description.push_str("**Active groups:**\n");
 
         if self.groups.is_empty() {
             description.push_str("*No groups configured*\n\nUse 'Create Group' to add a new group.");

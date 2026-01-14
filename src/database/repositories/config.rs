@@ -20,7 +20,7 @@ impl ConfigRepository {
     }
 
     pub async fn get_config_map(&self, guild_id: GI) -> Result<HashMap<String, String>> {
-        let rows = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config WHERE guild = ?")
+        let rows = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config WHERE guild_id = ?")
         .bind(guild_id.get() as i64)
         .fetch_all(&self.pool)
         .await?;
@@ -52,18 +52,18 @@ impl ConfigRepository {
         }
     }
 
-    pub async fn get_config_value(&self, key: &str, guild_id: GI) -> Result<Option<String>> {
-        let result = sqlx::query("SELECT value FROM config WHERE guild = ? AND key = ?")
+    pub async fn get_config_item(&self, column: &str, guild_id: GI) -> Result<Option<String>> {
+        let result = sqlx::query("SELECT ? FROM config WHERE guild_id = ?")
+            .bind(column)
             .bind(guild_id.get() as i64)
-            .bind(key)
             .fetch_optional(&self.pool)
             .await?;
 
-        Ok(result.and_then(|row| row.get::<Option<String>, _>("value")))
+        Ok(result.and_then(|row| row.get::<Option<String>, _>(column)))
     }
 
     pub async fn delete_config(&self, key: &str, guild_id: GI) -> Result<()> {
-        sqlx::query("DELETE FROM config WHERE guild = ? AND key = ?")
+        sqlx::query("DELETE FROM config WHERE guild_id = ? AND key = ?")
             .bind(guild_id.get() as i64)
             .bind(key)
             .execute(&self.pool)
@@ -72,7 +72,7 @@ impl ConfigRepository {
     }
 
     pub async fn get_all_for_guild(&self, guild_id: GI) -> Result<Vec<ConfigFormat>> {
-        let rows = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config WHERE guild = ?")
+        let rows = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config WHERE guild_id = ?")
         .bind(guild_id.get() as i64)
         .fetch_all(&self.pool)
         .await?;
@@ -90,7 +90,7 @@ impl Repository<ConfigFormat, (GI, String)> for ConfigRepository {
     }
 
     async fn get_by_id(&self, (guild_id, key): (GI, String)) -> Result<ConfigFormat> {
-        let result = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config WHERE guild = ? AND key = ?")
+        let result = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config WHERE guild_id = ? AND key = ?")
         .bind(guild_id.get() as i64)
         .bind(&key)
         .fetch_one(&self.pool)
