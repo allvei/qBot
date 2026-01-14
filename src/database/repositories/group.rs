@@ -124,6 +124,17 @@ impl GroupRepository {
         );
         group.connect_info = connect_info;
         group.team_balance_method = team_balance_method;
+        
+        // Load DM alert settings
+        group.dm_alert_enabled = result.try_get::<i64, _>("dm_alert_enabled").unwrap_or(0) != 0;
+        group.dm_alert_threshold = result.try_get::<i64, _>("dm_alert_threshold").unwrap_or(0) as u8;
+        
+        // Parse dm_alert_users as JSON array
+        if let Ok(users_json) = result.try_get::<String, _>("dm_alert_users") {
+            if let Ok(users) = serde_json::from_str::<Vec<serenity::all::UserId>>(&users_json) {
+                group.dm_alert_users = users;
+            }
+        }
 
         Ok(group)
     }
@@ -330,5 +341,45 @@ impl Repository<Group, u8> for GroupRepository {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+}
+
+impl GroupRepository {
+    /// Update DM alert settings for a group
+    pub async fn update_dm_alert_settings(&self, guild_id: GI, group_id: u8, enabled: bool, threshold: u8, users: Vec<serenity::all::UserId>) -> Result<()> {
+        let users_json = serde_json::to_string(&users)?;
+        
+        sqlx::query(
+            "UPDATE groups SET dm_alert_enabled = ?, dm_alert_threshold = ?, dm_alert_users = ? 
+             WHERE guild_id = ? AND group_id = ?"
+        )
+        .bind(enabled as i64)
+        .bind(threshold as i64)
+        .bind(users_json)
+        .bind(guild_id.get() as i64)
+        .bind(group_id as i64)
+        .execute(&self.pool)
+        .await?;
+        
+        Ok(())
+    }
+
+    /// Get DM alert settings for a group
+    pub async fn get_dm_alert_settings(&self, guild_id: GI, group_id: u8) -> Result<(bool, u8, Vec<serenity::all::UserId>)> {
+        let result = sqlx::query(
+            "SELECT dm_alert_enabled, dm_alert_threshold, dm_alert_users 
+             FROM groups WHERE guild_id = ? AND group_id = ?"
+        )
+        .bind(guild_id.get() as i64)
+        .bind(group_id as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let enabled = result.get::<i64, _>("dm_alert_enabled") != 0;
+        let threshold = result.get::<i64, _>("dm_alert_threshold") as u8;
+        let users_json: String = result.get("dm_alert_users");
+        let users = serde_json::from_str(&users_json).unwrap_or_default();
+
+        Ok((enabled, threshold, users))
     }
 }

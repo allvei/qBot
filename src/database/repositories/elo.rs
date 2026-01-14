@@ -95,8 +95,8 @@ impl EloRepository {
         // Get current ELO or create default
         let current = self.get(user_id, guild_id).await?;
         
-        // Calculate new ELO (clamped to 0-100)
-        let new_elo      = (current.elo as i32 + elo_change as i32).clamp(0, 100) as u16;
+        // Calculate new ELO
+        let new_elo      = (current.elo as i32 + elo_change as i32) as u16;
         let new_division = Rank::from_elo_default(new_elo);
         let new_games    = current.games + 1;
         let new_wins     = if won { current.wins + 1 } else { current.wins };
@@ -130,10 +130,9 @@ impl EloRepository {
     /// Get all ELO records for a user across all guilds
     pub async fn get_all_for_user(&self, user_id: UI) -> Result<Vec<(u64, GuildElo)>> {
         let rows = sqlx::query(
-            "SELECT g.guild_id, e.elo, e.division, e.games, e.wins 
-             FROM   elos e 
-             JOIN   guilds g ON e.guild_id = g.id 
-             WHERE  e.user_id = ?"
+            "SELECT guild_id, elo, division, games, wins 
+             FROM elos 
+             WHERE user_id = ?"
         )
         .bind(user_id.get() as i64)
         .fetch_all(&self.pool)
@@ -164,11 +163,10 @@ impl EloRepository {
     /// Get leaderboard for a guild (top N players by ELO)
     pub async fn get_leaderboard(&self, guild_id: GI, limit: u32) -> Result<Vec<(UI, GuildElo)>> {
         let rows = sqlx::query(
-            "SELECT u.user_id, e.elo, e.division, e.games, e.wins 
-             FROM elos e 
-             JOIN users u ON e.user_id = u.id 
-             WHERE e.guild_id = ? 
-             ORDER BY e.elo DESC 
+            "SELECT user_id, elo, division, games, wins 
+             FROM elos 
+             WHERE guild_id = ? 
+             ORDER BY elo DESC 
              LIMIT ?"
         )
         .bind(guild_id.get() as i64)

@@ -76,15 +76,9 @@ impl RankRepository {
         Ok(ranks)
     }
 
-    /// Get ranks for a guild, initializing with defaults if none exist
+    /// Get ranks for a guild
     pub async fn get_or_init_ranks(&self, guild_id: GI) -> Result<Vec<GuildRank>> {
-        let ranks = self.get_ranks(guild_id).await?;
-        if ranks.is_empty() {
-            self.init_default_ranks(guild_id).await?;
-            self.get_ranks(guild_id).await
-        } else {
-            Ok(ranks)
-        }
+        self.get_ranks(guild_id).await
     }
 
     /// Initialize default ranks for a guild
@@ -161,11 +155,12 @@ impl RankRepository {
     }
 
     /// Add a new rank
-    pub async fn add_rank(&self, guild_id: GI, name: &str, elo: u16) -> Result<()> {
-        sqlx::query("INSERT INTO ranks (guild_id, name, elo, role_id) VALUES (?, ?, ?, NULL)")
+    pub async fn add_rank(&self, guild_id: GI, name: &str, elo: u16, role_id: RoleId) -> Result<()> {
+        sqlx::query("INSERT INTO ranks (guild_id, name, elo, role_id) VALUES (?, ?, ?, ?)")
             .bind(guild_id.get() as i64)
             .bind(name)
             .bind(elo as i64)
+            .bind(role_id.get() as i64)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -215,5 +210,19 @@ impl RankRepository {
             Some(rank) => Ok(rank.name),
             None => Ok("Beginner".to_string()),
         }
+    }
+
+    /// Find rank from Discord role ID
+    pub async fn rank_from_role_id(&self, guild_id: GI, role_id: RoleId) -> Result<Option<GuildRank>> {
+        let ranks = self.get_or_init_ranks(guild_id).await?;
+        
+        // Find the rank with the matching role_id
+        for rank in &ranks {
+            if rank.role_id == role_id {
+                return Ok(Some(rank.clone()));
+            }
+        }
+
+        Ok(None)
     }
 }

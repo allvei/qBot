@@ -429,6 +429,7 @@ impl UserRepository {
                     leave_alert_footer_text,
                     leave_alert_footer_icon:      row.try_get::<String, _>("leave_alert_footer_icon").ok().filter(|s| !s.is_empty()),
                     leave_alert_footer_thumbnail: row.try_get::<String, _>("leave_alert_footer_thumbnail").ok().filter(|s| !s.is_empty()),
+                    group_quota_thresholds:        std::collections::HashMap::new(),
                 })
             }
             None => {
@@ -519,7 +520,8 @@ pub struct UserSettings {
     pub vc_auto_join:                  bool,
     pub announcement_color:             i64,
     pub dm_alerts:                      bool,
-    pub notify_quota_threshold:         Option<u8>,
+    pub notify_quota_threshold:         Option<u8>, // Legacy field - kept for compatibility
+    pub group_quota_thresholds:         std::collections::HashMap<(u64, u8), u8>, // (guild_id, group_id) -> players_needed
     pub alert_desc:                     Option<String>,
     pub alert_footer_text:              Option<String>,
     pub alert_footer_icon:              Option<String>,
@@ -542,6 +544,7 @@ impl Default for UserSettings {
             announcement_color:           3447003, // Discord blurple
             dm_alerts:                    true,
             notify_quota_threshold:       None,
+            group_quota_thresholds:       std::collections::HashMap::new(),
             alert_desc:                   None,
             alert_footer_text:            None,
             alert_footer_icon:            None,
