@@ -4,6 +4,12 @@ use serenity::all::{
     CreateEmbedFooter, RoleId,
 };
 
+use crate::Ephemeral as Eph;
+
+const LIST_THRESHOLD: usize = 5;
+
+
+type SF = SettingsField;
 /// A field displayed in the settings embed
 pub struct SettingsField {
     pub name:   String,
@@ -11,7 +17,7 @@ pub struct SettingsField {
     pub inline: bool,
 }
 
-impl SettingsField {
+impl SF {
     pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
         Self { name: name.into(), value: value.into(), inline: true }
     }
@@ -22,28 +28,31 @@ impl SettingsField {
     }
 }
 
+type SR = SettingsRow;
 /// A row of components (buttons or select menu)
 pub enum SettingsRow {
-    Buttons(Vec<SettingsButton>),
+    Buttons(Vec<SB>),
     RoleSelect { id: String, placeholder: String, default: Option<RoleId> },
     StringSelect { id: String, placeholder: String, options: Vec<(String, String)> },
 }
 
+
+type SB = SettingsButton;
 /// A button in the settings menu
 pub struct SettingsButton {
     pub id:       String,
     pub label:    String,
-    pub style:    SettingsButtonStyle,
+    pub style:    SBS,
     pub disabled: bool,
 }
 
-impl SettingsButton {
+impl SB {
     pub fn toggle(id: impl Into<String>, label: impl Into<String>, enabled: bool) -> Self {
         let label_str = label.into();
         Self {
             id:       id.into(),
             label:    if enabled { format!("{label_str} enabled") } else { format!("{label_str} disabled") },
-            style:    if enabled { SettingsButtonStyle::Success } else { SettingsButtonStyle::Danger },
+            style:    if enabled { SBS::Success } else { SBS::Danger },
             disabled: false,
         }
     }
@@ -52,12 +61,12 @@ impl SettingsButton {
         Self {
             id:       id.into(),
             label:    label.into(),
-            style:    SettingsButtonStyle::Primary,
+            style:    SBS::Primary,
             disabled: false,
         }
     }
 
-    pub fn action(id: impl Into<String>, label: impl Into<String>, style: SettingsButtonStyle) -> Self {
+    pub fn action(id: impl Into<String>, label: impl Into<String>, style: SBS) -> Self {
         Self {
             id:       id.into(),
             label:    label.into(),
@@ -72,6 +81,7 @@ impl SettingsButton {
     }
 }
 
+type SBS = SettingsButtonStyle;
 #[derive(Clone, Copy)]
 pub enum SettingsButtonStyle {
     Primary,
@@ -80,13 +90,13 @@ pub enum SettingsButtonStyle {
     Danger,
 }
 
-impl From<SettingsButtonStyle> for BS {
-    fn from(style: SettingsButtonStyle) -> Self {
+impl From<SBS> for BS {
+    fn from(style: SBS) -> Self {
         match style {
-            SettingsButtonStyle::Primary   => BS::Primary,
-            SettingsButtonStyle::Secondary => BS::Secondary,
-            SettingsButtonStyle::Success   => BS::Success,
-            SettingsButtonStyle::Danger    => BS::Danger,
+            SBS::Primary   => BS::Primary,
+            SBS::Secondary => BS::Secondary,
+            SBS::Success   => BS::Success,
+            SBS::Danger    => BS::Danger,
         }
     }
 }
@@ -96,8 +106,8 @@ pub struct SettingsMenu {
     pub title:       String,
     pub description: Option<String>,
     pub color:       u32,
-    pub fields:      Vec<SettingsField>,
-    pub rows:        Vec<SettingsRow>,
+    pub fields:      Vec<SF>,
+    pub rows:        Vec<SR>,
     pub footer:      Option<String>,
 }
 
@@ -123,12 +133,12 @@ impl SettingsMenu {
         self
     }
 
-    pub fn field(mut self, field: SettingsField) -> Self {
+    pub fn field(mut self, field: SF) -> Self {
         self.fields.push(field);
         self
     }
 
-    pub fn row(mut self, row: SettingsRow) -> Self {
+    pub fn row(mut self, row: SR) -> Self {
         self.rows.push(row);
         self
     }
@@ -162,7 +172,7 @@ impl SettingsMenu {
     /// Build the component rows for this settings menu
     pub fn build_components(&self) -> Vec<CAR> {
         self.rows.iter().map(|row| match row {
-            SettingsRow::Buttons(buttons) => {
+            SR::Buttons(buttons) => {
                 let btns: Vec<CB> = buttons.iter().map(|b| {
                     CB::new(&b.id)
                         .label(&b.label)
@@ -171,7 +181,7 @@ impl SettingsMenu {
                 }).collect();
                 CAR::Buttons(btns)
             }
-            SettingsRow::RoleSelect { id, placeholder, default } => {
+            SR::RoleSelect { id, placeholder, default } => {
                 CAR::SelectMenu(
                     CSM::new(id, CSMK::Role { default_roles: default.map(|r| vec![r]) })
                         .placeholder(placeholder)
@@ -179,7 +189,7 @@ impl SettingsMenu {
                         .max_values(1)
                 )
             }
-            SettingsRow::StringSelect { id, placeholder, options } => {
+            SR::StringSelect { id, placeholder, options } => {
                 let opts: Vec<CSMO> = options.iter()
                     .map(|(label, value)| CSMO::new(label, value))
                     .collect();
@@ -191,6 +201,51 @@ impl SettingsMenu {
                 )
             }
         }).collect()
+    }
+}
+
+/// Create an intelligent selection menu that adapts based on the number of options
+pub fn create_selection_menu(
+    menu_id: &str,
+    placeholder: &str,
+    options: Vec<(String, String)>,
+) -> Option<CAR> {
+    if options.is_empty() {
+        return None;
+    }
+
+    // Always create a button for single option
+    if options.len() == 1 {
+        let (label, value) = options.into_iter().next().unwrap();
+        let button = CB::new(&format!("{}_{}", menu_id, value))
+            .label(label)
+            .style(BS::Primary);
+        
+        return Some(CAR::Buttons(vec![button]));
+    }
+
+    // Use buttons if below threshold, otherwise use select menu
+    if options.len() < LIST_THRESHOLD {
+        let buttons: Vec<CB> = options.into_iter()
+            .map(|(label, value)| {
+                CB::new(&format!("{}_{}", menu_id, value))
+                    .label(label)
+                    .style(BS::Secondary)
+            })
+            .collect();
+        
+        Some(CAR::Buttons(buttons))
+    } else {
+        let select_options: Vec<CSMO> = options.into_iter()
+            .map(|(label, value)| CSMO::new(label, value))
+            .collect();
+        
+        Some(CAR::SelectMenu(
+            CSM::new(menu_id, CSMK::String { options: select_options })
+                .placeholder(placeholder)
+                .min_values(1)
+                .max_values(1)
+        ))
     }
 }
 
@@ -212,20 +267,33 @@ impl AsSettingsMenu for crate::database::repositories::UserSettings {
             if minutes == 1 { "" } else { "s" }
         );
 
+        // For now, show the legacy quota alert setting since we don't have context here
+        // In the future, this could be enhanced to show group-specific settings
+        let quota_desc = if let Some(threshold) = self.notify_quota_threshold {
+            format!("**Quota alert:** {} players (legacy)", threshold)
+        } else if !self.group_quota_thresholds.is_empty() {
+            format!("**Quota alert:** {} group(s) configured", self.group_quota_thresholds.len())
+        } else {
+            "**Quota alert:** Disabled".to_string()
+        };
+
         SettingsMenu::new("qBot preferences")
-            .description(timeout_desc)
+            .description(format!("{}\n{}", timeout_desc, quota_desc))
             .color(self.announcement_color as u32)
-            .row(SettingsRow::Buttons(vec![
-                SettingsButton::edit("settings_timeout", "Set timeout length"),
-                SettingsButton::toggle("settings_toggle_dm", "DM alerts", self.dm_alerts),
-                ]))
-            .row(SettingsRow::Buttons(vec![
-                SettingsButton::toggle("settings_vc_auto_join", "VC auto-join", self.vc_auto_join),
-                SettingsButton::toggle("settings_vc_auto_leave", "VC auto-leave", self.vc_auto_leave),
+            .row(SR::Buttons(vec![
+                SB::edit("settings_timeout", "Set timeout length"),
             ]))
-            .row(SettingsRow::Buttons(vec![
-                SettingsButton::edit("settings_edit_alert", "Edit join alert"),
-                SettingsButton::edit("settings_edit_leave_alert", "Edit leave alert"),
+            .row(SR::Buttons(vec![
+                SB::toggle("settings_toggle_dm", "DM alerts", self.dm_alerts),
+                SB::edit("settings_quota_alert", "Quota alert"),
+            ]))
+            .row(SR::Buttons(vec![
+                SB::toggle("settings_vc_auto_join", "VC auto-join", self.vc_auto_join),
+                SB::toggle("settings_vc_auto_leave", "VC auto-leave", self.vc_auto_leave),
+            ]))
+            .row(SR::Buttons(vec![
+                SB::edit("settings_edit_alert", "Edit join alert"),
+                SB::edit("settings_edit_leave_alert", "Edit leave alert"),
             ]))
     }
 }
@@ -251,22 +319,21 @@ impl AsSettingsMenu for ServerSettingsDisplay {
             .map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
             .unwrap_or_else(|| "*Not configured*".to_string());
 
-        let runner_default = self.runner_role.as_ref()
+        let _runner_default = self.runner_role.as_ref()
             .and_then(|s| s.parse::<u64>().ok())
             .map(RoleId::new);
-        let admin_default = self.admin_role.as_ref()
+        let _admin_default = self.admin_role.as_ref()
             .and_then(|s| s.parse::<u64>().ok())
             .map(RoleId::new);
 
         SettingsMenu::new(format!("{} Server Settings", self.guild_name))
-            .field(SettingsField::new("Runner Role", runner_display).inline(false))
-            .field(SettingsField::new("Admin Role", admin_display).inline(false))
             .color(0x5865F2)
-            .row(SettingsRow::Buttons(vec![
-                SettingsButton::action("server_settings_roles", "Manage Roles", SettingsButtonStyle::Secondary),
-                SettingsButton::action("server_settings_ranks", "Manage Ranks", SettingsButtonStyle::Secondary),
-                SettingsButton::action("server_settings_groups", "Manage Groups", SettingsButtonStyle::Secondary),
+            .row(SR::Buttons(vec![
+                SB::action("server_settings_roles",  "Roles", SBS::Secondary),
+                SB::action("server_settings_ranks",  "Ranks", SBS::Secondary),
+                SB::action("server_settings_groups", "Groups", SBS::Secondary),
             ]))
+            .footer("Select a category to manage:")
     }
 }
 
@@ -289,8 +356,8 @@ impl RoleConfigDisplay {
 
         CE::new()
             .title(format!("{} - Manage Roles", self.guild_name))
-            .field("Runner Role", runner_display, false)
-            .field("Admin Role", admin_display, false)
+            .field("Runner Role", runner_display, true)
+            .field("Admin Role", admin_display, true)
             .color(0x5865F2)
             .footer(CreateEmbedFooter::new("Select roles below or use Create Roles to auto-generate"))
     }
@@ -314,11 +381,9 @@ impl RoleConfigDisplay {
             ),
             CAR::Buttons(vec![
                 CB::new("server_settings_create_roles")
-                    .label("Create Roles")
+                    .label("Create roles")
                     .style(BS::Primary),
-                CB::new("server_settings_roles_back")
-                    .label("Back to Server Settings")
-                    .style(BS::Secondary),
+                Eph::back("server_settings_roles_back"),
             ]),
         ]
     }
@@ -334,24 +399,52 @@ pub struct RankConfigDisplay {
 
 impl RankConfigDisplay {
     pub fn build_embed(&self) -> CE {
-        // Build compact rank list: ELO rank <@&role_id> (default)
-        let mut description = String::new();
-        for (rank_name, elo, role_id) in &self.rank_roles {
-            let is_default = rank_name == &self.default_rank;
-            let default_marker = if is_default { " (default)" } else { "" };
-            let role_display = format!(" <@&{}>", role_id.get());
-            description.push_str(&format!("‹**{elo}**› {rank_name}{role_display}{default_marker}\n"));
-        }
+        // Build compact rank list: ELO rank1, rank2, rank3 <@&role_id1>, <@&role_id2>, <@&role_id3> (default)
+        let description = if self.rank_roles.is_empty() {
+            "No ranks configured yet. Click 'Add Rank' to create your first rank.".to_string()
+        } else {
+            // Group ranks by ELO
+            use std::collections::HashMap;
+            let mut elo_groups: HashMap<u16, Vec<(String, RoleId)>> = HashMap::new();
+            
+            for (rank_name, elo, role_id) in &self.rank_roles {
+                elo_groups.entry(*elo).or_insert_with(Vec::new).push((rank_name.clone(), *role_id));
+            }
+            
+            // Sort ELO values
+            let mut sorted_elos: Vec<u16> = elo_groups.keys().cloned().collect();
+            sorted_elos.sort();
+            
+            let mut desc = String::new();
+            for elo in sorted_elos {
+                if let Some(ranks) = elo_groups.get(&elo) {
+                    let role_displays: Vec<String> = ranks.iter()
+                        .map(|(_, role_id)| format!("<@&{}>", role_id.get()))
+                        .collect();
+                    
+                    // Check if any of these ranks is the default
+                    let is_default = ranks.iter().any(|(name, _)| name == &self.default_rank);
+                    let default_marker = if is_default { " (default)" } else { "" };
+                    
+                    desc.push_str(&format!("‹**{elo}**› {}{}\n", role_displays.join(", "), default_marker));
+                }
+            }
+            desc
+        };
 
         CE::new()
             .title(format!("{} - Manage Ranks", self.guild_name))
             .description(description)
             .color(0x5865F2)
-            .footer(CreateEmbedFooter::new("Select a rank below to edit its name, ELO, or linked role"))
+            .footer(CreateEmbedFooter::new(if self.rank_roles.is_empty() {
+                "Configure ranks by adding new ones below"
+            } else {
+                "Select a rank below to edit its name, ELO, or linked role"
+            }))
     }
 
     pub fn build_components(&self) -> Vec<CAR> {
-        vec![
+        let mut components = vec![
             CAR::Buttons(vec![
                 CB::new("server_settings_dynamic_elo")
                     .label(if self.dynamic_elo { "Dynamic ELO enabled" } else { "Dynamic ELO disabled" })
@@ -360,23 +453,35 @@ impl RankConfigDisplay {
                     .label("Change the default rank")
                     .style(BS::Secondary),
             ]),
-            CAR::SelectMenu(
-                CSM::new("server_settings_rank_select", CSMK::String {
-                    options: self.rank_roles.iter()
-                        .map(|(name, _, _)| CSMO::new(name, name.clone()))
-                        .collect()
-                })
-                .placeholder("Select rank to configure")
-            ),
+        ];
+
+        // Only add rank selection menu if there are valid ranks
+        if !self.rank_roles.is_empty() {
+            components.push(
+                CAR::SelectMenu(
+                    CSM::new("server_settings_rank_select", CSMK::String {
+                        options: self.rank_roles.iter()
+                            .map(|(name, _, _)| CSMO::new(name, name.clone()))
+                            .collect()
+                    })
+                    .placeholder("Select rank to configure")
+                )
+            );
+        }
+
+        components.push(
             CAR::Buttons(vec![
                 CB::new("server_settings_rank_add")
-                    .label("Add Rank")
+                    .label("Add rank")
                     .style(BS::Success),
-                CB::new("server_settings_ranks_back")
-                    .label("Back to Server Settings")
-                    .style(BS::Secondary),
-            ]),
-        ]
+                CB::new("server_settings_rank_link")
+                    .label("Link ranks")
+                    .style(BS::Primary),
+                Eph::back("server_settings_ranks_back"),
+            ])
+        );
+
+        components
     }
 }
 
@@ -441,7 +546,8 @@ pub struct GroupListDisplay {
 impl GroupListDisplay {
     pub fn build_embed(&self) -> CE {
         let mut description = String::new();
-        
+        description.push_str("Active groups:\n\n");
+
         if self.groups.is_empty() {
             description.push_str("*No groups configured*\n\nUse 'Create Group' to add a new group.");
         } else {
@@ -449,7 +555,7 @@ impl GroupListDisplay {
                 let name = group.display_name();
                 let quota = group.quota;
                 let sessions = group.sessions.len();
-                description.push_str(&format!("**{}** - {quota} players, {sessions} session(s)\n", name));
+                description.push_str(&format!("- {}\n", name));
             }
         }
 
@@ -463,16 +569,19 @@ impl GroupListDisplay {
     pub fn build_components(&self) -> Vec<CAR> {
         let mut components = Vec::new();
 
-        // Add group selector if there are groups
+        // Add group selector using intelligent selection menu
         if !self.groups.is_empty() {
-            let options: Vec<CSMO> = self.groups.iter()
-                .map(|g| CSMO::new(g.display_name(), g.group_id.to_string()))
+            let options: Vec<(String, String)> = self.groups.iter()
+                .map(|g| (g.display_name(), g.group_id.to_string()))
                 .collect();
 
-            components.push(CAR::SelectMenu(
-                CSM::new("server_settings_group_select", CSMK::String { options })
-                    .placeholder("Select group to configure")
-            ));
+            if let Some(selection_menu) = create_selection_menu(
+                "server_settings_group_select",
+                "Select group to configure",
+                options,
+            ) {
+                components.push(selection_menu);
+            }
         }
 
         // Add create group and back buttons
@@ -480,9 +589,7 @@ impl GroupListDisplay {
             CB::new("server_settings_create_group")
                 .label("Add a group")
                 .style(BS::Primary),
-            CB::new("server_settings_groups_back")
-                .label("Back to Server Settings")
-                .style(BS::Secondary),
+            Eph::back("server_settings_groups_back"),
         ]));
 
         components
@@ -515,21 +622,21 @@ impl AsSettingsMenu for GroupSettingsDisplay {
         let gid = self.group_id;
 
         SettingsMenu::new(format!("{name_display} Settings"))
-            .field(SettingsField::new("Name", name_display.clone()))
-            .field(SettingsField::new("Quota", format!("{} players", self.quota)))
-            .field(SettingsField::new("Hot Join Timeout", format!("{} seconds", self.timeout)))
-            .field(SettingsField::new("Connect Info", connect_display).inline(false))
-            .field(SettingsField::new("Team Balance", self.team_balance_method.as_str()))
+            .field(SF::new("Name", name_display.clone()))
+            .field(SF::new("Quota", format!("{} players", self.quota)))
+            .field(SF::new("Hot Join Timeout", format!("{} seconds", self.timeout)))
+            .field(SF::new("Connect Info", connect_display).inline(false))
+            .field(SF::new("Team Balance", self.team_balance_method.as_str()))
             .color(0x5865F2)
-            .row(SettingsRow::Buttons(vec![
-                SettingsButton::edit(format!("group_settings_edit_name_{gid}"), "Edit Name"),
-                SettingsButton::edit(format!("group_settings_edit_quota_{gid}"), "Edit Quota"),
-                SettingsButton::edit(format!("group_settings_edit_timeout_{gid}"), "Edit Timeout"),
+            .row(SR::Buttons(vec![
+                SB::edit(format!("group_settings_edit_name_{gid}"), "Edit Name"),
+                SB::edit(format!("group_settings_edit_quota_{gid}"), "Edit Quota"),
+                SB::edit(format!("group_settings_edit_timeout_{gid}"), "Edit Timeout"),
             ]))
-            .row(SettingsRow::Buttons(vec![
-                SettingsButton::edit(format!("group_settings_edit_connect_{gid}"), "Edit Connect Info"),
+            .row(SR::Buttons(vec![
+                SB::edit(format!("group_settings_edit_connect_{gid}"), "Edit Connect Info"),
             ]))
-            .row(SettingsRow::StringSelect {
+            .row(SR::StringSelect {
                 id: format!("group_settings_balance_{gid}"),
                 placeholder: "Select team balance method...".to_string(),
                 options: vec![
@@ -570,20 +677,20 @@ impl AsSettingsMenu for PlayerSettingsDisplay {
         let uid = self.user_id.get();
 
         SettingsMenu::new(format!("{} - Player Settings", self.username))
-            .field(SettingsField::new("Steam ID", steam_display))
-            .field(SettingsField::new("ELO", format!("{}", self.elo)))
-            .field(SettingsField::new("Rank", &self.division))
-            .field(SettingsField::new("Games", format!("{}", self.games)))
-            .field(SettingsField::new("Wins", format!("{}", self.wins)))
-            .field(SettingsField::new("Winrate", winrate))
+            .field(SF::new("Steam ID", steam_display))
+            .field(SF::new("ELO", format!("{}", self.elo)))
+            .field(SF::new("Rank", &self.division))
+            .field(SF::new("Games", format!("{}", self.games)))
+            .field(SF::new("Wins", format!("{}", self.wins)))
+            .field(SF::new("Winrate", winrate))
             .color(0x5865F2)
-            .row(SettingsRow::Buttons(vec![
-                SettingsButton::edit(format!("player_settings_edit_steam_{uid}"), "Edit Steam ID"),
-                SettingsButton::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO"),
+            .row(SR::Buttons(vec![
+                SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit Steam ID"),
+                SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO"),
             ]))
-            .row(SettingsRow::Buttons(vec![
-                SettingsButton::edit(format!("player_settings_edit_division_{uid}"), "Edit Rank"),
-                SettingsButton::edit(format!("player_settings_edit_alerts_{uid}"), "Edit Alerts"),
+            .row(SR::Buttons(vec![
+                SB::edit(format!("player_settings_edit_division_{uid}"), "Edit Rank"),
+                SB::edit(format!("player_settings_edit_alerts_{uid}"), "Edit Alerts"),
             ]))
     }
 }

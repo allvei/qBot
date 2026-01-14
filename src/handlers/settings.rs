@@ -74,7 +74,7 @@ pub async fn handle_settings_button(
     let button_id = &interaction.data.custom_id;
     let username  = &interaction.user.name;
 
-    info!("[DM] {} pressed {}", username, button_id);
+    info!("{} pressed {}", username, button_id);
 
     // Update activity timestamp for DM cleanup tracking
     if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
@@ -88,8 +88,8 @@ pub async fn handle_settings_button(
 
             // Acknowledge and update the settings menu directly (no popup)
             let settings = db.users.get_prefs(user_id).await?;
-            let embed = build_settings_embed(&settings);
-            let buttons = build_settings_buttons(&settings);
+            let embed    = build_settings_embed(&settings);
+            let buttons  = build_settings_buttons(&settings);
 
             let response = CIR::UpdateMessage(
                 CIRM::new().embed(embed).components(buttons)
@@ -262,6 +262,121 @@ pub async fn handle_settings_button(
                 ]);
 
             let response = CIR::Modal(modal);
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "settings_quota_alert" => {
+            // Show quota threshold selection buttons based on current group's quota
+            let settings = db.users.get_prefs(user_id).await?;
+            
+            // Try to determine the current group context from the interaction
+            let (guild_id, group_id, group_quota) = if let (Some(gid), channel) = (interaction.guild_id, interaction.channel_id) {
+                // Find which group this channel belongs to
+                let data = ctx.data.read().await;
+                let manager = data.get::<crate::models::GuildKey>();
+                
+                if let Some(manager_ref) = manager {
+                    let mut manager: tokio::sync::MutexGuard<'_, crate::models::Manager> = manager_ref.lock().await;
+                    if let Ok(group) = manager.get_group_by_channel(gid, channel) {
+                        (gid, group.group_id, group.quota)
+                    } else {
+                        // Default values if no group found
+                        (gid, 0, 12u8)
+                    }
+                } else {
+                    (gid, 0, 12u8)
+                }
+            } else {
+                // Default values if no guild context
+                (serenity::all::GuildId::new(0), 0, 12u8)
+            };
+            
+            // Get current threshold for this specific group
+            let current_threshold = settings.group_quota_thresholds.get(&(guild_id.get(), group_id)).copied();
+            
+            // Generate relative threshold buttons (quota - 4, -3, -2, -1)
+            let mut threshold_buttons = Vec::new();
+            for offset in 1..=4u8 {
+                let threshold = group_quota.saturating_sub(offset);
+                let button_label = if threshold == 0 {
+                    "Any players".to_string()
+                } else {
+                    format!("{} players", threshold)
+                };
+                
+                threshold_buttons.push(
+                    CB::new(&format!("settings_quota_alert:{}", threshold))
+                        .label(button_label)
+                        .style(if current_threshold == Some(threshold) { BS::Success } else { BS::Secondary })
+                );
+            }
+            
+            let disable_button = vec![
+                CB::new("settings_quota_alert:disable").label("Disable").style(if current_threshold.is_none() { BS::Danger } else { BS::Secondary }),
+            ];
+
+            let embed = CE::new()
+                .title("Set quota alert threshold")
+                .description(format!(
+                    "Choose how many players should be in the queue before you get a DM notification:\nGroup quota: {} players",
+                    group_quota
+                ))
+                .color(settings.announcement_color as u32);
+
+            let response = CIR::UpdateMessage(
+                CIRM::new()
+                    .embed(embed)
+                    .components(vec![CAR::Buttons(threshold_buttons), CAR::Buttons(disable_button)])
+            );
+
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        button_id if button_id.starts_with("settings_quota_alert:") => {
+            // Handle quota threshold selection
+            let threshold_str = button_id.split(':').nth(1).unwrap_or("disable");
+            
+            // Parse the threshold value (could be "disable" or a number)
+            let new_threshold = if threshold_str == "disable" {
+                None
+            } else {
+                threshold_str.parse().ok()
+            };
+
+            // Get guild and group context from interaction
+            let (guild_id, group_id) = if let (Some(gid), channel) = (interaction.guild_id, interaction.channel_id) {
+                // Find which group this channel belongs to
+                let data = ctx.data.read().await;
+                let manager = data.get::<crate::models::GuildKey>();
+                
+                if let Some(manager_ref) = manager {
+                    let mut manager: tokio::sync::MutexGuard<'_, crate::models::Manager> = manager_ref.lock().await;
+                    if let Ok(group) = manager.get_group_by_channel(gid, channel) {
+                        (gid, group.group_id)
+                    } else {
+                        (gid, 0)
+                    }
+                } else {
+                    (gid, 0)
+                }
+            } else {
+                (serenity::all::GuildId::new(0), 0)
+            };
+
+            // Update user settings with per-group threshold
+            let mut settings = db.users.get_prefs(user_id).await?;
+            if let Some(threshold) = new_threshold {
+                settings.group_quota_thresholds.insert((guild_id.get(), group_id), threshold);
+            } else {
+                settings.group_quota_thresholds.remove(&(guild_id.get(), group_id));
+            }
+            db.users.update_settings(user_id, &settings).await?;
+
+            // Update the settings menu directly
+            let embed = build_settings_embed(&settings);
+            let buttons = build_settings_buttons(&settings);
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(embed).components(buttons)
+            );
             interaction.create_response(&ctx.http, response).await?;
         }
         _ => {
@@ -681,7 +796,7 @@ pub async fn handle_server_settings_button(
     let guild_id = interaction.guild_id.expect("Guild ID not found");
     let button_id = &interaction.data.custom_id;
 
-    info!("[Server Settings] {} pressed {}", interaction.user.name, button_id);
+    info!("{} pressed {}", interaction.user.name, button_id);
 
     match button_id.as_str() {
         "server_settings_dynamic_elo" => {
@@ -845,6 +960,57 @@ pub async fn handle_server_settings_button(
                 }
             }
         }
+        "server_settings_rank_link_role" => {
+            // Handle role selection for linking existing rank
+            let selected_role_id = if let serenity::all::ComponentInteractionDataKind::RoleSelect { values } = &interaction.data.kind {
+                values.first().copied().ok_or_else(|| anyhow!("No role selected"))?
+            } else {
+                return Err(anyhow!("No role selected"));
+            };
+
+            // Get the role name to use as default
+            let role_name = match guild_id.roles(&ctx.http).await {
+                Ok(roles) => {
+                    if let Some(role) = roles.get(&selected_role_id) {
+                        role.name.clone()
+                    } else {
+                        // Fallback to role ID if role not found
+                        selected_role_id.get().to_string()
+                    }
+                },
+                Err(_) => {
+                    // Fallback to role ID if API call fails
+                    selected_role_id.get().to_string()
+                }
+            };
+
+            // Show modal to specify rank name and ELO for the selected role
+            use serenity::all::{CreateModal, CreateActionRow, CreateInputText, InputTextStyle};
+            
+            let modal = CreateModal::new(
+                format!("server_settings_rank_modal_link_{}", selected_role_id.get()),
+                "Link Existing Rank"
+            )
+            .components(vec![
+                CreateActionRow::InputText(
+                    CreateInputText::new(InputTextStyle::Short, "Rank Name", "name")
+                        .placeholder("e.g., Champion, Legend, Elite")
+                        .value(&role_name)
+                        .required(true)
+                        .max_length(30)
+                ),
+                CreateActionRow::InputText(
+                    CreateInputText::new(InputTextStyle::Short, "ELO Threshold", "elo")
+                        .placeholder("Minimum ELO for this rank")
+                        .required(true)
+                        .min_length(1)
+                        .max_length(3)
+                ),
+            ]);
+
+            let response = CIR::Modal(modal);
+            interaction.create_response(&ctx.http, response).await?;
+        }
         "server_settings_rank_back" => {
             // Go back to rank list
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
@@ -882,7 +1048,7 @@ pub async fn handle_server_settings_button(
                                 .max_length(30)
                         ),
                         CreateActionRow::InputText(
-                            CreateInputText::new(InputTextStyle::Short, "ELO Threshold (0-100)", "elo")
+                            CreateInputText::new(InputTextStyle::Short, "ELO Threshold", "elo")
                                 .placeholder("Minimum ELO for this rank")
                                 .value(guild_rank.elo.to_string())
                                 .required(true)
@@ -908,22 +1074,39 @@ pub async fn handle_server_settings_button(
                             .max_length(30)
                     ),
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "ELO Threshold (0-100)", "elo")
+                        CreateInputText::new(InputTextStyle::Short, "ELO Threshold", "elo")
                             .placeholder("Minimum ELO for this rank")
                             .required(true)
                             .min_length(1)
                             .max_length(3)
                     ),
-                    CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Create Discord Role? (yes/no)", "create_role")
-                            .placeholder("yes = create new role, no = link existing later")
-                            .value("no")
-                            .required(true)
-                            .max_length(3)
-                    ),
                 ]);
 
             let response = CIR::Modal(modal);
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_rank_link" => {
+            // Show role selector for linking existing rank
+            let response = CIR::UpdateMessage(
+                CIRM::new()
+                    .embed(CE::new()
+                        .title("Link ranks")
+                        .description("Select a Discord role to link to a new rank. The role will be used to assign this rank to players automatically.")
+                        .color(0x5865F2))
+                    .components(vec![
+                        CAR::SelectMenu(
+                            CSM::new("server_settings_rank_link_role", CSMK::Role { default_roles: None })
+                                .placeholder("Select a Discord role to link")
+                                .min_values(1)
+                                .max_values(1)
+                        ),
+                        CAR::Buttons(vec![
+                            CB::new("server_settings_ranks_back")
+                                .label("Back to Ranks")
+                                .style(BS::Secondary),
+                        ])
+                    ])
+            );
             interaction.create_response(&ctx.http, response).await?;
         }
         _ if button_id.starts_with("server_settings_rank_delete_") => {
@@ -932,7 +1115,7 @@ pub async fn handle_server_settings_button(
             // Delete rank from DB by name
             db.ranks.delete_rank(guild_id, rank_name).await?;
             
-            info!("[Server Settings] {} deleted rank {}", interaction.user.name, rank_name);
+            info!("{} deleted rank {}", interaction.user.name, rank_name);
 
             // Return to rank list
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
@@ -966,7 +1149,7 @@ pub async fn handle_server_settings_button(
             db.ranks.update_rank_role(guild_id, rank_name, selected_role_id).await?;
             
             let role_display = format!("<@&{}>", selected_role_id.get());
-            info!("[Server Settings] {} linked rank {} to role {}", interaction.user.name, rank_name, role_display);
+            info!("{} linked rank {} to role {}", interaction.user.name, rank_name, role_display);
 
             // Refresh the rank config display
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
@@ -1128,6 +1311,9 @@ pub async fn handle_server_settings_button(
                         sessions:            vec![],
                         connect_info:        None,
                         team_balance_method: crate::models::TeamBalanceMethod::default(),
+                        dm_alert_enabled:    false,
+                        dm_alert_threshold:  0,
+                        dm_alert_users:      vec![],
                     };
 
                     // Publish the dashboard to get the actual message ID
@@ -1276,6 +1462,49 @@ pub async fn handle_server_settings_button(
             );
             interaction.create_response(&ctx.http, response).await?;
         }
+        _ if button_id.starts_with("server_settings_group_select_") => {
+            // Handle group selection from button - show modal with all settings
+            let group_id_str = button_id.strip_prefix("server_settings_group_select_").unwrap();
+            if let Ok(group_id) = group_id_str.parse::<u8>() {
+                // Find the group
+                let groups = db.groups.get_groups_for_guild(guild_id).await?;
+                if let Some(group) = groups.iter().find(|g| g.group_id == group_id) {
+                    let modal = CreateModal::new(format!("server_settings_group_modal_{group_id}"), "Edit Group Settings")
+                        .components(vec![
+                            CreateActionRow::InputText(
+                                CreateInputText::new(InputTextStyle::Short, "Name", "name")
+                                    .placeholder("e.g., NA PUGs, EU Competitive")
+                                    .value(group.name.clone().unwrap_or_default())
+                                    .required(false)
+                                    .max_length(50)
+                            ),
+                            CreateActionRow::InputText(
+                                CreateInputText::new(InputTextStyle::Short, "Quota (2-100)", "quota")
+                                    .placeholder("Number of players required")
+                                    .value(group.quota.to_string())
+                                    .required(true)
+                                    .min_length(1)
+                                    .max_length(3)
+                            ),
+                            CreateActionRow::InputText(
+                                CreateInputText::new(InputTextStyle::Short, "Hot Join Timeout (seconds)", "timeout")
+                                    .placeholder("Seconds to wait before starting game")
+                                    .value(group.timeout.to_string())
+                                    .required(false)
+                                    .min_length(1)
+                                    .max_length(4)
+                            ),
+                        ]);
+
+                    let response = CIR::Modal(modal);
+                    interaction.create_response(&ctx.http, response).await?;
+                } else {
+                    warn!("Group {group_id} not found for guild {guild_id}");
+                }
+            } else {
+                warn!("Invalid group ID in button: {group_id_str}");
+            }
+        }
         _ => {
             warn!("Unknown server settings button: {}", button_id);
         }
@@ -1358,13 +1587,12 @@ pub async fn handle_server_settings_modal(
     let guild_id = interaction.guild_id.expect("Guild ID not found");
     let modal_id = &interaction.data.custom_id;
 
-    info!("[Server Settings] {} submitted modal {}", interaction.user.name, modal_id);
+    info!("{} submitted modal {}", interaction.user.name, modal_id);
 
     if modal_id == "server_settings_rank_modal_add" {
         // Handle add new rank modal
         let mut name_value = String::new();
         let mut elo_value = String::new();
-        let mut create_role_value = String::new();
 
         for row in &interaction.data.components {
             for component in &row.components {
@@ -1372,7 +1600,6 @@ pub async fn handle_server_settings_modal(
                     match input.custom_id.as_str() {
                         "name" => name_value = input.value.clone().unwrap_or_default(),
                         "elo" => elo_value = input.value.clone().unwrap_or_default(),
-                        "create_role" => create_role_value = input.value.clone().unwrap_or_default(),
                         _ => {}
                     }
                 }
@@ -1389,19 +1616,132 @@ pub async fn handle_server_settings_modal(
         }
 
         let elo: u16 = match elo_value.trim().parse() {
-            Ok(e) if e <= 100 => e,
+            Ok(e) => e,
             _ => {
                 let response = CIR::Message(
-                    CIRM::new().content("Invalid ELO. Must be between 0 and 100.").ephemeral(true)
+                    CIRM::new().content("Invalid ELO. Must be a valid number.").ephemeral(true)
                 );
                 interaction.create_response(&ctx.http, response).await?;
                 return Ok(());
             }
         };
 
-        // Add rank to DB (sorted by ELO automatically)
-        db.ranks.add_rank(guild_id, name, elo).await?;
-        info!("[Server Settings] {} added rank '{}' with ELO {}", interaction.user.name, name, elo);
+        // Check if rank name already exists
+        if let Ok(Some(_)) = db.ranks.get_rank_by_name(guild_id, name).await {
+            let response = CIR::Message(
+                CIRM::new().content("A rank with this name already exists. Please choose a different name.").ephemeral(true)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+
+        // Create a new Discord role for this rank
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+        let role_name = name.to_string();
+        
+        let role_id = match guild_id.create_role(&ctx.http,
+            serenity::all::EditRole::new()
+                .name(&role_name)
+                .colour(serenity::all::Color::from_rgb(128, 128, 128))
+                .hoist(false)
+                .mentionable(true)
+                .permissions(serenity::all::Permissions::empty())
+        ).await {
+            Ok(role) => {
+                info!("[{}] Created new role {} for rank {}", guild_name, role.name, name);
+                role.id
+            },
+            Err(e) => {
+                warn!("[{}] Failed to create role for rank {}: {}", guild_name, name, e);
+                let response = CIR::Message(
+                    CIRM::new().content("Failed to create Discord role. Please check bot permissions.").ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+        };
+
+        // Add rank to DB with the created role ID
+        db.ranks.add_rank(guild_id, name, elo, role_id).await?;
+        info!("{} added rank '{}' with ELO {} and role {}", interaction.user.name, name, elo, role_id.get());
+
+        // Return to rank configuration menu
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+        let rank_roles = get_all_rank_roles(db, guild_id).await?;
+        let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id).await?;
+        
+        let display = crate::handlers::settings_menu::RankConfigDisplay {
+            guild_name,
+            rank_roles,
+            dynamic_elo,
+            default_rank,
+        };
+
+        let response = CIR::UpdateMessage(
+            CIRM::new().embed(display.build_embed()).components(display.build_components())
+        );
+        interaction.create_response(&ctx.http, response).await?;
+    } else if modal_id.starts_with("server_settings_rank_modal_link_") {
+        // Handle link existing rank modal
+        let role_id_str = modal_id.strip_prefix("server_settings_rank_modal_link_").unwrap();
+        let role_id = match role_id_str.parse::<u64>() {
+            Ok(id) => serenity::all::RoleId::new(id),
+            Err(_) => {
+                let response = CIR::Message(
+                    CIRM::new().content("Invalid role ID.").ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+        };
+
+        let mut name_value = String::new();
+        let mut elo_value = String::new();
+
+        for row in &interaction.data.components {
+            for component in &row.components {
+                if let serenity::all::ActionRowComponent::InputText(input) = component {
+                    match input.custom_id.as_str() {
+                        "name" => name_value = input.value.clone().unwrap_or_default(),
+                        "elo" => elo_value = input.value.clone().unwrap_or_default(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        let name = name_value.trim();
+        if name.is_empty() {
+            let response = CIR::Message(
+                CIRM::new().content("Rank name cannot be empty.").ephemeral(true)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+
+        let elo: u16 = match elo_value.trim().parse() {
+            Ok(e) => e,
+            _ => {
+                let response = CIR::Message(
+                    CIRM::new().content("Invalid ELO. Must be a valid number.").ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+        };
+
+        // Check if rank name already exists
+        if let Ok(Some(_)) = db.ranks.get_rank_by_name(guild_id, name).await {
+            let response = CIR::Message(
+                CIRM::new().content("A rank with this name already exists. Please choose a different name.").ephemeral(true)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+
+        // Add rank to DB with the selected role ID
+        db.ranks.add_rank(guild_id, name, elo, role_id).await?;
+        info!("{} linked rank '{}' with ELO {} to role {}", interaction.user.name, name, elo, role_id.get());
 
         // Return to rank configuration menu
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
@@ -1450,15 +1790,26 @@ pub async fn handle_server_settings_modal(
         }
 
         let elo: u16 = match elo_value.trim().parse() {
-            Ok(e) if e <= 100 => e,
+            Ok(e) => e,
             _ => {
                 let response = CIR::Message(
-                    CIRM::new().content("Invalid ELO. Must be between 0 and 100.").ephemeral(true)
+                    CIRM::new().content("Invalid ELO. Must be a valid number.").ephemeral(true)
                 );
                 interaction.create_response(&ctx.http, response).await?;
                 return Ok(());
             }
         };
+
+        // Check if new rank name already exists (and it's not the same rank being renamed)
+        if new_name != old_rank_name {
+            if let Ok(Some(_)) = db.ranks.get_rank_by_name(guild_id, new_name).await {
+                let response = CIR::Message(
+                    CIRM::new().content("A rank with this name already exists. Please choose a different name.").ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+        }
 
         // Update rank in DB using name instead of position
         db.ranks.update_rank_name(guild_id, old_rank_name, new_name).await?;
@@ -2192,7 +2543,7 @@ pub async fn handle_player_settings_button(
         let modal = CreateModal::new(format!("player_settings_modal_elo_{target_user_id}"), "Edit ELO")
             .components(vec![
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Short, "ELO (0-100)", "elo")
+                    CreateInputText::new(InputTextStyle::Short, "ELO", "elo")
                         .placeholder("e.g., 50")
                         .value(guild_elo.elo.to_string())
                         .required(true)
@@ -2351,11 +2702,11 @@ pub async fn handle_player_settings_modal(
             .unwrap_or_default();
 
         let elo: u16 = match elo_str.trim().parse() {
-            Ok(e) if e <= 100 => e,
+            Ok(e) => e,
             _ => {
                 let response = CIR::Message(
                     CIRM::new()
-                        .content("Invalid ELO. Must be between 0 and 100.")
+                        .content("Invalid ELO. Must be a valid number.")
                         .ephemeral(true)
                 );
                 interaction.create_response(&ctx.http, response).await?;

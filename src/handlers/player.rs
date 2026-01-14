@@ -8,7 +8,6 @@ use tracing::{info, warn, error};
 use crate::{ComponentContext as CC, Database as DB};
 use crate::models::{
     CommandContext as CmC, SessionPlayer as SP, Rank, Role, Server, SessionStatus as SS, Team,
-    DEFAULT_RANK,
 };
 
 /// Helper: Get member with cache-first strategy
@@ -27,28 +26,78 @@ async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI) -> Option<Membe
     }
 }
 
+/// Get user's rank from their Discord roles (highest rank role they have)
+pub async fn get_user_rank_from_discord_roles(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<Rank> {
+    // Get the member and their roles
+    let member = match get_member_cached(ctx, guild_id, user_id).await {
+        Some(m) => m,
+        None => return None,
+    };
+
+    // Get all configured ranks for the guild
+    let ranks = match db.ranks.get_ranks(guild_id).await {
+        Ok(r) => r,
+        Err(_) => return None,
+    };
+
+    // Find the highest rank the user has (ranks are sorted by ELO ascending, so check in reverse)
+    for rank in ranks.iter().rev() {
+        if member.roles.contains(&rank.role_id) {
+            return Some(Rank::from_name(&rank.name));
+        }
+    }
+
+    None
+}
+
 /// Get player's rank from their ELO in the database
 pub async fn get_player_rank(db: &DB, guild_id: GI, user_id: UI) -> Option<Rank> {
     // Get player's ELO from the elos table
     match db.elos.get(user_id, guild_id).await {
-        Ok(guild_elo) => Some(guild_elo.division),
+        Ok(guild_elo) => {
+            // Convert the ELO to the appropriate Rank enum based on server configuration
+            Some(Rank::from_elo(guild_elo.elo, db, guild_id).await)
+        },
         Err(_) => None,
     }
 }
 
-/// Get or assign player rank - returns existing rank or assigns default
+/// Get or assign player rank - returns existing rank or assigns based on Discord roles
 pub async fn get_or_assign_player_rank(db: &DB, guild_id: GI, user_id: UI) -> Result<Rank> {
     // Check if player already has a rank in the elos table
     if let Some(rank) = get_player_rank(db, guild_id, user_id).await {
         return Ok(rank);
     }
 
-    // Player has no rank - assign default
-    let default_elo = DEFAULT_RANK.default_rank_elo();
-    db.elos.set(user_id, guild_id, default_elo, DEFAULT_RANK).await?;
+    // Player has no ELO record - try to determine rank from Discord roles
+    // Note: This requires a Context, which we don't have here. 
+    // The dashboard.rs code should call get_user_rank_from_discord_roles first.
     
-    info!("Assigned default rank {} (ELO {}) to user {}", DEFAULT_RANK.name(), default_elo, user_id);
-    Ok(DEFAULT_RANK)
+    // Fallback to server's configured default rank
+    let default_rank_name = db.config.get_config_value("default_rank", guild_id).await?
+        .unwrap_or_else(|| crate::models::DEFAULT_RANK.name().to_string());
+    
+    // Find the configured default rank in the database
+    let default_guild_rank = match db.ranks.get_rank_by_name(guild_id, &default_rank_name).await? {
+        Some(rank) => rank,
+        None => {
+            // Fallback to hardcoded default if configured rank doesn't exist
+            warn!("Configured default rank '{}' not found in database, using hardcoded default", default_rank_name);
+            let fallback_elo = crate::models::DEFAULT_RANK.default_rank_elo();
+            db.elos.set(user_id, guild_id, fallback_elo, crate::models::DEFAULT_RANK).await?;
+            info!("Assigned fallback default rank {} (ELO {}) to user {}", crate::models::DEFAULT_RANK.name(), fallback_elo, user_id);
+            return Ok(crate::models::DEFAULT_RANK);
+        }
+    };
+    
+    // Convert the guild rank's ELO to the appropriate Rank enum
+    let assigned_rank = Rank::from_elo(default_guild_rank.elo, db, guild_id).await;
+    
+    // Set the player's ELO and rank in the database
+    db.elos.set(user_id, guild_id, default_guild_rank.elo, assigned_rank).await?;
+    
+    info!("Assigned server default rank '{}' (ELO {}) to user {}", default_rank_name, default_guild_rank.elo, user_id);
+    Ok(assigned_rank)
 }
 
 /// Validate that runner and admin roles are configured
