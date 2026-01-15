@@ -20,15 +20,32 @@ impl ConfigRepository {
     }
 
     pub async fn get_config_map(&self, guild_id: GI) -> Result<HashMap<String, String>> {
-        let rows = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config WHERE guild_id = ?")
-        .bind(guild_id.get() as i64)
-        .fetch_all(&self.pool)
-        .await?;
+        let row = sqlx::query("SELECT runner_id, admin_id, active_elo, default_rank FROM config WHERE guild_id = ?")
+            .bind(guild_id.get() as i64)
+            .fetch_optional(&self.pool)
+            .await?;
 
         let mut config_map = HashMap::new();
-        for row in rows {
-            if let Some(value) = row.value {
-                config_map.insert(row.key, value);
+        
+        if let Some(row) = row {
+            // Add runner_id if present
+            if let Ok(Some(runner_id)) = row.try_get::<Option<i64>, _>("runner_id") {
+                config_map.insert("runner_id".to_string(), runner_id.to_string());
+            }
+            
+            // Add admin_id if present
+            if let Ok(Some(admin_id)) = row.try_get::<Option<i64>, _>("admin_id") {
+                config_map.insert("admin_id".to_string(), admin_id.to_string());
+            }
+            
+            // Add active_elo if present
+            if let Ok(Some(active_elo)) = row.try_get::<Option<i64>, _>("active_elo") {
+                config_map.insert("active_elo".to_string(), active_elo.to_string());
+            }
+            
+            // Add default_rank if present
+            if let Ok(Some(default_rank)) = row.try_get::<Option<i64>, _>("default_rank") {
+                config_map.insert("default_rank".to_string(), default_rank.to_string());
             }
         }
 

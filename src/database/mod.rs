@@ -63,7 +63,7 @@ impl Database {
 
     /// Creates a new user in the database
     pub async fn new_user(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
-        self.users.upsert_tag(user_id, Some(0), ctx).await
+        self.users.upsert_tag(user_id, Some(0)).await
     }
 
     /// Gets a Player by Discord ID

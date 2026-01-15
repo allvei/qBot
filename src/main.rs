@@ -968,11 +968,6 @@ impl EventHandler for Handler {
                                         if let Err(e) = group.queue_player_with_vc_status(player.clone(), discord_rank, queue_ctx, true).await {
                                             error!("Failed to add player to queue: {e}");
                                         } else {
-                                            // Check and send DM alerts if threshold is met
-                                            if let Err(e) = group.check_and_send_dm_alerts(&ctx, &self.db).await {
-                                                warn!("Failed to send DM alerts: {e}");
-                                            }
-                                            
                                             // Log successful queue join via voice channel
                                             let guild_name = ctx.cache.guild(server).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
                                             let group_name = ctx.cache.channel(group.channels.dashboard)

@@ -260,32 +260,21 @@ pub trait AsSettingsMenu {
 
 impl AsSettingsMenu for crate::database::repositories::UserSettings {
     fn as_settings_menu(&self) -> SettingsMenu {
-        let minutes = self.expiry_duration.as_secs() / 60;
+        let minutes = self.timeout;
         let timeout_desc = format!(
             "**Timeout length:** {} minute{}",
             minutes,
             if minutes == 1 { "" } else { "s" }
         );
 
-        // For now, show the legacy quota alert setting since we don't have context here
-        // In the future, this could be enhanced to show group-specific settings
-        let quota_desc = if let Some(threshold) = self.notify_quota_threshold {
-            format!("**Quota alert:** {} players (legacy)", threshold)
-        } else if !self.group_quota_thresholds.is_empty() {
-            format!("**Quota alert:** {} group(s) configured", self.group_quota_thresholds.len())
-        } else {
-            "**Quota alert:** Disabled".to_string()
-        };
-
         SettingsMenu::new("qBot preferences")
-            .description(format!("{}\n{}", timeout_desc, quota_desc))
-            .color(self.announcement_color as u32)
+            .description(format!("{}", timeout_desc))
+            .color(self.join_alert_color as u32)
             .row(SR::Buttons(vec![
                 SB::edit("settings_timeout", "Set timeout length"),
             ]))
             .row(SR::Buttons(vec![
-                SB::toggle("settings_toggle_dm", "DM alerts", self.dm_alerts),
-                SB::edit("settings_quota_alert", "Quota alert"),
+                SB::toggle("settings_toggle_dm", "DM alerts", self.pm_hot_alert),
             ]))
             .row(SR::Buttons(vec![
                 SB::toggle("settings_vc_auto_join", "VC auto-join", self.vc_auto_join),
@@ -672,7 +661,7 @@ pub struct PlayerSettingsDisplay {
     pub username: String,
     pub steam_id: Option<u64>,
     pub elo:      u16,
-    pub division: String,
+    pub rank: String,
     pub games:    u32,
     pub wins:     u32,
 }
@@ -694,7 +683,7 @@ impl AsSettingsMenu for PlayerSettingsDisplay {
         SettingsMenu::new(format!("{} - Player Settings", self.username))
             .field(SF::new("Steam ID", steam_display))
             .field(SF::new("ELO", format!("{}", self.elo)))
-            .field(SF::new("Rank", &self.division))
+            .field(SF::new("Rank", &self.rank))
             .field(SF::new("Games", format!("{}", self.games)))
             .field(SF::new("Wins", format!("{}", self.wins)))
             .field(SF::new("Winrate", winrate))
@@ -704,7 +693,7 @@ impl AsSettingsMenu for PlayerSettingsDisplay {
                 SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO"),
             ]))
             .row(SR::Buttons(vec![
-                SB::edit(format!("player_settings_edit_division_{uid}"), "Edit Rank"),
+                SB::edit(format!("player_settings_edit_rank_{uid}"), "Edit Rank"),
                 SB::edit(format!("player_settings_edit_alerts_{uid}"), "Edit Alerts"),
             ]))
     }

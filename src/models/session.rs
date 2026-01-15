@@ -8,7 +8,7 @@ use serenity::all::{
 };
 use sqlx::FromRow;
 
-use crate::models::Player;
+use crate::{DEFAULT_TIMEOUT, models::Player};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -159,23 +159,23 @@ pub enum SessionStatus {
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct SessionPlayer {
-    pub player:          Player,
-    pub team:            Option<Team>,
-    pub in_queue_vc:     bool,
-    pub in_queue_cmd:    bool,
-    pub joined_at:       SystemTime,
-    pub expiry_duration: Option<std::time::Duration>, // Per-instance expiry override
+    pub player:       Player,
+    pub team:         Option<Team>,
+    pub in_queue_vc:  bool,
+    pub in_queue_cmd: bool,
+    pub joined_at:    SystemTime,
+    pub timeout:      u8,
 }
 
 impl SessionPlayer {
     pub fn add(player: Player) -> Self {
         Self {
             player,
-            team:            None,
-            in_queue_vc:     false,
-            in_queue_cmd:    false,
-            joined_at:       SystemTime::now(),
-            expiry_duration: None, // Use user's default setting initially
+            team:         None,
+            in_queue_vc:  false,
+            in_queue_cmd: false,
+            joined_at:    SystemTime::now(),
+            timeout:      DEFAULT_TIMEOUT,
         }
     }
 

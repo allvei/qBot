@@ -1,6 +1,5 @@
-use std::fmt::Display;
 use anyhow::Result;
-use sqlx::{Error, Row, SqlitePool};
+use sqlx::{Row, SqlitePool};
 use serenity::{all::GuildId as GI};
 
 use crate::DEFAULT_HOT_JOIN_TIMEOUT;
@@ -62,8 +61,8 @@ impl DatabaseMigrations {
             sqlx::query(
                 "CREATE TABLE config (
                     guild_id     INTEGER NOT NULL,
-                    runner_id    TEXT,
-                    admin_id     TEXT,
+                    runner_id    INTEGER,
+                    admin_id     INTEGER,
                     active_elo   INTEGER,
                     default_rank INTEGER,
                     PRIMARY KEY(guild_id)
@@ -76,64 +75,71 @@ impl DatabaseMigrations {
         }
         Ok(())
     }
+    async fn verify_config(&self) -> Result<()> {
+        let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank"];
+        self.verify_columns("config", &required_columns).await?;
+        Ok(())
+    }
     async fn create_users_table(&self) ->  Result<()> {
         if !self.check_table("users").await? {
             sqlx::query(
                 "CREATE TABLE users (
-                    user_id                         INTEGER PRIMARY KEY,
-                    steam_id                        INTEGER,
-                    dm_enabled                      INTEGER DEFAULT 1,
-                    timeout_length                  INTEGER DEFAULT 30,
-                    join_announcement               INTEGER DEFAULT 0,
-                    vc_disconnect_on_leave          INTEGER DEFAULT 1,
-                    announcement_color              INTEGER DEFAULT 3447003,
-                    show_stats_in_announcement      INTEGER DEFAULT 0,
-                    notify_quota_threshold          INTEGER DEFAULT NULL,
-                    alert_desc                      TEXT    DEFAULT NULL,
-                    alert_footer_text               TEXT    DEFAULT NULL,
-                    alert_footer_icon               TEXT    DEFAULT NULL,
-                    alert_footer_thumbnail          TEXT    DEFAULT NULL,
-                    leave_alert                     INTEGER DEFAULT 0,
-                    leave_alert_desc                TEXT    DEFAULT NULL,
-                    leave_alert_footer_text         TEXT    DEFAULT NULL,
-                    leave_alert_footer_icon         TEXT    DEFAULT NULL,
-                    leave_alert_footer_thumbnail    TEXT    DEFAULT NULL,
-                    elo                             INTEGER DEFAULT 30
+                    user_id                  INTEGER PRIMARY KEY,
+                    steam_id                 INTEGER,
+                    pm_hot_alert             INTEGER DEFAULT 1,
+                    pm_queue_alert_threshold INTEGER DEFAULT NULL,
+                    timeout                  INTEGER DEFAULT 30,
+                    vc_auto_join             INTEGER DEFAULT 1,
+                    join_alert_title         TEXT    DEFAULT 0,
+                    join_alert               TEXT    DEFAULT NULL,
+                    join_alert_color         INTEGER DEFAULT 3447003,
+                    join_alert_img           TEXT    DEFAULT NULL,
+                    join_alert_footer        TEXT    DEFAULT NULL,
+                    join_alert_footer_img    TEXT    DEFAULT NULL,
+                    vc_auto_leave            INTEGER DEFAULT 1,
+                    leave_alert_title        TEXT    DEFAULT 0,
+                    leave_alert              TEXT    DEFAULT NULL,
+                    leave_alert_color        INTEGER DEFAULT 3447003,
+                    leave_alert_img          TEXT    DEFAULT NULL,
+                    leave_alert_footer       TEXT    DEFAULT NULL,
+                    leave_alert_footer_img   TEXT    DEFAULT NULL,
                 )"
             )
             .execute(&self.pool)
             .await?;
         } else {
             // Verify schema integrity
-            let has_unique     = self.check_unique("users", "user_id").await?;
-            let has_user_id    = self.check_column("users", "user_id").await?;
-            let has_steam_id   = self.check_column("users", "steam_id")  .await?;
-            let has_dm_enabled = self.check_column("users", "dm_enabled").await?;
+            let has_unique       = self.check_unique("users", "user_id").await?;
+            let has_user_id      = self.check_column("users", "user_id").await?;
+            let has_steam_id     = self.check_column("users", "steam_id")  .await?;
+            let has_pm_hot_alert = self.check_column("users", "pm_hot_alert").await?;
 
-            // Add dm_enabled column if missing
-            if has_user_id && !has_dm_enabled {
-                add_column!(self, "users", "dm_enabled", "INTEGER", "1");
+            // Add pm_hot_alert column if missing
+            if has_user_id && !has_pm_hot_alert {
+                add_column!(self, "users", "pm_hot_alert", "INTEGER", "1");
             }
 
             // Add new settings columns if missing
             if has_user_id {
-                add_column!(self, "users", "timeout_length",               "INTEGER", "30");
-                add_column!(self, "users", "join_announcement",            "INTEGER", "0");
-                add_column!(self, "users", "vc_disconnect_on_leave",       "INTEGER", "1");
-                add_column!(self, "users", "vc_auto_queue",                "INTEGER", "1");
-                add_column!(self, "users", "announcement_color",           "INTEGER", "3447003");
-                add_column!(self, "users", "show_stats_in_announcement",   "INTEGER", "0");
-                add_column!(self, "users", "notify_quota_threshold",       "INTEGER", "NULL");
-                add_column!(self, "users", "alert_desc",                   "TEXT",    "NULL");
-                add_column!(self, "users", "alert_footer_text",            "TEXT",    "NULL");
-                add_column!(self, "users", "alert_footer_icon",            "TEXT",    "NULL");
-                add_column!(self, "users", "alert_footer_thumbnail",       "TEXT",    "NULL");
-                add_column!(self, "users", "leave_alert",                  "INTEGER", "0");
-                add_column!(self, "users", "leave_alert_desc",             "TEXT",    "NULL");
-                add_column!(self, "users", "leave_alert_footer_text",      "TEXT",    "NULL");
-                add_column!(self, "users", "leave_alert_footer_icon",      "TEXT",    "NULL");
-                add_column!(self, "users", "leave_alert_footer_thumbnail", "TEXT",    "NULL");
-                add_column!(self, "users", "elos",                         "INTEGER", "30");
+                add_column!(self, "users", "user_id",                  "INTEGER", "30");
+                add_column!(self, "users", "steam_id",                 "INTEGER", "0");
+                add_column!(self, "users", "pm_hot_alert",             "INTEGER", "1");
+                add_column!(self, "users", "pm_queue_alert_threshold", "INTEGER", "3447003");
+                add_column!(self, "users", "timeout",                  "INTEGER", "NULL");
+                add_column!(self, "users", "vc_auto_join",             "INTEGER", "NULL");
+                add_column!(self, "users", "join_alert_title",         "TEXT",    "NULL");
+                add_column!(self, "users", "join_alert",               "TEXT",    "NULL");
+                add_column!(self, "users", "join_alert_color",         "INTEGER", "NULL");
+                add_column!(self, "users", "join_alert_img",           "TEXT",    "0");
+                add_column!(self, "users", "join_alert_footer",        "TEXT",    "NULL");
+                add_column!(self, "users", "join_alert_footer_img",    "TEXT",    "NULL");
+                add_column!(self, "users", "vc_auto_leave",            "INTEGER", "NULL");
+                add_column!(self, "users", "leave_alert_title",        "TEXT",    "NULL");
+                add_column!(self, "users", "leave_alert",              "TEXT",    "NULL");
+                add_column!(self, "users", "leave_alert_color",        "INTEGER", "NULL");
+                add_column!(self, "users", "leave_alert_img",          "TEXT",    "NULL");
+                add_column!(self, "users", "leave_alert_footer",       "TEXT",    "NULL");
+                add_column!(self, "users", "leave_alert_footer_img",   "TEXT",    "NULL");
             }
 
             if !has_user_id || !has_steam_id || !has_unique {
@@ -154,22 +160,21 @@ impl DatabaseMigrations {
                     "CREATE TABLE users (
                         user_id                      INTEGER PRIMARY KEY,
                         steam_id                     INTEGER,
-                        dm_enabled                   INTEGER DEFAULT 1,
-                        timeout_length               INTEGER DEFAULT 0,
-                        join_announcement            INTEGER DEFAULT 0,
-                        vc_disconnect_on_leave       INTEGER DEFAULT 1,
-                        announcement_color           INTEGER DEFAULT 3447003,
-                        show_stats_in_announcement   INTEGER DEFAULT 0,
-                        notify_quota_threshold       INTEGER DEFAULT NULL,
-                        alert_desc                   TEXT    DEFAULT NULL,
-                        alert_footer_text            TEXT    DEFAULT NULL,
-                        alert_footer_icon            TEXT    DEFAULT NULL,
-                        alert_footer_thumbnail       TEXT    DEFAULT NULL,
+                        pm_hot_alert                   INTEGER DEFAULT 1,
+                        timeout               INTEGER DEFAULT 0,
+                        join_alert            INTEGER DEFAULT 0,
+                        vc_auto_leave       INTEGER DEFAULT 1,
+                        join_alert_color           INTEGER DEFAULT 3447003,
+                        pm_queue_alert_threshold       INTEGER DEFAULT NULL,
+                        join_alert                   TEXT    DEFAULT NULL,
+                        join_alert_footer            TEXT    DEFAULT NULL,
+                        join_alert_footer_img            TEXT    DEFAULT NULL,
+                        join_alert_img       TEXT    DEFAULT NULL,
                         leave_alert                  INTEGER DEFAULT 0,
-                        leave_alert_desc             TEXT    DEFAULT NULL,
-                        leave_alert_footer_text      TEXT    DEFAULT NULL,
-                        leave_alert_footer_icon      TEXT    DEFAULT NULL,
-                        leave_alert_footer_thumbnail TEXT    DEFAULT NULL,
+                        leave_alert             TEXT    DEFAULT NULL,
+                        leave_alert_footer      TEXT    DEFAULT NULL,
+                        leave_alert_footer_img      TEXT    DEFAULT NULL,
+                        leave_alert_img TEXT    DEFAULT NULL,
                         elo                          INTEGER DEFAULT 30
                     )"
                 )
@@ -180,7 +185,7 @@ impl DatabaseMigrations {
                 for row in backup_data {
                     let user_id: i64 = row.get("user_id");
                     let steam_id: Option<i64> = row.try_get("steam_id").ok();
-                    sqlx::query("INSERT OR IGNORE INTO users (user_id, steam_id, dm_enabled, timeout_length, join_announcement, vc_disconnect_on_leave, announcement_color, show_stats_in_announcement, notify_quota_threshold, alert_desc, alert_footer_text, alert_footer_icon, alert_footer_thumbnail, leave_alert, leave_alert_desc, leave_alert_footer_text, leave_alert_footer_icon, leave_alert_footer_thumbnail, elo)
+                    sqlx::query("INSERT OR IGNORE INTO users (user_id, steam_id, pm_hot_alert, timeout, join_alert, vc_auto_leave, join_alert_color, pm_queue_alert_threshold, join_alert, join_alert_footer, join_alert_footer_img, join_alert_img, leave_alert, leave_alert, leave_alert_footer, leave_alert_footer_img, leave_alert_img, elo)
                                  VALUES (?, ?, 1, 0, 0, 1, 3447003, 0, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, NULL, NULL, 30)
                                  ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id")
                         .bind(user_id)
@@ -190,6 +195,31 @@ impl DatabaseMigrations {
                 }
             }
         }
+        Ok(())
+    }
+    async fn verify_users(&self)  -> Result<()> {
+        let required_columns = vec![
+            "user_id",
+            "steam_id",
+            "pm_hot_alert",
+            "pm_queue_alert_threshold",
+            "timeout",
+            "vc_auto_join",
+            "join_alert_title",
+            "join_alert",
+            "join_alert_color",
+            "join_alert_img",
+            "join_alert_footer",
+            "join_alert_footer_img",
+            "vc_auto_leave",
+            "leave_alert_title",
+            "leave_alert",
+            "leave_alert_color",
+            "leave_alert_img",
+            "leave_alert_footer",
+            "leave_alert_footer_img",
+        ];
+        self.verify_columns("users", &required_columns).await?;
         Ok(())
     }
     async fn create_groups_table(&self) -> Result<()> {
@@ -289,6 +319,18 @@ impl DatabaseMigrations {
         }
         Ok(())
     }
+    async fn verify_groups(&self) -> Result<()> {
+        // Add name column if missing
+        add_column!(self, "groups", "name", "TEXT", "NULL");
+        
+        let required_columns = vec![
+            "id", "group_id", "timeout", "guild_id", "dashboard",
+            "chat", "queue", "dashboard_msg", "red", "blu",
+            "game", "game_increment", "quota"
+        ];
+        self.verify_columns("groups", &required_columns).await?;
+        Ok(())
+    }
     async fn create_teams_table(&self) ->  Result<()> {
         if !self.check_table("teams").await? {
             sqlx::query(
@@ -305,28 +347,33 @@ impl DatabaseMigrations {
         }
         Ok(())
     }
+    async fn verify_teams(&self)  -> Result<()> {
+        let required_columns = vec!["id", "guild_id", "group_id", "red", "blu"];
+        self.verify_columns("teams", &required_columns).await?;
+        Ok(())
+    }
     async fn create_elo_table(&self) ->    Result<()> {
         // Check if old elos table exists with foreign key constraints
-        let needs_migration = if self.check_table("elos").await? {
+        let needs_migration = if self.check_table("elo").await? {
             // Check if it has foreign key constraints
-            self.check_column("elos", "division").await?
+            self.check_column("elo", "rank").await?
         } else {
             false
         };
 
         if needs_migration {
             // Drop old table and recreate without foreign keys
-            sqlx::query("DROP TABLE elos").execute(&self.pool).await?;
+            sqlx::query("DROP TABLE elo").execute(&self.pool).await?;
         }
 
-        if !self.check_table("elos").await? {
+        if !self.check_table("elo").await? {
             sqlx::query(
-                "CREATE TABLE elos (
+                "CREATE TABLE elo (
                     id        INTEGER PRIMARY KEY,
                     guild_id INTEGER NOT NULL,
                     user_id  INTEGER NOT NULL,
                     elo       INTEGER NOT NULL DEFAULT 50,
-                    division  TEXT    NOT NULL DEFAULT 'Apprentice',
+                    rank  TEXT    NOT NULL DEFAULT 'Apprentice',
                     games     INTEGER NOT NULL DEFAULT 0,
                     wins      INTEGER NOT NULL DEFAULT 0,
                     UNIQUE(guild_id, user_id)
@@ -335,6 +382,11 @@ impl DatabaseMigrations {
             .execute(&self.pool)
             .await?;
         }
+        Ok(())
+    }
+    async fn verify_elos(&self)   -> Result<()> {
+        let required_columns = vec!["id", "guild_id", "user_id", "elo", "rank", "games", "wins"];
+        self.verify_columns("elo", &required_columns).await?;
         Ok(())
     }
     async fn create_ranks_table(&self) ->  Result<()> {
@@ -395,64 +447,6 @@ impl DatabaseMigrations {
 
         Ok(())
     }
-
-    // SCHEMA VALIDATIONS
-
-    async fn verify_config(&self) -> Result<()> {
-        let required_columns = vec!["guild_id", "key", "value", "description"];
-        self.verify_columns("config", &required_columns).await?;
-        Ok(())
-    }
-
-    async fn verify_users(&self)  -> Result<()> {
-        let required_columns = vec![
-            "id",
-            "user_id",
-            "tag",
-            "steam_id",
-            "dm_enabled",
-            "timeout_length",
-            "join_announcement",
-            "vc_disconnect_on_leave",
-            "announcement_color",
-            "show_stats_in_announcement",
-            "notify_quota_threshold",
-            "alert_desc",
-            "alert_footer_text",
-            "alert_footer_icon",
-            "alert_footer_thumbnail",
-            "leave_alert",
-            "leave_alert_desc",
-            "leave_alert_footer_text",
-            "leave_alert_footer_icon",
-            "leave_alert_footer_thumbnail",
-            "elo",
-        ];
-        self.verify_columns("users", &required_columns).await?;
-        Ok(())
-    }
-    async fn verify_groups(&self) -> Result<()> {
-        // Add name column if missing
-        add_column!(self, "groups", "name", "TEXT", "NULL");
-        
-        let required_columns = vec![
-            "id", "group_id", "timeout", "guild_id", "dashboard",
-            "chat", "queue", "dashboard_msg", "red", "blu",
-            "game", "game_increment", "quota"
-        ];
-        self.verify_columns("groups", &required_columns).await?;
-        Ok(())
-    }
-    async fn verify_teams(&self)  -> Result<()> {
-        let required_columns = vec!["id", "guild_id", "group_id", "red", "blu"];
-        self.verify_columns("teams", &required_columns).await?;
-        Ok(())
-    }
-    async fn verify_elos(&self)   -> Result<()> {
-        let required_columns = vec!["id", "guild_id", "user_id", "elo", "division", "games", "wins"];
-        self.verify_columns("elos", &required_columns).await?;
-        Ok(())
-    }
     async fn verify_ranks(&self)  -> Result<()> {
         let required_columns = vec!["id", "guild_id", "name", "elo", "role_id"];
         self.verify_columns("ranks", &required_columns).await?;
@@ -501,10 +495,10 @@ impl DatabaseMigrations {
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
         )
         .bind(table_name)
-        .fetch_all(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
 
-        Ok(!result.is_empty())
+        Ok(result.is_some())
     }
     /// Check if column exists in table
     async fn check_column(&self, table_name: &str, column_name: &str) -> Result<bool> {

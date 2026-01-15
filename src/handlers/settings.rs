@@ -7,7 +7,6 @@ use serenity::all::{
     CreateSelectMenuOption as CSMO, RoleId, GuildId as GI,
 };
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::{error, info, warn};
 
 use crate::Database;
@@ -35,9 +34,9 @@ const FOOTER_SPAM_REPLACEMENT_MESSAGES: &[&str] = &[
     "qBot is best bot",
 ];
 
-const SANITIZE_ALERTS_ENABLED: bool = false;
-const MAX_ALERT_NEWLINES: usize = 4;
-const MAX_ALERT_CHARS: usize = 180;
+const SANITIZE_ALERTS_ENABLED: bool  = false;
+const MAX_ALERT_NEWLINES:      usize = 4;
+const MAX_ALERT_CHARS:         usize = 180;
 
 /// Check if text exceeds alert message limits (max 4 newlines, 180 chars)
 fn exceeds_alert_limits(text: &str) -> bool {
@@ -84,7 +83,7 @@ pub async fn handle_settings_button(
     match button_id.as_str() {
         "settings_toggle_dm" => {
             // Toggle DM alerts
-            let _new_state = db.users.toggle_dm_enabled(user_id).await?;
+            let _new_state = db.users.toggle_pm_hot_alert(user_id).await?;
 
             // Acknowledge and update the settings menu directly (no popup)
             let settings = db.users.get_prefs(user_id).await?;
@@ -99,11 +98,11 @@ pub async fn handle_settings_button(
         "settings_timeout" => {
             // Show time selection buttons inline (replace current message temporarily)
             let settings = db.users.get_prefs(user_id).await?;
-            let current_minutes = settings.expiry_duration.as_secs() / 60;
+            let current_minutes = settings.timeout;
             
             let time_buttons = vec![
-                CB::new("settings_timeout:30m").label("30 min").style(if current_minutes == 30 { BS::Success } else { BS::Secondary }),
-                CB::new("settings_timeout:1h") .label("1 hour").style(if current_minutes == 60 { BS::Success } else { BS::Secondary }),
+                CB::new("settings_timeout:30m").label("30 min") .style(if current_minutes == 30  { BS::Success } else { BS::Secondary }),
+                CB::new("settings_timeout:1h") .label("1 hour") .style(if current_minutes == 60  { BS::Success } else { BS::Secondary }),
                 CB::new("settings_timeout:2h") .label("2 hours").style(if current_minutes == 120 { BS::Success } else { BS::Secondary }),
                 CB::new("settings_timeout:3h") .label("3 hours").style(if current_minutes == 180 { BS::Success } else { BS::Secondary }),
                 CB::new("settings_timeout:4h") .label("4 hours").style(if current_minutes == 240 { BS::Success } else { BS::Secondary }),
@@ -116,7 +115,7 @@ pub async fn handle_settings_button(
             let embed = CE::new()
                 .title("Set timeout length")
                 .description("Choose how long before you're automatically removed from the queue:")
-                .color(settings.announcement_color as u32);
+                .color(settings.join_alert_color as u32);
 
             let response = CIR::UpdateMessage(
                 CIRM::new()
@@ -152,7 +151,7 @@ pub async fn handle_settings_button(
 
                 // Update user settings
                 let mut settings = db.users.get_prefs(user_id).await?;
-                settings.expiry_duration = Duration::from_secs(minutes as u64 * 60);
+                settings.timeout = minutes;
                 db.users.update_settings(user_id, &settings).await?;
 
                 // Update the settings menu directly (no confirmation popup)
@@ -200,24 +199,24 @@ pub async fn handle_settings_button(
             let settings = db.users.get_prefs(user_id).await?;
             let modal = CreateModal::new("settings_modal_announcement", "Customize join announcement")
                 .components(vec![
-                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "HEX Color", "announcement_color")
+                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "HEX Color", "join_alert_color")
                         .placeholder("e.g., 3447003 or FF5733")
-                        .value(format!("{:06X}", settings.announcement_color))
+                        .value(format!("{:06X}", settings.join_alert_color))
                         .required(false).min_length(6).max_length(6)
                     ),
-                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Paragraph, "Message", "alert_desc")
+                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Paragraph, "Message", "join_alert")
                         .placeholder("e.g., Kafri: defense")
-                        .value(settings.alert_desc.unwrap_or_default())
-                        .required(false).max_length(2000)
+                        .value(settings.join_alert_desc.unwrap_or_default())
+                        .required(false).max_length(MAX_ALERT_CHARS as u16)
                     ),
-                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "Footer text", "alert_footer_text")
+                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "Footer text", "join_alert_footer")
                         .placeholder("e.g., Good luck!")
-                        .value(settings.alert_footer_text.unwrap_or_default())
+                        .value(settings.join_alert_footer.unwrap_or_default())
                         .required(false).max_length(2048)
                     ),
-                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "Thumbnail URL", "alert_footer_thumbnail")
+                    CreateActionRow::InputText(CreateInputText::new(InputTextStyle::Short,     "Thumbnail URL", "join_alert_img")
                         .placeholder("https://example.com/thumb.png")
-                        .value(settings.alert_footer_thumbnail.unwrap_or_default())
+                        .value(settings.join_alert_img.unwrap_or_default())
                         .required(false).max_length(512)
                     ),
                 ]);
@@ -233,150 +232,35 @@ pub async fn handle_settings_button(
                     CreateActionRow::InputText(
                         CreateInputText::new(InputTextStyle::Short, "Color (hex, optional)", "leave_alert_color")
                             .placeholder("e.g., 3447003 or FF5733")
-                            .value(format!("{:06X}", settings.announcement_color))
+                            .value(format!("{:06X}", settings.leave_alert_color))
                             .required(false)
                             .min_length(6)
                             .max_length(6)
                     ),
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Paragraph, "Description", "leave_alert_desc")
+                        CreateInputText::new(InputTextStyle::Paragraph, "Description", "leave_alert")
                             .placeholder("e.g., {name} has left. Use {user} for mention")
                             .value(settings.leave_alert_desc.unwrap_or_default())
                             .required(false)
-                            .max_length(2000)
+                            .max_length(MAX_ALERT_CHARS as u16)
                     ),
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Footer Text", "leave_alert_footer_text")
+                        CreateInputText::new(InputTextStyle::Short, "Footer Text", "leave_alert_footer")
                             .placeholder("e.g., See you next time!")
-                            .value(settings.leave_alert_footer_text.unwrap_or_default())
+                            .value(settings.leave_alert_footer.unwrap_or_default())
                             .required(false)
-                            .max_length(2048)
+                            .max_length(MAX_ALERT_CHARS as u16)
                     ),
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Thumbnail URL", "leave_alert_footer_thumbnail")
+                        CreateInputText::new(InputTextStyle::Short, "Thumbnail URL", "leave_alert_img")
                             .placeholder("https://example.com/thumb.png")
-                            .value(settings.leave_alert_footer_thumbnail.unwrap_or_default())
+                            .value(settings.leave_alert_img.unwrap_or_default())
                             .required(false)
                             .max_length(512)
                     ),
                 ]);
 
             let response = CIR::Modal(modal);
-            interaction.create_response(&ctx.http, response).await?;
-        }
-        "settings_quota_alert" => {
-            // Show quota threshold selection buttons based on current group's quota
-            let settings = db.users.get_prefs(user_id).await?;
-            
-            // Try to determine the current group context from the interaction
-            let (guild_id, group_id, group_quota) = if let (Some(gid), channel) = (interaction.guild_id, interaction.channel_id) {
-                // Find which group this channel belongs to
-                let data = ctx.data.read().await;
-                let manager = data.get::<crate::models::GuildKey>();
-                
-                if let Some(manager_ref) = manager {
-                    let mut manager: tokio::sync::MutexGuard<'_, crate::models::Manager> = manager_ref.lock().await;
-                    if let Ok(group) = manager.get_group_by_channel(gid, channel) {
-                        (gid, group.group_id, group.quota)
-                    } else {
-                        // Default values if no group found
-                        (gid, 0, 12u8)
-                    }
-                } else {
-                    (gid, 0, 12u8)
-                }
-            } else {
-                // Default values if no guild context
-                (serenity::all::GuildId::new(0), 0, 12u8)
-            };
-            
-            // Get current threshold for this specific group
-            let current_threshold = settings.group_quota_thresholds.get(&(guild_id.get(), group_id)).copied();
-            
-            // Generate relative threshold buttons (quota - 4, -3, -2, -1)
-            let mut threshold_buttons = Vec::new();
-            for offset in 1..=4u8 {
-                let threshold = group_quota.saturating_sub(offset);
-                let button_label = if threshold == 0 {
-                    "Any players".to_string()
-                } else {
-                    format!("{} players", threshold)
-                };
-                
-                threshold_buttons.push(
-                    CB::new(&format!("settings_quota_alert:{}", threshold))
-                        .label(button_label)
-                        .style(if current_threshold == Some(threshold) { BS::Success } else { BS::Secondary })
-                );
-            }
-            
-            let disable_button = vec![
-                CB::new("settings_quota_alert:disable").label("Disable").style(if current_threshold.is_none() { BS::Danger } else { BS::Secondary }),
-            ];
-
-            let embed = CE::new()
-                .title("Set quota alert threshold")
-                .description(format!(
-                    "Choose how many players should be in the queue before you get a DM notification:\nGroup quota: {} players",
-                    group_quota
-                ))
-                .color(settings.announcement_color as u32);
-
-            let response = CIR::UpdateMessage(
-                CIRM::new()
-                    .embed(embed)
-                    .components(vec![CAR::Buttons(threshold_buttons), CAR::Buttons(disable_button)])
-            );
-
-            interaction.create_response(&ctx.http, response).await?;
-        }
-        button_id if button_id.starts_with("settings_quota_alert:") => {
-            // Handle quota threshold selection
-            let threshold_str = button_id.split(':').nth(1).unwrap_or("disable");
-            
-            // Parse the threshold value (could be "disable" or a number)
-            let new_threshold = if threshold_str == "disable" {
-                None
-            } else {
-                threshold_str.parse().ok()
-            };
-
-            // Get guild and group context from interaction
-            let (guild_id, group_id) = if let (Some(gid), channel) = (interaction.guild_id, interaction.channel_id) {
-                // Find which group this channel belongs to
-                let data = ctx.data.read().await;
-                let manager = data.get::<crate::models::GuildKey>();
-                
-                if let Some(manager_ref) = manager {
-                    let mut manager: tokio::sync::MutexGuard<'_, crate::models::Manager> = manager_ref.lock().await;
-                    if let Ok(group) = manager.get_group_by_channel(gid, channel) {
-                        (gid, group.group_id)
-                    } else {
-                        (gid, 0)
-                    }
-                } else {
-                    (gid, 0)
-                }
-            } else {
-                (serenity::all::GuildId::new(0), 0)
-            };
-
-            // Update user settings with per-group threshold
-            let mut settings = db.users.get_prefs(user_id).await?;
-            if let Some(threshold) = new_threshold {
-                settings.group_quota_thresholds.insert((guild_id.get(), group_id), threshold);
-            } else {
-                settings.group_quota_thresholds.remove(&(guild_id.get(), group_id));
-            }
-            db.users.update_settings(user_id, &settings).await?;
-
-            // Update the settings menu directly
-            let embed = build_settings_embed(&settings);
-            let buttons = build_settings_buttons(&settings);
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(embed).components(buttons)
-            );
             interaction.create_response(&ctx.http, response).await?;
         }
         _ => {
@@ -431,16 +315,16 @@ pub async fn handle_settings_modal(
                                 // Color field
                                 if !trimmed.is_empty() {
                                     let hex_str = trimmed.trim_start_matches('#');
-                                    if let Ok(color) = i64::from_str_radix(hex_str, 16) {
+                                    if let Ok(color) = u32::from_str_radix(hex_str, 16) {
                                         if (0..=0xFFFFFF).contains(&color) {
-                                            settings.announcement_color = color;
+                                            settings.join_alert_color = color;
                                         }
                                     }
                                 }
                             },
-                            1 => settings.alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
-                            2 => settings.alert_footer_text = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
-                            3 => settings.alert_footer_thumbnail   = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                            1 => settings.join_alert_desc   = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                            2 => settings.join_alert_footer = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                            3 => settings.join_alert_img    = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
                             _ => {}
                         }
                     }
@@ -451,7 +335,7 @@ pub async fn handle_settings_modal(
             db.users.update_settings(user_id, &settings).await?;
 
             // Build preview embed
-            let preview_embed = build_join_announcement_embed(ctx, user_id, None, &settings, "Journeyman").await;
+            let preview_embed = build_join_alert_embed(ctx, user_id, None, &settings, "Journeyman").await;
 
             // Send ephemeral preview as interaction response (dismissible)
             let response = CIR::Message(
@@ -492,16 +376,16 @@ pub async fn handle_settings_modal(
                                 // Color field
                                 if !trimmed.is_empty() {
                                     let hex_str = trimmed.trim_start_matches('#');
-                                    if let Ok(color) = i64::from_str_radix(hex_str, 16) {
+                                    if let Ok(color) = u32::from_str_radix(hex_str, 16) {
                                         if (0..=0xFFFFFF).contains(&color) {
-                                            settings.announcement_color = color;
+                                            settings.join_alert_color = color;
                                         }
                                     }
                                 }
                             },
-                            1 => settings.leave_alert_desc               = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
-                            2 => settings.leave_alert_footer_text        = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
-                            3 => settings.leave_alert_footer_thumbnail   = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                            1 => settings.leave_alert_desc   = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                            2 => settings.leave_alert_footer = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                            3 => settings.leave_alert_img    = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
                             _ => {}
                         }
                     }
@@ -597,7 +481,7 @@ pub fn build_settings_buttons(settings: &crate::database::repositories::UserSett
 }
 
 /// Build a join announcement embed (used for both actual announcements and previews)
-pub async fn build_join_announcement_embed(
+pub async fn build_join_alert_embed(
     ctx:       &Context,
     user_id:   serenity::all::UserId,
     guild_id:  Option<serenity::all::GuildId>,
@@ -625,7 +509,7 @@ pub async fn build_join_announcement_embed(
 
     // Build description with template support
     // If custom description is set (even if empty), use it; otherwise use default
-    let description = match &settings.alert_desc {
+    let description = match &settings.join_alert_desc {
         Some(custom_desc) if !custom_desc.trim().is_empty() => {
             // Sanitize newline spam only for actual announcements (not previews)
             let text_to_use = if guild_id.is_some() {
@@ -647,7 +531,7 @@ pub async fn build_join_announcement_embed(
     // Create embed with title showing nickname + "joined the queue"
     let mut embed = CE::new()
         .title(format!("{display_name} joined the queue"))
-        .color(settings.announcement_color as u32);
+        .color(settings.join_alert_color as u32);
     
     // Only add description if there is one
     if let Some(desc) = description {
@@ -655,7 +539,7 @@ pub async fn build_join_announcement_embed(
     }
 
     // Add custom footer
-    if let Some(footer_text) = &settings.alert_footer_text {
+    if let Some(footer_text) = &settings.join_alert_footer {
         // Sanitize footer spam only for actual announcements (not previews)
         let footer_to_use = if guild_id.is_some() {
             sanitize_footer_text(footer_text)
@@ -664,14 +548,14 @@ pub async fn build_join_announcement_embed(
         };
         
         let mut footer = CreateEmbedFooter::new(footer_to_use);
-        if let Some(footer_icon) = &settings.alert_footer_icon {
+        if let Some(footer_icon) = &settings.join_alert_footer_img {
             footer = footer.icon_url(footer_icon);
         }
         embed = embed.footer(footer);
     }
 
     // Add thumbnail
-    if let Some(thumbnail) = &settings.alert_footer_thumbnail {
+    if let Some(thumbnail) = &settings.join_alert_img {
         embed = embed.thumbnail(thumbnail);
     }
 
@@ -727,7 +611,7 @@ pub async fn build_leave_alert_embed(
     // Create embed with title showing nickname + "left the queue"
     let mut embed = CE::new()
         .title(format!("{} left the queue", display_name))
-        .color(settings.announcement_color as u32);
+        .color(settings.join_alert_color as u32);
     
     // Only add description if there is one
     if let Some(desc) = description {
@@ -735,7 +619,7 @@ pub async fn build_leave_alert_embed(
     }
 
     // Add custom footer if provided
-    if let Some(footer_text) = &settings.leave_alert_footer_text {
+    if let Some(footer_text) = &settings.leave_alert_footer {
         // Sanitize footer spam only for actual announcements (not previews)
         let footer_to_use = if guild_id.is_some() {
             sanitize_footer_text(footer_text)
@@ -744,14 +628,14 @@ pub async fn build_leave_alert_embed(
         };
         
         let mut footer = CreateEmbedFooter::new(footer_to_use);
-        if let Some(footer_icon) = &settings.leave_alert_footer_icon {
+        if let Some(footer_icon) = &settings.leave_alert_footer_img {
             footer = footer.icon_url(footer_icon);
         }
         embed = embed.footer(footer);
     }
 
     // Add custom thumbnail if provided
-    if let Some(thumbnail) = &settings.leave_alert_footer_thumbnail {
+    if let Some(thumbnail) = &settings.leave_alert_img {
         embed = embed.thumbnail(thumbnail);
     }
 
@@ -2441,7 +2325,7 @@ pub struct PlayerSettings {
     pub username: String,
     pub steam_id: Option<u64>,
     pub elo:      u16,
-    pub division: String,
+    pub rank: String,
     pub games:    u32,
     pub wins:     u32,
 }
@@ -2454,7 +2338,7 @@ pub fn build_player_settings_embed(settings: &PlayerSettings) -> CE {
         username: settings.username.clone(),
         steam_id: settings.steam_id,
         elo:      settings.elo,
-        division: settings.division.clone(),
+        rank: settings.rank.clone(),
         games:    settings.games,
         wins:     settings.wins,
     };
@@ -2469,7 +2353,7 @@ pub fn build_player_settings_buttons(user_id: serenity::all::UserId) -> Vec<CAR>
         username: String::new(),
         steam_id: None,
         elo:      0,
-        division: String::new(),
+        rank: String::new(),
         games:    0,
         wins:     0,
     };
@@ -2529,13 +2413,13 @@ pub async fn handle_player_settings_button(
 
         let response = CIR::Modal(modal);
         interaction.create_response(&ctx.http, response).await?;
-    } else if button_id.starts_with("player_settings_edit_division_") {
-        let modal = CreateModal::new(format!("player_settings_modal_division_{target_user_id}"), "Edit Rank")
+    } else if button_id.starts_with("player_settings_edit_rank_") {
+        let modal = CreateModal::new(format!("player_settings_modal_rank_{target_user_id}"), "Edit Rank")
             .components(vec![
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Short, "Rank", "division")
+                    CreateInputText::new(InputTextStyle::Short, "Rank", "rank")
                         .placeholder("e.g., Gold, Silver, Bronze")
-                        .value(guild_elo.division.name())
+                        .value(guild_elo.rank.name())
                         .required(true)
                         .max_length(20)
                 ),
@@ -2550,33 +2434,33 @@ pub async fn handle_player_settings_button(
         let modal = CreateModal::new(format!("player_settings_modal_alerts_{target_user_id}"), "Edit Player Alerts")
             .components(vec![
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Short, "HEX Color", "announcement_color")
+                    CreateInputText::new(InputTextStyle::Short, "HEX Color", "join_alert_color")
                         .placeholder("e.g., 3447003 or FF5733")
-                        .value(format!("{:06X}", user_settings.announcement_color))
+                        .value(format!("{:06X}", user_settings.join_alert_color))
                         .required(false)
                         .min_length(6)
                         .max_length(6)
                 ),
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Paragraph, "Join Alert Message", "alert_desc")
+                    CreateInputText::new(InputTextStyle::Paragraph, "Join Alert Message", "join_alert")
                         .placeholder("e.g., Kafri: defense")
-                        .value(user_settings.alert_desc.unwrap_or_default())
+                        .value(user_settings.join_alert_desc.unwrap_or_default())
                         .required(false)
-                        .max_length(2000)
+                        .max_length(MAX_ALERT_CHARS as u16)
                 ),
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Short, "Join Alert Footer", "alert_footer_text")
+                    CreateInputText::new(InputTextStyle::Short, "Join Alert Footer", "join_alert_footer")
                         .placeholder("e.g., Good luck!")
-                        .value(user_settings.alert_footer_text.unwrap_or_default())
+                        .value(user_settings.join_alert_footer.unwrap_or_default())
                         .required(false)
-                        .max_length(2048)
+                        .max_length(MAX_ALERT_CHARS as u16)
                 ),
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Paragraph, "Leave Alert Message", "leave_alert_desc")
+                    CreateInputText::new(InputTextStyle::Paragraph, "Leave Alert Message", "leave_alert")
                         .placeholder("e.g., See you next time!")
                         .value(user_settings.leave_alert_desc.unwrap_or_default())
                         .required(false)
-                        .max_length(2000)
+                        .max_length(MAX_ALERT_CHARS as u16)
                 ),
             ]);
 
@@ -2652,7 +2536,7 @@ pub async fn handle_player_settings_modal(
             username,
             steam_id: player.steam_id,
             elo:      guild_elo.elo,
-            division: guild_elo.division.name().to_string(),
+            rank: guild_elo.rank.name().to_string(),
             games:    guild_elo.games,
             wins:     guild_elo.wins,
         };
@@ -2689,9 +2573,9 @@ pub async fn handle_player_settings_modal(
             }
         };
 
-        // Get current division and calculate new rank from ELO
+        // Get current rank and calculate new rank from ELO
         let guild_elo = db.elos.get(target_uid, guild_id).await?;
-        let old_rank = guild_elo.division;
+        let old_rank = guild_elo.rank;
         let new_rank = crate::models::types::Rank::from_elo(elo, db, guild_id).await;
 
         // Update ELO and rank in database
@@ -2713,7 +2597,7 @@ pub async fn handle_player_settings_modal(
             username,
             steam_id: player.steam_id,
             elo:      guild_elo.elo,
-            division: guild_elo.division.name().to_string(),
+            rank: guild_elo.rank.name().to_string(),
             games:    guild_elo.games,
             wins:     guild_elo.wins,
         };
@@ -2725,8 +2609,8 @@ pub async fn handle_player_settings_modal(
             CIRM::new().embed(embed).components(buttons)
         );
         interaction.create_response(&ctx.http, response).await?;
-    } else if modal_id.starts_with("player_settings_modal_division_") {
-        let division_str = interaction.data.components.first()
+    } else if modal_id.starts_with("player_settings_modal_rank_") {
+        let rank_str = interaction.data.components.first()
             .and_then(|row| row.components.first())
             .and_then(|c| {
                 if let serenity::all::ActionRowComponent::InputText(input) = c {
@@ -2737,11 +2621,11 @@ pub async fn handle_player_settings_modal(
             })
             .unwrap_or_default();
 
-        let new_rank = crate::models::types::Rank::from_name(division_str.trim());
+        let new_rank = crate::models::types::Rank::from_name(rank_str.trim());
 
         // Get current data and calculate new ELO from rank
         let guild_elo = db.elos.get(target_uid, guild_id).await?;
-        let old_rank = guild_elo.division;
+        let old_rank = guild_elo.rank;
         let new_elo = new_rank.default_rank_elo();
 
         // Update ELO and rank in database
@@ -2763,7 +2647,7 @@ pub async fn handle_player_settings_modal(
             username,
             steam_id: player.steam_id,
             elo:      guild_elo.elo,
-            division: guild_elo.division.name().to_string(),
+            rank: guild_elo.rank.name().to_string(),
             games:    guild_elo.games,
             wins:     guild_elo.wins,
         };
@@ -2788,15 +2672,15 @@ pub async fn handle_player_settings_modal(
                             // Color field
                             if !trimmed.is_empty() {
                                 let hex_str = trimmed.trim_start_matches('#');
-                                if let Ok(color) = i64::from_str_radix(hex_str, 16) {
+                                if let Ok(color) = u32::from_str_radix(hex_str, 16) {
                                     if (0..=0xFFFFFF).contains(&color) {
-                                        user_settings.announcement_color = color;
+                                        user_settings.join_alert_color = color;
                                     }
                                 }
                             }
                         },
-                        1 => user_settings.alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
-                        2 => user_settings.alert_footer_text = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                        1 => user_settings.join_alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+                        2 => user_settings.join_alert_footer = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
                         3 => user_settings.leave_alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
                         _ => {}
                     }
@@ -2819,7 +2703,7 @@ pub async fn handle_player_settings_modal(
             username,
             steam_id: player.steam_id,
             elo:      guild_elo.elo,
-            division: guild_elo.division.name().to_string(),
+            rank: guild_elo.rank.name().to_string(),
             games:    guild_elo.games,
             wins:     guild_elo.wins,
         };

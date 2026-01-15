@@ -1,12 +1,10 @@
-use std::time::Duration;
-
 use anyhow::Result;
 use async_trait::async_trait;
 use serenity::all::{Context as Ctx, UserId as UI, GuildId as GI};
 use sqlx::{Row, SqlitePool};
 use tracing::{error, info, warn};
 
-use crate::{Database, Elo, Rank};
+use crate::{DEFAULT_ALERT_COLOR, Database, DEFAULT_TIMEOUT, Elo, Rank};
 use crate::models::Player;
 use super::Repository;
 
@@ -126,61 +124,43 @@ impl UserRepository {
     /// Ensure user exists without fetching tag (for internal operations)
     pub async fn check_user(&self, user_id: UI, steam_id: Option<u64>) -> Result<Player> {
         let result = sqlx::query(
-            "INSERT INTO users (user_id, steam_id, elo)
-             VALUES (?, ?, ?)
+            "INSERT INTO users (user_id, steam_id)
+             VALUES (?, ?)
              ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id
-             RETURNING id, user_id, tag, steam_id, elo"
+             RETURNING user_id, steam_id"
         )
         .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
-        .bind(30) // default ELO only for new users
         .fetch_one(&self.pool)
         .await?;
 
         Ok(Self::get_player(result))
     }
 
-    pub async fn upsert(&self, user_id: UI, steam_id: Option<u64>, ctx: &Ctx) -> Result<Player> {
-        // Fetch discord tag from API first
-        let tag = if let Ok(user) = ctx.http.get_user(user_id).await {
-            Some(user.tag())
-        } else {
-            None
-        };
-
+    pub async fn upsert(&self, user_id: UI, steam_id: Option<u64>) -> Result<Player> {
         let result = sqlx::query(
-            "INSERT INTO users (user_id, steam_id, elo, tag)
-             VALUES (?, ?, ?, ?)
-             ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id, tag=excluded.tag
-             RETURNING id, user_id, tag, steam_id, elo"
+            "INSERT INTO users (user_id, steam_id)
+             VALUES (?, ?)
+             ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id
+             RETURNING user_id, steam_id"
         )
         .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
-        .bind(30) // default ELO only for new users
-        .bind(&tag)
         .fetch_one(&self.pool)
         .await?;
 
         Ok(Self::get_player(result))
     }
 
-    pub async fn upsert_tag(&self, user_id: UI, steam_id: Option<u64>, ctx: &Ctx) -> Result<Player> {
-        let tag = if let Ok(user) = ctx.http.get_user(user_id).await {
-            Some(user.tag())
-        } else {
-            None
-        };
-
+    pub async fn upsert_tag(&self, user_id: UI, steam_id: Option<u64>) -> Result<Player> {
         let result = sqlx::query(
-            "INSERT INTO users (user_id, steam_id, elo, tag)
-             VALUES (?, ?, ?, ?)
-             ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id, tag=excluded.tag
-             RETURNING id, user_id, tag, steam_id, elo"
+            "INSERT INTO users (user_id, steam_id)
+             VALUES (?, ?)
+             ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id
+             RETURNING user_id, steam_id"
         )
         .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
-        .bind(30) // default ELO only for new users
-        .bind(&tag)
         .fetch_one(&self.pool)
         .await?;
 
@@ -188,15 +168,14 @@ impl UserRepository {
     }
 
     fn get_player(result: sqlx::sqlite::SqliteRow) -> Player {
-        let mut player = Player::default(result.get::<u64, _>           ("user_id").into(),
-                                         result.get::<String, _>        ("tag"),
-                                         result.get::<Option<i64>, _>   ("steam_id").map(|id| id as u64));
+        let user_id: i64 = result.get("user_id");
+        let steam_id: Option<i64> = result.try_get("steam_id").ok();
         
-        // Set ELO if present in database, otherwise leave at default (will be updated later)
-        if let Ok(Some(elo)) = result.try_get::<Option<u16>, _>("elo") {
-            player.set_elo(elo);
-        }
-        player
+        Player::default(
+            (user_id as u64).into(),
+            String::new(),
+            steam_id.map(|id| id as u64)
+        )
     }
 
     /// Get player with rank determined from guild-specific ELO and Discord roles
@@ -204,7 +183,7 @@ impl UserRepository {
         info!("DEBUG: get_player_with_guild_rank called for user {} in guild {}", user_id, guild_id);
         
         // Get base player data from users table
-        let result = sqlx::query("SELECT user_id, steam_id, elo, tag FROM users WHERE user_id = ?")
+        let result = sqlx::query("SELECT user_id, steam_id FROM users WHERE user_id = ?")
             .bind(user_id.get() as i64)
             .fetch_one(&self.pool)
             .await?;
@@ -214,14 +193,13 @@ impl UserRepository {
         // Get guild-specific ELO (this is the primary source now)
         let guild_elo = db.elos.get(user_id, guild_id).await?;
         player.elo = guild_elo.elo;
-        player.rank = guild_elo.division;
+        player.rank = guild_elo.rank;
         
         info!("DEBUG: Player guild ELO: {}, Rank: {}", player.elo, player.rank.name());
 
         // For new players (no games), initialize with default rank
         if guild_elo.games == 0 && player.elo == 0 {
-            let default_rank_name = db.config.get_config_item("default_rank", guild_id).await?
-                .unwrap_or_else(|| crate::models::DEFAULT_RANK.name().to_string());
+            let default_rank_name = db.config.get_config_item("default_rank", guild_id).await?.unwrap();
             
             // Find the configured default rank in the database
             let default_guild_rank = match db.ranks.get_rank_by_name(guild_id, &default_rank_name).await? {
@@ -285,16 +263,16 @@ impl UserRepository {
         self.get(*user_id).await
     }
 
-    pub async fn get_dm_enabled(&self, user_id: UI) -> Result<bool> {
-        let result = sqlx::query("SELECT dm_enabled FROM users WHERE user_id = ?")
+    pub async fn get_pm_hot_alert(&self, user_id: UI) -> Result<bool> {
+        let result = sqlx::query("SELECT pm_hot_alert FROM users WHERE user_id = ?")
             .bind(user_id.get() as i64)
             .fetch_optional(&self.pool)
             .await?;
 
         match result {
             Some(row) => {
-                let dm_enabled: i64 = row.try_get("dm_enabled").unwrap_or(1);
-                Ok(dm_enabled != 0)
+                let pm_hot_alert: i64 = row.try_get("pm_hot_alert").unwrap_or(1);
+                Ok(pm_hot_alert != 0)
             }
             None => {
                 // User doesn't exist yet, return default (enabled)
@@ -303,16 +281,16 @@ impl UserRepository {
         }
     }
 
-    pub async fn toggle_dm_enabled(&self, user_id: UI) -> Result<bool> {
+    pub async fn toggle_pm_hot_alert(&self, user_id: UI) -> Result<bool> {
         // Ensure user exists
         let _ = self.check_user(user_id, None).await?;
 
         // Get current value
-        let current = self.get_dm_enabled(user_id).await?;
+        let current = self.get_pm_hot_alert(user_id).await?;
         let new_value = !current;
 
         // Update database
-        sqlx::query("UPDATE users SET dm_enabled = ? WHERE user_id = ?")
+        sqlx::query("UPDATE users SET pm_hot_alert = ? WHERE user_id = ?")
             .bind(if new_value { 1 } else { 0 })
             .bind(user_id.get() as i64)
             .execute(&self.pool)
@@ -324,12 +302,12 @@ impl UserRepository {
     /// Get user settings
     pub async fn get_prefs(&self, user_id: UI) -> Result<UserSettings> {
         let result = sqlx::query(
-            "SELECT timeout_length, join_announcement, vc_disconnect_on_leave, vc_auto_queue,
-                    announcement_color, dm_enabled, notify_quota_threshold,
-                    alert_desc, alert_footer_text,
-                    alert_footer_icon, alert_footer_thumbnail,
-                    leave_alert, leave_alert_desc,
-                    leave_alert_footer_text, leave_alert_footer_icon, leave_alert_footer_thumbnail
+            "SELECT timeout, join_alert, vc_auto_leave, vc_auto_join,
+                    join_alert_color, pm_hot_alert, pm_queue_alert_threshold,
+                    join_alert, join_alert_footer,
+                    join_alert_footer_img, join_alert_img,
+                    leave_alert, leave_alert,
+                    leave_alert_footer, leave_alert_footer_img, leave_alert_img
              FROM users WHERE user_id = ?"
         )
         .bind(user_id.get() as i64)
@@ -338,103 +316,99 @@ impl UserRepository {
 
         match result {
             Some(row) => {
-                let timeout_length: i64 = row.try_get("timeout_length").unwrap_or(30);
-                let minutes = if timeout_length == 0 { 30 } else { timeout_length };
-
                 // Load alert descriptions and truncate if too long
-                let raw_alert_desc:         Option<String> = row.try_get::<String, _>("alert_desc")             .ok().filter(|s| !s.is_empty());
-                let raw_leave_alert_desc:   Option<String> = row.try_get::<String, _>("leave_alert_desc")       .ok().filter(|s| !s.is_empty());
-                let raw_alert_footer:       Option<String> = row.try_get::<String, _>("alert_footer_text")      .ok().filter(|s| !s.is_empty());
-                let raw_leave_alert_footer: Option<String> = row.try_get::<String, _>("leave_alert_footer_text").ok().filter(|s| !s.is_empty());
+                let raw_join_alert:         Option<String> = row.try_get::<String, _>("join_alert")        .ok().filter(|s| !s.is_empty());
+                let raw_leave_alert:        Option<String> = row.try_get::<String, _>("leave_alert")       .ok().filter(|s| !s.is_empty());
+                let raw_alert_footer:       Option<String> = row.try_get::<String, _>("join_alert_footer") .ok().filter(|s| !s.is_empty());
+                let raw_leave_alert_footer: Option<String> = row.try_get::<String, _>("leave_alert_footer").ok().filter(|s| !s.is_empty());
 
-                let alert_desc = raw_alert_desc.as_ref().map(|s| {
+                let join_alert = raw_join_alert.as_ref().map(|s| {
                     let truncated = truncate_alert_message(s);
                     if truncated.len() < s.len() {
-                        warn!("Truncated alert_desc for user {}: {} -> {} chars", user_id, s.len(), truncated.len());
+                        warn!("Truncated join_alert for user {}: {} -> {} chars", user_id, s.len(), truncated.len());
                     }
                     truncated
                 }).filter(|s| !s.is_empty());
 
-                let leave_alert_desc = raw_leave_alert_desc.as_ref().map(|s| {
+                let leave_alert = raw_leave_alert.as_ref().map(|s| {
                     let truncated = truncate_alert_message(s);
                     if truncated.len() < s.len() {
-                        warn!("Truncated leave_alert_desc for user {}: {} -> {} chars", user_id, s.len(), truncated.len());
+                        warn!("Truncated leave_alert for user {}: {} -> {} chars", user_id, s.len(), truncated.len());
                     }
                     truncated
                 }).filter(|s| !s.is_empty());
 
-                let alert_footer_text = raw_alert_footer.as_ref().map(|s| {
+                let join_alert_footer = raw_alert_footer.as_ref().map(|s| {
                     let truncated = truncate_footer_text(s);
                     if truncated.len() < s.len() {
-                        warn!("Truncated alert_footer_text for user {}: {} -> {} chars", user_id, s.len(), truncated.len());
+                        warn!("Truncated join_alert_footer for user {}: {} -> {} chars", user_id, s.len(), truncated.len());
                     }
                     truncated
                 }).filter(|s| !s.is_empty());
 
-                let leave_alert_footer_text = raw_leave_alert_footer.as_ref().map(|s| {
+                let leave_alert_footer = raw_leave_alert_footer.as_ref().map(|s| {
                     let truncated = truncate_footer_text(s);
                     if truncated.len() < s.len() {
-                        warn!("Truncated leave_alert_footer_text for user {}: {} -> {} chars", user_id, s.len(), truncated.len());
+                        warn!("Truncated leave_alert_footer for user {}: {} -> {} chars", user_id, s.len(), truncated.len());
                     }
                     truncated
                 }).filter(|s| !s.is_empty());
 
                 // If truncation occurred, update the database  
-                let alert_truncated        = raw_alert_desc        .as_ref().map(|s| truncate_alert_message(s).len() < s.len()).unwrap_or(false);
-                let leave_truncated        = raw_leave_alert_desc  .as_ref().map(|s| truncate_alert_message(s).len() < s.len()).unwrap_or(false);
+                let alert_truncated        = raw_join_alert        .as_ref().map(|s| truncate_alert_message(s).len() < s.len()).unwrap_or(false);
+                let leave_truncated        = raw_leave_alert  .as_ref().map(|s| truncate_alert_message(s).len() < s.len()).unwrap_or(false);
                 let footer_truncated       = raw_alert_footer      .as_ref().map(|s| truncate_footer_text(s)  .len() < s.len()).unwrap_or(false);
                 let leave_footer_truncated = raw_leave_alert_footer.as_ref().map(|s| truncate_footer_text(s)  .len() < s.len()).unwrap_or(false);
 
                 if alert_truncated {
-                    let _ = sqlx::query("UPDATE users SET alert_desc = ? WHERE user_id = ?")
-                        .bind(&alert_desc)
+                    let _ = sqlx::query("UPDATE users SET join_alert = ? WHERE user_id = ?")
+                        .bind(&join_alert)
                         .bind(user_id.get() as i64)
                         .execute(&self.pool)
                         .await;
                 }
 
                 if leave_truncated {
-                    let _ = sqlx::query("UPDATE users SET leave_alert_desc = ? WHERE user_id = ?")
-                        .bind(&leave_alert_desc)
+                    let _ = sqlx::query("UPDATE users SET leave_alert = ? WHERE user_id = ?")
+                        .bind(&leave_alert)
                         .bind(user_id.get() as i64)
                         .execute(&self.pool)
                         .await;
                 }
 
                 if footer_truncated {
-                    let _ = sqlx::query("UPDATE users SET alert_footer_text = ? WHERE user_id = ?")
-                        .bind(&alert_footer_text)
+                    let _ = sqlx::query("UPDATE users SET join_alert_footer = ? WHERE user_id = ?")
+                        .bind(&join_alert_footer)
                         .bind(user_id.get() as i64)
                         .execute(&self.pool)
                         .await;
                 }
 
                 if leave_footer_truncated {
-                    let _ = sqlx::query("UPDATE users SET leave_alert_footer_text = ? WHERE user_id = ?")
-                        .bind(&leave_alert_footer_text)
+                    let _ = sqlx::query("UPDATE users SET leave_alert_footer = ? WHERE user_id = ?")
+                        .bind(&leave_alert_footer)
                         .bind(user_id.get() as i64)
                         .execute(&self.pool)
                         .await;
                 }
 
                 Ok(UserSettings {
-                    expiry_duration:              Duration::from_secs((minutes as u64) * 60),
-                    join_announcement:            row.try_get::<i64, _>("join_announcement").unwrap_or(0) != 0,
-                    vc_auto_leave:                      row.try_get::<i64, _>("vc_disconnect_on_leave").unwrap_or(1) != 0,
-                    vc_auto_join:                row.try_get::<i64, _>("vc_auto_queue").unwrap_or(1) != 0,
-                    announcement_color:           row.try_get("announcement_color").unwrap_or(3447003),
-                    dm_alerts:                    row.try_get::<i64, _>("dm_enabled").unwrap_or(1) != 0,
-                    notify_quota_threshold:       row.try_get::<i64, _>("notify_quota_threshold").ok().map(|v| v as u8),
-                    alert_desc,
-                    alert_footer_text,
-                    alert_footer_icon:            row.try_get::<String, _>("alert_footer_icon").ok().filter(|s| !s.is_empty()),
-                    alert_footer_thumbnail:       row.try_get::<String, _>("alert_footer_thumbnail").ok().filter(|s| !s.is_empty()),
-                    leave_alert:                  row.try_get::<i64, _>("leave_alert").unwrap_or(0) != 0,
-                    leave_alert_desc,
-                    leave_alert_footer_text,
-                    leave_alert_footer_icon:      row.try_get::<String, _>("leave_alert_footer_icon").ok().filter(|s| !s.is_empty()),
-                    leave_alert_footer_thumbnail: row.try_get::<String, _>("leave_alert_footer_thumbnail").ok().filter(|s| !s.is_empty()),
-                    group_quota_thresholds:        std::collections::HashMap::new(),
+                    pm_hot_alert:             row.try_get::<i64, _>   ("pm_hot_alert")            .unwrap_or(1) != 0,
+                    timeout:                  row.try_get::<u8, _>    ("timeout")                 .unwrap_or(DEFAULT_TIMEOUT),
+                    vc_auto_join:             row.try_get::<i64, _>   ("vc_auto_join")            .unwrap_or(1) != 0,
+                    join_alert_title:         row.try_get::<String, _>("join_alert_title")        .ok().filter(|s| !s.is_empty()),
+                    join_alert_desc:          row.try_get::<String, _>("join_alert_desc")         .ok().filter(|s| !s.is_empty()),
+                    join_alert_color:         row.try_get::<u32, _>   ("join_alert_color")        .unwrap_or(DEFAULT_ALERT_COLOR),
+                    join_alert_img:           row.try_get::<String, _>("join_alert_img")          .ok().filter(|s| !s.is_empty()),
+                    join_alert_footer:        row.try_get::<String, _>("join_alert_footer")       .ok().filter(|s| !s.is_empty()),
+                    join_alert_footer_img:    row.try_get::<String, _>("join_alert_footer_img")   .ok().filter(|s| !s.is_empty()),
+                    vc_auto_leave:            row.try_get::<i64, _>   ("vc_auto_leave")           .unwrap_or(1) != 0,
+                    leave_alert_title:        row.try_get::<String, _>("leave_alert_title")       .ok().filter(|s| !s.is_empty()),
+                    leave_alert_desc:         row.try_get::<String, _>("leave_alert_desc")        .ok().filter(|s| !s.is_empty()),
+                    leave_alert_color:        row.try_get::<u32, _>   ("leave_alert_color")       .unwrap_or(DEFAULT_ALERT_COLOR),
+                    leave_alert_img:          row.try_get::<String, _>("leave_alert_img")         .ok().filter(|s| !s.is_empty()),
+                    leave_alert_footer:       row.try_get::<String, _>("leave_alert_footer")      .ok().filter(|s| !s.is_empty()),
+                    leave_alert_footer_img:   row.try_get::<String, _>("leave_alert_footer_img")  .ok().filter(|s| !s.is_empty()),
                 })
             }
             None => {
@@ -449,44 +423,42 @@ impl UserRepository {
         // Ensure user exists
         let _ = self.check_user(user_id, None).await?;
 
-        let timeout_length = (settings.expiry_duration.as_secs() / 60) as i64;
-        
         sqlx::query(
             "UPDATE users SET
-                timeout_length = ?,
-                join_announcement = ?,
-                vc_disconnect_on_leave = ?,
-                vc_auto_queue = ?,
-                announcement_color = ?,
-                dm_enabled = ?,
-                notify_quota_threshold = ?,
-                alert_desc = ?,
-                alert_footer_text = ?,
-                alert_footer_icon = ?,
-                alert_footer_thumbnail = ?,
-                leave_alert = ?,
-                leave_alert_desc = ?,
-                leave_alert_footer_text = ?,
-                leave_alert_footer_icon = ?,
-                leave_alert_footer_thumbnail = ?
-             WHERE user_id = ?"
+                pm_hot_alert           = ?,
+                timeout                = ?,
+                vc_auto_join           = ?,
+                join_alert_title       = ?,
+                join_alert_desc        = ?,
+                join_alert_color       = ?,
+                join_alert_img         = ?,
+                join_alert_footer      = ?,
+                join_alert_footer_img  = ?,
+                vc_auto_leave          = ?,
+                leave_alert_title      = ?,
+                leave_alert_desc       = ?,
+                leave_alert_color      = ?,
+                leave_alert_img        = ?,
+                leave_alert_footer     = ?,
+                leave_alert_footer_img = ?
+                WHERE user_id          = ?"
         )
-        .bind(timeout_length)
-        .bind(if settings.join_announcement { 1 } else { 0 })
-        .bind(if settings.vc_auto_leave { 1 } else { 0 })
-        .bind(if settings.vc_auto_join { 1 } else { 0 })
-        .bind(settings.announcement_color)
-        .bind(if settings.dm_alerts { 1 } else { 0 })
-        .bind(settings.notify_quota_threshold.map(|v| v as i64))
-        .bind(&settings.alert_desc)
-        .bind(&settings.alert_footer_text)
-        .bind(&settings.alert_footer_icon)
-        .bind(&settings.alert_footer_thumbnail)
-        .bind(if settings.leave_alert { 1 } else { 0 })
+        .bind(settings.pm_hot_alert)
+        .bind(settings.timeout)
+        .bind(settings.vc_auto_join)
+        .bind(&settings.join_alert_title)
+        .bind(&settings.join_alert_desc)
+        .bind(settings.join_alert_color)
+        .bind(&settings.join_alert_img)
+        .bind(&settings.join_alert_footer)
+        .bind(&settings.join_alert_footer_img)
+        .bind(settings.vc_auto_leave)
+        .bind(&settings.leave_alert_title)
         .bind(&settings.leave_alert_desc)
-        .bind(&settings.leave_alert_footer_text)
-        .bind(&settings.leave_alert_footer_icon)
-        .bind(&settings.leave_alert_footer_thumbnail)
+        .bind(settings.leave_alert_color)
+        .bind(&settings.leave_alert_img)
+        .bind(&settings.leave_alert_footer)
+        .bind(&settings.leave_alert_footer_img)
         .bind(user_id.get() as i64)
         .execute(&self.pool)
         .await?;
@@ -500,7 +472,7 @@ impl UserRepository {
         let _ = self.check_user(user_id, None).await?;
 
         // Validate field name to prevent SQL injection
-        let allowed_fields = ["timeout_length", "join_announcement", "vc_disconnect_on_leave", "announcement_color", "dm_enabled"];
+        let allowed_fields = ["timeout", "join_alert", "vc_auto_leave", "join_alert_color", "pm_hot_alert"];
         if !allowed_fields.contains(&field) {
             return Err(anyhow::anyhow!("Invalid setting field: {}", field));
         }
@@ -519,46 +491,43 @@ impl UserRepository {
 /// User settings structure
 #[derive(Debug, Clone)]
 pub struct UserSettings {
-    pub expiry_duration:                Duration,
-    pub join_announcement:              bool,
-    pub vc_auto_leave:                        bool,
-    pub vc_auto_join:                  bool,
-    pub announcement_color:             i64,
-    pub dm_alerts:                      bool,
-    pub notify_quota_threshold:         Option<u8>, // Legacy field - kept for compatibility
-    pub group_quota_thresholds:         std::collections::HashMap<(u64, u8), u8>, // (guild_id, group_id) -> players_needed
-    pub alert_desc:                     Option<String>,
-    pub alert_footer_text:              Option<String>,
-    pub alert_footer_icon:              Option<String>,
-    pub alert_footer_thumbnail:         Option<String>,
-    pub leave_alert:                    bool,
-    pub leave_alert_desc:               Option<String>,
-    pub leave_alert_footer_text:        Option<String>,
-    pub leave_alert_footer_icon:        Option<String>,
-    pub leave_alert_footer_thumbnail:   Option<String>,
+    pub pm_hot_alert:             bool,
+    pub timeout:                  u8,
+    pub vc_auto_join:             bool,
+    pub join_alert_title:         Option<String>,
+    pub join_alert_desc:          Option<String>,
+    pub join_alert_color:         u32,
+    pub join_alert_img:           Option<String>,
+    pub join_alert_footer:        Option<String>,
+    pub join_alert_footer_img:    Option<String>,
+    pub vc_auto_leave:            bool,
+    pub leave_alert_title:        Option<String>,
+    pub leave_alert_desc:         Option<String>,
+    pub leave_alert_color:        u32,
+    pub leave_alert_img:          Option<String>,
+    pub leave_alert_footer:       Option<String>,
+    pub leave_alert_footer_img:   Option<String>,
 }
 
 impl Default for UserSettings {
     fn default() -> Self {
-        use crate::models::constants::EXPIRY_DEFAULT;
         Self {
-            expiry_duration:              EXPIRY_DEFAULT, // 120 minutes
-            join_announcement:            false,
-            vc_auto_leave:                false,
-            vc_auto_join:                 false,
-            announcement_color:           3447003, // Discord blurple
-            dm_alerts:                    true,
-            notify_quota_threshold:       None,
-            group_quota_thresholds:       std::collections::HashMap::new(),
-            alert_desc:                   None,
-            alert_footer_text:            None,
-            alert_footer_icon:            None,
-            alert_footer_thumbnail:       None,
-            leave_alert:                  false,
-            leave_alert_desc:             None,
-            leave_alert_footer_text:      None,
-            leave_alert_footer_icon:      None,
-            leave_alert_footer_thumbnail: None,
+            pm_hot_alert:             false,
+            timeout:                  DEFAULT_TIMEOUT,
+            vc_auto_join:             false,
+            join_alert_title:         None,
+            join_alert_desc:          None,
+            join_alert_color:         DEFAULT_ALERT_COLOR,
+            join_alert_img:           None,
+            join_alert_footer:        None,
+            join_alert_footer_img:    None,
+            vc_auto_leave:            false,
+            leave_alert_title:        None,
+            leave_alert_desc:         None,
+            leave_alert_color:        DEFAULT_ALERT_COLOR,
+            leave_alert_img:          None,
+            leave_alert_footer:       None,
+            leave_alert_footer_img:   None,
         }
     }
 }

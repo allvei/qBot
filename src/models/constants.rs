@@ -1,27 +1,23 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serenity::all::VoiceState;
 use sqlx::FromRow;
 
-use crate::Elo;
-
 use super::types::Rank;
 
 pub const DEFAULT_RANK: Rank = Rank::Apprentice;
-
-pub const ACTIVE_ELO_ENABLED_BY_DEFAULT: bool     = false;
-pub const DEFAULT_QUOTA:                 u8       = 8;
-pub const DEFAULT_HOT_JOIN_TIMEOUT:      u16      = 120; // Seconds for players to join VC when queue goes hot
-pub const DEFAULT_QUEUE_CHANNEL:         u64      = 0;
-pub const CLEANUP_INTERVAL_SECS:         u64      = 60;  // Check every minute
-pub const INACTIVITY_TIMEOUT_SECS:       u64      = 600; // 10 minutes
-pub const EXPIRY_DEFAULT:                Duration = Duration::from_secs(120 * 60);    // 120 minutes default user queue expiry
-pub const EXPIRY_MAX:                    Duration = Duration::from_secs(4 * 60 * 60); // 4 hours
-pub const EXPIRY_MIN:                    Duration = Duration::from_secs(30 * 60);     // 30 minutes
+pub const DEFAULT_ALERT_COLOR:      u32  = 3447003;
+pub const DEFAULT_ACTIVE_ELO:       bool = false;
+pub const DEFAULT_QUOTA:            u8   = 8;
+pub const DEFAULT_HOT_JOIN_TIMEOUT: u16  = 120; // Seconds for players to join VC when queue goes hot
+pub const CLEANUP_INTERVAL_SECS:    u64  = 60;  // Check every minute
+pub const INACTIVITY_TIMEOUT_SECS:  u64  = 600; // 10m
+pub const DEFAULT_TIMEOUT:          u8   = 120; // 2h default user queue expiry
+pub const MAX_TIMEOUT:              u8   = 240; // 4h max user queue expiry
+pub const MIN_TIMEOUT:              u8   = 30;  // 30m min user queue expiry
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct ConfigFormat {

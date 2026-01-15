@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Error, Result};
 use std::{collections::HashSet, sync::Arc, time::{Duration, SystemTime}};
-use crate::{QueueToggleType, log_queue_toggle, models::constants::DEFAULT_HOT_JOIN_TIMEOUT};
+use crate::{DEFAULT_TIMEOUT, QueueToggleType, log_queue_toggle, models::constants::DEFAULT_HOT_JOIN_TIMEOUT};
 use serenity::{all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
     CreateEmbed as CE, CreateMessage as CM, CreateInteractionResponse as CIR,
@@ -386,18 +386,17 @@ impl Group {
                         if player.in_queue_vc {
                             timers_field.push_str("In voice\n");
                         } else {
-                            // Use per-instance expiry_duration if set, otherwise get user's setting
-                            let expiry_duration = if let Some(duration) = player.expiry_duration {
-                                duration
-                            } else if let Ok(settings) = db.users.get_prefs(player.player.user_id).await {
-                                settings.expiry_duration
+                            // Use per-instance timeout if set, otherwise get user's setting
+                            let timeout = player.timeout;
+                            if let Ok(settings) = db.users.get_prefs(player.player.user_id).await {
+                                settings.timeout
                             } else {
-                                std::time::Duration::ZERO
+                                DEFAULT_TIMEOUT
                             };
 
-                            if expiry_duration.as_secs() > 0 {
+                            if timeout > 0 {
                                 if let Ok(join_time) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
-                                    let expiry_timestamp = join_time.as_secs() + expiry_duration.as_secs();
+                                    let expiry_timestamp = join_time.as_secs() + timeout as u64;
                                     timers_field.push_str(&format!("<t:{}:R>\n", expiry_timestamp));
                                 } else {
                                     timers_field.push_str("-\n");
@@ -729,12 +728,6 @@ impl Group {
             if let Err(e) = self.queue_player(player, discord_rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
                 warn!("Failed to queue player: {e}");
             } else {
-                // Check and send DM alerts if threshold is met
-                if let Err(e) = self.check_and_send_dm_alerts(cc.ctx, &cc.db).await {
-                    warn!("Failed to send DM alerts: {e}");
-                }
-                
-                //
                 // Log successful queue join via button
                 let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
                 let group_name = cc.ctx.cache.channel(dashboard_channel)
@@ -746,9 +739,9 @@ impl Group {
                 // Send join announcement using shared function
                 if let Ok(settings) = cc.db.users.get_prefs(user_id).await {
                     use serenity::all::CreateMessage;
-                    use crate::handlers::settings::build_join_announcement_embed;
+                    use crate::handlers::settings::build_join_alert_embed;
 
-                    let embed = build_join_announcement_embed(
+                    let embed = build_join_alert_embed(
                         cc.ctx,
                         user_id,
                         Some(guild_id),
@@ -1157,11 +1150,11 @@ impl Group {
         
         // Parse duration string
         let duration = match duration_str {
-            Some("30m") => std::time::Duration::from_secs(30 * 60),
-            Some("1h")  => std::time::Duration::from_secs(60 * 60),
-            Some("2h")  => std::time::Duration::from_secs(2 * 60 * 60),
-            Some("3h")  => std::time::Duration::from_secs(3 * 60 * 60),
-            Some("4h")  => std::time::Duration::from_secs(4 * 60 * 60),
+            Some("30m") => 30,
+            Some("1h")  => 60,
+            Some("2h")  => 120,
+            Some("3h")  => 180,
+            Some("4h")  => 240,
             _ => {
                 cc.reply("Invalid expiry duration.").await?;
                 return Ok(());
@@ -1172,7 +1165,7 @@ impl Group {
         let mut found = false;
         for session in self.sessions.iter_mut() {
             if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
-                player.expiry_duration = Some(duration);
+                player.timeout = duration;
                 found = true;
                 break;
             }

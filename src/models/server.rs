@@ -3,12 +3,12 @@
 //! This module defines the Server struct and its related functionality.
 //! A Server represents a Discord guild with associated groups and games.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use std::time::SystemTime;
 
 use tokio::sync::Mutex;
 use anyhow::{anyhow, Error, Result};
-use crate::{Database as DB, GREEN, Manager, ORANGE, Rank, models::constants::{ACTIVE_ELO_ENABLED_BY_DEFAULT, DEFAULT_HOT_JOIN_TIMEOUT, EXPIRY_MAX, EXPIRY_MIN}};
+use crate::{Database as DB, GREEN, Manager, ORANGE, Rank, models::constants::{DEFAULT_ACTIVE_ELO, DEFAULT_HOT_JOIN_TIMEOUT, MAX_TIMEOUT, MIN_TIMEOUT}};
 use serde::{Deserialize, Serialize};
 use serenity::{all::{
     ChannelId as CI, Context, CreateEmbed,
@@ -112,11 +112,11 @@ impl Server {
             Ok(Some(value)) => {
                 match value.parse::<bool>() {
                     Ok(enabled) => Ok(enabled),
-                    Err(_) => Ok(ACTIVE_ELO_ENABLED_BY_DEFAULT),
+                    Err(_) => Ok(DEFAULT_ACTIVE_ELO),
                 }
             }
-            Ok(None) => Ok(ACTIVE_ELO_ENABLED_BY_DEFAULT),
-            Err(_) => Ok(ACTIVE_ELO_ENABLED_BY_DEFAULT),
+            Ok(None) => Ok(DEFAULT_ACTIVE_ELO),
+            Err(_) => Ok(DEFAULT_ACTIVE_ELO),
         }
     }
 }
@@ -251,40 +251,7 @@ impl Group {
         self.sessions.iter().position(|s| std::ptr::eq(s, session))
     }
 
-    /// Check and send DM alerts when queue reaches threshold
-    pub async fn check_and_send_dm_alerts(&self, ctx: &serenity::all::Context, db: &crate::Database) -> Result<()> {
-        // Get the current queue size from the first inactive session
-        if let Some(session) = self.get_inactives().first() {
-            let current_size = session.pool.len() as u8;
-            
-            // Check all users in the session for their personal alert preferences
-            for session_player in &session.pool {
-                let user_id = session_player.player.user_id;
-                
-                // Get user's personal settings
-                if let Ok(user_settings) = db.users.get_prefs(user_id).await {
-                    // Check if user has DM alerts enabled
-                    if user_settings.dm_alerts {
-                        // Check for per-group threshold first, then fallback to legacy
-                        let user_threshold = user_settings.group_quota_thresholds
-                            .get(&(self.guild_id.get(), self.group_id))
-                            .or(user_settings.notify_quota_threshold.as_ref());
-                        
-                        if let Some(threshold) = user_threshold {
-                            // Check if we've reached or exceeded the user's threshold
-                            if current_size >= *threshold {
-                                if let Err(e) = self.send_personal_dm_alert(ctx, user_id, current_size, *threshold).await {
-                                    warn!("Failed to send DM alert to user {}: {}", user_id, e);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
-        Ok(())
-    }
 
     /// Send a personal DM alert to a specific user based on their threshold
     async fn send_personal_dm_alert(&self, ctx: &serenity::all::Context, user_id: serenity::all::UserId, current_size: u8, user_threshold: u8) -> Result<()> {
@@ -296,17 +263,14 @@ impl Group {
             .unwrap_or_else(|| "Unknown".to_string());
 
         let embed = CreateEmbed::new()
-            .title("🎮 Queue Alert")
+            .title("Game ready!")
             .description(format!(
-                "The queue for **{}** in **{}** now has **{}/{}** players!",
+                "**{}** is ready in **{}** with **{}** players!",
                 self.display_name(),
                 guild_name,
-                current_size,
-                self.quota
+                current_size
             ))
-            .color(0x00FF00) // Green color
-            .field("Players Needed", format!("{}", self.quota.saturating_sub(current_size)), true)
-            .field("Your Threshold", format!("{} players", user_threshold), true)
+            .color(GREEN) // Green color
             .footer(CreateEmbedFooter::new("You're getting this because you set a quota alert in your preferences!"));
 
         user.direct_message(&ctx.http, CreateMessage::new().embed(embed)).await?;
@@ -459,12 +423,12 @@ impl Group {
             let mut players_to_remove = Vec::new();
 
             for player in &session.pool {
-                // Use per-instance expiry_duration if set, otherwise get user's setting
-                let expiry_duration = if let Some(duration) = player.expiry_duration {
+                // Use per-instance timeout if set, otherwise get user's setting
+                let timeout = if let duration = player.timeout {
                     duration
                 } else {
                     match db.users.get_prefs(player.player.user_id).await {
-                        Ok(settings) => settings.expiry_duration,
+                        Ok(settings) => settings.timeout,
                         Err(_) => {
                             // If we can't get settings, skip this player
                             continue;
@@ -473,20 +437,20 @@ impl Group {
                 };
 
                 // Clamp to valid range (EXPIRY_MIN to EXPIRY_MAX)
-                let expiry_secs = expiry_duration.as_secs().clamp(EXPIRY_MIN.as_secs(), EXPIRY_MAX.as_secs());
+                let expiry_mins = timeout.clamp(MIN_TIMEOUT, MAX_TIMEOUT);
 
                 // Skip if timeout is disabled (below EXPIRY_MIN)
-                if expiry_secs < EXPIRY_MIN.as_secs() {
+                if expiry_mins < MIN_TIMEOUT {
                     continue;
                 }
 
                 // Check if player has exceeded their timeout time
                 if let Ok(elapsed) = SystemTime::now().duration_since(player.joined_at) {
-                    if elapsed.as_secs() >= expiry_secs {
+                    if elapsed.as_secs() >= Duration::from_mins(expiry_mins as u64).as_secs() {
                         info!("Auto-removing player {} after {} seconds (limit: {})",
                             player.player.tag,
                             elapsed.as_secs(),
-                            expiry_secs
+                            expiry_mins
                         );
                         players_to_remove.push(player.player.user_id);
                     }
@@ -850,77 +814,19 @@ impl Group {
         db: Option<&DB>,
         manager: Option<Arc<Mutex<Manager>>>,
     ) -> Result<()> {
-        //
         let queue_ctx = QueueContext { ctx, guild_id, db, manager };
         self.queue_player_with_vc_status(player, rank, queue_ctx, false).await
     }
 
     pub async fn queue_player_with_vc_status(&mut self, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
-        let player_id = player.user_id;
-        let quota = self.quota as usize;
         let session = self.get_queue().await?;
 
-        //
         if in_vc {session.add_player_in_vc(player);}
         else {session.add_player(player);}
 
-        let current_count = session.pool.len();
-        //
-
-        //
-        // Check for near-quota notifications
-        if let Some(db) = queue_ctx.db {
-            let slots_remaining = quota.saturating_sub(current_count);
-
-            // Send near-quota notifications to users who have the threshold set
-            if slots_remaining > 0 && slots_remaining <= 5 {
-                // Get all users with notification preferences
-                for session_player in &session.pool {
-                    // Skip the player who just joined
-                    if session_player.player.user_id == player_id {
-                        continue;
-                    }
-
-                    if let Ok(settings) = db.users.get_prefs(session_player.player.user_id).await {
-                        if let Some(threshold) = settings.notify_quota_threshold {
-                            if slots_remaining <= threshold as usize {
-                                // Send DM notification
-                                if let Ok(user) = queue_ctx.ctx.http.get_user(session_player.player.user_id).await {
-                                    use serenity::all::{CreateEmbed, CreateMessage};
-
-                                    let embed = CreateEmbed::new()
-                                        .title("Queue Almost Ready!")
-                                        .description(format!(
-                                            "The queue is {} player{} away from starting!\nCurrent: {}/{}",
-                                            slots_remaining,
-                                            if slots_remaining == 1 { "" } else { "s" },
-                                            current_count,
-                                            quota
-                                        ))
-                                        .color(ORANGE); // Orange
-
-                                    let _ = user.direct_message(&queue_ctx.ctx.http, CreateMessage::new().embed(embed)).await;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        //
-        // Session borrow ends here
-
-        // Queue count now only displayed in dashboard
-
-        //
         if self.is_quota() {
-            //
             self.hot(queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager).await?;
-            //
-        } else {
-            //
         }
-        //
         Ok(())
     }
 
@@ -1034,7 +940,7 @@ impl Group {
     /// Notifies the queue chat that quota has been met
     /// Only pings players who are NOT in the voice channel yet
     /// Only pings the first 'quota' players, not extras queued for next match
-    /// Also sends DMs to players who have dm_enabled=true
+    /// Also sends DMs to players who have pm_hot_alert=true
     pub async fn notify(&mut self, ctx: &Context, guild_id: GI, db: Option<&DB>) {
         // Validate VC status before sending notifications to prevent desync
         // This ensures we only ping players who are actually not in VC
@@ -1071,11 +977,11 @@ impl Group {
         let msg = CM::new().embed(embed).content(content);
         let _ = queue_chat.send_message(&ctx.http, msg).await;
 
-        // Send DMs to users who have dm_enabled=true
+        // Send DMs to users who have pm_hot_alert=true
         if let Some(database) = db {
             for user_id in players_to_dm {
                 // Check if user has DM notifications enabled
-                match database.users.get_dm_enabled(user_id).await {
+                match database.users.get_pm_hot_alert(user_id).await {
                     Ok(true) => {
                         // Send DM
                         if let Ok(user) = ctx.http.get_user(user_id).await {

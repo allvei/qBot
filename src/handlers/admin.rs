@@ -1692,7 +1692,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
     };
 
     info!("DEBUG: User {} - Guild ELO: {}, Rank: {}, Games: {}, Wins: {}", 
-          user_id, guild_elo.elo, guild_elo.division.name(), guild_elo.games, guild_elo.wins);
+          user_id, guild_elo.elo, guild_elo.rank.name(), guild_elo.games, guild_elo.wins);
 
     // Get user info - if no user provided, we can't continue
     let user_info = user.ok_or_else(|| {
@@ -1712,7 +1712,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
     embed = embed.field("ELO Rating", format!("**{}**", guild_elo.elo), true);
 
     // Rank information
-    embed = embed.field("Rank", format!("**{}**", guild_elo.division.name()), true);
+    embed = embed.field("Rank", format!("**{}**", guild_elo.rank.name()), true);
 
     // Stats
     let win_rate = if guild_elo.games > 0 {
@@ -1780,9 +1780,9 @@ pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
     
     // Check current status
     let is_enabled = match cc.db.config.get_config_item("active_elo_enabled", guild_id).await {
-        Ok(Some(value)) => value.parse::<bool>().unwrap_or(crate::ACTIVE_ELO_ENABLED_BY_DEFAULT),
-        Ok(None) => crate::ACTIVE_ELO_ENABLED_BY_DEFAULT,
-        Err(_) => crate::ACTIVE_ELO_ENABLED_BY_DEFAULT,
+        Ok(Some(value)) => value.parse::<bool>().unwrap_or(crate::DEFAULT_ACTIVE_ELO),
+        Ok(None) => crate::DEFAULT_ACTIVE_ELO,
+        Err(_) => crate::DEFAULT_ACTIVE_ELO,
     };
 
     let status_embed = CE::new()

@@ -15,7 +15,7 @@ pub async fn cmd_toggle_dm(cc: &CC<'_>) -> Result<()> {
     let user_id = cc.intax.user.id;
 
     // Toggle the DM preference
-    let new_state = cc.db.users.toggle_dm_enabled(user_id).await?;
+    let new_state = cc.db.users.toggle_pm_hot_alert(user_id).await?;
 
     let (status_text, status_emoji) = if new_state {
         ("enabled", "🔔")
@@ -98,7 +98,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
         username,
         steam_id: player.steam_id,
         elo:      guild_elo.elo,
-        division: guild_elo.division.name().to_string(),
+        rank: guild_elo.rank.name().to_string(),
         games:    guild_elo.games,
         wins:     guild_elo.wins,
     };

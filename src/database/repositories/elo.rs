@@ -8,7 +8,7 @@ use crate::Rank;
 #[derive(Debug, Clone)]
 pub struct GuildElo {
     pub elo:      u16,
-    pub division: Rank,
+    pub rank: Rank,
     pub games:    u32,
     pub wins:     u32,
 }
@@ -17,7 +17,7 @@ impl Default for GuildElo {
     fn default() -> Self {
         Self {
             elo:      50,
-            division: Rank::Apprentice,
+            rank: Rank::Apprentice,
             games:    0,
             wins:     0,
         }
@@ -37,7 +37,7 @@ impl EloRepository {
     /// Get a player's ELO for a specific guild (returns None if no record exists)
     pub async fn get_if_exists(&self, user_id: UI, guild_id: GI) -> Result<Option<GuildElo>> {
         let result = sqlx::query(
-            "SELECT elo, division, games, wins FROM elos WHERE guild_id = ? AND user_id = ?"
+            "SELECT elo, rank, games, wins FROM elo WHERE guild_id = ? AND user_id = ?"
         )
         .bind(guild_id.get() as i64)
         .bind(user_id.get() as i64)
@@ -46,16 +46,16 @@ impl EloRepository {
 
         match result {
             Some(row) => {
-                let elo:          i64    = row.get("elo");
-                let division_str: String = row.get("division");
-                let games:        i64    = row.get("games");
-                let wins:         i64    = row.get("wins");
+                let elo:      i64    = row.get("elo");
+                let rank_str: String = row.get("rank");
+                let games:    i64    = row.get("games");
+                let wins:     i64    = row.get("wins");
 
                 Ok(Some(GuildElo {
-                    elo:      elo   as u16,
-                    division: Self::parse_division(&division_str),
-                    games:    games as u32,
-                    wins:     wins  as u32,
+                    elo:   elo   as u16,
+                    rank:  Self::parse_rank(&rank_str),
+                    games: games as u32,
+                    wins:  wins  as u32,
                 }))
             }
             None => Ok(None),
@@ -68,26 +68,26 @@ impl EloRepository {
     }
 
     /// Set a player's ELO for a specific guild (creates if not exists)
-    pub async fn set(&self, user_id: UI, guild_id: GI, elo: u16, division: Rank) -> Result<()> {
+    pub async fn set(&self, user_id: UI, guild_id: GI, elo: u16, rank: Rank) -> Result<()> {
         sqlx::query(
-            "INSERT INTO elos (guild_id, user_id, elo, division)
+            "INSERT INTO elo (guild_id, user_id, elo, rank)
              VALUES (?, ?, ?, ?)
-             ON CONFLICT(guild_id, user_id) DO UPDATE SET elo = excluded.elo, division = excluded.division"
+             ON CONFLICT(guild_id, user_id) DO UPDATE SET elo = excluded.elo, rank = excluded.rank"
         )
         .bind(guild_id.get() as i64)
         .bind(user_id.get() as i64)
         .bind(elo as i64)
-        .bind(division.name())
+        .bind(rank.name())
         .execute(&self.pool)
         .await?;
 
         Ok(())
     }
 
-    /// Update only the ELO value (division will be recalculated)
+    /// Update only the ELO value (rank will be recalculated)
     pub async fn update_elo(&self, user_id: UI, guild_id: GI, elo: u16) -> Result<()> {
-        let division = Rank::from_elo_default(elo);
-        self.set(user_id, guild_id, elo, division).await
+        let rank = Rank::from_elo_default(elo);
+        self.set(user_id, guild_id, elo, rank).await
     }
 
     /// Record a game result and update ELO
@@ -96,24 +96,24 @@ impl EloRepository {
         let current = self.get(user_id, guild_id).await?;
         
         // Calculate new ELO
-        let new_elo      = (current.elo as i32 + elo_change as i32) as u16;
-        let new_division = Rank::from_elo_default(new_elo);
-        let new_games    = current.games + 1;
-        let new_wins     = if won { current.wins + 1 } else { current.wins };
+        let new_elo   = (current.elo as i32 + elo_change as i32) as u16;
+        let new_rank  = Rank::from_elo_default(new_elo);
+        let new_games = current.games + 1;
+        let new_wins  = if won { current.wins + 1 } else { current.wins };
 
         sqlx::query(
-            "INSERT INTO elos (guild_id, user_id, elo, division, games, wins)
+            "INSERT INTO elo (guild_id, user_id, elo, rank, games, wins)
              VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT(guild_id, user_id) DO UPDATE SET 
                 elo      = excluded.elo, 
-                division = excluded.division,
+                rank = excluded.rank,
                 games    = excluded.games,
                 wins     = excluded.wins"
         )
         .bind(guild_id.get() as i64)
         .bind(user_id.get()  as i64)
         .bind(new_elo        as i64)
-        .bind(new_division.name())
+        .bind(new_rank.name())
         .bind(new_games      as i64)
         .bind(new_wins       as i64)
         .execute(&self.pool)
@@ -121,7 +121,7 @@ impl EloRepository {
 
         Ok(GuildElo {
             elo:      new_elo,
-            division: new_division,
+            rank: new_rank,
             games:    new_games,
             wins:     new_wins,
         })
@@ -130,8 +130,8 @@ impl EloRepository {
     /// Get all ELO records for a user across all guilds
     pub async fn get_all_for_user(&self, user_id: UI) -> Result<Vec<(u64, GuildElo)>> {
         let rows = sqlx::query(
-            "SELECT guild_id, elo, division, games, wins 
-             FROM elos 
+            "SELECT guild_id, elo, rank, games, wins 
+             FROM elo 
              WHERE user_id = ?"
         )
         .bind(user_id.get() as i64)
@@ -142,7 +142,7 @@ impl EloRepository {
         for row in rows {
             let guild_id:     i64    = row.get("guild_id");
             let elo:          i64    = row.get("elo");
-            let division_str: String = row.get("division");
+            let rank_str: String = row.get("rank");
             let games:        i64    = row.get("games");
             let wins:         i64    = row.get("wins");
 
@@ -150,7 +150,7 @@ impl EloRepository {
                 guild_id as u64,
                 GuildElo {
                     elo:      elo as u16,
-                    division: Self::parse_division(&division_str),
+                    rank: Self::parse_rank(&rank_str),
                     games:    games as u32,
                     wins:     wins as u32,
                 },
@@ -163,8 +163,8 @@ impl EloRepository {
     /// Get leaderboard for a guild (top N players by ELO)
     pub async fn get_leaderboard(&self, guild_id: GI, limit: u32) -> Result<Vec<(UI, GuildElo)>> {
         let rows = sqlx::query(
-            "SELECT user_id, elo, division, games, wins 
-             FROM elos 
+            "SELECT user_id, elo, rank, games, wins 
+             FROM elo 
              WHERE guild_id = ? 
              ORDER BY elo DESC 
              LIMIT ?"
@@ -178,7 +178,7 @@ impl EloRepository {
         for row in rows {
             let user_id:      i64    = row.get("user_id");
             let elo:          i64    = row.get("elo");
-            let division_str: String = row.get("division");
+            let rank_str: String = row.get("rank");
             let games:        i64    = row.get("games");
             let wins:         i64    = row.get("wins");
 
@@ -186,7 +186,7 @@ impl EloRepository {
                 UI::new(user_id as u64),
                 GuildElo {
                     elo:      elo as u16,
-                    division: Self::parse_division(&division_str),
+                    rank: Self::parse_rank(&rank_str),
                     games:    games as u32,
                     wins:     wins as u32,
                 },
@@ -196,8 +196,8 @@ impl EloRepository {
         Ok(results)
     }
 
-    /// Parse division string to Rank enum
-    fn parse_division(s: &str) -> Rank {
+    /// Parse rank string to Rank enum
+    fn parse_rank(s: &str) -> Rank {
         match s {
             "Beginner"     => Rank::Beginner,
             "Newcomer"     => Rank::Newcomer,
