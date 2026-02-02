@@ -360,7 +360,7 @@ impl Group {
                     description.push_str(&format!("**Queue ({queue_players}/{quota})**\n"));
 
                     if queue_players == 0 {
-                        description.push_str("*No players in queue. Join to get started!*\n");
+                        description.push_str("*No players in queue.\nJoin to get started!*\n");
                     }
                     description.push('\n');
                 }
@@ -1050,8 +1050,8 @@ impl Group {
         };
 
         embed = embed
-            .field(format!("🔴 RED (avg {})", red_avg_elo), format_team(&team_red), true)
-            .field(format!("🔵 BLU (avg {})", blu_avg_elo), format_team(&team_blu), true);
+            .field(format!("🔴 RED ‹**{}**›", red_avg_elo), format_team(&team_red), true)
+            .field(format!("🔵 BLU ‹**{}**›", blu_avg_elo), format_team(&team_blu), true);
 
         // Defer update now that we're going to end the match
         cc.defer_update().await?;
