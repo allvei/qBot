@@ -2,18 +2,19 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serenity::all::{
-    CommandInteraction, ComponentInteraction, Context,
-    CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM,
-    UserId, GuildId as GI,
+    CommandInteraction, ComponentInteraction, Context, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, GuildId as GI, RoleId as RI, UserId as UI
 };
+use sqlx::Row;
 use sqlx::prelude::{FromRow};
 use tokio::sync::Mutex;
+use tracing::{error, warn};
 
 use crate::RED;
 use crate::database::Database;
 use crate::models::{
     Manager as GameManager, Role,
 };
+use crate::repositories::elo;
 
 // ============================================================================
 // Command Contexts
@@ -108,18 +109,18 @@ pub type Elo = u16;
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 #[allow(clippy::missing_docs_in_private_items)]
 pub struct Player {
-    pub user_id:  UserId,
+    pub user_id:  UI,
     pub tag:      String,
     pub steam_id: Option<u64>,
-    pub rank:     Rank,
+    pub rank:     Option<Rank>,
     pub elo:      Elo,
     pub role:     Option<Role>,
 }
 
 impl Player {
-    pub fn default(user_id: UserId, tag: String, steam_id: Option<u64>) -> Player {
-        let rank = Rank::Apprentice;
-        let elo = rank.default_rank_elo();
+    
+    pub fn add(user_id: UI, tag: String, steam_id: Option<u64>, rank: Option<Rank>) -> Player {
+        let elo = rank.as_ref().map_or(50, |r| r.elo); // Default ELO if no rank
         Player {
             user_id,
             tag,
@@ -130,23 +131,13 @@ impl Player {
         }
     }
 
-    pub fn add(user_id: UserId, tag: String, steam_id: Option<u64>, rank: Rank) -> Player {
-        Player {
-            user_id,
-            tag,
-            steam_id,
-            rank,
-            elo:  rank.default_rank_elo(),
-            role: None,
-        }
-    }
-
     pub fn set_steam(&mut self, steam_id: Option<u64>) {
         self.steam_id = steam_id;
     }
 
     pub fn set_rank(&mut self, rank: Rank) {
-        self.rank = rank;
+        self.elo = rank.elo;
+        self.rank = Some(rank);
     }
 
     pub fn set_elo(&mut self, elo: Elo) {
@@ -155,12 +146,13 @@ impl Player {
 
     /// Update rank based on ELO using configurable values
     pub async fn update_rank_from_elo(&mut self, db: &Database, guild_id: GI) {
-            self.rank = Rank::from_elo(self.elo, db, guild_id).await;
-    }
-
-    /// Update rank based on ELO using default values (fallback)
-    pub fn update_rank_from_elo_default(&mut self) {
-        self.rank = Rank::from_elo_default(self.elo);
+        match Rank::from_elo(db, guild_id, self.elo).await {
+            Ok(rank) => {
+                self.elo = rank.elo;
+                self.rank = Some(rank);
+            },
+            Err(e) => warn!("Failed to update rank from ELO: {}", e),
+        }
     }
 
     pub fn set_role(&mut self, role: Option<Role>) {
@@ -172,163 +164,103 @@ impl Player {
         name.display_name().to_string()
     }
 }
-
-// ============================================================================
-// Rank
-// ============================================================================
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Rank {
-    Beginner,
-    Newcomer,
-    Novice,
-    Apprentice,
-    Journeyman,
-    Expert,
-    Master,
-    MasterElite,
-    Grandmaster,
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, PartialEq)]
+pub struct Rank {
+    pub guild_id: GI,
+    pub role_id:  RI,
+    pub name:     String,
+    pub elo:      u16,
 }
 
-#[allow(non_snake_case, unreachable_patterns)]
 impl Rank {
-    /// Get position index (0-8) for this rank
-    pub fn position(&self) -> u8 {
-        match self {
-            Rank::Beginner    => 0,
-            Rank::Newcomer    => 1,
-            Rank::Novice      => 2,
-            Rank::Apprentice  => 3,
-            Rank::Journeyman  => 4,
-            Rank::Expert      => 5,
-            Rank::Master      => 6,
-            Rank::MasterElite => 7,
-            Rank::Grandmaster => 8,
-        }
+    pub async fn get_user_rank(db: &Database, guild_id: GI, user_id: UI) -> Result<Self, anyhow::Error> {
+        let row = sqlx::query(
+            "SELECT r.guild_id, r.name, r.elo, r.role_id 
+             FROM elo e 
+             JOIN ranks r ON e.rank = r.role_id 
+             WHERE e.guild_id = ? AND e.user_id = ?"
+        )
+        .bind(guild_id.get() as i64)
+        .bind(user_id.get() as i64)
+        .fetch_one(&db.pool)
+        .await?;
+
+        Ok(Self {
+            guild_id: GI::new(row.get::<i64, _>(0) as u64),
+            name:     row.get(1),
+            elo:      row.get(2),
+            role_id:  RI::new(row.get::<i64, _>(3) as u64),
+        })
     }
 
-    /// Create rank from position index
-    pub fn from_position(position: u8) -> Option<Rank> {
-        match position {
-            0 => Some(Rank::Beginner),
-            1 => Some(Rank::Newcomer),
-            2 => Some(Rank::Novice),
-            3 => Some(Rank::Apprentice),
-            4 => Some(Rank::Journeyman),
-            5 => Some(Rank::Expert),
-            6 => Some(Rank::Master),
-            7 => Some(Rank::MasterElite),
-            8 => Some(Rank::Grandmaster),
-            _ => None,
-        }
+    pub async fn get_guild_default(db: &Database, guild_id: GI) -> Result<Rank, anyhow::Error> {
+        let row = sqlx::query(
+            "SELECT r.elo, r.name, r.role_id 
+             FROM config c 
+             JOIN ranks r ON c.default_rank = r.role_id 
+             WHERE c.guild_id = ?"
+        )
+        .bind(guild_id.get() as i64)
+        .fetch_one(&db.pool)
+        .await?;
+        
+        let elo:     u16    = row.get("elo");
+        let name:    String = row.get("name");
+        let role_id: RI     = RI::new(row.get::<i64, _>("role_id") as u64);
+        
+        Ok(Rank {
+            guild_id,
+            name,
+            elo,
+            role_id,
+        })
     }
 
-    /// Get default name for this rank (fallback when DB not available)
-    pub fn name(&self) -> &'static str {
-        match self {
-            Rank::Beginner    => "Beginner",
-            Rank::Newcomer    => "Newcomer",
-            Rank::Novice      => "Novice",
-            Rank::Apprentice  => "Apprentice",
-            Rank::Journeyman  => "Journeyman",
-            Rank::Expert      => "Expert",
-            Rank::Master      => "Master",
-            Rank::MasterElite => "Master Elite",
-            Rank::Grandmaster => "Grandmaster",
-        }
+    pub fn get_rank_elo(&self) -> u16 {
+        self.elo
+    }
+    
+    /// Get rank by name from database
+    pub async fn from_name(db: &Database, guild_id: GI, name: &str) -> Result<Rank, anyhow::Error> {
+        let row = sqlx::query(
+            "SELECT role_id, name, elo 
+             FROM ranks 
+             WHERE guild_id = ? AND LOWER(name) = LOWER(?)"
+        )
+        .bind(guild_id.get() as i64)
+        .bind(name)
+        .fetch_one(&db.pool)
+        .await?;
+        
+        Ok(Rank {
+            guild_id,
+            role_id: RI::new(row.get::<i64, _>("role_id") as u64),
+            name: row.get("name"),
+            elo: row.get("elo"),
+        })
     }
 
-    /// Get configurable name from DB, falling back to default
-    pub async fn name_from_db(&self, db: &Database, guild_id: GI) -> String {
-        if let Ok(Some(guild_rank)) = db.ranks.get_rank_by_name(guild_id, self.name()).await {
-            guild_rank.name
-        } else {
-            self.name().to_string()
-        }
-    }
+    pub async fn from_elo(db: &Database, guild_id: GI, elo: u16) -> Result<Rank, anyhow::Error> {
+        let rows = sqlx::query(
+            "SELECT role_id, name, elo 
+             FROM ranks 
+             WHERE guild_id = ? AND elo <= ?
+             ORDER BY elo DESC 
+             LIMIT 1"
+        )
+        .bind(guild_id.get() as i64)
+        .bind(elo as i64)
+        .fetch_optional(&db.pool)
+        .await?;
 
-    pub fn from_name(name: &str) -> Rank {
-        match name.to_lowercase().as_str() {
-            "beginner"     => Rank::Beginner,
-            "newcomer"     => Rank::Newcomer,
-            "novice"       => Rank::Novice,
-            "apprentice"   => Rank::Apprentice,
-            "journeyman"   => Rank::Journeyman,
-            "expert"       => Rank::Expert,
-            "master"       => Rank::Master,
-            "master elite" => Rank::MasterElite,
-            "grandmaster"  => Rank::Grandmaster,
-            _              => Rank::Journeyman, // Default fallback
-        }
-    }
-
-    /// Get default ELO for this rank (fallback when DB not available)
-    pub fn default_rank_elo(&self) -> Elo {
-        match self {
-            Rank::Beginner    => 10,
-            Rank::Newcomer    => 30,
-            Rank::Novice      => 40,
-            Rank::Apprentice  => 50,
-            Rank::Journeyman  => 65,
-            Rank::Expert      => 75,
-            Rank::Master      => 85,
-            Rank::MasterElite => 90,
-            Rank::Grandmaster => 95,
-        }
-    }
-
-    /// Get the next higher rank (for ELO comparison)
-    pub fn next_rank(&self) -> Option<Rank> {
-        match self {
-            Rank::Beginner    => Some(Rank::Newcomer),
-            Rank::Newcomer    => Some(Rank::Novice),
-            Rank::Novice      => Some(Rank::Apprentice),
-            Rank::Apprentice  => Some(Rank::Journeyman),
-            Rank::Journeyman  => Some(Rank::Expert),
-            Rank::Expert      => Some(Rank::Master),
-            Rank::Master      => Some(Rank::MasterElite),
-            Rank::MasterElite => Some(Rank::Grandmaster),
-            Rank::Grandmaster => None,
-        }
-    }
-
-    /// Determine rank from ELO value using guild-configured values
-    pub async fn from_elo(elo: Elo, db: &Database, guild_id: GI) -> Rank {
-        if let Ok(Some(guild_rank)) = db.ranks.rank_from_elo(guild_id, elo).await {
-            Rank::from_name(&guild_rank.name)
-        } else {
-            Rank::from_elo_default(elo)
-        }
-    }
-
-    /// Determine rank from ELO value using default values (fallback)
-    pub fn from_elo_default(elo: Elo) -> Rank {
-        for rank in [
-            Rank::Beginner,
-            Rank::Newcomer,
-            Rank::Novice,
-            Rank::Apprentice,
-            Rank::Journeyman,
-            Rank::Expert,
-            Rank::Master,
-            Rank::MasterElite,
-        ] {
-            let current_elo = rank.default_rank_elo();
-            let next_elo = rank.next_rank().map(|r| r.default_rank_elo()).unwrap_or(101);
-            
-            if elo >= current_elo && elo < next_elo {
-                return rank;
-            }
-        }
-        Rank::Grandmaster
-    }
-
-    /// Get ELO value from DB, falling back to default if not set
-    pub async fn elo_from_db(&self, db: &Database, guild_id: GI) -> Elo {
-        if let Ok(Some(guild_rank)) = db.ranks.get_rank_by_name(guild_id, self.name()).await {
-            guild_rank.elo
-        } else {
-            self.default_rank_elo()
+        match rows {
+            Some(row) => Ok(Rank {
+                guild_id,
+                role_id: RI::new(row.get::<i64, _>("role_id") as u64),
+                name: row.get("name"),
+                elo: row.get("elo"),
+            }),
+            None => Err(anyhow::anyhow!("No rank found for ELO {}", elo)),
         }
     }
 }
