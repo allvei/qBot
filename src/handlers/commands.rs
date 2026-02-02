@@ -86,8 +86,8 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
         .and_then(|o| o.value.as_user_id())
         .ok_or_else(|| anyhow!("User option not found"))?;
 
-    // Get player data
-    let player    = cc.db.users.get(target_user)          .await?;
+    // Get player data (ensure user exists in database)
+    let player    = cc.db.users.check_user(target_user, None).await?;
     let guild_elo = cc.db.elo .get(target_user, guild_id, &cc.db).await?;
     let username  = cc.ctx.http.get_user(target_user)     .await
         .map(|u| u.name.clone())
