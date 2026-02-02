@@ -99,24 +99,39 @@ impl ConfigRepository {
 
     /// Get default_rank as Discord role ID
     pub async fn get_default_rank_role_id(&self, guild_id: GI) -> Result<Option<RoleId>> {
-        let row = sqlx::query("SELECT default_rank FROM config WHERE guild_id = ?")
-            .bind(guild_id.get() as i64)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query(
+            "SELECT r.role_id 
+             FROM config c 
+             JOIN ranks r ON c.default_rank = r.id 
+             WHERE c.guild_id = ?"
+        )
+        .bind(guild_id.get() as i64)
+        .fetch_optional(&self.pool)
+        .await?;
 
         Ok(row.and_then(|row| {
-            row.try_get::<Option<i64>, _>("default_rank")
+            row.try_get::<Option<i64>, _>("role_id")
                 .ok()
                 .flatten()
                 .map(|id| RoleId::new(id as u64))
         }))
     }
 
-    /// Set default_rank as Discord role ID
+    /// Set default_rank as Discord role ID (stores ranks.id internally)
     pub async fn set_default_rank_role_id(&self, guild_id: GI, role_id: RoleId) -> Result<()> {
+        // Find the rank ID from the role ID
+        let rank_id: i64 = sqlx::query_scalar(
+            "SELECT id FROM ranks WHERE guild_id = ? AND role_id = ?"
+        )
+        .bind(guild_id.get() as i64)
+        .bind(role_id.get() as i64)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to find rank for role ID {}: {}", role_id, e))?;
+        
         sqlx::query("INSERT INTO config (guild_id, default_rank) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET default_rank = excluded.default_rank")
             .bind(guild_id.get() as i64)
-            .bind(role_id.get() as i64)
+            .bind(rank_id)
             .execute(&self.pool)
             .await?;
         Ok(())

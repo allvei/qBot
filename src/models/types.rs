@@ -197,7 +197,7 @@ impl Rank {
         let row = sqlx::query(
             "SELECT r.elo, r.name, r.role_id 
              FROM config c 
-             JOIN ranks r ON c.default_rank = r.role_id 
+             JOIN ranks r ON c.default_rank = r.id 
              WHERE c.guild_id = ?"
         )
         .bind(guild_id.get() as i64)
