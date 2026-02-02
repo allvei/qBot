@@ -14,11 +14,11 @@ use repositories::{ConfigRepository, EloRepository, GroupRepository, RankReposit
 /// Main database interface that orchestrates all repositories
 #[derive(Clone)]
 pub struct Database {
-    pool:       SqlitePool,
+    pub pool:   SqlitePool,
     pub users:  UserRepository,
     pub groups: GroupRepository,
     pub config: ConfigRepository,
-    pub elos:   EloRepository,
+    pub elo:    EloRepository,
     pub ranks:  RankRepository,
 }
 
@@ -40,6 +40,11 @@ impl Database {
         // Initialize the database connection pool
         let pool = SqlitePool::connect(database_url).await?;
 
+        // Enable foreign key constraints (must be done per connection)
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await?;
+
         // Run migrations
         let migrations = DatabaseMigrations::new(&pool);
         migrations.create_tables().await?;
@@ -51,7 +56,7 @@ impl Database {
         let elos   = EloRepository   ::new(pool.clone());
         let ranks  = RankRepository  ::new(pool.clone());
 
-        Ok(Database { pool, users, groups, config, elos, ranks })
+        Ok(Database { pool, users, groups, config, elo: elos, ranks })
     }
 
     /// Get the underlying connection pool for advanced operations
@@ -62,8 +67,8 @@ impl Database {
     // Backward compatibility methods - delegate to repositories
 
     /// Creates a new user in the database
-    pub async fn new_user(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
-        self.users.upsert_tag(user_id, Some(0)).await
+    pub async fn new_user(&self, user_id: UI, _ctx: &Ctx) -> Result<Player> {
+        self.users.check_user(user_id, Some(0)).await
     }
 
     /// Gets a Player by Discord ID
@@ -129,6 +134,7 @@ impl Database {
     }
 
     /// Sets a configuration value
+    #[deprecated(note = "Use column-specific methods instead. This method doesn't match actual schema.")]
     pub async fn set_config(&self, key: &str, value: &str, guild_id: GI) -> Result<()> {
         self.config.set_config(key, value, guild_id).await
     }
