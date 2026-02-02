@@ -132,7 +132,7 @@ pub enum TeamBalanceMethod {
 impl TeamBalanceMethod {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Bch => "BCH",
+            Self::Bch =>     "BCH",
             Self::Average => "Average",
         }
     }
