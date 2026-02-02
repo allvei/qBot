@@ -1021,7 +1021,7 @@ impl Group {
 
         // Build match summary embed
         let mut embed = CE::new()
-            .title("Match Ended")
+            .title("Match ended")
             .color(0x5865F2);
 
         // Format duration

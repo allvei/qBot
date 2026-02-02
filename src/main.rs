@@ -1073,11 +1073,11 @@ impl Handler {
 
         // Check required permissions
         let required_perms = [
-            (Permissions::MOVE_MEMBERS,    "Move Members"),
-            (Permissions::SEND_MESSAGES,   "Send Messages"),
-            (Permissions::EMBED_LINKS,     "Embed Links"),
-            (Permissions::VIEW_CHANNEL,    "View Channels"),
-            (Permissions::MANAGE_CHANNELS, "Manage Channels"),
+            (Permissions::MOVE_MEMBERS,    "Move members"),
+            (Permissions::SEND_MESSAGES,   "Send messages"),
+            (Permissions::EMBED_LINKS,     "Embed links"),
+            (Permissions::VIEW_CHANNEL,    "View channels"),
+            (Permissions::MANAGE_CHANNELS, "Manage channels"),
         ];
 
         for (perm, name) in required_perms {
@@ -1279,7 +1279,7 @@ impl Handler {
             // Create a warning dashboard in the first available text channel
             if let Some(channel) = guild.channels.values().find(|c| c.kind == serenity::all::ChannelType::Text) {
                 let warning_embed = serenity::all::CreateEmbed::new()
-                    .title("Missing Bot Permissions")
+                    .title("Missing bot permissions")
                     .description(format!(
                         "The bot is missing required permissions to function properly.\n\n\
                         **Missing Permissions:**\n{missing_perms}\n\n\
@@ -1288,7 +1288,7 @@ impl Handler {
                     .color(RED);
 
                 let button = serenity::all::CreateButton::new("confirm_permissions")
-                    .label("Confirm Permissions")
+                    .label("Confirm permissions")
                     .style(serenity::all::ButtonStyle::Success);
 
                 let action_row = serenity::all::CreateActionRow::Buttons(vec![button]);
@@ -1319,7 +1319,7 @@ impl Handler {
             let channel_exists = match ctx.http.get_channel(channel_id).await {
                 Ok(_) => true,
                 Err(e) => {
-                    if e.to_string().contains("10003") || e.to_string().contains("Unknown Channel") {
+                    if e.to_string().contains("10003") || e.to_string().contains("Unknown channel") {
                         warn!("[{}] Dashboard channel {} no longer exists, skipping group", guild.name, channel_id);
                         false
                     } else {
