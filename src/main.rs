@@ -90,7 +90,7 @@ impl EventHandler for Handler {
 
             // Start the cleanup background task
             dm_tracker.start_cleanup_task(ctx.http.clone());
-            info!("DM message tracker initialized with 10-minute cleanup");
+            info!("DM tracker initialized with 10-minute cleanup");
         }
 
         // Start timeout background task
@@ -466,6 +466,15 @@ impl EventHandler for Handler {
                     let result = handlers::handle_group_settings_balance_select(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling group settings balance select: {e}");
+                    }
+                    return;
+                }
+
+                // Handle player settings rank selection
+                if itx.data.custom_id.starts_with("player_settings_rank_select_") {
+                    let result = handlers::handle_player_settings_rank_select(&ctx, &itx, &self.db).await;
+                    if let Err(e) = result {
+                        error!("Error handling player settings rank select: {e}");
                     }
                     return;
                 }

@@ -3453,8 +3453,90 @@ pub async fn handle_server_settings_modal(
     Ok(())
 }
 
+/// Handle player settings rank selection dropdown
+pub async fn handle_player_settings_rank_select(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    db: &Arc<Database>,
+) -> Result<()> {
+    let custom_id = &interaction.data.custom_id;
+    
+    // Extract user_id from custom_id (format: player_settings_rank_select_<user_id>)
+    let target_user_id: u64 = custom_id
+        .rsplit('_')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!("Invalid select ID format: {}", custom_id))?;
+    
+    let target_uid = serenity::all::UserId::new(target_user_id);
+    let guild_id = interaction.guild_id.expect("Guild ID not found");
+
+    // Get the selected rank from the select menu
+    let selected_rank = match &interaction.data.kind {
+        serenity::all::ComponentInteractionDataKind::StringSelect { values } => {
+            values.first()
+                .ok_or_else(|| anyhow::anyhow!("No rank selected"))?
+                .clone()
+        }
+        _ => return Err(anyhow!("Invalid interaction type")),
+    };
+
+    // Get current player data
+    let player = db.users.check_user(target_uid, None).await?;
+    let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
+    
+    // Get the new rank from the selected name
+    let new_rank = crate::models::types::Rank::from_name(db, guild_id, &selected_rank).await?;
+    
+    // Update ELO and rank in database
+    db.elo.set(target_uid, guild_id, new_rank.elo, new_rank.clone()).await?;
+    
+    if guild_elo.rank.name != new_rank.name {
+        info!("Updated rank for {}: {} -> {}", target_uid, guild_elo.rank.name, new_rank.name);
+    }
+
+    // Refresh the settings menu
+    let username = match ctx.http.get_user(target_uid).await {
+        Ok(u) => u.name.clone(),
+        Err(_) => target_user_id.to_string(),
+    };
+    
+    let updated_guild_elo = db.elo.get(target_uid, guild_id, db).await?;
+    let settings = PlayerSettings {
+        user_id: target_uid,
+        username,
+        steam_id: player.steam_id,
+        elo: updated_guild_elo.elo,
+        rank: updated_guild_elo.rank.name.clone(),
+        games: updated_guild_elo.games,
+        wins: updated_guild_elo.wins,
+    };
+
+    // Use rank selection dropdown again for the updated menu
+    let display_settings = crate::handlers::settings_menu::PlayerSettingsDisplay {
+        user_id: settings.user_id,
+        username: settings.username.clone(),
+        steam_id: settings.steam_id,
+        elo: settings.elo,
+        rank: settings.rank.clone(),
+        games: settings.games,
+        wins: settings.wins,
+    };
+    
+    let response = match crate::handlers::settings_menu::create_player_settings_with_rank_select(&display_settings, db, guild_id).await {
+        Ok(resp) => resp,
+        Err(_) => {
+            // Fallback to regular menu if rank selection fails
+            crate::models::Ephemeral::send_edit_player(&settings, target_uid)
+        }
+    };
+
+    interaction.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
 // ============================================================================
-// Group Settings
+// GROUP SETTINGS HANDLERS
 // ============================================================================
 
 /// Group settings structure for display
