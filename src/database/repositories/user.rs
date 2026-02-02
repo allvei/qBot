@@ -1,10 +1,10 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serenity::all::{Context as Ctx, UserId as UI, GuildId as GI};
 use sqlx::{Row, SqlitePool};
 use tracing::{error, info, warn};
 
-use crate::{DEFAULT_ALERT_COLOR, Database, DEFAULT_TIMEOUT, Elo, Rank};
+use crate::{DEFAULT_ALERT_COLOR, Database, DEFAULT_TIMEOUT, Rank};
 use crate::models::Player;
 use super::Repository;
 
@@ -92,19 +92,24 @@ impl UserRepository {
     }
 
     pub async fn get(&self, user_id: UI) -> Result<Player> {
-        match sqlx::query("SELECT user_id, tag, steam_id, elo FROM users WHERE user_id = ?").bind(user_id.get() as i64).fetch_one(&self.pool).await {
+        match sqlx::query("SELECT user_id, steam_id FROM users WHERE user_id = ?").bind(user_id.get() as i64).fetch_one(&self.pool).await {
             Ok(result) => Ok(Self::get_player(result)),
             Err(e) => Err(e.into()),
         }
     }
 
-    pub async fn get_with_tag(&self, user_id: UI, _ctx: &Ctx) -> Result<Player> {
-        let result = sqlx::query("SELECT user_id, tag, steam_id, elo FROM users WHERE user_id = ?")
+    pub async fn get_with_tag(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
+        let result = sqlx::query("SELECT user_id, steam_id FROM users WHERE user_id = ?")
         .bind(user_id.get() as i64)
         .fetch_one(&self.pool)
         .await?;
 
-        let player = Self::get_player(result);
+        let mut player = Self::get_player(result);
+        
+        // Fetch tag from Discord API
+        if let Ok(user) = ctx.http.get_user(user_id).await {
+            player.tag = user.display_name().to_string();
+        }
 
         Ok(player)
     }
@@ -152,29 +157,17 @@ impl UserRepository {
         Ok(Self::get_player(result))
     }
 
-    pub async fn upsert_tag(&self, user_id: UI, steam_id: Option<u64>) -> Result<Player> {
-        let result = sqlx::query(
-            "INSERT INTO users (user_id, steam_id)
-             VALUES (?, ?)
-             ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id
-             RETURNING user_id, steam_id"
-        )
-        .bind(user_id.get() as i64)
-        .bind(steam_id.map(|id| id as i64).unwrap_or(0))
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(Self::get_player(result))
-    }
-
+    /// 
     fn get_player(result: sqlx::sqlite::SqliteRow) -> Player {
-        let user_id: i64 = result.get("user_id");
+        let user_id: i64          = result.get("user_id");
         let steam_id: Option<i64> = result.try_get("steam_id").ok();
         
-        Player::default(
+        // No rank available from basic user query - must be set later with guild-specific data
+        Player::add(
             (user_id as u64).into(),
             String::new(),
-            steam_id.map(|id| id as u64)
+            steam_id.map(|id| id as u64),
+            None // No rank available without guild context
         )
     }
 
@@ -191,66 +184,44 @@ impl UserRepository {
         let mut player = Self::get_player(result);
         
         // Get guild-specific ELO (this is the primary source now)
-        let guild_elo = db.elos.get(user_id, guild_id).await?;
+        let guild_elo = db.elo.get(user_id, guild_id, db).await?;
         player.elo = guild_elo.elo;
-        player.rank = guild_elo.rank;
+        player.rank = Some(guild_elo.rank);
         
-        info!("DEBUG: Player guild ELO: {}, Rank: {}", player.elo, player.rank.name());
+        info!("DEBUG: Player guild ELO: {}, Rank: {}", player.elo, player.rank.as_ref().unwrap().name);
 
         // For new players (no games), initialize with default rank
         if guild_elo.games == 0 && player.elo == 0 {
-            let default_rank_name = db.config.get_config_item("default_rank", guild_id).await?.unwrap();
+            // Get default rank role ID from config
+            let default_rank_role_id = db.config.get_default_rank_role_id(guild_id).await?;
             
-            // Find the configured default rank in the database
-            let default_guild_rank = match db.ranks.get_rank_by_name(guild_id, &default_rank_name).await? {
-                Some(rank) => rank,
-                None => {
-                    // Fallback to hardcoded default if configured rank doesn't exist
-                    warn!("Configured default rank '{}' not found in database, using hardcoded default", default_rank_name);
-                    let fallback_elo = crate::models::DEFAULT_RANK.default_rank_elo();
-                    db.elos.set(user_id, guild_id, fallback_elo, crate::models::DEFAULT_RANK).await?;
-                    info!("Assigned fallback default rank {} (ELO {}) to user {}", crate::models::DEFAULT_RANK.name(), fallback_elo, user_id);
-                    player.rank = crate::models::DEFAULT_RANK;
-                    player.elo = fallback_elo;
-                    return Ok(player);
-                }
+            // Find the configured default rank in the database by role ID
+            let default_guild_rank = match default_rank_role_id {
+                Some(role_id) => db.ranks.rank_from_role_id(guild_id, role_id).await?,
+                None => return Err(anyhow!("No default rank configured for guild"))
             };
             
-            // Convert the guild rank's ELO to the appropriate Rank enum
-            let assigned_rank = Rank::from_elo(default_guild_rank.elo, db, guild_id).await;
+            // Convert the guild rank's ELO to the appropriate Rank struct
+            let assigned_rank = Rank::from_elo(db, guild_id, default_guild_rank.elo).await?;
             let default_elo = default_guild_rank.elo;
             
-            info!("DEBUG: New player in guild, using default rank {} with ELO {}", 
-                  assigned_rank.name(), default_elo);
-            player.rank = assigned_rank;
+            info!("DEBUG: New player in guild, using default rank {} (role {}) with ELO {}", 
+                  assigned_rank.name, default_guild_rank.role_id, default_elo);
+            player.rank = Some(assigned_rank.clone());
             player.elo  = default_elo;
             
             // Initialize their guild ELO
-            if let Err(e) = db.elos.set(user_id, guild_id, player.elo, player.rank).await {
+            if let Err(e) = db.elo.set(user_id, guild_id, player.elo, player.rank.clone().unwrap()).await {
                 error!("Failed to initialize guild ELO for player {}: {}", user_id, e);
             } else {
                 info!("Initialized guild ELO for player {} to {} (rank: {})", 
-                      user_id, player.elo, assigned_rank.name());
+                      user_id, player.elo, assigned_rank.name);
             }
         }
 
         Ok(player)
     }
 
-    /// Update global ELO (legacy - prefer using EloRepository for guild-specific ELO)
-    #[deprecated(note = "Use EloRepository::update_elo for guild-specific ELO")]
-    pub async fn update_elo(&self, user_id: UI, elo: Option<Elo>) -> Result<()> {
-        // Ensure user exists
-        let _ = self.check_user(user_id, None).await?;
-
-        sqlx::query("UPDATE users SET elo = ? WHERE user_id = ?")
-            .bind(elo.map(|e| e as i64))
-            .bind(user_id.get() as i64)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
 
     pub async fn update_steam_id(&self, user_id: &UI, steam_id: Option<u64>) -> Result<Player> {
         info!("Updating user steam_id for user_id: {}", user_id);
@@ -302,12 +273,13 @@ impl UserRepository {
     /// Get user settings
     pub async fn get_prefs(&self, user_id: UI) -> Result<UserSettings> {
         let result = sqlx::query(
-            "SELECT timeout, join_alert, vc_auto_leave, vc_auto_join,
+            "SELECT timeout, vc_auto_leave, vc_auto_join,
                     join_alert_color, pm_hot_alert, pm_queue_alert_threshold,
-                    join_alert, join_alert_footer,
+                    join_alert_title, join_alert, join_alert_footer,
                     join_alert_footer_img, join_alert_img,
-                    leave_alert, leave_alert,
-                    leave_alert_footer, leave_alert_footer_img, leave_alert_img
+                    leave_alert_title, leave_alert,
+                    leave_alert_footer, leave_alert_footer_img, leave_alert_img,
+                    leave_alert_color
              FROM users WHERE user_id = ?"
         )
         .bind(user_id.get() as i64)
@@ -397,7 +369,7 @@ impl UserRepository {
                     timeout:                  row.try_get::<u8, _>    ("timeout")                 .unwrap_or(DEFAULT_TIMEOUT),
                     vc_auto_join:             row.try_get::<i64, _>   ("vc_auto_join")            .unwrap_or(1) != 0,
                     join_alert_title:         row.try_get::<String, _>("join_alert_title")        .ok().filter(|s| !s.is_empty()),
-                    join_alert_desc:          row.try_get::<String, _>("join_alert_desc")         .ok().filter(|s| !s.is_empty()),
+                    join_alert_desc:          join_alert.clone(),
                     join_alert_color:         row.try_get::<u32, _>   ("join_alert_color")        .unwrap_or(DEFAULT_ALERT_COLOR),
                     join_alert_img:           row.try_get::<String, _>("join_alert_img")          .ok().filter(|s| !s.is_empty()),
                     join_alert_footer:        row.try_get::<String, _>("join_alert_footer")       .ok().filter(|s| !s.is_empty()),
@@ -429,14 +401,14 @@ impl UserRepository {
                 timeout                = ?,
                 vc_auto_join           = ?,
                 join_alert_title       = ?,
-                join_alert_desc        = ?,
+                join_alert             = ?,
                 join_alert_color       = ?,
                 join_alert_img         = ?,
                 join_alert_footer      = ?,
                 join_alert_footer_img  = ?,
                 vc_auto_leave          = ?,
                 leave_alert_title      = ?,
-                leave_alert_desc       = ?,
+                leave_alert            = ?,
                 leave_alert_color      = ?,
                 leave_alert_img        = ?,
                 leave_alert_footer     = ?,

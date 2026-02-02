@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serenity::all::{UserId as UI, GuildId as GI};
 use sqlx::{Row, SqlitePool};
 
@@ -8,20 +8,9 @@ use crate::Rank;
 #[derive(Debug, Clone)]
 pub struct GuildElo {
     pub elo:      u16,
-    pub rank: Rank,
+    pub rank:     Rank,
     pub games:    u32,
     pub wins:     u32,
-}
-
-impl Default for GuildElo {
-    fn default() -> Self {
-        Self {
-            elo:      50,
-            rank: Rank::Apprentice,
-            games:    0,
-            wins:     0,
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -34,10 +23,13 @@ impl EloRepository {
         Self { pool }
     }
 
-    /// Get a player's ELO for a specific guild (returns None if no record exists)
+    /// Get a player's ELO for a specific guild (returns None if no record)
     pub async fn get_if_exists(&self, user_id: UI, guild_id: GI) -> Result<Option<GuildElo>> {
         let result = sqlx::query(
-            "SELECT elo, rank, games, wins FROM elo WHERE guild_id = ? AND user_id = ?"
+            "SELECT e.elo, e.games, e.wins, r.name, r.elo as rank_elo, r.role_id
+             FROM elo e
+             LEFT JOIN ranks r ON e.rank = r.id
+             WHERE e.guild_id = ? AND e.user_id = ?"
         )
         .bind(guild_id.get() as i64)
         .bind(user_id.get() as i64)
@@ -46,14 +38,28 @@ impl EloRepository {
 
         match result {
             Some(row) => {
-                let elo:      i64    = row.get("elo");
-                let rank_str: String = row.get("rank");
-                let games:    i64    = row.get("games");
-                let wins:     i64    = row.get("wins");
+                let elo:     i64    = row.get("elo");
+                let games:   i64    = row.get("games");
+                let wins:    i64    = row.get("wins");
+                let name:    Option<String> = row.get("name");
+                let rank_elo: Option<i64> = row.get("rank_elo");
+                let role_id: Option<i64> = row.get("role_id");
+
+                let rank = if let (Some(name), Some(rank_elo), Some(role_id)) = (name, rank_elo, role_id) {
+                    Rank {
+                        guild_id,
+                        role_id: serenity::all::RoleId::new(role_id as u64),
+                        name,
+                        elo: rank_elo as u16,
+                    }
+                } else {
+                    // Return None if join failed - no valid rank data available
+                    return Ok(None);
+                };
 
                 Ok(Some(GuildElo {
                     elo:   elo   as u16,
-                    rank:  Self::parse_rank(&rank_str),
+                    rank:  rank,
                     games: games as u32,
                     wins:  wins  as u32,
                 }))
@@ -63,12 +69,36 @@ impl EloRepository {
     }
 
     /// Get a player's ELO for a specific guild (returns default if no record)
-    pub async fn get(&self, user_id: UI, guild_id: GI) -> Result<GuildElo> {
-        Ok(self.get_if_exists(user_id, guild_id).await?.unwrap_or_default())
+    pub async fn get(&self, user_id: UI, guild_id: GI, db: &crate::Database) -> Result<GuildElo> {
+        match self.get_if_exists(user_id, guild_id).await? {
+            Some(elo) => Ok(elo),
+            None => {
+                // Return default rank from guild config
+                let default_rank = Rank::get_guild_default(db, guild_id).await
+                    .map_err(|_| anyhow::anyhow!("Failed to get default rank for guild {}", guild_id))?;
+                Ok(GuildElo {
+                    elo: default_rank.elo,
+                    rank: default_rank,
+                    games: 0,
+                    wins: 0,
+                })
+            }
+        }
     }
 
-    /// Set a player's ELO for a specific guild (creates if not exists)
+    /// Set or update a player's ELO and rank
     pub async fn set(&self, user_id: UI, guild_id: GI, elo: u16, rank: Rank) -> Result<()> {
+        // Get the rank ID from the ranks table
+        let rank_id: i64 = sqlx::query_scalar(
+            "SELECT id FROM ranks WHERE guild_id = ? AND name = ? AND role_id = ?"
+        )
+        .bind(guild_id.get() as i64)
+        .bind(&rank.name)
+        .bind(rank.role_id.get() as i64)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to find rank ID for rank '{}': {}", rank.name, e))?;
+
         sqlx::query(
             "INSERT INTO elo (guild_id, user_id, elo, rank)
              VALUES (?, ?, ?, ?)
@@ -77,7 +107,7 @@ impl EloRepository {
         .bind(guild_id.get() as i64)
         .bind(user_id.get() as i64)
         .bind(elo as i64)
-        .bind(rank.name())
+        .bind(rank_id)
         .execute(&self.pool)
         .await?;
 
@@ -85,19 +115,19 @@ impl EloRepository {
     }
 
     /// Update only the ELO value (rank will be recalculated)
-    pub async fn update_elo(&self, user_id: UI, guild_id: GI, elo: u16) -> Result<()> {
-        let rank = Rank::from_elo_default(elo);
+    pub async fn update_elo(&self, user_id: UI, guild_id: GI, elo: u16, db: &crate::Database) -> Result<()> {
+        let rank = Rank::from_elo(db, guild_id, elo).await?;
         self.set(user_id, guild_id, elo, rank).await
     }
 
     /// Record a game result and update ELO
-    pub async fn record_game(&self, user_id: UI, guild_id: GI, won: bool, elo_change: i16) -> Result<GuildElo> {
+    pub async fn record_game(&self, user_id: UI, guild_id: GI, won: bool, elo_change: i16, db: &crate::Database) -> Result<GuildElo> {
         // Get current ELO or create default
-        let current = self.get(user_id, guild_id).await?;
+        let current = self.get(user_id, guild_id, db).await?;
         
         // Calculate new ELO
         let new_elo   = (current.elo as i32 + elo_change as i32) as u16;
-        let new_rank  = Rank::from_elo_default(new_elo);
+        let new_rank  = Rank::from_elo(db, guild_id, new_elo).await?;
         let new_games = current.games + 1;
         let new_wins  = if won { current.wins + 1 } else { current.wins };
 
@@ -113,7 +143,7 @@ impl EloRepository {
         .bind(guild_id.get() as i64)
         .bind(user_id.get()  as i64)
         .bind(new_elo        as i64)
-        .bind(new_rank.name())
+        .bind(&new_rank.name)
         .bind(new_games      as i64)
         .bind(new_wins       as i64)
         .execute(&self.pool)
@@ -121,7 +151,7 @@ impl EloRepository {
 
         Ok(GuildElo {
             elo:      new_elo,
-            rank: new_rank,
+            rank:     new_rank,
             games:    new_games,
             wins:     new_wins,
         })
@@ -130,9 +160,10 @@ impl EloRepository {
     /// Get all ELO records for a user across all guilds
     pub async fn get_all_for_user(&self, user_id: UI) -> Result<Vec<(u64, GuildElo)>> {
         let rows = sqlx::query(
-            "SELECT guild_id, elo, rank, games, wins 
-             FROM elo 
-             WHERE user_id = ?"
+            "SELECT e.guild_id, e.elo, e.games, e.wins, r.name, r.elo as rank_elo, r.role_id
+             FROM elo e
+             LEFT JOIN ranks r ON e.rank = r.id
+             WHERE e.user_id = ?"
         )
         .bind(user_id.get() as i64)
         .fetch_all(&self.pool)
@@ -142,15 +173,29 @@ impl EloRepository {
         for row in rows {
             let guild_id:     i64    = row.get("guild_id");
             let elo:          i64    = row.get("elo");
-            let rank_str: String = row.get("rank");
             let games:        i64    = row.get("games");
             let wins:         i64    = row.get("wins");
+            let name:         Option<String> = row.get("name");
+            let rank_elo:     Option<i64> = row.get("rank_elo");
+            let role_id:      Option<i64> = row.get("role_id");
+
+            let rank = if let (Some(name), Some(rank_elo), Some(role_id)) = (name, rank_elo, role_id) {
+                Rank {
+                    guild_id: GI::new(guild_id as u64),
+                    role_id: serenity::all::RoleId::new(role_id as u64),
+                    name,
+                    elo: rank_elo as u16,
+                }
+            } else {
+                // Skip records with invalid rank data
+                continue;
+            };
 
             results.push((
                 guild_id as u64,
                 GuildElo {
                     elo:      elo as u16,
-                    rank: Self::parse_rank(&rank_str),
+                    rank,
                     games:    games as u32,
                     wins:     wins as u32,
                 },
@@ -163,10 +208,11 @@ impl EloRepository {
     /// Get leaderboard for a guild (top N players by ELO)
     pub async fn get_leaderboard(&self, guild_id: GI, limit: u32) -> Result<Vec<(UI, GuildElo)>> {
         let rows = sqlx::query(
-            "SELECT user_id, elo, rank, games, wins 
-             FROM elo 
-             WHERE guild_id = ? 
-             ORDER BY elo DESC 
+            "SELECT e.user_id, e.elo, e.games, e.wins, r.name, r.elo as rank_elo, r.role_id
+             FROM elo e
+             LEFT JOIN ranks r ON e.rank = r.id
+             WHERE e.guild_id = ? 
+             ORDER BY e.elo DESC 
              LIMIT ?"
         )
         .bind(guild_id.get() as i64)
@@ -178,15 +224,29 @@ impl EloRepository {
         for row in rows {
             let user_id:      i64    = row.get("user_id");
             let elo:          i64    = row.get("elo");
-            let rank_str: String = row.get("rank");
             let games:        i64    = row.get("games");
             let wins:         i64    = row.get("wins");
+            let name:         Option<String> = row.get("name");
+            let rank_elo:     Option<i64> = row.get("rank_elo");
+            let role_id:      Option<i64> = row.get("role_id");
+
+            let rank = if let (Some(name), Some(rank_elo), Some(role_id)) = (name, rank_elo, role_id) {
+                Rank {
+                    guild_id,
+                    role_id: serenity::all::RoleId::new(role_id as u64),
+                    name,
+                    elo: rank_elo as u16,
+                }
+            } else {
+                // Skip records with invalid rank data
+                continue;
+            };
 
             results.push((
                 UI::new(user_id as u64),
                 GuildElo {
                     elo:      elo as u16,
-                    rank: Self::parse_rank(&rank_str),
+                    rank,
                     games:    games as u32,
                     wins:     wins as u32,
                 },
@@ -194,21 +254,5 @@ impl EloRepository {
         }
 
         Ok(results)
-    }
-
-    /// Parse rank string to Rank enum
-    fn parse_rank(s: &str) -> Rank {
-        match s {
-            "Beginner"     => Rank::Beginner,
-            "Newcomer"     => Rank::Newcomer,
-            "Novice"       => Rank::Novice,
-            "Apprentice"   => Rank::Apprentice,
-            "Journeyman"   => Rank::Journeyman,
-            "Expert"       => Rank::Expert,
-            "Master"       => Rank::Master,
-            "Master Elite" => Rank::MasterElite,
-            "Grandmaster"  => Rank::Grandmaster,
-            _              => Rank::Apprentice,
-        }
     }
 }

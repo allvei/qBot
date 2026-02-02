@@ -1,13 +1,8 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use async_trait::async_trait;
 use sqlx::{Row, SqlitePool};
-use tracing::error;
-use serenity::all::GuildId as GI;
-
-use super::Repository;
-use crate::models::ConfigFormat;
+use serenity::all::{GuildId as GI, RoleId};
 
 #[derive(Clone)]
 pub struct ConfigRepository {
@@ -52,76 +47,86 @@ impl ConfigRepository {
         Ok(config_map)
     }
 
+    /// DEPRECATED: This method uses dynamic SQL with arbitrary column names that don't match the actual schema.
+    /// The config table has columns: runner_id, admin_id, active_elo, default_rank (all INTEGER)
+    /// But code uses this with keys like "runner_role", "admin_role", "active_elo_enabled" which don't exist.
+    /// 
+    /// TODO: Replace all usages with proper column-specific methods:
+    /// - Use get_runner_id(), set_runner_id() for runner_id column
+    /// - Use get_admin_id(), set_admin_id() for admin_id column  
+    /// - Use get_active_elo(), set_active_elo() for active_elo column
+    /// - Use get_default_rank_role_id(), set_default_rank_role_id() for default_rank column
+    #[deprecated(note = "Use column-specific methods instead. This method doesn't match actual schema.")]
     pub async fn set_config(&self, key: &str, value: &str, guild_id: GI) -> Result<()> {
-        let query_result = sqlx::query("INSERT OR REPLACE INTO config (guild, key, value) VALUES (?, ?, ?)")
+        // Build dynamic query for setting specific columns
+        let query = format!("INSERT INTO config (guild_id, {}) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET {} = excluded.{}", key, key, key);
+        sqlx::query(&query)
         .bind(guild_id.get() as i64)
-        .bind(key)
         .bind(value)
         .execute(&self.pool)
-        .await;
-
-        match query_result {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                error!("Failed to set config: {e}");
-                Err(e.into())
-            }
-        }
+        .await?;
+        Ok(())
     }
 
+    /// DEPRECATED: This method uses dynamic SQL with arbitrary column names that don't match the actual schema.
+    /// See set_config() deprecation note for details.
+    #[deprecated(note = "Use column-specific methods instead. This method doesn't match actual schema.")]
     pub async fn get_config_item(&self, column: &str, guild_id: GI) -> Result<Option<String>> {
-        let result = sqlx::query("SELECT ? FROM config WHERE guild_id = ?")
-            .bind(column)
+        // Build dynamic query - cannot use bind for column names
+        let query = format!("SELECT {} FROM config WHERE guild_id = ?", column);
+        let result = sqlx::query(&query)
             .bind(guild_id.get() as i64)
             .fetch_optional(&self.pool)
             .await?;
 
-        Ok(result.and_then(|row| row.get::<Option<String>, _>(column)))
+        Ok(result.and_then(|row| {
+            // Try to get as i64 first (for INTEGER columns), then as String
+            if let Ok(val) = row.try_get::<i64, _>(column) {
+                Some(val.to_string())
+            } else {
+                row.get::<Option<String>, _>(column)
+            }
+        }))
     }
 
-    pub async fn delete_config(&self, key: &str, guild_id: GI) -> Result<()> {
-        sqlx::query("DELETE FROM config WHERE guild_id = ? AND key = ?")
+    /// DEPRECATED: This method assumes a key-value schema that doesn't exist.
+    /// The config table doesn't have a 'key' column.
+    #[deprecated(note = "Config table doesn't have key-value structure. Use column-specific methods.")]
+    pub async fn delete_config(&self, _key: &str, _guild_id: GI) -> Result<()> {
+        // This method cannot work with the current schema
+        Err(anyhow::anyhow!("delete_config is deprecated and doesn't match schema. Set column to NULL instead."))
+    }
+
+    /// Get default_rank as Discord role ID
+    pub async fn get_default_rank_role_id(&self, guild_id: GI) -> Result<Option<RoleId>> {
+        let row = sqlx::query("SELECT default_rank FROM config WHERE guild_id = ?")
             .bind(guild_id.get() as i64)
-            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|row| {
+            row.try_get::<Option<i64>, _>("default_rank")
+                .ok()
+                .flatten()
+                .map(|id| RoleId::new(id as u64))
+        }))
+    }
+
+    /// Set default_rank as Discord role ID
+    pub async fn set_default_rank_role_id(&self, guild_id: GI, role_id: RoleId) -> Result<()> {
+        sqlx::query("INSERT INTO config (guild_id, default_rank) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET default_rank = excluded.default_rank")
+            .bind(guild_id.get() as i64)
+            .bind(role_id.get() as i64)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
-    pub async fn get_all_for_guild(&self, guild_id: GI) -> Result<Vec<ConfigFormat>> {
-        let rows = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config WHERE guild_id = ?")
-        .bind(guild_id.get() as i64)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows)
-    }
-}
-
-#[async_trait]
-impl Repository<ConfigFormat, (GI, String)> for ConfigRepository {
-    async fn create(&self, _config : &ConfigFormat) -> Result<ConfigFormat> {
-        // This implementation assumes guild_id is passed separately
-        // In a real implementation, you might want to modify ConfigFormat to include guild_id
-        Err(anyhow::anyhow!("Use set_config method instead"))
-    }
-
-    async fn get_by_id(&self, (guild_id, key): (GI, String)) -> Result<ConfigFormat> {
-        let result = sqlx::query_as::<_, ConfigFormat>("SELECT key, value, description FROM config WHERE guild_id = ? AND key = ?")
-        .bind(guild_id.get() as i64)
-        .bind(&key)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(result)
-    }
-
-    async fn update(&self, _config: &ConfigFormat) -> Result<ConfigFormat> {
-        // This would need guild_id to be part of ConfigFormat or passed separately
-        Err(anyhow::anyhow!("Use set_config method instead"))
-    }
-
-    async fn delete(&self, (guild_id, key): (GI, String)) -> Result<()> {
-        self.delete_config(&key, guild_id).await
-    }
+    // TODO: Add these column-specific methods:
+    // pub async fn get_runner_id(&self, guild_id: GI) -> Result<Option<UserId>>
+    // pub async fn set_runner_id(&self, guild_id: GI, user_id: UserId) -> Result<()>
+    // pub async fn get_admin_id(&self, guild_id: GI) -> Result<Option<UserId>>
+    // pub async fn set_admin_id(&self, guild_id: GI, user_id: UserId) -> Result<()>
+    // pub async fn get_active_elo(&self, guild_id: GI) -> Result<bool>
+    // pub async fn set_active_elo(&self, guild_id: GI, enabled: bool) -> Result<()>
 }

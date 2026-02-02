@@ -30,12 +30,21 @@ impl GroupRepository {
     pub async fn create_group(&self, guild_id: GI, dashboard_msg: u64, config: GroupConfig) -> Result<Group> {
         info!("Creating new group with queue: {}", config.queue_vc_id);
 
+        // Get the next available group_id for this guild
+        let next_group_id: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(group_id), -1) + 1 FROM groups WHERE guild_id = ?"
+        )
+        .bind(guild_id.get() as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
         let result = sqlx::query(
-            "INSERT INTO groups (guild_id, dashboard, chat, queue, dashboard_msg, red, blu, quota)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO groups (guild_id, group_id, dashboard, chat, queue, dashboard_msg, red, blu, quota)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING id, group_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, quota, connect_info"
         )
         .bind(guild_id.get()              as i64)
+        .bind(next_group_id)
         .bind(config.dashboard_channel_id as i64)
         .bind(config.chat_channel_id      as i64)
         .bind(config.queue_vc_id          as i64)
@@ -68,6 +77,17 @@ impl GroupRepository {
         .await?;
 
         self.build_group_from_row_async(&result).await
+    }
+
+    /// Delete a group from the database
+    pub async fn delete_group(&self, guild_id: GI, group_id: u8) -> Result<()> {
+        sqlx::query("DELETE FROM groups WHERE guild_id = ? AND group_id = ?")
+            .bind(guild_id.get() as i64)
+            .bind(group_id as i64)
+            .execute(&self.pool)
+            .await?;
+        
+        Ok(())
     }
 
     async fn build_group_from_row_async(&self, result: &sqlx::sqlite::SqliteRow) -> Result<Group> {
@@ -205,6 +225,20 @@ impl GroupRepository {
         .bind(dashboard_msg_id as i64)
         .bind(guild_id.get() as i64)
         .bind(dashboard_channel_id as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update dashboard message ID for a group by its group_id
+    pub async fn update_dashboard_msg_by_group_id(&self, guild_id: GI, group_id: u8, dashboard_msg_id: u64) -> Result<()> {
+        info!("Updating dashboard message ID for guild {} group {}", guild_id, group_id);
+
+        sqlx::query("UPDATE groups SET dashboard_msg = ? WHERE guild_id = ? AND group_id = ?")
+        .bind(dashboard_msg_id as i64)
+        .bind(guild_id.get() as i64)
+        .bind(group_id as i64)
         .execute(&self.pool)
         .await?;
 

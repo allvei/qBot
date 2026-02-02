@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Error, Result, anyhow};
 use sqlx::{Row, SqlitePool};
 use tracing::info;
 use serenity::all::{RoleId, GuildId as GI};
@@ -212,17 +212,17 @@ impl RankRepository {
         }
     }
 
-    /// Find rank from Discord role ID
-    pub async fn rank_from_role_id(&self, guild_id: GI, role_id: RoleId) -> Result<Option<GuildRank>> {
+    /// Get rank struct from RoleId
+    pub async fn rank_from_role_id(&self, guild_id: GI, role_id: RoleId) -> Result<GuildRank, Error> {
         let ranks = self.get_or_init_ranks(guild_id).await?;
         
         // Find the rank with the matching role_id
         for rank in &ranks {
             if rank.role_id == role_id {
-                return Ok(Some(rank.clone()));
+                return Ok(rank.clone());
             }
         }
 
-        Ok(None)
+        Err(anyhow!("Rank not found for role ID {}", role_id))
     }
 }
