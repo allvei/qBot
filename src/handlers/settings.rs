@@ -4329,8 +4329,8 @@ pub async fn handle_player_settings_button(
     
     let target_uid = serenity::all::UserId::new(target_user_id);
 
-    // Get current player data
-    let player = db.users.get(target_uid).await?;
+    // Get current player data (ensure user exists)
+    let player = db.users.check_user(target_uid, None).await?;
     let guild_id = interaction.guild_id.expect("Guild ID not found");
     let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
 
@@ -4475,7 +4475,7 @@ pub async fn handle_player_settings_modal(
         db.users.update_steam_id(&target_uid, steam_id).await?;
 
         // Refresh the settings menu
-        let player = db.users.get(target_uid).await?;
+        let player = db.users.check_user(target_uid, None).await?;
         let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
         let username = ctx.http.get_user(target_uid).await
             .map(|u| u.name.clone())
@@ -4536,7 +4536,7 @@ pub async fn handle_player_settings_modal(
         }
 
         // Refresh the settings menu
-        let player = db.users.get(target_uid).await?;
+        let player = db.users.check_user(target_uid, None).await?;
         let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
         let username = ctx.http.get_user(target_uid).await
             .map(|u| u.name.clone())
@@ -4586,7 +4586,7 @@ pub async fn handle_player_settings_modal(
         }
 
         // Refresh the settings menu
-        let player = db.users.get(target_uid).await?;
+        let player = db.users.check_user(target_uid, None).await?;
         let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
         let username = ctx.http.get_user(target_uid).await
             .map(|u| u.name.clone())
@@ -4642,7 +4642,7 @@ pub async fn handle_player_settings_modal(
         db.users.update_settings(target_uid, &user_settings).await?;
 
         // Refresh the player settings menu
-        let player = db.users.get(target_uid).await?;
+        let player = db.users.check_user(target_uid, None).await?;
         let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
         let username = ctx.http.get_user(target_uid).await
             .map(|u| u.name.clone())
