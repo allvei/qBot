@@ -122,11 +122,78 @@ impl ConfigRepository {
         Ok(())
     }
 
-    // TODO: Add these column-specific methods:
-    // pub async fn get_runner_id(&self, guild_id: GI) -> Result<Option<UserId>>
-    // pub async fn set_runner_id(&self, guild_id: GI, user_id: UserId) -> Result<()>
-    // pub async fn get_admin_id(&self, guild_id: GI) -> Result<Option<UserId>>
-    // pub async fn set_admin_id(&self, guild_id: GI, user_id: UserId) -> Result<()>
-    // pub async fn get_active_elo(&self, guild_id: GI) -> Result<bool>
-    // pub async fn set_active_elo(&self, guild_id: GI, enabled: bool) -> Result<()>
+    /// Get runner_id as Discord role ID
+    pub async fn get_runner_role_id(&self, guild_id: GI) -> Result<Option<RoleId>> {
+        let row = sqlx::query("SELECT runner_id FROM config WHERE guild_id = ?")
+            .bind(guild_id.get() as i64)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|row| {
+            row.try_get::<Option<i64>, _>("runner_id")
+                .ok()
+                .flatten()
+                .map(|id| RoleId::new(id as u64))
+        }))
+    }
+
+    /// Set runner_id as Discord role ID
+    pub async fn set_runner_role_id(&self, guild_id: GI, role_id: RoleId) -> Result<()> {
+        sqlx::query("INSERT INTO config (guild_id, runner_id) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET runner_id = excluded.runner_id")
+            .bind(guild_id.get() as i64)
+            .bind(role_id.get() as i64)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Get admin_id as Discord role ID
+    pub async fn get_admin_role_id(&self, guild_id: GI) -> Result<Option<RoleId>> {
+        let row = sqlx::query("SELECT admin_id FROM config WHERE guild_id = ?")
+            .bind(guild_id.get() as i64)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|row| {
+            row.try_get::<Option<i64>, _>("admin_id")
+                .ok()
+                .flatten()
+                .map(|id| RoleId::new(id as u64))
+        }))
+    }
+
+    /// Set admin_id as Discord role ID
+    pub async fn set_admin_role_id(&self, guild_id: GI, role_id: RoleId) -> Result<()> {
+        sqlx::query("INSERT INTO config (guild_id, admin_id) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET admin_id = excluded.admin_id")
+            .bind(guild_id.get() as i64)
+            .bind(role_id.get() as i64)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Get active_elo setting
+    pub async fn get_active_elo(&self, guild_id: GI) -> Result<bool> {
+        let row = sqlx::query("SELECT active_elo FROM config WHERE guild_id = ?")
+            .bind(guild_id.get() as i64)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|row| {
+            row.try_get::<Option<i64>, _>("active_elo")
+                .ok()
+                .flatten()
+                .map(|val| val != 0)
+        }).unwrap_or(false))
+    }
+
+    /// Set active_elo setting
+    pub async fn set_active_elo(&self, guild_id: GI, enabled: bool) -> Result<()> {
+        sqlx::query("INSERT INTO config (guild_id, active_elo) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET active_elo = excluded.active_elo")
+            .bind(guild_id.get() as i64)
+            .bind(enabled as i32)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }

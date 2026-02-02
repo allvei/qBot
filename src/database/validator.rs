@@ -209,10 +209,10 @@ impl ValidationReport {
 
     pub fn print_summary(&self) {
         info!("=== Database Validation Report ===");
-        info!("Schema Valid: {}",       self.schema_valid);
+        info!("Schema valid: {}",       self.schema_valid);
         info!("Errors: {}",             self.errors.len());
         info!("Warnings: {}",           self.warnings.len());
-        info!("Guilds with Groups: {}", self.guild_groups.len());
+        info!("Guilds with groups: {}", self.guild_groups.len());
 
         if !self.errors.is_empty() {
             error!("Errors found:");
