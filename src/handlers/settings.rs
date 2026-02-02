@@ -4288,7 +4288,7 @@ pub fn build_player_settings_embed(settings: &PlayerSettings) -> CE {
         username: settings.username.clone(),
         steam_id: settings.steam_id,
         elo:      settings.elo,
-        rank: settings.rank.clone(),
+        rank:     settings.rank.clone(),
         games:    settings.games,
         wins:     settings.wins,
     };
@@ -4303,7 +4303,7 @@ pub fn build_player_settings_buttons(user_id: serenity::all::UserId) -> Vec<CAR>
         username: String::new(),
         steam_id: None,
         elo:      0,
-        rank: String::new(),
+        rank:     String::new(),
         games:    0,
         wins:     0,
     };
@@ -4384,7 +4384,7 @@ pub async fn handle_player_settings_button(
         let modal = CreateModal::new(format!("player_settings_modal_alerts_{target_user_id}"), "Edit player alerts")
             .components(vec![
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Short, "HEX Color", "join_alert_color")
+                    CreateInputText::new(InputTextStyle::Short, "HEX color", "join_alert_color")
                         .placeholder("e.g., 3447003 or FF5733")
                         .value(format!("{:06X}", user_settings.join_alert_color))
                         .required(false)
