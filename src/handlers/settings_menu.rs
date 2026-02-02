@@ -596,7 +596,7 @@ impl GroupListDisplay {
         // Add create group, remove group, and back buttons
         let mut buttons = vec![
             CB::new("server_settings_create_group")
-                .label("Create a new group")
+                .label("Create a group")
                 .style(BS::Primary),
         ];
         
@@ -644,25 +644,25 @@ impl AsSettingsMenu for GroupSettingsDisplay {
         SettingsMenu::new(format!("{name_display} Settings"))
             .field(SF::new("Name", name_display.clone()))
             .field(SF::new("Quota", format!("{} players", self.quota)))
-            .field(SF::new("Confirm time", format!("{} seconds", self.timeout)))
+            .field(SF::new("Confirm expiry", format!("{} seconds", self.timeout)))
             .field(SF::new("Connect info", connect_display).inline(false))
             .field(SF::new("Team balance", self.team_balance_method.as_str()))
             .color(0x5865F2)
             .row(SR::Buttons(vec![
-                SB::edit(format!("group_settings_edit_name_{gid}"), "Name"),
-                SB::edit(format!("group_settings_edit_quota_{gid}"), "Quota"),
-                SB::edit(format!("group_settings_edit_timeout_{gid}"), "Confirm time"),
+                SB::edit(format!("group_settings_edit_name_{gid}"),      "Name"),
+                SB::edit(format!("group_settings_edit_quota_{gid}"),     "Quota"),
+                SB::edit(format!("group_settings_edit_timeout_{gid}"),   "Confirm expiry"),
             ]))
             .row(SR::Buttons(vec![
-                SB::edit(format!("group_settings_edit_connect_{gid}"), "Connect info"),
-                SB::action(format!("group_settings_link_message_{gid}"), "Link an existing dashboard message", SBS::Success),
+                SB::edit(format!("group_settings_edit_connect_{gid}"),   "Connect info"),
+                SB::action(format!("group_settings_link_message_{gid}"), "Re-link a dashboard message", SBS::Success),
             ]))
             .row(SR::StringSelect {
                 id: format!("group_settings_balance_{gid}"),
                 placeholder: "Select team balance method...".to_string(),
                 options: vec![
-                    ("BCH".to_string(), "bch".to_string()),
-                    ("Average".to_string(), "average".to_string()),
+                    ("Custom distribution algorithm".to_string(), "bch".to_string()),
+                    ("Average distribution".to_string(),          "average".to_string()),
                 ],
             })
     }
