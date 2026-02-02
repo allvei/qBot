@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Error, Result};
 use std::{collections::HashSet, sync::Arc, time::{Duration, SystemTime}};
-use crate::{DEFAULT_TIMEOUT, QueueToggleType, log_queue_toggle, models::constants::DEFAULT_HOT_JOIN_TIMEOUT};
+use crate::{DEFAULT_TIMEOUT, QueueToggleType, log_queue_toggle};
 use serenity::{all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
     CreateEmbed as CE, CreateMessage as CM, CreateInteractionResponse as CIR,
@@ -270,6 +270,7 @@ impl Group {
     /// Builds dashboard embed and components based on current group state
     pub async fn build_dashboard_content(&self, db: &crate::Database, guild_id: GI) -> Result<(CE, Vec<CAR>)> {
         let quota     = self.quota as usize;
+        let timeout_seconds = self.timeout as u64;
         let inactives = self.get_inactives();
         let actives   = self.get_actives();
 
@@ -295,7 +296,7 @@ impl Group {
                         if let Some(ready_at) = session.ready_at {
                             if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
                                 let ready_timestamp = duration_since_epoch.as_secs();
-                                let deadline_timestamp = ready_timestamp + DEFAULT_HOT_JOIN_TIMEOUT as u64;
+                                let deadline_timestamp = ready_timestamp + timeout_seconds;
                                 description.push_str(&format!("Join deadline: <t:{deadline_timestamp}:R>\n"));
                                 description.push_str("Missing players will be removed. Overflow players will take their spots.\n\n");
                             }
@@ -339,7 +340,7 @@ impl Group {
                         if let Some(ready_at) = current_session.ready_at {
                             if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
                                 let ready_timestamp = duration_since_epoch.as_secs();
-                                let deadline_timestamp = ready_timestamp + DEFAULT_HOT_JOIN_TIMEOUT as u64;
+                                let deadline_timestamp = ready_timestamp + timeout_seconds;
                                 description.push_str(&format!("Join deadline: <t:{deadline_timestamp}:R>\n"));
                                 description.push_str("Missing players will be removed. Overflow players will take their spots.\n\n");
                             }
@@ -364,7 +365,7 @@ impl Group {
                     description.push('\n');
                 }
             } else {
-                description.push_str("**Queue status**\n* Empty. Join to get started!*\n\n");
+                description.push_str("**Queue status**\n* Join to get started!\n\n");
             }
         }
 
@@ -396,8 +397,8 @@ impl Group {
 
                             if timeout > 0 {
                                 if let Ok(join_time) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
-                                    let expiry_timestamp = join_time.as_secs() + timeout as u64;
-                                    timers_field.push_str(&format!("<t:{}:R>\n", expiry_timestamp));
+                                    let expiry_timestamp = join_time.as_secs() + (timeout as u64 * 60);
+                                    timers_field.push_str(&format!("Timeout <t:{}:R>\n", expiry_timestamp));
                                 } else {
                                     timers_field.push_str("-\n");
                                 }
@@ -408,7 +409,7 @@ impl Group {
                     }
 
                     embed = embed.field("Players", players_field, true);
-                    embed = embed.field("Timeout", timers_field,  true); // TODO: should not be displayed when player in vc
+                    embed = embed.field("Status",  timers_field,  true);
                 }
             }
         }
@@ -649,23 +650,53 @@ impl Group {
         cc.defer_update().await?;
         //
 
-        // Get player's rank from Discord roles first, then fallback to database/default
-        use crate::handlers::player::{get_user_rank_from_discord_roles, get_or_assign_player_rank};
+        // Get player rank: DB for speed, Discord roles for truth
+        use crate::handlers::player::{get_player_rank, get_user_rank_from_discord_roles, get_or_assign_player_rank};
+        use crate::Rank;
         if let Some(guild_id) = cc.component.guild_id {
-            // First try to get rank from Discord roles
-            let discord_rank = if let Some(role_based_rank) = get_user_rank_from_discord_roles(cc.ctx, &cc.db, guild_id, user_id).await {
-                info!("DEBUG: User {} has Discord role for rank {}", user_id, role_based_rank.name());
-                role_based_rank
+            // First, get Discord role (source of truth) - returns GuildRank with ELO
+            let role_based_guild_rank = get_user_rank_from_discord_roles(cc.ctx, &cc.db, guild_id, user_id).await;
+            
+            // Convert to Rank struct and get ELO
+            let (discord_rank, rank_min_elo) = if let Some(db_rank) = get_player_rank(&cc.db, guild_id, user_id).await {
+                info!("DEBUG: User {} has existing rank {} in database", user_id, db_rank.name);
+                // Discord role is source of truth if it exists
+                if let Some(guild_rank) = &role_based_guild_rank {
+                    let role_rank = Rank::from_name(&cc.db, guild_id, &guild_rank.name).await.unwrap_or(db_rank.clone());
+                    if role_rank != db_rank {
+                        info!("DEBUG: User {} Discord role '{}' (ELO {}) differs from DB {}, using Discord role", 
+                              user_id, guild_rank.name, guild_rank.elo, db_rank.name);
+                    }
+                    (role_rank, guild_rank.elo)
+                } else {
+                    // No Discord role, keep DB rank (they may have lost role but keep earned rank)
+                    info!("DEBUG: User {} has no Discord rank role, keeping DB rank {}", user_id, db_rank.name);
+                    let elo = db_rank.elo;
+                    (db_rank, elo)
+                }
             } else {
-                // No Discord rank roles found, get or assign from database/default
-                match get_or_assign_player_rank(&cc.db, guild_id, user_id).await {
-                    Ok(rank) => {
-                        info!("DEBUG: User {} assigned rank {} from database/default", user_id, rank.name());
-                        rank
-                    },
-                    Err(e) => {
-                        error!("Failed to get or assign rank for user {}: {}", user_id, e);
-                        return Ok(());
+                // No DB rank - check Discord roles before defaulting
+                if let Some(guild_rank) = &role_based_guild_rank {
+                    let role_rank = Rank::from_name(&cc.db, guild_id, &guild_rank.name).await.unwrap_or_else(|_| Rank {
+                        guild_id,
+                        role_id: guild_rank.role_id,
+                        name: guild_rank.name.clone(),
+                        elo: guild_rank.elo,
+                    });
+                    info!("DEBUG: User {} has Discord role '{}' (ELO {})", user_id, guild_rank.name, guild_rank.elo);
+                    (role_rank, guild_rank.elo)
+                } else {
+                    // No DB rank or Discord roles, assign default
+                    match get_or_assign_player_rank(&cc.db, guild_id, user_id).await {
+                        Ok(rank) => {
+                            info!("DEBUG: User {} assigned default rank {}", user_id, rank.name);
+                            let elo = rank.elo;
+                            (rank, elo)
+                        },
+                        Err(e) => {
+                            error!("Failed to get or assign rank for user {}: {}", user_id, e);
+                            return Ok(());
+                        }
                     }
                 }
             };
@@ -677,52 +708,48 @@ impl Group {
             };
 
             // Get guild-specific ELO if exists
-            let existing_elo = cc.db.elos.get_if_exists(user_id, guild_id).await.ok().flatten();
+            let existing_elo = cc.db.elo.get_if_exists(user_id, guild_id).await.ok().flatten();
             
             // Get the valid ELO range for the player's Discord rank
-            let rank_min_elo = discord_rank.elo_from_db(&cc.db, guild_id).await;
-            let next_rank    = discord_rank.next_rank();
-            let rank_max_elo = if let Some(nr) = next_rank {
-                nr.elo_from_db(&cc.db, guild_id).await
-            } else {
-                101
-            };
+            let rank_min_elo = discord_rank.elo;
+            // For next rank, we'd need to query the database for ranks with higher ELO
+            // For now, use a simple upper bound
+            let rank_max_elo = 101;
             
-            info!("DEBUG: discord_rank={} (pos {}), rank_min_elo={}, next_rank={:?}, rank_max_elo={}",
-                  discord_rank.name(), discord_rank.position(), rank_min_elo, 
-                  next_rank.map(|r| r.name()), rank_max_elo);
+            info!("DEBUG: discord_rank={}, rank_min_elo={}, rank_max_elo={}",
+                  discord_rank.name, rank_min_elo, rank_max_elo);
             
             if let Some(guild_elo) = existing_elo {
                 if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
                     // ELO is within the Discord rank's range - keep it
                     info!("Player {} ELO {} within {} range [{}, {}), keeping", 
-                          user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo);
+                          user_id, guild_elo.elo, discord_rank.name, rank_min_elo, rank_max_elo);
                     player.elo = guild_elo.elo;
                 } else {
                     // ELO is outside the Discord rank's range - reset to rank default
                     info!("Player {} ELO {} outside {} range [{}, {}), resetting to {}", 
-                          user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo, rank_min_elo);
+                          user_id, guild_elo.elo, discord_rank.name, rank_min_elo, rank_max_elo, rank_min_elo);
                     player.elo = rank_min_elo;
-                    if let Err(e) = cc.db.elos.set(user_id, guild_id, player.elo, discord_rank).await {
+                    if let Err(e) = cc.db.elo.set(user_id, guild_id, player.elo, discord_rank.clone()).await {
                         warn!("Failed to update guild ELO: {}", e);
                     }
                 }
             } else {
                 // No ELO record - new player, use Discord rank's default ELO
                 info!("New player {} in guild, setting ELO to {} from Discord rank {}", 
-                      user_id, rank_min_elo, discord_rank.name());
+                      user_id, rank_min_elo, discord_rank.name);
                 player.elo = rank_min_elo;
-                if let Err(e) = cc.db.elos.set(user_id, guild_id, player.elo, discord_rank).await {
+                if let Err(e) = cc.db.elo.set(user_id, guild_id, player.elo, discord_rank.clone()).await {
                     warn!("Failed to initialize guild ELO: {}", e);
                 }
             }
-            player.rank = discord_rank;
+            player.rank = Some(discord_rank.clone());
 
             // Fetch discord tag from component user for performance (avoid extra API call)
             player.tag = cc.component.user.tag();
 
             // Save rank for announcement (player will be moved)
-            let player_rank = discord_rank;
+            let player_rank = discord_rank.clone();
 
             //
             if let Err(e) = self.queue_player(player, discord_rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
@@ -746,7 +773,7 @@ impl Group {
                         user_id,
                         Some(guild_id),
                         &settings,
-                        player_rank.name()
+                        &player_rank.name
                     ).await;
 
                     let queue_chat = self.channels.queue_chat;

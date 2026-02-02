@@ -6,11 +6,11 @@ use std::sync::Arc;
 use time::macros::format_description;
 use tracing_subscriber::fmt::time::UtcTime;
 use anyhow::Result;
-use pf_pug_bot::{Player, RED, commands};
+use pf_pug_bot::{Player, RED, commands, Rank};
 use serenity::all::{
     Client, GatewayIntents, EventHandler, Ready, Guild,Interaction,
     VoiceState, Command, Context, User, CommandOptionType as COT,
-    CreateEmbed, EditMessage,
+    CreateEmbed, EditMessage, UserId
 };
 use serenity::prelude::TypeMapKey;
 use serenity::async_trait;
@@ -445,8 +445,8 @@ impl EventHandler for Handler {
                     return;
                 }
 
-                // Handle server settings buttons
-                if itx.data.custom_id.starts_with("server_settings_") {
+                // Handle server settings buttons (including link channel flow)
+                if itx.data.custom_id.starts_with("server_settings_") || itx.data.custom_id.starts_with("link_ch_") {
                     let result = handlers::handle_server_settings_button(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling server settings interaction: {e}");
@@ -472,8 +472,8 @@ impl EventHandler for Handler {
                     return;
                 }
 
-                // Handle group settings buttons
-                if itx.data.custom_id.starts_with("group_settings_") {
+                // Handle group settings buttons (including link message buttons)
+                if itx.data.custom_id.starts_with("group_settings_") || itx.data.custom_id.starts_with("group_link_msg_") {
                     let result = handlers::handle_group_settings_button(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling group settings interaction: {e}");
@@ -554,7 +554,7 @@ impl EventHandler for Handler {
                                     error!("[{}] No group found in database for #{}", guild_name, channel_name);
                                     let error_response = CIR::Message(
                                         CIRM::new()
-                                            .content("Dashboard configuration not found. Please run `/setup` to configure this channel.")
+                                            .content("Dashboard configuration not found. Please run `/config` to configure this server.")
                                             .ephemeral(true)
                                     );
                                     if let Err(e) = itx.create_response(&ctx.http, error_response).await {
@@ -625,6 +625,13 @@ impl EventHandler for Handler {
                     let result = handlers::handle_group_settings_modal(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling group settings modal '{}': {}", itx.data.custom_id, e);
+                    }
+                }
+                // Handle modal submissions for linking dashboard message
+                if itx.data.custom_id.starts_with("group_link_msg_modal_") {
+                    let result = handlers::handle_group_link_msg_modal(&ctx, &itx, &self.db, &self.manager).await;
+                    if let Err(e) = result {
+                        error!("Error handling group link message modal '{}': {}", itx.data.custom_id, e);
                     }
                 }
                 // Handle modal submissions for player settings
@@ -904,84 +911,129 @@ impl EventHandler for Handler {
 
                             // Now we're guaranteed to have a session
                             {
-                                // Get or assign player rank (auto-creates ranks and assigns default if needed)
-                                use pf_pug_bot::handlers::player::get_or_assign_player_rank;
-                                match get_or_assign_player_rank(&self.db, server, user_id).await {
-                                    Ok(discord_rank) => {
-                                        // Get base player info
-                                        let mut player = match self.db.get_user(user_id, &ctx).await {
-                                            Ok(p) => p,
-                                            Err(_) => match self.db.new_user(user_id, &ctx).await {
-                                                Ok(p) => p,
-                                                Err(e) => {
-                                                    error!("Failed to create new user: {}", e);
-                                                    return;
-                                                }
-                                            }
-                                        };
-
-                                        // Get guild-specific ELO if exists
-                                        let existing_elo = self.db.elos.get_if_exists(user_id, server).await.ok().flatten();
-                                        
-                                        // Get the valid ELO range for the Discord rank
-                                        let rank_min_elo = discord_rank.elo_from_db(&self.db, server).await;
-                                        let next_rank = discord_rank.next_rank();
-                                        let rank_max_elo = if let Some(nr) = next_rank {
-                                            nr.elo_from_db(&self.db, server).await
-                                        } else {
-                                            101
-                                        };
-                                        
-                                        if let Some(guild_elo) = existing_elo {
-                                            if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
-                                                // ELO is within the Discord rank's range - keep it
-                                                info!("Voice join - Player {} ELO {} within {} range [{}, {}), keeping", 
-                                                      user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo);
-                                                player.elo = guild_elo.elo;
-                                            } else {
-                                                // ELO is outside the Discord rank's range - reset to rank default
-                                                info!("Voice join - Player {} ELO {} outside {} range [{}, {}), resetting to {}", 
-                                                      user_id, guild_elo.elo, discord_rank.name(), rank_min_elo, rank_max_elo, rank_min_elo);
-                                                player.elo = rank_min_elo;
-                                                if let Err(e) = self.db.elos.set(user_id, server, player.elo, discord_rank).await {
-                                                    warn!("Failed to update guild ELO: {}", e);
-                                                }
-                                            }
-                                        } else {
-                                            // No ELO record - new player, use Discord rank's default ELO
-                                            info!("Voice join - New player {} in guild, setting ELO to {} from Discord rank {}", 
-                                                  user_id, rank_min_elo, discord_rank.name());
-                                            player.elo = rank_min_elo;
-                                            if let Err(e) = self.db.elos.set(user_id, server, player.elo, discord_rank).await {
-                                                warn!("Failed to initialize guild ELO: {}", e);
+                                // Get player rank: DB for speed, Discord roles for truth
+                                use pf_pug_bot::handlers::player::{get_player_rank, get_user_rank_from_discord_roles, get_or_assign_player_rank};
+                                
+                                // First, get Discord role (source of truth) - returns GuildRank with ELO
+                                let role_based_guild_rank = get_user_rank_from_discord_roles(&ctx, &self.db, server, user_id).await;
+                                
+                                // Convert to Rank struct and get ELO
+                                let (discord_rank, rank_min_elo) = if let Some(db_rank) = get_player_rank(&self.db, server, user_id).await {
+                                    // Player has existing rank in database
+                                    if let Some(guild_rank) = &role_based_guild_rank {
+                                        // Discord role exists - use its name to determine Rank struct
+                                        let role_rank = Rank::from_name(&self.db, server, &guild_rank.name).await.unwrap_or(db_rank.clone());
+                                        if role_rank != db_rank {
+                                            info!("Voice join - Player {} Discord role '{}' (ELO {}) differs from DB {}, using Discord role", 
+                                                  user_id, guild_rank.name, guild_rank.elo, db_rank.name);
+                                        }
+                                        (role_rank, guild_rank.elo)
+                                    } else {
+                                        // No Discord role, keep DB rank
+                                        let elo = db_rank.elo;
+                                        (db_rank, elo)
+                                    }
+                                } else {
+                                    // No DB rank - check Discord roles before defaulting
+                                    if let Some(guild_rank) = &role_based_guild_rank {
+                                        // Has Discord role, use its name
+                                        let role_rank = Rank::from_name(&self.db, server, &guild_rank.name).await.unwrap_or_else(|_| Rank {
+                                            guild_id: server,
+                                            role_id: guild_rank.role_id,
+                                            name: guild_rank.name.clone(),
+                                            elo: guild_rank.elo,
+                                        });
+                                        info!("Voice join - New player {} has Discord role '{}' (ELO {})", 
+                                              user_id, guild_rank.name, guild_rank.elo);
+                                        (role_rank, guild_rank.elo)
+                                    } else {
+                                        // No DB rank or Discord role, assign default
+                                        match get_or_assign_player_rank(&self.db, server, user_id).await {
+                                            Ok(rank) => {
+                                                let elo = rank.elo;
+                                                (rank, elo)
+                                            },
+                                            Err(e) => {
+                                                error!("Failed to get or assign rank for user {}: {}", user_id, e);
+                                                return;
                                             }
                                         }
-                                        player.rank = discord_rank;
-                                        
-                                        // Use queue_player_with_vc_status to set in_queue_vc BEFORE quota check/notification
-                                        let queue_ctx = pf_pug_bot::models::server::QueueContext {
-                                            ctx: &ctx,
-                                            guild_id: Some(server),
-                                            db: Some(&self.db),
-                                            manager: Some(self.manager.clone()),
-                                        };
-                                        if let Err(e) = group.queue_player_with_vc_status(player.clone(), discord_rank, queue_ctx, true).await {
-                                            error!("Failed to add player to queue: {e}");
-                                        } else {
-                                            // Log successful queue join via voice channel
-                                            let guild_name = ctx.cache.guild(server).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-                                            let group_name = ctx.cache.channel(group.channels.dashboard)
-                                                .map(|ch| ch.name.clone())
-                                                .unwrap_or_else(|| "Unknown".to_string());
-                                            log_queue_toggle(&guild_name, &group_name, &tag, QueueToggleType::VJ);
+                                    }
+                                };
+                                
+                                // Get base player info
+                                let mut player = match self.db.get_user(user_id, &ctx).await {
+                                    Ok(p) => p,
+                                    Err(_) => match self.db.new_user(user_id, &ctx).await {
+                                        Ok(p) => p,
+                                        Err(e) => {
+                                            error!("Failed to create new user: {}", e);
+                                            return;
                                         }
+                                    }
+                                };
 
-                                        group.queue_dash_update(&ctx, server).await;
-                                    },
-                                    Err(e) => {
-                                        warn!("{} failed to get or assign rank: {}", tag, e);
+                                // Get guild-specific ELO if exists
+                                let existing_elo = self.db.elo.get_if_exists(user_id, server).await.ok().flatten();
+                                
+                                // Get the valid ELO range for the Discord rank
+                                let rank_min_elo = discord_rank.elo;
+                                let rank_max_elo = 101; // Simple upper bound
+                                
+                                if let Some(guild_elo) = existing_elo {
+                                    if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
+                                        // ELO is within the Discord rank's range - keep it
+                                        info!("Voice join - Player {} ELO {} within {} range [{}, {}), keeping", 
+                                              user_id, guild_elo.elo, discord_rank.name, rank_min_elo, rank_max_elo);
+                                        player.elo = guild_elo.elo;
+                                    } else {
+                                        // ELO is outside the Discord rank's range - reset to rank default
+                                        info!("Voice join - Player {} ELO {} outside {} range [{}, {}), resetting to {}", 
+                                              user_id, guild_elo.elo, discord_rank.name, rank_min_elo, rank_max_elo, rank_min_elo);
+                                        player.elo = rank_min_elo;
+                                        if let Err(e) = self.db.elo.set(user_id, server, player.elo, discord_rank.clone()).await {
+                                            warn!("Failed to update guild ELO: {}", e);
+                                        }
+                                    }
+                                } else {
+                                    // No ELO record - new player, use Discord rank's default ELO
+                                    // Get the role_id for this rank for debugging
+                                    let role_id_info = if let Ok(ranks) = self.db.ranks.get_ranks(server).await {
+                                        ranks.iter()
+                                            .find(|r| r.name == discord_rank.name)
+                                            .map(|r| format!(" (role_id: {})", r.role_id))
+                                            .unwrap_or_else(|| String::new())
+                                    } else {
+                                        String::new()
+                                    };
+                                    info!("Voice join - New player {} in guild, setting ELO to {} from Discord rank {}{}", 
+                                          user_id, rank_min_elo, discord_rank.name, role_id_info);
+                                    player.elo = rank_min_elo;
+                                    if let Err(e) = self.db.elo.set(user_id, server, player.elo, discord_rank.clone()).await {
+                                        warn!("Failed to initialize guild ELO: {}", e);
                                     }
                                 }
+                                player.rank = Some(discord_rank.clone());
+                                
+                                // Use queue_player_with_vc_status to set in_queue_vc BEFORE quota check/notification
+                                let queue_ctx = pf_pug_bot::models::server::QueueContext {
+                                    ctx: &ctx,
+                                    guild_id: Some(server),
+                                    db: Some(&self.db),
+                                    manager: Some(self.manager.clone()),
+                                };
+                                if let Err(e) = group.queue_player_with_vc_status(player.clone(), discord_rank, queue_ctx, true).await {
+                                    error!("Failed to add player to queue: {e}");
+                                } else {
+                                    // Log successful queue join via voice channel
+                                    let guild_name = ctx.cache.guild(server).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                                    let group_name = ctx.cache.channel(group.channels.dashboard)
+                                        .map(|ch| ch.name.clone())
+                                        .unwrap_or_else(|| "Unknown".to_string());
+                                    log_queue_toggle(&guild_name, &group_name, &tag, QueueToggleType::VJ);
+                                }
+
+                                group.queue_dash_update(&ctx, server).await;
                             }
                         }
 
@@ -1068,7 +1120,7 @@ impl Handler {
             }
 
             // Collect all players to add first (to avoid quota check per player)
-            let mut players_to_add: Vec<Player> = Vec::new();
+            let mut players_to_add: Vec<(serenity::all::UserId, String)> = Vec::new();
             for (user_id, voice_state) in &guild.voice_states {
                 // Check if user is in this queue voice channel
                 if voice_state.channel_id == Some(queue_vc_id) {
@@ -1083,15 +1135,7 @@ impl Handler {
                         "Unknown".to_string()
                     };
 
-                    match get_or_assign_player_rank(&self.db, guild.id, *user_id).await {
-                        Ok(rank) => {
-                            let player = Player::add(*user_id, tag, None, rank);
-                            players_to_add.push(player);
-                        },
-                        Err(e) => {
-                            warn!("Failed to get or assign rank for existing user {}: {}", tag, e);
-                        }
-                    }
+                    players_to_add.push((*user_id, tag));
                 }
             }
 
@@ -1103,63 +1147,105 @@ impl Handler {
                     .map(|ch| ch.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
 
-                for player in &mut players_to_add {
-                    // Get player info and handle ELO fallback
-                    let player = match self.db.get_user(player.user_id, ctx).await {
-                        Ok(mut player) => {
-                            // If player has no ELO in database, use rank-based ELO
-                            if player.elo == 0 {
-                                info!("DEBUG: Existing VC - Player {} has ELO 0, setting to {} from Discord rank {}", player.user_id, player.rank.default_rank_elo(), player.rank.name());
-                                player.elo = player.rank.default_rank_elo();
-                                // Update database with the rank-based ELO
-                                if let Err(e) = self.db.users.update_elo(player.user_id, Some(player.elo)).await {
-                                    warn!("Failed to update player ELO in database: {}", e);
-                                }
-                            } else {
-                                // Player has stored ELO, check for ELO mismatch with Discord rank
-                                let elo_mismatch = player.elo <= 30 && player.rank.default_rank_elo() > 30;
-                                
-                                if elo_mismatch {
-                                    warn!("ELO MISMATCH DETECTED in existing VC: Player {} has ELO {} but Discord rank {} (default ELO {}). Auto-correcting...", 
-                                          player.user_id, player.elo, player.rank.name(), player.rank.default_rank_elo());
-                                    
-                                    player.elo = player.rank.default_rank_elo();
-                                    
-                                    // Update the database with the corrected ELO
-                                    if let Err(e) = self.db.users.update_elo(player.user_id, Some(player.elo)).await {
-                                        error!("Failed to auto-correct ELO for player {} in existing VC: {}", player.user_id, e);
-                                    } else {
-                                        info!("Successfully auto-corrected ELO for player {} in existing VC to {} (rank: {})", 
-                                              player.user_id, player.elo, player.rank.name());
-                                    }
-                                } else {
-                                    // Player has stored ELO, keep their ELO and only update rank if it makes sense
-                                    info!("DEBUG: Existing VC - Player {} has custom ELO {}, keeping it instead of Discord rank ELO {}", player.user_id, player.elo, player.rank.default_rank_elo());
-                                    // Don't override rank - keep whatever rank matches their current ELO
-                                    player.update_rank_from_elo(&self.db, guild.id).await;
-                                }
+                use pf_pug_bot::handlers::player::{get_player_rank, get_user_rank_from_discord_roles, get_or_assign_player_rank};
+                
+                for (user_id, _tag) in &players_to_add {
+                    let user_id = *user_id;
+                    // Use same rank detection as voice join: Discord roles for truth, DB for speed
+                    let role_based_guild_rank = get_user_rank_from_discord_roles(&ctx, &self.db, guild.id, user_id).await;
+                    
+                    let (discord_rank, rank_min_elo) = if let Some(db_rank) = get_player_rank(&self.db, guild.id, user_id).await {
+                        // Player has existing rank in database
+                        if let Some(guild_rank) = &role_based_guild_rank {
+                            // Discord role exists - use its name to determine Rank struct
+                            let role_rank = Rank::from_name(&self.db, guild.id, &guild_rank.name).await.unwrap_or(db_rank.clone());
+                            if role_rank != db_rank {
+                                info!("Existing VC - Player {} Discord role '{}' (ELO {}) differs from DB {}, using Discord role", 
+                                      user_id, guild_rank.name, guild_rank.elo, db_rank.name);
                             }
-                            player
-                        },
-                        Err(_) => {
-                            // New player - use rank-based ELO
-                            info!("DEBUG: Existing VC - New player {}, setting ELO to {} from Discord rank {}", player.user_id, player.rank.default_rank_elo(), player.rank.name());
-                            let mut new_player = match self.db.new_user(player.user_id, ctx).await {
-                                Ok(p) => p,
+                            (role_rank, guild_rank.elo)
+                        } else {
+                            // No Discord role, keep DB rank
+                            let elo = db_rank.elo;
+                            (db_rank, elo)
+                        }
+                    } else {
+                        // No DB rank - check Discord roles before defaulting
+                        if let Some(guild_rank) = &role_based_guild_rank {
+                            let role_rank = Rank::from_name(&self.db, guild.id, &guild_rank.name).await.unwrap_or_else(|_| Rank {
+                                guild_id: guild.id,
+                                role_id: guild_rank.role_id,
+                                name: guild_rank.name.clone(),
+                                elo: guild_rank.elo,
+                            });
+                            info!("Existing VC - Player {} has Discord role '{}' (ELO {})", user_id, guild_rank.name, guild_rank.elo);
+                            (role_rank, guild_rank.elo)
+                        } else {
+                            // No DB rank or Discord role, assign default
+                            match get_or_assign_player_rank(&self.db, guild.id, user_id).await {
+                                Ok(rank) => {
+                                    let elo = rank.elo;
+                                    (rank, elo)
+                                },
                                 Err(e) => {
-                                    error!("Failed to create new user: {}", e);
-                                    return;
+                                    error!("Failed to get or assign rank for user {}: {}", user_id, e);
+                                    continue;
                                 }
-                            };
-                            new_player.elo = player.rank.default_rank_elo();
-                            new_player.rank = player.rank;
-                            // Update database with the rank-based ELO
-                            if let Err(e) = self.db.users.update_elo(player.user_id, Some(new_player.elo)).await {
-                                warn!("Failed to update new player ELO in database: {}", e);
                             }
-                            new_player
                         }
                     };
+                    
+                    // Get base player info
+                    let mut player = match self.db.get_user(user_id, &ctx).await {
+                        Ok(p) => p,
+                        Err(_) => match self.db.new_user(user_id, &ctx).await {
+                            Ok(p) => p,
+                            Err(e) => {
+                                error!("Failed to create new user: {}", e);
+                                continue;
+                            }
+                        }
+                    };
+                    
+                    // Get guild-specific ELO if exists
+                    let existing_elo = self.db.elo.get_if_exists(user_id, guild.id).await.ok().flatten();
+                    
+                    // Get the valid ELO range for the Discord rank
+                    let rank_min_elo = discord_rank.elo;
+                    let rank_max_elo = 101; // Simple upper bound
+                    
+                    if let Some(guild_elo) = existing_elo {
+                        if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
+                            // ELO is within the Discord rank's range - keep it
+                            player.elo = guild_elo.elo;
+                        } else {
+                            // ELO is outside the Discord rank's range - reset to rank default
+                            info!("Existing VC - Player {} ELO {} outside {} range [{}, {}), resetting to {}", 
+                                  user_id, guild_elo.elo, discord_rank.name, rank_min_elo, rank_max_elo, rank_min_elo);
+                            player.elo = rank_min_elo;
+                            if let Err(e) = self.db.elo.set(user_id, guild.id, player.elo, discord_rank.clone()).await {
+                                warn!("Failed to update guild ELO: {}", e);
+                            }
+                        }
+                    } else {
+                        // No ELO record - use Discord rank's default ELO
+                        // Get the role_id for this rank for debugging
+                        let role_id_info = if let Ok(ranks) = self.db.ranks.get_ranks(guild.id).await {
+                            ranks.iter()
+                                .find(|r| r.name == discord_rank.name)
+                                .map(|r| format!(" (role_id: {})", r.role_id))
+                                .unwrap_or_else(|| String::new())
+                        } else {
+                            String::new()
+                        };
+                        info!("Existing VC - New player {} in guild, setting ELO to {} from Discord rank {}{}", 
+                              user_id, rank_min_elo, discord_rank.name, role_id_info);
+                        player.elo = rank_min_elo;
+                        if let Err(e) = self.db.elo.set(user_id, guild.id, player.elo, discord_rank.clone()).await {
+                            warn!("Failed to initialize guild ELO: {}", e);
+                        }
+                    }
+                    player.rank = Some(discord_rank);
                     
                     log_queue_toggle(&guild_name, &group_name, &player.tag.clone(), QueueToggleType::VJ);
                     session.add_player(player);

@@ -8,7 +8,6 @@ use sqlx::FromRow;
 
 use super::types::Rank;
 
-pub const DEFAULT_RANK: Rank = Rank::Apprentice;
 pub const DEFAULT_ALERT_COLOR:      u32  = 3447003;
 pub const DEFAULT_ACTIVE_ELO:       bool = false;
 pub const DEFAULT_QUOTA:            u8   = 8;

@@ -8,7 +8,7 @@ use std::time::SystemTime;
 
 use tokio::sync::Mutex;
 use anyhow::{anyhow, Error, Result};
-use crate::{Database as DB, GREEN, Manager, ORANGE, Rank, models::constants::{DEFAULT_ACTIVE_ELO, DEFAULT_HOT_JOIN_TIMEOUT, MAX_TIMEOUT, MIN_TIMEOUT}};
+use crate::{Database as DB, GREEN, Manager, Rank, models::constants::{DEFAULT_ACTIVE_ELO, MAX_TIMEOUT, MIN_TIMEOUT}};
 use serde::{Deserialize, Serialize};
 use serenity::{all::{
     ChannelId as CI, Context, CreateEmbed,
@@ -329,13 +329,14 @@ impl Group {
         // Spawn a targeted deadline timer for this hot session
         if let (Some(guild_id), Some(mgr)) = (guild_id, manager) {
             let group_id = self.group_id;
+            let timeout = self.timeout;
             let ctx_clone = ctx.clone();
 
             tokio::spawn(async move {
                 use tokio::time::{sleep, Duration};
 
-                // Wait for the deadline
-                sleep(Duration::from_secs(DEFAULT_HOT_JOIN_TIMEOUT as u64)).await;
+                // Wait for the deadline (use group's configured timeout)
+                sleep(Duration::from_secs(timeout as u64)).await;
 
                 // Check if players have joined, remove those who haven't
                 let mut manager_lock = mgr.lock().await;
@@ -358,11 +359,12 @@ impl Group {
     pub async fn check_hot_timeout(&mut self, ctx: &Context, guild_id: GI) -> bool {
         let mut changes_made = false;
         let quota = self.quota as usize;
+        let timeout_seconds = self.timeout as u64;
 
         // Find hot sessions that have timed out
         let hot_sessions: Vec<usize> = self.sessions.iter().enumerate()
             .filter_map(|(idx, s)| {
-                if s.is_hot_timeout(DEFAULT_HOT_JOIN_TIMEOUT as u64) {
+                if s.is_hot_timeout(timeout_seconds) {
                     Some(idx)
                 } else {
                     None
@@ -607,7 +609,7 @@ impl Group {
 
         // Only re-add players who were successfully moved (i.e., were still in voice)
         for player in players_to_requeue {
-            let _rank = player.rank;
+            let _rank = player.rank.clone();
             if successfully_moved.contains(&player.user_id) {
                 // Player was successfully moved back to queue VC
                 idle_session.add_player_in_vc(player);
@@ -637,7 +639,7 @@ impl Group {
         for session in &mut self.sessions {
             for player in &mut session.pool {
                 if let Some(updated_rank) = get_player_rank(db, guild_id, player.player.user_id).await {
-                    player.player.rank = updated_rank;
+                    player.player.rank = Some(updated_rank);
                 }
             }
         }
