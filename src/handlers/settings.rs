@@ -245,7 +245,7 @@ pub async fn handle_settings_button(
                             .max_length(MAX_ALERT_CHARS as u16)
                     ),
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Footer Text", "leave_alert_footer")
+                        CreateInputText::new(InputTextStyle::Short, "Footer text", "leave_alert_footer")
                             .placeholder("e.g., See you next time!")
                             .value(settings.leave_alert_footer.unwrap_or_default())
                             .required(false)
@@ -873,11 +873,11 @@ pub async fn handle_server_settings_button(
             
             let modal = CreateModal::new(
                 format!("server_settings_rank_modal_link_{}", selected_role_id.get()),
-                "Link Existing Rank"
+                "Link existing rank"
             )
             .components(vec![
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Short, "Rank Name", "name")
+                    CreateInputText::new(InputTextStyle::Short, "Rank name", "name")
                         .placeholder("e.g., Champion, Legend, Elite")
                         .value(&role_name)
                         .required(true)
@@ -921,11 +921,11 @@ pub async fn handle_server_settings_button(
                 
                 let modal = CreateModal::new(
                     format!("server_settings_rank_modal_{}", rank_name),
-                    format!("Edit {} Rank", guild_rank.name)
+                    format!("Edit {} rank", guild_rank.name)
                 )
                 .components(vec![
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Rank Name", "name")
+                        CreateInputText::new(InputTextStyle::Short, "Rank name", "name")
                             .placeholder("e.g., Beginner, Expert, Champion")
                             .value(&guild_rank.name)
                                 .required(true)
@@ -949,10 +949,10 @@ pub async fn handle_server_settings_button(
             // Show modal to add a new rank
             use serenity::all::{CreateModal, CreateActionRow, CreateInputText, InputTextStyle};
             
-            let modal = CreateModal::new("server_settings_rank_modal_add", "Add New Rank")
+            let modal = CreateModal::new("server_settings_rank_modal_add", "Add new rank")
                 .components(vec![
                     CreateActionRow::InputText(
-                        CreateInputText::new(InputTextStyle::Short, "Rank Name", "name")
+                        CreateInputText::new(InputTextStyle::Short, "Rank name", "name")
                             .placeholder("e.g., Champion, Legend, Elite")
                             .required(true)
                             .max_length(30)
@@ -986,7 +986,7 @@ pub async fn handle_server_settings_button(
                         ),
                         CAR::Buttons(vec![
                             CB::new("server_settings_ranks_back")
-                                .label("Back to Ranks")
+                                .label("Back to ranks")
                                 .style(BS::Secondary),
                         ])
                     ])
@@ -1472,13 +1472,13 @@ pub async fn handle_server_settings_button(
                             let (next_channel_type, next_channel_name, available_channels) = if dashboard_channel.is_none() {
                                 ("dashboard", "Dashboard (text)", text_channels)
                             } else if queue_channel.is_none() {
-                                ("queue", "Queue Chat (text)", text_channels)
+                                ("queue", "Queue chat (text)", text_channels)
                             } else if queue_vc_channel.is_none() {
-                                ("queue_vc", "Queue Voice Channel", voice_channels)
+                                ("queue_vc", "Queue voice channel", voice_channels)
                             } else if red_channel.is_none() {
-                                ("red", "Red Team Voice Channel", voice_channels)
+                                ("red", "Red team voice channel", voice_channels)
                             } else {
-                                ("blue", "Blue Team Voice Channel", voice_channels)
+                                ("blue", "Blue team voice channel", voice_channels)
                             };
                             
                             if available_channels.is_empty() {
@@ -1655,7 +1655,7 @@ pub async fn handle_server_settings_button(
                                 );
                                 
                                 buttons.push(CB::new(format!("link_existing_remove_dup_{}", state))
-                                    .label("Remove Duplicate & Link Existing")
+                                    .label("Remove duplicate & link existing")
                                     .style(BS::Success));
                             } else {
                                 description.push_str(
@@ -1675,10 +1675,10 @@ pub async fn handle_server_settings_button(
                                 );
                                 
                                 buttons.push(CB::new(format!("link_remove_dup_new_{}", state))
-                                    .label("Remove Duplicate & Create New")
+                                    .label("Remove duplicate & create new")
                                     .style(BS::Success));
                                 buttons.push(CB::new(format!("link_manual_msg_{}", state))
-                                    .label("Provide Message ID")
+                                    .label("Provide message ID")
                                     .style(BS::Primary));
                             }
                         } else if !existing_dashboard_msgs.is_empty() {
@@ -1708,13 +1708,13 @@ pub async fn handle_server_settings_button(
                             );
                             
                             buttons.push(CB::new(format!("link_use_existing_{}", state))
-                                .label("Link to Existing Dashboard")
+                                .label("Link to existing dashboard")
                                 .style(BS::Success));
                             buttons.push(CB::new(format!("link_create_new_{}", state))
-                                .label("Create New Dashboard")
+                                .label("Create new dashboard")
                                 .style(BS::Primary));
                             buttons.push(CB::new(format!("link_manual_msg_{}", state))
-                                .label("Provide Message ID")
+                                .label("Provide message ID")
                                 .style(BS::Secondary));
                         } else {
                             description.push_str(&format!(
@@ -1736,10 +1736,10 @@ pub async fn handle_server_settings_button(
                             );
                             
                             buttons.push(CB::new(format!("link_create_new_{}", state))
-                                .label("Create New Dashboard")
+                                .label("Create new dashboard")
                                 .style(BS::Success));
                             buttons.push(CB::new(format!("link_manual_msg_{}", state))
-                                .label("Provide Message ID")
+                                .label("Provide message ID")
                                 .style(BS::Secondary));
                         }
                         
@@ -2136,13 +2136,13 @@ pub async fn handle_server_settings_button(
                             let (next_channel_type, next_channel_name, available_channels) = if dashboard_channel.is_none() {
                                 ("dashboard", "Dashboard (text)", text_channels)
                             } else if queue_channel.is_none() {
-                                ("queue", "Queue Chat (text)", text_channels)
+                                ("queue", "Queue chat (text)", text_channels)
                             } else if queue_vc_channel.is_none() {
-                                ("queue_vc", "Queue Voice Channel", voice_channels)
+                                ("queue_vc", "Queue voice channel", voice_channels)
                             } else if red_channel.is_none() {
-                                ("red", "Red Team Voice Channel", voice_channels)
+                                ("red", "Red team voice channel", voice_channels)
                             } else {
-                                ("blue", "Blue Team Voice Channel", voice_channels)
+                                ("blue", "Blue team voice channel", voice_channels)
                             };
                             
                             let options: Vec<CreateSelectMenuOption> = available_channels.iter()
@@ -2462,7 +2462,7 @@ pub async fn handle_server_settings_button(
             // Prompt user to provide message ID manually
             let response = CIR::Message(
                 CIRM::new()
-                    .content("**Manual Message ID Input**\n\nPlease provide the dashboard message ID.\n\nYou can get this by:\n1. Right-clicking the dashboard message\n2. Selecting \"Copy Message Link\"\n3. The ID is the last number in the URL\n\nExample: `https://discord.com/channels/123/456/789` → Message ID is `789`\n\n*Note: This feature requires a modal input which will be implemented in a future update. For now, please use the automatic detection or create a new dashboard.*")
+                    .content("**Manual Message ID Input**\n\nPlease provide the dashboard message ID.\n\nYou can get this by:\n1. Right-clicking the dashboard message\n2. Selecting \"Copy message link\"\n3. The ID is the last number in the URL\n\nExample: `https://discord.com/channels/123/456/789` → Message ID is `789`\n\n*Note: This feature requires a modal input which will be implemented in a future update. For now, please use the automatic detection or create a new dashboard.*")
                     .ephemeral(true)
             );
             interaction.create_response(&ctx.http, response).await?;
@@ -2572,10 +2572,10 @@ pub async fn handle_server_settings_button(
                         let components = vec![
                             CAR::Buttons(vec![
                                 CB::new(format!("server_settings_remove_confirm_delete_{}", group_id))
-                                    .label("Yes, Delete Channels")
+                                    .label("Yes, delete channels")
                                     .style(BS::Danger),
                                 CB::new(format!("server_settings_remove_confirm_keep_{}", group_id))
-                                    .label("No, Keep Channels")
+                                    .label("No, keep channels")
                                     .style(BS::Success),
                                 CB::new("server_settings_remove_cancel")
                                     .label("Cancel")
@@ -2762,7 +2762,7 @@ pub async fn handle_server_settings_button(
                         // Find the group
                         let groups = db.groups.get_groups_for_guild(guild_id).await?;
                         if let Some(group) = groups.iter().find(|g| g.group_id == group_id) {
-                            let modal = CreateModal::new(format!("server_settings_group_modal_{group_id}"), "Edit Group Settings")
+                            let modal = CreateModal::new(format!("server_settings_group_modal_{group_id}"), "Edit group settings")
                                 .components(vec![
                                     CreateActionRow::InputText(
                                         CreateInputText::new(InputTextStyle::Short, "Name", "name")
@@ -2780,7 +2780,7 @@ pub async fn handle_server_settings_button(
                                             .max_length(3)
                                     ),
                                     CreateActionRow::InputText(
-                                        CreateInputText::new(InputTextStyle::Short, "Hot Join Timeout (seconds)", "timeout")
+                                        CreateInputText::new(InputTextStyle::Short, "Ready check duration (seconds)", "timeout")
                                             .placeholder("Seconds for missing players to join VC")
                                             .value(group.timeout.to_string())
                                             .required(true)
@@ -2788,7 +2788,7 @@ pub async fn handle_server_settings_button(
                                             .max_length(3)
                                     ),
                                     CreateActionRow::InputText(
-                                        CreateInputText::new(InputTextStyle::Paragraph, "Connect Info", "connect")
+                                        CreateInputText::new(InputTextStyle::Paragraph, "Connect info", "connect")
                                             .placeholder("e.g., connect 192.168.1.1:27015; password secret")
                                             .value(group.connect_info.clone().unwrap_or_default())
                                             .required(false)
@@ -2878,7 +2878,7 @@ pub async fn handle_server_settings_button(
                         let state = format!("{}_{:x}", group_id, existing_dashboard_msgs[0].0.get());
                         
                         buttons.push(CB::new(format!("group_link_msg_confirm_{}", state))
-                            .label("Link to This Message")
+                            .label("Link to this message")
                             .style(BS::Success));
                     } else {
                         description.push_str(&format!(
@@ -3551,10 +3551,10 @@ pub async fn handle_group_settings_button(
 
     // Match button action (button_id format: group_settings_edit_<action>_<group_id>)
     if button_id.starts_with("group_settings_edit_name_") {
-        let modal = CreateModal::new(format!("group_settings_modal_name_{group_id}"), "Set Group Name")
+        let modal = CreateModal::new(format!("group_settings_modal_name_{group_id}"), "Set group name")
             .components(vec![
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Short, "Group Name", "name")
+                    CreateInputText::new(InputTextStyle::Short, "Group name", "name")
                         .placeholder("e.g., NA PUGs, EU Competitive")
                         .value(settings.name.unwrap_or_default())
                         .required(false)
@@ -3565,7 +3565,7 @@ pub async fn handle_group_settings_button(
         let response = CIR::Modal(modal);
         interaction.create_response(&ctx.http, response).await?;
     } else if button_id.starts_with("group_settings_edit_quota_") {
-        let modal = CreateModal::new(format!("group_settings_modal_quota_{group_id}"), "Set Queue Quota")
+        let modal = CreateModal::new(format!("group_settings_modal_quota_{group_id}"), "Set queue quota")
             .components(vec![
                 CreateActionRow::InputText(
                     CreateInputText::new(InputTextStyle::Short, "Quota (2-100)", "quota")
@@ -3580,7 +3580,7 @@ pub async fn handle_group_settings_button(
         let response = CIR::Modal(modal);
         interaction.create_response(&ctx.http, response).await?;
     } else if button_id.starts_with("group_settings_edit_timeout_") {
-        let modal = CreateModal::new(format!("group_settings_modal_timeout_{group_id}"), "Set Hot Join Timeout")
+        let modal = CreateModal::new(format!("group_settings_modal_timeout_{group_id}"), "Set ready check duration")
             .components(vec![
                 CreateActionRow::InputText(
                     CreateInputText::new(InputTextStyle::Short, "Timeout (seconds)", "timeout")
@@ -3595,10 +3595,10 @@ pub async fn handle_group_settings_button(
         let response = CIR::Modal(modal);
         interaction.create_response(&ctx.http, response).await?;
     } else if button_id.starts_with("group_settings_edit_connect_") {
-        let modal = CreateModal::new(format!("group_settings_modal_connect_{group_id}"), "Set Server Connect Info")
+        let modal = CreateModal::new(format!("group_settings_modal_connect_{group_id}"), "Set server connect info")
             .components(vec![
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Paragraph, "Connect Command", "connect_info")
+                    CreateInputText::new(InputTextStyle::Paragraph, "Connect command", "connect_info")
                         .placeholder("e.g., connect 192.168.1.1:27015; password secret")
                         .value(settings.connect_info.unwrap_or_default())
                         .required(false)
@@ -3661,7 +3661,7 @@ pub async fn handle_group_settings_button(
                     let state = format!("{}_{:x}", group_id, msg_id.get());
                     let time_str = timestamp.unix_timestamp();
                     let label = if i == 0 {
-                        format!("Most Recent (<t:{}:f>)", time_str)
+                        format!("Most recent (<t:{}:f>)", time_str)
                     } else {
                         format!("Message {} (<t:{}:f>)", i + 1, time_str)
                     };
@@ -3685,7 +3685,7 @@ pub async fn handle_group_settings_button(
             
             // Add manual input button
             buttons.push(CB::new(format!("group_link_msg_manual_{}", group_id))
-                .label("Enter Message ID")
+                .label("Enter message ID")
                 .style(BS::Primary));
             
             buttons.push(CB::new(format!("group_settings_back_{}", group_id))
@@ -3748,7 +3748,7 @@ pub async fn handle_group_settings_button(
             Err(e) => {
                 error!("Failed to update dashboard_msg for group {}: {}", group_id, e);
                 let embed = CE::new()
-                    .title("❌ Failed to Link Message")
+                    .title("Failed to link the message")
                     .description(format!("Database error: {}", e))
                     .color(0xED4245);
                 
@@ -3762,10 +3762,10 @@ pub async fn handle_group_settings_button(
         // Manual message ID input - show modal
         use serenity::all::{CreateModal, CreateInputText, InputTextStyle, CreateActionRow};
         
-        let modal = CreateModal::new(format!("group_link_msg_modal_{}", group_id), "Enter Dashboard Message ID")
+        let modal = CreateModal::new(format!("group_link_msg_modal_{}", group_id), "Enter dashboard message ID")
             .components(vec![
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Short, "Message ID or Link", "message_id")
+                    CreateInputText::new(InputTextStyle::Short, "Message ID or link", "message_id")
                         .placeholder("e.g., 1467572971093885086 or https://discord.com/channels/.../...")
                         .required(true)
                         .min_length(17)
@@ -3939,7 +3939,7 @@ pub async fn handle_group_link_msg_modal(
                 Err(e) => {
                     error!("Failed to update dashboard_msg for group {}: {}", group_id, e);
                     let embed = CE::new()
-                        .title("❌ Failed to Link Message")
+                        .title("Failed to link the message")
                         .description(format!("Database error: {}", e))
                         .color(0xED4245);
                     
@@ -4364,7 +4364,7 @@ pub async fn handle_player_settings_button(
         let response = CIR::Modal(modal);
         interaction.create_response(&ctx.http, response).await?;
     } else if button_id.starts_with("player_settings_edit_rank_") {
-        let modal = CreateModal::new(format!("player_settings_modal_rank_{target_user_id}"), "Edit Rank")
+        let modal = CreateModal::new(format!("player_settings_modal_rank_{target_user_id}"), "Edit rank")
             .components(vec![
                 CreateActionRow::InputText(
                     CreateInputText::new(InputTextStyle::Short, "Rank", "rank")
@@ -4381,7 +4381,7 @@ pub async fn handle_player_settings_button(
         // Get target user's current alert settings
         let user_settings = db.users.get_prefs(target_uid).await?;
         
-        let modal = CreateModal::new(format!("player_settings_modal_alerts_{target_user_id}"), "Edit Player Alerts")
+        let modal = CreateModal::new(format!("player_settings_modal_alerts_{target_user_id}"), "Edit player alerts")
             .components(vec![
                 CreateActionRow::InputText(
                     CreateInputText::new(InputTextStyle::Short, "HEX Color", "join_alert_color")
@@ -4392,21 +4392,21 @@ pub async fn handle_player_settings_button(
                         .max_length(6)
                 ),
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Paragraph, "Join Alert Message", "join_alert")
+                    CreateInputText::new(InputTextStyle::Paragraph, "Join alert message", "join_alert")
                         .placeholder("e.g., Kafri: defense")
                         .value(user_settings.join_alert_desc.unwrap_or_default())
                         .required(false)
                         .max_length(MAX_ALERT_CHARS as u16)
                 ),
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Short, "Join Alert Footer", "join_alert_footer")
+                    CreateInputText::new(InputTextStyle::Short, "Join alert footer", "join_alert_footer")
                         .placeholder("e.g., Good luck!")
                         .value(user_settings.join_alert_footer.unwrap_or_default())
                         .required(false)
                         .max_length(MAX_ALERT_CHARS as u16)
                 ),
                 CreateActionRow::InputText(
-                    CreateInputText::new(InputTextStyle::Paragraph, "Leave Alert Message", "leave_alert")
+                    CreateInputText::new(InputTextStyle::Paragraph, "Leave alert message", "leave_alert")
                         .placeholder("e.g., See you next time!")
                         .value(user_settings.leave_alert_desc.unwrap_or_default())
                         .required(false)

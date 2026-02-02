@@ -26,14 +26,14 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
 
     if let Some(val,) = value {
         cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found")).await?;
-        let embed    = CE::new().title("Config Updated").description(format!("Set `{key}` = `{val}`"));
+        let embed    = CE::new().title("Config updated").description(format!("Set `{key}` = `{val}`"));
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
     } else {
         let config = match cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found")).await {
             Ok(cfg) => cfg,
             Err(e) => {
-                let err_embed = CE::new().title("Failed to Load Config").description(format!("Error: {e}\nPlease create a config using `/config`."));
+                let err_embed = CE::new().title("Failed to load config").description(format!("Error: {e}\nPlease create a config using `/config`."));
                 let response = CIR::Message(CIRM::new().embed(err_embed).ephemeral(true));
                 cc.intax.create_response(&cc.ctx.http, response).await?;
                 return Ok(());
@@ -46,7 +46,7 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
                                      groups: `{}`",
         config.guild_id, config.roles.runner, config.roles.admin
         );
-        let embed = CE::new().title("Bot Configuration").description(config_text);
+        let embed = CE::new().title("Bot configuration").description(config_text);
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
         cc.intax.create_response(&cc.ctx.http, response).await?;
     }
@@ -79,7 +79,7 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
         );
 
         let embed = CE::new()
-            .title("Role Configuration")
+            .title("Role configuration")
             .description(role_text);
 
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
@@ -120,7 +120,7 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
         cc.db.config.set_config(role_key, &role_id, guild_id).await?;
 
         let embed = CE::new()
-            .title("Role Updated")
+            .title("Role updated")
             .description(format!(
                 "Set {} role to <@&{}>",
                 role_type.to_lowercase(),
@@ -366,7 +366,7 @@ async fn start_setup_flow(cc: &CC<'_>, guild_id: GI, user_id: UI) -> Result<()> 
 
     // Send welcome message as ephemeral reply
     let welcome_embed = CE::new()
-        .title("Guild Setup Wizard")
+        .title("Guild setup wizard")
         .description(format!(
             "Welcome to the setup wizard for **{}**!\n\n\
             I'll guide you through configuring the bot step by step.\n\
@@ -546,7 +546,7 @@ async fn handle_dashboard_selection(ctx: &Context, interaction: &CX, channel_id:
     });
 
     let embed = CE::new()
-        .title("Dashboard Channel Selected")
+        .title("Dashboard channel selected")
         .description(format!(
             "Dashboard channel: <#{channel_id}>\n\n\
             **Step 2/7: Queue Text Channel**\n\
@@ -585,7 +585,7 @@ async fn handle_queue_selection(ctx: &Context, interaction: &CX, channel_id: u64
     });
 
     let embed = CE::new()
-        .title("Queue Text Channel Selected")
+        .title("Queue text channel selected")
         .description(format!(
             "Queue text channel: <#{channel_id}>\n\n\
             **Step 3/7: Queue Voice Channel**\n\
@@ -624,7 +624,7 @@ async fn handle_queue_vc_selection(ctx: &Context, interaction: &CX, channel_id: 
     });
 
     let embed = CE::new()
-        .title("Queue Voice Channel Selected")
+        .title("Queue voice channel selected")
         .description(format!(
             "Queue voice channel: <#{channel_id}>\n\n\
             **Step 4/7: Red Team Voice Channel**\n\
@@ -663,7 +663,7 @@ async fn handle_red_selection(ctx: &Context, interaction: &CX, channel_id: u64) 
     });
 
     let embed = CE::new()
-        .title("Red Team Channel Selected")
+        .title("Red team channel selected")
         .description(format!(
             "Red team channel: <#{channel_id}>\n\n\
             **Step 5/7: Blue Team Voice Channel**\n\
@@ -702,7 +702,7 @@ async fn handle_blue_selection(ctx: &Context, interaction: &CX, channel_id: u64)
     });
 
     let embed = CE::new()
-        .title("Blue Team Channel Selected")
+        .title("Blue team channel selected")
         .description(format!(
             "Blue team channel: <#{channel_id}>\n\n\
             **Step 6/7: Runner Role**\n\
@@ -741,7 +741,7 @@ async fn handle_runner_selection(ctx: &Context, interaction: &CX, role_id: u64) 
     });
 
     let embed = CE::new()
-        .title("Runner Role Selected")
+        .title("Runner role selected")
         .description(format!(
             "Runner role: <@&{role_id}>\n\n\
             **Step 7/7: Admin Role**\n\
@@ -782,7 +782,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
         Some(cfg) if cfg.is_complete() => cfg,
         _ => {
             let error_embed = CE::new()
-                .title("Setup Error")
+                .title("Setup error")
                 .description("Configuration is incomplete. Please restart the setup process.")
                 .color(RED);
 
@@ -816,7 +816,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
         Ok(msg) => msg,
         Err(e) => {
             let error_embed = CE::new()
-                .title("Setup Failed")
+                .title("Setup failed")
                 .description(format!("Failed to create dashboard message: {e}"))
                 .color(RED);
 
@@ -873,7 +873,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
             }
 
             let success_embed = CE::new()
-                .title("Setup Complete!")
+                .title("Setup complete!")
                 .description(format!(
                     "Your PUG bot is now fully configured and ready to use!\n\n\
                     **Configuration Summary:**\n\
@@ -898,7 +898,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
         },
         Err(e) => {
             let error_embed = CE::new()
-                .title("Setup Failed")
+                .title("Setup failed")
                 .description(format!("Failed to save configuration: {e}"))
                 .color(RED);
 
@@ -928,7 +928,7 @@ async fn handle_init_queue_selection(ctx: &Context, interaction: &CX, channel_id
     });
 
     let embed = CE::new()
-        .title("Queue Text Channel Selected")
+        .title("Queue text channel selected")
         .description(format!(
             "Queue text channel: <#{channel_id}>\n\n\
             **Step 3/5: Queue Voice Channel**\n\
@@ -966,7 +966,7 @@ async fn handle_init_queue_vc_selection(ctx: &Context, interaction: &CX, channel
     });
 
     let embed = CE::new()
-        .title("Queue Voice Channel Selected")
+        .title("Queue voice channel selected")
         .description(format!(
             "Queue voice channel: <#{channel_id}>\n\n\
             **Step 4/5: Red Team Voice Channel**\n\
@@ -1004,7 +1004,7 @@ async fn handle_init_red_selection(ctx: &Context, interaction: &CX, channel_id: 
     });
 
     let embed = CE::new()
-        .title("Red Team Channel Selected")
+        .title("Red team channel selected")
         .description(format!(
             "Red team channel: <#{channel_id}>\n\n\
             **Step 5/5: Blue Team Voice Channel**\n\
@@ -1042,7 +1042,7 @@ async fn handle_init_blue_selection(ctx: &Context, interaction: &CX, channel_id:
     });
 
     let embed = CE::new()
-        .title("Blue Team Channel Selected")
+        .title("Blue team channel selected")
         .description(format!(
             "Blue team channel: <#{channel_id}>\n\n\
             **Step 2/2: Admin Role**\n\
@@ -1080,7 +1080,7 @@ async fn handle_init_runner_selection(ctx: &Context, interaction: &CX, role_id: 
     });
 
     let embed = CE::new()
-        .title("Runner Role Selected")
+        .title("Runner role selected")
         .description(format!(
             "Runner role: <@&{role_id}>\n\n\
             **Step 2/2: Admin Role**\n\
@@ -1128,7 +1128,7 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
                   && cfg.admin_role       .is_some() => cfg,
         _ => {
             let error_embed = CE::new()
-                .title("Setup Error")
+                .title("Setup error")
                 .description("Configuration is incomplete. Please restart the setup process.")
                 .color(RED);
 
@@ -1189,7 +1189,7 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
         },
         Err(e) => {
             let error_embed = CE::new()
-                .title("Setup Failed")
+                .title("Setup failed")
                 .description(format!("Failed to create group configuration: {e}"))
                 .color(RED);
 
@@ -1203,7 +1203,7 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
     SETUP_STATE.complete_setup(user_id, guild_id);
 
     let success_embed = CE::new()
-        .title("Group Setup Complete!")
+        .title("Group setup complete!")
         .description(format!(
             "Group configuration has been saved successfully!\n\n\
             **Configuration Summary:**\n\
@@ -1257,7 +1257,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
     if missing_system_roles.is_empty() {
         // All roles exist
         let success_embed = CE::new()
-            .title("All Roles Configured")
+            .title("All roles configured")
             .description("All system roles (Runner, Admin) and rank roles are properly configured in this server!")
             .color(GREEN);
 
@@ -1272,7 +1272,7 @@ pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
         );
 
         let embed = CE::new()
-            .title("Missing Roles")
+            .title("Missing roles")
             .description(description)
             .color(ORANGE);
 
@@ -1297,7 +1297,7 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
     }
 
     let embed = CE::new()
-        .title("Ranks Initialized")
+        .title("Ranks initialized")
         .description("Default ranks have been initialized in the database. Ranks are now ELO-based and do not require Discord roles.")
         .color(GREEN);
 
@@ -1370,7 +1370,7 @@ async fn handle_grouplink_dashboard_selection(ctx: &Context, interaction: &CX, c
     });
 
     let embed = CE::new()
-        .title("Dashboard Channel Selected")
+        .title("Dashboard channel selected")
         .description(format!(
             "Dashboard: <#{channel_id}>\n\n\
             **Step 2/5: Queue Text Channel**\n\
@@ -1403,7 +1403,7 @@ async fn handle_grouplink_queue_selection(ctx: &Context, interaction: &CX, chann
     });
 
     let embed = CE::new()
-        .title("Queue Text Channel Selected")
+        .title("Queue text channel selected")
         .description(format!(
             "Queue text: <#{channel_id}>\n\n\
             **Step 3/5: Queue Voice Channel**\n\
@@ -1436,7 +1436,7 @@ async fn handle_grouplink_queuevc_selection(ctx: &Context, interaction: &CX, cha
     });
 
     let embed = CE::new()
-        .title("Queue Voice Channel Selected")
+        .title("Queue voice channel selected")
         .description(format!(
             "Queue voice: <#{channel_id}>\n\n\
             **Step 4/5: Red Team Voice Channel**\n\
@@ -1469,7 +1469,7 @@ async fn handle_grouplink_red_selection(ctx: &Context, interaction: &CX, channel
     });
 
     let embed = CE::new()
-        .title("Red Team Channel Selected")
+        .title("Red team channel selected")
         .description(format!(
             "Red team: <#{channel_id}>\n\n\
             **Step 5/5: Blue Team Voice Channel**\n\
@@ -1513,7 +1513,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
 
     // Send "creating group" message
     let loading_embed = CE::new()
-        .title("Creating Group")
+        .title("Creating group")
         .description("Linking channels and creating PUG group...\n\nCleaning up any old configurations...")
         .color(ORANGE);
 
@@ -1610,7 +1610,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
                     SETUP_STATE.complete_setup(user_id, guild_id);
 
                     let success_embed = CE::new()
-                        .title("Group Created!")
+                        .title("Group created!")
                         .description(format!(
                             "Successfully linked existing channels!\n\n\
                             **Configuration:**\n\
@@ -1637,7 +1637,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
                     let _ = dashboard_channel.delete_message(&ctx.http, dashboard_msg_id).await;
 
                     let error_embed = CE::new()
-                        .title("Failed to Save Group")
+                        .title("Failed to save group")
                         .description(format!("Error saving to database: {e}"))
                         .color(RED);
 
@@ -1649,7 +1649,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
         },
         Err(e) => {
             let error_embed = CE::new()
-                .title("Dashboard Creation Failed")
+                .title("Dashboard creation failed")
                 .description(format!("Failed to create dashboard: {e}"))
                 .color(RED);
 
@@ -1682,7 +1682,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
         Ok(p) => p,
         Err(_) => {
             let error_embed = CE::new()
-                .title("Player Not Found")
+                .title("Player not found")
                 .description(format!("<@{}> is not in the database.", user_id))
                 .color(RED);
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -1697,7 +1697,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
     // Get user info - if no user provided, we can't continue
     let user_info = user.ok_or_else(|| {
         let _error_embed = CE::new()
-            .title("User Required")
+            .title("User required")
             .description("You must specify a user to view their ELO information, or use the command on yourself.")
             .color(RED);
         anyhow::anyhow!("User not provided")
@@ -1742,7 +1742,7 @@ pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
     cc.db.config.set_config("active_elo_enabled", "true", guild_id).await?;
 
     let success_embed = CE::new()
-        .title("Active ELO Enabled")
+        .title("Active ELO enabled")
         .description("Automatic ELO adjustments from match results are now **enabled**.\n\n*Note: This requires webhooks and game server API to be configured to actually work.*")
         .color(GREEN);
 
@@ -1762,7 +1762,7 @@ pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
     cc.db.config.set_config("active_elo_enabled", "false", guild_id).await?;
 
     let success_embed = CE::new()
-        .title("Active ELO Disabled")
+        .title("Active ELO disabled")
         .description("Automatic ELO adjustments from match results are now **disabled**.")
         .color(ORANGE);
 
@@ -1786,7 +1786,7 @@ pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
     };
 
     let status_embed = CE::new()
-        .title("Active ELO Status")
+        .title("Active ELO status")
         .description(format!(
             "Automatic ELO adjustments are currently **{}**\n\n\
             When enabled, this feature will:\n\
@@ -1822,7 +1822,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
         Err(e) => {
             warn!("[{}] No group found in channel {}: {}", guild_name, cc.intax.channel_id, e);
             let error_embed = CE::new()
-                .title("Group Not Found")
+                .title("Group not found")
                 .description(format!("No queue group found in this channel: {e}"))
                 .color(RED);
 
@@ -1839,7 +1839,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
         Err(e) => {
             warn!("[{}] User {} not found in any session: {}", guild_name, user_id, e);
             let error_embed = CE::new()
-                .title("Player Not Found")
+                .title("Player not found")
                 .description(format!("<@{user_id}> is not in any queue."))
                 .color(RED);
 
@@ -1855,7 +1855,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
         None => {
             error!("[{}] Player {} not found in pool despite being in session", guild_name, user_id);
             let error_embed = CE::new()
-                .title("Player Not Found")
+                .title("Player not found")
                 .description(format!("<@{user_id}> is not in the queue pool."))
                 .color(RED);
 
@@ -1881,7 +1881,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     group.queue_dash_update(cc.ctx, guild_id).await;
 
     let success_embed = CE::new()
-        .title("Player Buffered")
+        .title("Player buffered")
         .description(format!("<@{user_id}> moved to front of queue."))
         .color(GREEN);
 
@@ -1907,7 +1907,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
         Err(e) => {
             warn!("[{}] No group found in channel {}: {}", guild_name, cc.intax.channel_id, e);
             let error_embed = CE::new()
-                .title("Group Not Found")
+                .title("Group not found")
                 .description(format!("No queue group found in this channel: {e}"))
                 .color(RED);
 
@@ -1924,7 +1924,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
         Err(e) => {
             warn!("[{}] User {} not found in any session: {}", guild_name, user_id, e);
             let error_embed = CE::new()
-                .title("Player Not Found")
+                .title("Player not found")
                 .description(format!("<@{user_id}> is not in any queue."))
                 .color(RED);
 
@@ -1940,7 +1940,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
         None => {
             error!("[{}] Player {} not found in pool despite being in session", guild_name, user_id);
             let error_embed = CE::new()
-                .title("Player Not Found")
+                .title("Player not found")
                 .description(format!("<@{user_id}> is not in the queue pool."))
                 .color(RED);
 
@@ -1966,7 +1966,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     group.queue_dash_update(cc.ctx, guild_id).await;
 
     let success_embed = CE::new()
-        .title("Player Fatkidded")
+        .title("Player fatkidded")
         .description(format!("<@{user_id}> moved to end of queue."))
         .color(GREEN);
 
@@ -1986,7 +1986,7 @@ pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
         Ok(g) => g,
         Err(e) => {
             let error_embed = CE::new()
-                .title("Group Not Found")
+                .title("Group not found")
                 .description(format!("No queue group found in this channel: {e}"))
                 .color(RED);
 
@@ -2010,7 +2010,7 @@ pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
     group.queue_dash_update(cc.ctx, guild_id).await;
 
     let success_embed = CE::new()
-        .title("Queue Cleared")
+        .title("Queue cleared")
         .description(format!("Removed {player_count} player(s) from the queue."))
         .color(GREEN);
 

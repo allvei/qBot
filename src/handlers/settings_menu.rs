@@ -345,8 +345,8 @@ impl RoleConfigDisplay {
 
         CE::new()
             .title(format!("{} - Manage Roles", self.guild_name))
-            .field("Runner Role", runner_display, true)
-            .field("Admin Role", admin_display, true)
+            .field("Runner role", runner_display, true)
+            .field("Admin role", admin_display, true)
             .color(0x5865F2)
             .footer(CreateEmbedFooter::new("Select roles below or use Create Roles to auto-generate"))
     }
@@ -362,11 +362,11 @@ impl RoleConfigDisplay {
         vec![
             CAR::SelectMenu(
                 CSM::new("server_settings_runner_role", CSMK::Role { default_roles: runner_default.map(|r| vec![r]) })
-                    .placeholder("Select Runner Role")
+                    .placeholder("Select runner role")
             ),
             CAR::SelectMenu(
                 CSM::new("server_settings_admin_role", CSMK::Role { default_roles: admin_default.map(|r| vec![r]) })
-                    .placeholder("Select Admin Role")
+                    .placeholder("Select admin role")
             ),
             CAR::Buttons(vec![
                 CB::new("server_settings_create_roles")
@@ -507,7 +507,7 @@ impl RankRoleConfigDisplay {
             .title(format!("{} - {} Rank", self.guild_name, self.rank_name))
             .field("Name", &self.rank_name, true)
             .field("ELO Threshold", self.elo.to_string(), true)
-            .field("Discord Role", role_display, true)
+            .field("Discord role", role_display, true)
             .color(0x5865F2)
             .footer(CreateEmbedFooter::new("Edit name, ELO, or link a Discord role"))
     }
@@ -519,19 +519,19 @@ impl RankRoleConfigDisplay {
                     format!("server_settings_rank_role_{}", self.rank_key),
                     CSMK::Role { default_roles: Some(vec![self.role_id]) }
                 )
-                .placeholder("Link Discord Role")
+                .placeholder("Link discord Role")
                 .min_values(0)
                 .max_values(1)
             ),
             CAR::Buttons(vec![
                 CB::new(format!("server_settings_rank_edit_{}", self.rank_key))
-                    .label("Edit Name & ELO")
+                    .label("Edit name & ELO")
                     .style(BS::Primary),
                 CB::new(format!("server_settings_rank_delete_{}", self.rank_key))
-                    .label("Remove Rank")
+                    .label("Remove rank")
                     .style(BS::Danger),
                 CB::new("server_settings_rank_back")
-                    .label("Back to Ranks")
+                    .label("Back to ranks")
                     .style(BS::Secondary),
             ]),
         ]
@@ -596,7 +596,7 @@ impl GroupListDisplay {
         // Add create group, remove group, and back buttons
         let mut buttons = vec![
             CB::new("server_settings_create_group")
-                .label("Create New Group")
+                .label("Create a new group")
                 .style(BS::Primary),
         ];
         
@@ -604,7 +604,7 @@ impl GroupListDisplay {
         if !self.groups.is_empty() {
             buttons.push(
                 CB::new("server_settings_remove_group")
-                    .label("Remove Group")
+                    .label("Remove a group")
                     .style(BS::Danger)
             );
         }
@@ -644,18 +644,18 @@ impl AsSettingsMenu for GroupSettingsDisplay {
         SettingsMenu::new(format!("{name_display} Settings"))
             .field(SF::new("Name", name_display.clone()))
             .field(SF::new("Quota", format!("{} players", self.quota)))
-            .field(SF::new("Hot Join Timeout", format!("{} seconds", self.timeout)))
-            .field(SF::new("Connect Info", connect_display).inline(false))
-            .field(SF::new("Team Balance", self.team_balance_method.as_str()))
+            .field(SF::new("Confirm time", format!("{} seconds", self.timeout)))
+            .field(SF::new("Connect info", connect_display).inline(false))
+            .field(SF::new("Team balance", self.team_balance_method.as_str()))
             .color(0x5865F2)
             .row(SR::Buttons(vec![
-                SB::edit(format!("group_settings_edit_name_{gid}"), "Edit Name"),
-                SB::edit(format!("group_settings_edit_quota_{gid}"), "Edit Quota"),
-                SB::edit(format!("group_settings_edit_timeout_{gid}"), "Edit Timeout"),
+                SB::edit(format!("group_settings_edit_name_{gid}"), "Name"),
+                SB::edit(format!("group_settings_edit_quota_{gid}"), "Quota"),
+                SB::edit(format!("group_settings_edit_timeout_{gid}"), "Confirm time"),
             ]))
             .row(SR::Buttons(vec![
-                SB::edit(format!("group_settings_edit_connect_{gid}"), "Edit Connect Info"),
-                SB::action(format!("group_settings_link_message_{gid}"), "Link Message", SBS::Success),
+                SB::edit(format!("group_settings_edit_connect_{gid}"), "Connect info"),
+                SB::action(format!("group_settings_link_message_{gid}"), "Link an existing dashboard message", SBS::Success),
             ]))
             .row(SR::StringSelect {
                 id: format!("group_settings_balance_{gid}"),
@@ -710,8 +710,8 @@ impl AsSettingsMenu for PlayerSettingsDisplay {
                 SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO"),
             ]))
             .row(SR::Buttons(vec![
-                SB::edit(format!("player_settings_edit_rank_{uid}"), "Edit Rank"),
-                SB::edit(format!("player_settings_edit_alerts_{uid}"), "Edit Alerts"),
+                SB::edit(format!("player_settings_edit_rank_{uid}"), "Edit rank"),
+                SB::edit(format!("player_settings_edit_alerts_{uid}"), "Edit alerts"),
             ]))
     }
 }
