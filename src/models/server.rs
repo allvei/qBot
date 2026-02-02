@@ -199,7 +199,9 @@ impl Group {
 
     /// Get display name for the group (name or "Group {id}")
     pub fn display_name(&self) -> String {
-        self.name.clone().unwrap_or_else(|| format!("Group {}", self.group_id))
+        self.name.clone()
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| format!("Group {}", self.group_id))
     }
 
     pub fn create_session(&mut self) -> Result<&mut Session> {
@@ -1062,14 +1064,21 @@ impl Role {
 
     /// Get all Discord role IDs from database configuration (supports multiple roles)
     pub async fn ids(&self, db: &DB, guild_id: GI) -> Vec<RI> {
-        if let Ok(Some(value)) = db.config.get_config_item(self.config_key(), guild_id).await {
-            // Support comma-separated role IDs
-            value.split(',')
-                .filter_map(|s| s.trim().parse::<u64>().ok())
-                .map(RI::new)
-                .collect()
-        } else {
-            Vec::new()
+        match self {
+            Role::Runner => {
+                if let Ok(Some(role_id)) = db.config.get_runner_role_id(guild_id).await {
+                    vec![role_id]
+                } else {
+                    Vec::new()
+                }
+            },
+            Role::Admin => {
+                if let Ok(Some(role_id)) = db.config.get_admin_role_id(guild_id).await {
+                    vec![role_id]
+                } else {
+                    Vec::new()
+                }
+            },
         }
     }
 
