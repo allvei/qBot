@@ -120,7 +120,25 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
         wins:     guild_elo.wins,
     };
 
-    cc.intax.create_response(&cc.ctx.http, Ephemeral::send_edit_player(&settings, target_user)).await?;
+    // Use rank selection dropdown if ranks are available
+    let display_settings = crate::handlers::settings_menu::PlayerSettingsDisplay {
+        user_id: settings.user_id,
+        username: settings.username.clone(),
+        steam_id: settings.steam_id,
+        elo: settings.elo,
+        rank: settings.rank.clone(),
+        games: settings.games,
+        wins: settings.wins,
+    };
+    
+    let response = match crate::handlers::settings_menu::create_player_settings_with_rank_select(&display_settings, &cc.db, guild_id).await {
+        Ok(resp) => resp,
+        Err(_) => {
+            // Fallback to regular menu if rank selection fails
+            Ephemeral::send_edit_player(&settings, target_user)
+        }
+    };
+    cc.intax.create_response(&cc.ctx.http, response).await?;
 
     info!("Sent player settings menu for {} to {} (ephemeral)", target_user, cc.intax.user.name);
     Ok(())

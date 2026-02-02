@@ -710,8 +710,71 @@ impl AsSettingsMenu for PlayerSettingsDisplay {
                 SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO"),
             ]))
             .row(SR::Buttons(vec![
-                SB::edit(format!("player_settings_edit_rank_{uid}"), "Edit rank"),
                 SB::edit(format!("player_settings_edit_alerts_{uid}"), "Edit alerts"),
             ]))
     }
+}
+
+/// Create rank selection dropdown for player settings
+pub async fn create_player_settings_with_rank_select(
+    settings: &PlayerSettingsDisplay,
+    db: &crate::Database,
+    guild_id: serenity::all::GuildId
+) -> anyhow::Result<serenity::all::CreateInteractionResponse> {
+    use crate::database::repositories::rank::GuildRank;
+    use serenity::all::CreateInteractionResponse as CIR;
+    use serenity::all::CreateInteractionResponseMessage as CIRM;
+    
+    let uid = settings.user_id.get();
+    let steam_display = settings.steam_id
+        .map(|id| format!("https://steamcommunity.com/profiles/{}", id))
+        .unwrap_or_else(|| "Not set".to_string());
+    
+    let winrate = if settings.games > 0 {
+        format!("{:.1}%", (settings.wins as f64 / settings.games as f64) * 100.0)
+    } else {
+        "0%".to_string()
+    };
+
+    // Get all ranks for the guild
+    let ranks = match db.ranks.get_ranks(guild_id).await {
+        Ok(r) => r,
+        Err(_) => {
+            // If no ranks configured, return regular menu
+            let menu = settings.as_settings_menu();
+            return Ok(CIR::Message(CIRM::new()
+                .embed(menu.build_embed())
+                .components(menu.build_components())
+                .ephemeral(true)));
+        }
+    };
+
+    // Create rank selection dropdown
+    let menu = SettingsMenu::new(format!("{} - Player Settings", settings.username))
+        .field(SF::new("Steam ID", steam_display))
+        .field(SF::new("ELO", format!("{}", settings.elo)))
+        .field(SF::new("Rank", &settings.rank))
+        .field(SF::new("Games", format!("{}", settings.games)))
+        .field(SF::new("Wins", format!("{}", settings.wins)))
+        .field(SF::new("Winrate", winrate))
+        .color(0x5865F2)
+        .row(SR::Buttons(vec![
+            SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit Steam ID"),
+            SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO"),
+        ]))
+        .row(SR::StringSelect {
+            id: format!("player_settings_rank_select_{uid}"),
+            placeholder: "Select a rank".to_string(),
+            options: ranks.iter().take(25).map(|rank: &GuildRank| {
+                (rank.name.clone(), format!("ELO: {}", rank.elo))
+            }).collect(),
+        })
+        .row(SR::Buttons(vec![
+            SB::edit(format!("player_settings_edit_alerts_{uid}"), "Edit alerts"),
+        ]));
+
+    Ok(CIR::Message(CIRM::new()
+        .embed(menu.build_embed())
+        .components(menu.build_components())
+        .ephemeral(true)))
 }
