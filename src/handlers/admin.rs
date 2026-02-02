@@ -1675,7 +1675,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
     }
 
     // Get guild-specific ELO data
-    let guild_elo = cc.db.elos.get(user_id, guild_id).await?;
+    let guild_elo = cc.db.elo.get(user_id, guild_id, &cc.db).await?;
     
     // Get base player info for steam_id
     let player = match cc.db.users.get(user_id).await {
@@ -1692,7 +1692,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
     };
 
     info!("DEBUG: User {} - Guild ELO: {}, Rank: {}, Games: {}, Wins: {}", 
-          user_id, guild_elo.elo, guild_elo.rank.name(), guild_elo.games, guild_elo.wins);
+          user_id, guild_elo.elo, guild_elo.rank.name, guild_elo.games, guild_elo.wins);
 
     // Get user info - if no user provided, we can't continue
     let user_info = user.ok_or_else(|| {
@@ -1712,7 +1712,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
     embed = embed.field("ELO Rating", format!("**{}**", guild_elo.elo), true);
 
     // Rank information
-    embed = embed.field("Rank", format!("**{}**", guild_elo.rank.name()), true);
+    embed = embed.field("Rank", format!("**{}**", guild_elo.rank.name), true);
 
     // Stats
     let win_rate = if guild_elo.games > 0 {

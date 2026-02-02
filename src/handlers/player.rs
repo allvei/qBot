@@ -27,7 +27,7 @@ async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI) -> Option<Membe
 }
 
 /// Get user's rank from their Discord roles (highest rank role they have)
-pub async fn get_user_rank_from_discord_roles(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<Rank> {
+pub async fn get_user_rank_from_discord_roles(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<crate::database::repositories::rank::GuildRank> {
     // Get the member and their roles
     let member = match get_member_cached(ctx, guild_id, user_id).await {
         Some(m) => m,
@@ -43,7 +43,9 @@ pub async fn get_user_rank_from_discord_roles(ctx: &Ctx, db: &DB, guild_id: GI, 
     // Find the highest rank the user has (ranks are sorted by ELO ascending, so check in reverse)
     for rank in ranks.iter().rev() {
         if member.roles.contains(&rank.role_id) {
-            return Some(Rank::from_name(&rank.name));
+            info!("User {} has Discord role '{}' (role_id: {}, ELO: {})", 
+                  user_id, rank.name, rank.role_id, rank.elo);
+            return Some(rank.clone());
         }
     }
 
@@ -53,11 +55,8 @@ pub async fn get_user_rank_from_discord_roles(ctx: &Ctx, db: &DB, guild_id: GI, 
 /// Get player's rank from their ELO in the database
 pub async fn get_player_rank(db: &DB, guild_id: GI, user_id: UI) -> Option<Rank> {
     // Get player's ELO from the elos table
-    match db.elos.get(user_id, guild_id).await {
-        Ok(guild_elo) => {
-            // Convert the ELO to the appropriate Rank enum based on server configuration
-            Some(Rank::from_elo(guild_elo.elo, db, guild_id).await)
-        },
+    match db.elo.get(user_id, guild_id, db).await {
+        Ok(guild_elo) => Some(guild_elo.rank),
         Err(_) => None,
     }
 }
@@ -74,29 +73,21 @@ pub async fn get_or_assign_player_rank(db: &DB, guild_id: GI, user_id: UI) -> Re
     // The dashboard.rs code should call get_user_rank_from_discord_roles first.
     
     // Fallback to server's configured default rank
-    let default_rank_name = db.config.get_config_item("default_rank", guild_id).await?
-        .unwrap_or_else(|| crate::models::DEFAULT_RANK.name().to_string());
+    let default_rank_role_id = db.config.get_default_rank_role_id(guild_id).await?;
     
-    // Find the configured default rank in the database
-    let default_guild_rank = match db.ranks.get_rank_by_name(guild_id, &default_rank_name).await? {
-        Some(rank) => rank,
-        None => {
-            // Fallback to hardcoded default if configured rank doesn't exist
-            warn!("Configured default rank '{}' not found in database, using hardcoded default", default_rank_name);
-            let fallback_elo = crate::models::DEFAULT_RANK.default_rank_elo();
-            db.elos.set(user_id, guild_id, fallback_elo, crate::models::DEFAULT_RANK).await?;
-            info!("Assigned fallback default rank {} (ELO {}) to user {}", crate::models::DEFAULT_RANK.name(), fallback_elo, user_id);
-            return Ok(crate::models::DEFAULT_RANK);
-        }
+    // Find the configured default rank in the database by role ID
+    let default_guild_rank = match default_rank_role_id {
+        Some(role_id) => db.ranks.rank_from_role_id(guild_id, role_id).await?,
+        None => Err(anyhow!("Default rank role not found"))?
     };
     
-    // Convert the guild rank's ELO to the appropriate Rank enum
-    let assigned_rank = Rank::from_elo(default_guild_rank.elo, db, guild_id).await;
+    // Convert the guild rank's ELO to the appropriate Rank struct
+    let assigned_rank = Rank::from_elo(db, guild_id, default_guild_rank.elo).await?;
     
     // Set the player's ELO and rank in the database
-    db.elos.set(user_id, guild_id, default_guild_rank.elo, assigned_rank).await?;
+    db.elo.set(user_id, guild_id, default_guild_rank.elo, assigned_rank.clone()).await?;
     
-    info!("Assigned server default rank '{}' (ELO {}) to user {}", default_rank_name, default_guild_rank.elo, user_id);
+    info!("Assigned server default rank '{}' (role {}, ELO {}) to user {}", default_guild_rank.name, default_guild_rank.role_id, default_guild_rank.elo, user_id);
     Ok(assigned_rank)
 }
 
@@ -317,39 +308,39 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         }
     };
 
-    // Get player info or create a new one (use fast path without extra API call)
-    let mut player = match cc.db.get_user(user, cc.ctx).await {
+    // Get player info with guild-specific ELO or create a new one
+    let mut player = match cc.db.users.get_with_guild_rank(user, cc.ctx, guild_id, &cc.db).await {
         Ok(mut player) => {
             // If player has no ELO in database, use rank-based ELO
             if player.elo == 0 {
-                info!("DEBUG: Player {} has ELO 0, setting to {} from Discord rank {}", user, rank.default_rank_elo(), rank.name());
-                player.elo = rank.default_rank_elo();
-                player.rank = rank;
-                // Update database with the rank-based ELO
-                if let Err(e) = cc.db.users.update_elo(user, Some(player.elo)).await {
+                info!("DEBUG: Player {} has ELO 0, setting to {} from Discord rank {}", user, rank.elo, rank.name);
+                player.elo = rank.elo;
+                player.rank = Some(rank.clone());
+                // Update database with the rank-based ELO (guild-specific)
+                if let Err(e) = cc.db.elo.set(user, guild_id, player.elo, player.rank.clone().unwrap()).await {
                     warn!("Failed to update player ELO in database: {}", e);
                 }
             } else {
                 // Player has stored ELO, check for ELO mismatch with Discord rank
-                let elo_mismatch = player.elo <= 30 && rank.default_rank_elo() > 30;
+                let elo_mismatch = player.elo <= 30 && rank.elo > 30;
                 
                 if elo_mismatch {
                     warn!("ELO MISMATCH DETECTED in queue: Player {} has ELO {} but Discord rank {} (default ELO {}). Auto-correcting...", 
-                          user, player.elo, rank.name(), rank.default_rank_elo());
+                          user, player.elo, rank.name, rank.elo);
                     
-                    player.elo = rank.default_rank_elo();
-                    player.rank = rank;
+                    player.elo = rank.elo;
+                    player.rank = Some(rank.clone());
                     
-                    // Update the database with the corrected ELO
-                    if let Err(e) = cc.db.users.update_elo(user, Some(player.elo)).await {
+                    // Update the database with the corrected ELO (guild-specific)
+                    if let Err(e) = cc.db.elo.set(user, guild_id, player.elo, player.rank.clone().unwrap()).await {
                         error!("Failed to auto-correct ELO for player {} in queue: {}", user, e);
                     } else {
                         info!("Successfully auto-corrected ELO for player {} in queue to {} (rank: {})", 
-                              user, player.elo, rank.name());
+                              user, player.elo, rank.name);
                     }
                 } else {
                     // Player has stored ELO, keep their ELO and only update rank if it makes sense
-                    info!("DEBUG: Player {} has custom ELO {}, keeping it instead of Discord rank ELO {}", user, player.elo, rank.default_rank_elo());
+                    info!("DEBUG: Player {} has custom ELO {}, keeping it instead of Discord rank ELO {}", user, player.elo, rank.elo);
                     // Don't override rank - keep whatever rank matches their current ELO
                     player.update_rank_from_elo(&cc.db, guild_id).await;
                 }
@@ -358,12 +349,12 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         },
         Err(_) => {
             // New player - use rank-based ELO
-            info!("DEBUG: New player {}, setting ELO to {} from Discord rank {}", user, rank.default_rank_elo(), rank.name());
+            info!("DEBUG: New player {}, setting ELO to {} from Discord rank {}", user, rank.elo, rank.name);
             let mut new_player = cc.db.new_user(user, cc.ctx).await?;
-            new_player.elo = rank.default_rank_elo();
-            new_player.rank = rank;
-            // Update database with the rank-based ELO
-            if let Err(e) = cc.db.users.update_elo(user, Some(new_player.elo)).await {
+            new_player.elo = rank.elo;
+            new_player.rank = Some(rank.clone());
+            // Update database with the rank-based ELO (guild-specific)
+            if let Err(e) = cc.db.elo.set(user, guild_id, new_player.elo, new_player.rank.clone().unwrap()).await {
                 warn!("Failed to update new player ELO in database: {}", e);
             }
             new_player

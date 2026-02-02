@@ -88,7 +88,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
 
     // Get player data
     let player    = cc.db.users.get(target_user)          .await?;
-    let guild_elo = cc.db.elos .get(target_user, guild_id).await?;
+    let guild_elo = cc.db.elo .get(target_user, guild_id, &cc.db).await?;
     let username  = cc.ctx.http.get_user(target_user)     .await
         .map(|u| u.name.clone())
         .unwrap_or_else(|_| target_user.to_string());
@@ -98,7 +98,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
         username,
         steam_id: player.steam_id,
         elo:      guild_elo.elo,
-        rank: guild_elo.rank.name().to_string(),
+        rank: guild_elo.rank.name.clone(),
         games:    guild_elo.games,
         wins:     guild_elo.wins,
     };

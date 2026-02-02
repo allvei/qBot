@@ -695,13 +695,13 @@ pub async fn handle_server_settings_button(
             // Return to rank configuration menu
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id).await?;
+            let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
                 dynamic_elo,
-                default_rank,
+                default_rank_role,
             };
 
             let response = CIR::UpdateMessage(
@@ -795,13 +795,13 @@ pub async fn handle_server_settings_button(
             // Show rank configuration menu
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id).await?;
+            let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
                 dynamic_elo,
-                default_rank,
+                default_rank_role,
             };
 
             let response = CIR::UpdateMessage(
@@ -899,13 +899,13 @@ pub async fn handle_server_settings_button(
             // Go back to rank list
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id).await?;
+            let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
                 dynamic_elo,
-                default_rank,
+                default_rank_role,
             };
 
             let response = CIR::UpdateMessage(
@@ -1004,13 +1004,13 @@ pub async fn handle_server_settings_button(
             // Return to rank list
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id).await?;
+            let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
                 dynamic_elo,
-                default_rank,
+                default_rank_role,
             };
 
             let response = CIR::UpdateMessage(
@@ -1054,28 +1054,30 @@ pub async fn handle_server_settings_button(
         }
         "server_settings_default_rank_select" => {
             if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
-                if let Some(rank_name) = values.first() {
-                    let new_rank = crate::models::types::Rank::from_name(rank_name.trim());
-                    let new_elo = new_rank.default_rank_elo();
+                if let Some(role_id_str) = values.first() {
+                    // Parse role ID from string
+                    if let Ok(role_id_u64) = role_id_str.parse::<u64>() {
+                        let role_id = RoleId::new(role_id_u64);
+                        
+                        // Set default rank as role ID
+                        db.config.set_default_rank_role_id(guild_id, role_id).await?;
 
-                    db.config.set_config("default_rank", new_rank.name(), guild_id).await?;
-                    db.config.set_config("default_elo", &new_elo.to_string(), guild_id).await?;
+                        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                        let rank_roles = get_all_rank_roles(db, guild_id).await?;
+                        let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
+                        
+                        let display = crate::handlers::settings_menu::RankConfigDisplay {
+                            guild_name,
+                            rank_roles,
+                            dynamic_elo,
+                            default_rank_role,
+                        };
 
-                    let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-                    let rank_roles = get_all_rank_roles(db, guild_id).await?;
-                    let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id).await?;
-                    
-                    let display = crate::handlers::settings_menu::RankConfigDisplay {
-                        guild_name,
-                        rank_roles,
-                        dynamic_elo,
-                        default_rank,
-                    };
-
-                    let response = CIR::UpdateMessage(
-                        CIRM::new().embed(display.build_embed()).components(display.build_components())
-                    );
-                    interaction.create_response(&ctx.http, response).await?;
+                        let response = CIR::UpdateMessage(
+                            CIRM::new().embed(display.build_embed()).components(display.build_components())
+                        );
+                        interaction.create_response(&ctx.http, response).await?;
+                    }
                 }
             }
         }
@@ -1292,6 +1294,1466 @@ pub async fn handle_server_settings_button(
                 }
             }
         }
+        "server_settings_link_group" => {
+            // Show category selection dropdown to link existing group
+            use serenity::all::{ChannelType, CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption};
+            
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            
+            // Get all categories in the guild - extract data before any awaits
+            let mut categories: Vec<(serenity::all::ChannelId, String)> = {
+                let guild = ctx.cache.guild(guild_id).ok_or_else(|| anyhow!("Guild not found"))?;
+                guild.channels.iter()
+                    .filter_map(|(id, channel)| {
+                        if channel.kind == ChannelType::Category {
+                            Some((*id, channel.name.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            };
+            
+            // Sort by name
+            categories.sort_by(|a, b| a.1.cmp(&b.1));
+            
+            if categories.is_empty() {
+                let response = CIR::Message(
+                    CIRM::new()
+                        .content("No categories found in this server. Please create a category with the required channels first.")
+                        .ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+            
+            // Create dropdown with categories
+            let options: Vec<CreateSelectMenuOption> = categories.iter()
+                .take(25) // Discord limit
+                .map(|(id, name)| {
+                    CreateSelectMenuOption::new(name.clone(), id.get().to_string())
+                        .description(format!("Category ID: {}", id.get()))
+                })
+                .collect();
+            
+            let select_menu = CreateSelectMenu::new(
+                "server_settings_link_category_select",
+                CreateSelectMenuKind::String { options }
+            )
+            .placeholder("Select a category to link");
+            
+            let embed = CE::new()
+                .title(format!("{} - Link Existing Group", guild_name))
+                .description(
+                    "**Select a category to link as a group**\n\n\
+                    The category must contain these channels:\n\
+                    • `dashboard` - Text channel for the dashboard\n\
+                    • `queue` - Text channel for queue chat\n\
+                    • `queue-vc` - Voice channel for the queue\n\
+                    • `red` - Voice channel for red team\n\
+                    • `blue` - Voice channel for blue team\n\n\
+                    Channel names must match exactly (case-insensitive)."
+                )
+                .color(0x5865F2);
+            
+            let components = vec![
+                CAR::SelectMenu(select_menu),
+                CAR::Buttons(vec![
+                    CB::new("server_settings_link_cancel")
+                        .label("Cancel")
+                        .style(BS::Secondary),
+                ]),
+            ];
+            
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(embed).components(components)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_link_category_select" => {
+            // Handle category selection - verify channels and link
+            if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
+                if let Some(category_id_str) = values.first() {
+                    if let Ok(category_id_u64) = category_id_str.parse::<u64>() {
+                        let category_id = serenity::all::ChannelId::new(category_id_u64);
+                        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                        
+                        // Find channels in this category - extract data before any awaits
+                        let (dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel) = {
+                            let guild = ctx.cache.guild(guild_id).ok_or_else(|| anyhow!("Guild not found"))?;
+                            
+                            let mut dashboard_channel = None;
+                            let mut queue_channel = None;
+                            let mut queue_vc_channel = None;
+                            let mut red_channel = None;
+                            let mut blue_channel = None;
+                            
+                            for (channel_id, channel) in &guild.channels {
+                                if channel.parent_id == Some(category_id) {
+                                    let name_lower = channel.name.to_lowercase();
+                                    
+                                    // Dashboard channel (text)
+                                    if dashboard_channel.is_none() && channel.kind == serenity::all::ChannelType::Text {
+                                        if name_lower == "dashboard" || name_lower == "dash" {
+                                            dashboard_channel = Some(*channel_id);
+                                        }
+                                    }
+                                    
+                                    // Queue chat channel (text) - try multiple variations
+                                    if queue_channel.is_none() && channel.kind == serenity::all::ChannelType::Text {
+                                        if name_lower == "queue" || name_lower == "pug-chat" || name_lower == "chat" 
+                                            || name_lower == "queue-chat" || name_lower == "pug" {
+                                            queue_channel = Some(*channel_id);
+                                        }
+                                    }
+                                    
+                                    // Queue voice channel - try multiple variations
+                                    if queue_vc_channel.is_none() && channel.kind == serenity::all::ChannelType::Voice {
+                                        if name_lower == "queue-vc" || name_lower == "queue" || name_lower == "pug" 
+                                            || name_lower == "queue vc" || name_lower == "waiting" {
+                                            queue_vc_channel = Some(*channel_id);
+                                        }
+                                    }
+                                    
+                                    // Red team voice channel
+                                    if red_channel.is_none() && channel.kind == serenity::all::ChannelType::Voice {
+                                        if name_lower == "red" || name_lower == "red team" || name_lower == "team red" {
+                                            red_channel = Some(*channel_id);
+                                        }
+                                    }
+                                    
+                                    // Blue team voice channel
+                                    if blue_channel.is_none() && channel.kind == serenity::all::ChannelType::Voice {
+                                        if name_lower == "blue" || name_lower == "blue team" || name_lower == "team blue" 
+                                            || name_lower == "blu" {
+                                            blue_channel = Some(*channel_id);
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            (dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel)
+                        };
+                        
+                        // Check if any channels are missing
+                        let has_all_channels = dashboard_channel.is_some() 
+                            && queue_channel.is_some() 
+                            && queue_vc_channel.is_some() 
+                            && red_channel.is_some() 
+                            && blue_channel.is_some();
+                        
+                        if !has_all_channels {
+                            // Start manual channel selection flow
+                            use serenity::all::{CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption};
+                            
+                            // Get all text and voice channels in the guild
+                            let (text_channels, voice_channels) = {
+                                let guild = ctx.cache.guild(guild_id).ok_or_else(|| anyhow!("Guild not found"))?;
+                                let mut text_chans = Vec::new();
+                                let mut voice_chans = Vec::new();
+                                
+                                for (channel_id, channel) in &guild.channels {
+                                    if channel.parent_id == Some(category_id) {
+                                        match channel.kind {
+                                            serenity::all::ChannelType::Text => {
+                                                text_chans.push((*channel_id, channel.name.clone()));
+                                            }
+                                            serenity::all::ChannelType::Voice => {
+                                                voice_chans.push((*channel_id, channel.name.clone()));
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                (text_chans, voice_chans)
+                            };
+                            
+                            // Determine which channel to select first
+                            let (next_channel_type, next_channel_name, available_channels) = if dashboard_channel.is_none() {
+                                ("dashboard", "Dashboard (text)", text_channels)
+                            } else if queue_channel.is_none() {
+                                ("queue", "Queue Chat (text)", text_channels)
+                            } else if queue_vc_channel.is_none() {
+                                ("queue_vc", "Queue Voice Channel", voice_channels)
+                            } else if red_channel.is_none() {
+                                ("red", "Red Team Voice Channel", voice_channels)
+                            } else {
+                                ("blue", "Blue Team Voice Channel", voice_channels)
+                            };
+                            
+                            if available_channels.is_empty() {
+                                let response = CIR::Message(
+                                    CIRM::new()
+                                        .content(format!(
+                                            "❌ No suitable channels found in this category.\n\n\
+                                            Please create the required channels first."
+                                        ))
+                                        .ephemeral(true)
+                                );
+                                interaction.create_response(&ctx.http, response).await?;
+                                return Ok(());
+                            }
+                            
+                            // Create channel selection dropdown
+                            let options: Vec<CreateSelectMenuOption> = available_channels.iter()
+                                .map(|(id, name)| {
+                                    CreateSelectMenuOption::new(name.clone(), id.get().to_string())
+                                })
+                                .collect();
+                            
+                            // Encode state compactly: use hex for IDs and single char for type
+                            // Format: cat_d_q_qv_r_b_t where each is hex (or 0)
+                            let type_char = match next_channel_type {
+                                "dashboard" => "d",
+                                "queue" => "q",
+                                "queue_vc" => "v",
+                                "red" => "r",
+                                "blue" => "b",
+                                _ => "x"
+                            };
+                            let state = format!("{:x}_{:x}_{:x}_{:x}_{:x}_{:x}_{}",
+                                category_id.get(),
+                                dashboard_channel.map(|c| c.get()).unwrap_or(0),
+                                queue_channel.map(|c| c.get()).unwrap_or(0),
+                                queue_vc_channel.map(|c| c.get()).unwrap_or(0),
+                                red_channel.map(|c| c.get()).unwrap_or(0),
+                                blue_channel.map(|c| c.get()).unwrap_or(0),
+                                type_char
+                            );
+                            
+                            let select_menu = CreateSelectMenu::new(
+                                format!("link_ch_{}", state),
+                                CreateSelectMenuKind::String { options }
+                            )
+                            .placeholder(format!("Select {}", next_channel_name));
+                            
+                            // Build status message
+                            let mut status = String::from("**Channel Linking Progress:**\n\n");
+                            status.push_str(&format!("✅ Dashboard: {}\n", 
+                                if let Some(id) = dashboard_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            ));
+                            status.push_str(&format!("✅ Queue Chat: {}\n", 
+                                if let Some(id) = queue_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            ));
+                            status.push_str(&format!("✅ Queue Voice: {}\n", 
+                                if let Some(id) = queue_vc_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            ));
+                            status.push_str(&format!("✅ Red Team: {}\n", 
+                                if let Some(id) = red_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            ));
+                            status.push_str(&format!("✅ Blue Team: {}\n", 
+                                if let Some(id) = blue_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            ));
+                            
+                            let embed = CE::new()
+                                .title(format!("{} - Link Channels", guild_name))
+                                .description(format!(
+                                    "{}\n\n**Next:** Select the {} channel from the dropdown below.",
+                                    status, next_channel_name
+                                ))
+                                .color(0x5865F2);
+                            
+                            let components = vec![
+                                CAR::SelectMenu(select_menu),
+                                CAR::Buttons(vec![
+                                    CB::new("server_settings_link_cancel")
+                                        .label("Cancel")
+                                        .style(BS::Secondary),
+                                ]),
+                            ];
+                            
+                            let response = CIR::UpdateMessage(
+                                CIRM::new().embed(embed).components(components)
+                            );
+                            interaction.create_response(&ctx.http, response).await?;
+                            return Ok(());
+                        }
+                        
+                        // All channels found - search for existing dashboard messages
+                        let dashboard_channel = dashboard_channel.unwrap();
+                        let queue_channel = queue_channel.unwrap();
+                        let queue_vc_channel = queue_vc_channel.unwrap();
+                        let red_channel = red_channel.unwrap();
+                        let blue_channel = blue_channel.unwrap();
+                        
+                        // Check for existing groups using these channels
+                        let existing_groups = db.groups.get_groups_for_guild(guild_id).await?;
+                        let duplicate_group = existing_groups.iter().find(|g| {
+                            g.channels.dashboard == dashboard_channel ||
+                            g.channels.queue_chat == queue_channel ||
+                            g.channels.queue_vc == queue_vc_channel ||
+                            g.channels.teams.iter().any(|t| t.red_vc == red_channel || t.blu_vc == blue_channel)
+                        });
+                        
+                        // Search for bot messages in dashboard channel
+                        let bot_user_id = ctx.cache.current_user().id;
+                        let mut existing_dashboard_msgs = Vec::new();
+                        
+                        match dashboard_channel.messages(&ctx.http, serenity::all::GetMessages::new().limit(50)).await {
+                            Ok(messages) => {
+                                for msg in messages {
+                                    if msg.author.id == bot_user_id && !msg.embeds.is_empty() {
+                                        // Check if it looks like a dashboard (has embed with "Queue" in title/description)
+                                        if let Some(embed) = msg.embeds.first() {
+                                            let title = embed.title.as_deref().unwrap_or("");
+                                            let desc = embed.description.as_deref().unwrap_or("");
+                                            if title.contains("Queue") || desc.contains("Queue") || desc.contains("Join") {
+                                                existing_dashboard_msgs.push((msg.id, msg.timestamp));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!("[{}] Failed to fetch messages from dashboard channel: {}", guild_name, e);
+                            }
+                        }
+                        
+                        // Sort by timestamp (newest first)
+                        existing_dashboard_msgs.sort_by(|a, b| b.1.cmp(&a.1));
+                        
+                        // Build prompt based on what we found
+                        let mut description = String::new();
+                        let mut buttons = Vec::new();
+                        
+                        if let Some(dup_group) = duplicate_group {
+                            description.push_str(&format!(
+                                "⚠️ **Duplicate Group Detected**\n\n\
+                                Group {} is already using one or more of these channels:\n\
+                                • Dashboard: <#{}>\n\
+                                • Queue Chat: <#{}>\n\
+                                • Queue Voice: <#{}>\n\
+                                • Red Team: <#{}>\n\
+                                • Blue Team: <#{}>\n\n",
+                                dup_group.display_name(),
+                                dup_group.channels.dashboard.get(),
+                                dup_group.channels.queue_chat.get(),
+                                dup_group.channels.queue_vc.get(),
+                                dup_group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0),
+                                dup_group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0)
+                            ));
+                            
+                            if !existing_dashboard_msgs.is_empty() {
+                                description.push_str(&format!(
+                                    "Found {} existing dashboard message(s) in <#{}>.\n\n\
+                                    **Options:**\n\
+                                    • Remove duplicate group and link to existing dashboard\n\
+                                    • Create new dashboard (will create duplicate)\n\
+                                    • Cancel",
+                                    existing_dashboard_msgs.len(),
+                                    dashboard_channel.get()
+                                ));
+                                
+                                // Encode state: channels + existing message ID
+                                let state = format!("{:x}_{:x}_{:x}_{:x}_{:x}_{:x}",
+                                    dashboard_channel.get(),
+                                    queue_channel.get(),
+                                    queue_vc_channel.get(),
+                                    red_channel.get(),
+                                    blue_channel.get(),
+                                    existing_dashboard_msgs[0].0.get()
+                                );
+                                
+                                buttons.push(CB::new(format!("link_existing_remove_dup_{}", state))
+                                    .label("Remove Duplicate & Link Existing")
+                                    .style(BS::Success));
+                            } else {
+                                description.push_str(
+                                    "No existing dashboard messages found.\n\n\
+                                    **Options:**\n\
+                                    • Remove duplicate group and create new dashboard\n\
+                                    • Provide message ID manually\n\
+                                    • Cancel"
+                                );
+                                
+                                let state = format!("{:x}_{:x}_{:x}_{:x}_{:x}",
+                                    dashboard_channel.get(),
+                                    queue_channel.get(),
+                                    queue_vc_channel.get(),
+                                    red_channel.get(),
+                                    blue_channel.get()
+                                );
+                                
+                                buttons.push(CB::new(format!("link_remove_dup_new_{}", state))
+                                    .label("Remove Duplicate & Create New")
+                                    .style(BS::Success));
+                                buttons.push(CB::new(format!("link_manual_msg_{}", state))
+                                    .label("Provide Message ID")
+                                    .style(BS::Primary));
+                            }
+                        } else if !existing_dashboard_msgs.is_empty() {
+                            description.push_str(&format!(
+                                "✅ **Found {} existing dashboard message(s)**\n\n\
+                                Found bot messages in <#{}> that appear to be dashboards.\n\
+                                Most recent: <https://discord.com/channels/{}/{}/{}>\n\n\
+                                **Options:**\n\
+                                • Link to existing dashboard (recommended)\n\
+                                • Create new dashboard\n\
+                                • Provide different message ID\n\
+                                • Cancel",
+                                existing_dashboard_msgs.len(),
+                                dashboard_channel.get(),
+                                guild_id.get(),
+                                dashboard_channel.get(),
+                                existing_dashboard_msgs[0].0.get()
+                            ));
+                            
+                            let state = format!("{:x}_{:x}_{:x}_{:x}_{:x}_{:x}",
+                                dashboard_channel.get(),
+                                queue_channel.get(),
+                                queue_vc_channel.get(),
+                                red_channel.get(),
+                                blue_channel.get(),
+                                existing_dashboard_msgs[0].0.get()
+                            );
+                            
+                            buttons.push(CB::new(format!("link_use_existing_{}", state))
+                                .label("Link to Existing Dashboard")
+                                .style(BS::Success));
+                            buttons.push(CB::new(format!("link_create_new_{}", state))
+                                .label("Create New Dashboard")
+                                .style(BS::Primary));
+                            buttons.push(CB::new(format!("link_manual_msg_{}", state))
+                                .label("Provide Message ID")
+                                .style(BS::Secondary));
+                        } else {
+                            description.push_str(&format!(
+                                "ℹ️ **No existing dashboard messages found**\n\n\
+                                Searched recent messages in <#{}> but didn't find any existing dashboards.\n\n\
+                                **Options:**\n\
+                                • Create new dashboard\n\
+                                • Provide message ID manually (if you know it exists)\n\
+                                • Cancel",
+                                dashboard_channel.get()
+                            ));
+                            
+                            let state = format!("{:x}_{:x}_{:x}_{:x}_{:x}",
+                                dashboard_channel.get(),
+                                queue_channel.get(),
+                                queue_vc_channel.get(),
+                                red_channel.get(),
+                                blue_channel.get()
+                            );
+                            
+                            buttons.push(CB::new(format!("link_create_new_{}", state))
+                                .label("Create New Dashboard")
+                                .style(BS::Success));
+                            buttons.push(CB::new(format!("link_manual_msg_{}", state))
+                                .label("Provide Message ID")
+                                .style(BS::Secondary));
+                        }
+                        
+                        buttons.push(CB::new("server_settings_link_cancel")
+                            .label("Cancel")
+                            .style(BS::Danger));
+                        
+                        let embed = CE::new()
+                            .title(format!("{} - Link Group Options", guild_name))
+                            .description(description)
+                            .color(0x5865F2);
+                        
+                        let response = CIR::UpdateMessage(
+                            CIRM::new().embed(embed).components(vec![CAR::Buttons(buttons)])
+                        );
+                        interaction.create_response(&ctx.http, response).await?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        "server_settings_link_cancel" => {
+            // Cancel linking and return to group list
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let groups = db.groups.get_groups_for_guild(guild_id).await?;
+            
+            let display = crate::handlers::settings_menu::GroupListDisplay {
+                guild_name,
+                groups,
+            };
+            
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(display.build_embed()).components(display.build_components())
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        _ if button_id.starts_with("link_use_existing_") => {
+            // Link to existing dashboard message
+            let state_str = button_id.strip_prefix("link_use_existing_").unwrap();
+            let parts: Vec<&str> = state_str.split('_').collect();
+            
+            if parts.len() != 6 {
+                let response = CIR::Message(
+                    CIRM::new().content("Invalid state data").ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+            
+            let dashboard_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[0], 16)?);
+            let queue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[1], 16)?);
+            let queue_vc_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[2], 16)?);
+            let red_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[3], 16)?);
+            let blue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[4], 16)?);
+            let dashboard_msg_id = u64::from_str_radix(parts[5], 16)?;
+            
+            // Create group with existing message ID
+            let group_config = crate::database::repositories::group::GroupConfig {
+                dashboard_channel_id: dashboard_channel.get(),
+                chat_channel_id: queue_channel.get(),
+                queue_vc_id: queue_vc_channel.get(),
+                red_vc_id: red_channel.get(),
+                blu_vc_id: blue_channel.get(),
+                quota: crate::DEFAULT_QUOTA,
+            };
+            
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            
+            match db.groups.create_group(guild_id, dashboard_msg_id, group_config).await {
+                Ok(db_group) => {
+                    info!("[{}] Group {} linked to existing dashboard {}", guild_name, db_group.group_id, dashboard_msg_id);
+                    
+                    // Add group to in-memory server
+                    let mut manager_lock = manager.lock().await;
+                    if let Ok(server) = manager_lock.get_server(guild_id) {
+                        if let Err(e) = server.add_group(db_group.clone()) {
+                            error!("Failed to add group to server: {e}");
+                        }
+                    }
+                    drop(manager_lock);
+                    
+                    // Show success and return to group list
+                    let groups = db.groups.get_groups_for_guild(guild_id).await?;
+                    let display = crate::handlers::settings_menu::GroupListDisplay {
+                        guild_name: guild_name.clone(),
+                        groups,
+                    };
+                    
+                    let response = CIR::UpdateMessage(
+                        CIRM::new()
+                            .content(format!("✅ Successfully linked group to existing dashboard!"))
+                            .embed(display.build_embed())
+                            .components(display.build_components())
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                },
+                Err(e) => {
+                    warn!("[{}] Failed to save linked group: {}", guild_name, e);
+                    let response = CIR::Message(
+                        CIRM::new().content(format!("Failed to save group: {e}")).ephemeral(true)
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
+        _ if button_id.starts_with("link_create_new_") => {
+            // Create new dashboard message
+            let state_str = button_id.strip_prefix("link_create_new_").unwrap();
+            let parts: Vec<&str> = state_str.split('_').collect();
+            
+            if parts.len() < 5 {
+                let response = CIR::Message(
+                    CIRM::new().content("Invalid state data").ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+            
+            let dashboard_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[0], 16)?);
+            let queue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[1], 16)?);
+            let queue_vc_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[2], 16)?);
+            let red_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[3], 16)?);
+            let blue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[4], 16)?);
+            
+            use crate::models::{Group, Channels, TeamChannel};
+            use serenity::all::MessageId;
+            
+            let mut temp_group = Group {
+                guild_id,
+                group_id:       0,
+                name:           None,
+                quota:          crate::DEFAULT_QUOTA,
+                timeout:        crate::DEFAULT_HOT_JOIN_TIMEOUT,
+                dashboard_msg:  MessageId::new(1),
+                channels:       Channels {
+                    queue_chat: queue_channel,
+                    queue_vc:   queue_vc_channel,
+                    teams:      vec![TeamChannel {
+                        red_vc: red_channel,
+                        blu_vc: blue_channel,
+                    }],
+                    dashboard: dashboard_channel,
+                },
+                sessions:            vec![],
+                connect_info:        None,
+                team_balance_method: crate::models::TeamBalanceMethod::default(),
+                dm_alert_enabled:    false,
+                dm_alert_threshold:  0,
+                dm_alert_users:      vec![],
+            };
+            
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            
+            // Publish the dashboard to get the actual message ID
+            match temp_group.dash_publish(ctx, dashboard_channel, db, guild_id).await {
+                            Ok(_) => {
+                                let dashboard_msg_id = temp_group.dashboard_msg.get();
+                                info!("[{}] Dashboard message created with ID {} (linked group)", guild_name, dashboard_msg_id);
+                                
+                                // Create the group in the database
+                                let group_config = crate::database::repositories::group::GroupConfig {
+                                    dashboard_channel_id: dashboard_channel.get(),
+                                    chat_channel_id: queue_channel.get(),
+                                    queue_vc_id: queue_vc_channel.get(),
+                                    red_vc_id: red_channel.get(),
+                                    blu_vc_id: blue_channel.get(),
+                                    quota: crate::DEFAULT_QUOTA,
+                                };
+                                match db.groups.create_group(guild_id, dashboard_msg_id, group_config).await {
+                                    Ok(db_group) => {
+                                        info!("[{}] Group {} linked and saved to database", guild_name, db_group.group_id);
+                                        
+                                        // Add group to in-memory server
+                                        let mut manager_lock = manager.lock().await;
+                                        if let Ok(server) = manager_lock.get_server(guild_id) {
+                                            if let Err(e) = server.add_group(db_group.clone()) {
+                                                error!("Failed to add group to server: {e}");
+                                            }
+                                        }
+                                        drop(manager_lock);
+                                        
+                                        // Show success message and return to group list
+                                        let groups = db.groups.get_groups_for_guild(guild_id).await?;
+                                        let display = crate::handlers::settings_menu::GroupListDisplay {
+                                            guild_name: guild_name.clone(),
+                                            groups,
+                                        };
+                                        
+                                        let response = CIR::UpdateMessage(
+                                            CIRM::new()
+                                                .content(format!("✅ Successfully linked group from category!"))
+                                                .embed(display.build_embed())
+                                                .components(display.build_components())
+                                        );
+                                        interaction.create_response(&ctx.http, response).await?;
+                                    },
+                                    Err(e) => {
+                                        // Database save failed - clean up dashboard message
+                                        let _ = dashboard_channel.delete_message(&ctx.http, dashboard_msg_id).await;
+                                        
+                                        warn!("[{}] Failed to save linked group to database: {}", guild_name, e);
+                                        let response = CIR::Message(
+                                            CIRM::new().content(format!("Failed to save group: {e}")).ephemeral(true)
+                                        );
+                                        interaction.create_response(&ctx.http, response).await?;
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                warn!("[{}] Failed to create dashboard for linked group: {}", guild_name, e);
+                                let response = CIR::Message(
+                                    CIRM::new().content(format!("Failed to create dashboard: {e}")).ephemeral(true)
+                                );
+                                interaction.create_response(&ctx.http, response).await?;
+                            }
+                        }
+        }
+        _ if button_id.starts_with("link_ch_") => {
+            // Handle channel selection in manual linking flow
+            if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
+                if let Some(selected_channel_str) = values.first() {
+                    if let Ok(selected_channel_id) = selected_channel_str.parse::<u64>() {
+                        let selected_channel = serenity::all::ChannelId::new(selected_channel_id);
+                        
+                        // Decode state from custom_id: link_ch_{hex_state}
+                        let state_str = button_id.strip_prefix("link_ch_").unwrap();
+                        let parts: Vec<&str> = state_str.split('_').collect();
+                        
+                        if parts.len() != 7 {
+                            let response = CIR::Message(
+                                CIRM::new().content("Invalid state. Please start over.").ephemeral(true)
+                            );
+                            interaction.create_response(&ctx.http, response).await?;
+                            return Ok(());
+                        }
+                        
+                        let category_id = serenity::all::ChannelId::new(u64::from_str_radix(parts[0], 16)?);
+                        let mut dashboard_channel = if parts[1] != "0" { Some(serenity::all::ChannelId::new(u64::from_str_radix(parts[1], 16)?)) } else { None };
+                        let mut queue_channel = if parts[2] != "0" { Some(serenity::all::ChannelId::new(u64::from_str_radix(parts[2], 16)?)) } else { None };
+                        let mut queue_vc_channel = if parts[3] != "0" { Some(serenity::all::ChannelId::new(u64::from_str_radix(parts[3], 16)?)) } else { None };
+                        let mut red_channel = if parts[4] != "0" { Some(serenity::all::ChannelId::new(u64::from_str_radix(parts[4], 16)?)) } else { None };
+                        let mut blue_channel = if parts[5] != "0" { Some(serenity::all::ChannelId::new(u64::from_str_radix(parts[5], 16)?)) } else { None };
+                        let type_char = parts[6];
+                        let channel_type = match type_char {
+                            "d" => "dashboard",
+                            "q" => "queue",
+                            "v" => "queue_vc",
+                            "r" => "red",
+                            "b" => "blue",
+                            _ => "unknown"
+                        };
+                        
+                        // Update the appropriate channel based on type
+                        match channel_type {
+                            "dashboard" => dashboard_channel = Some(selected_channel),
+                            "queue" => queue_channel = Some(selected_channel),
+                            "queue_vc" => queue_vc_channel = Some(selected_channel),
+                            "red" => red_channel = Some(selected_channel),
+                            "blue" => blue_channel = Some(selected_channel),
+                            _ => {}
+                        }
+                        
+                        // Check if all channels are now selected
+                        if dashboard_channel.is_some() && queue_channel.is_some() && queue_vc_channel.is_some() 
+                            && red_channel.is_some() && blue_channel.is_some() {
+                            // All channels selected - create the group
+                            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                            
+                            use crate::models::{Group, Channels, TeamChannel};
+                            use serenity::all::MessageId;
+                            
+                            let mut temp_group = Group {
+                                guild_id,
+                                group_id:       0,
+                                name:           None,
+                                quota:          crate::DEFAULT_QUOTA,
+                                timeout:        crate::DEFAULT_HOT_JOIN_TIMEOUT,
+                                dashboard_msg:  MessageId::new(1),
+                                channels:       Channels {
+                                    queue_chat: queue_channel.unwrap(),
+                                    queue_vc:   queue_vc_channel.unwrap(),
+                                    teams:      vec![TeamChannel {
+                                        red_vc: red_channel.unwrap(),
+                                        blu_vc: blue_channel.unwrap(),
+                                    }],
+                                    dashboard: dashboard_channel.unwrap(),
+                                },
+                                sessions:            vec![],
+                                connect_info:        None,
+                                team_balance_method: crate::models::TeamBalanceMethod::default(),
+                                dm_alert_enabled:    false,
+                                dm_alert_threshold:  0,
+                                dm_alert_users:      vec![],
+                            };
+                            
+                            // Publish the dashboard
+                            match temp_group.dash_publish(ctx, dashboard_channel.unwrap(), db, guild_id).await {
+                                Ok(_) => {
+                                    let dashboard_msg_id = temp_group.dashboard_msg.get();
+                                    info!("[{}] Dashboard message created with ID {} (linked group)", guild_name, dashboard_msg_id);
+                                    
+                                    // Create the group in the database
+                                    let group_config = crate::database::repositories::group::GroupConfig {
+                                        dashboard_channel_id: dashboard_channel.unwrap().get(),
+                                        chat_channel_id: queue_channel.unwrap().get(),
+                                        queue_vc_id: queue_vc_channel.unwrap().get(),
+                                        red_vc_id: red_channel.unwrap().get(),
+                                        blu_vc_id: blue_channel.unwrap().get(),
+                                        quota: crate::DEFAULT_QUOTA,
+                                    };
+                                    
+                                    match db.groups.create_group(guild_id, dashboard_msg_id, group_config).await {
+                                        Ok(db_group) => {
+                                            info!("[{}] Group {} linked and saved to database", guild_name, db_group.group_id);
+                                            
+                                            // Add group to in-memory server
+                                            let mut manager_lock = manager.lock().await;
+                                            if let Ok(server) = manager_lock.get_server(guild_id) {
+                                                if let Err(e) = server.add_group(db_group.clone()) {
+                                                    error!("Failed to add group to server: {e}");
+                                                }
+                                            }
+                                            drop(manager_lock);
+                                            
+                                            // Show success and return to group list
+                                            let groups = db.groups.get_groups_for_guild(guild_id).await?;
+                                            let display = crate::handlers::settings_menu::GroupListDisplay {
+                                                guild_name: guild_name.clone(),
+                                                groups,
+                                            };
+                                            
+                                            let response = CIR::UpdateMessage(
+                                                CIRM::new()
+                                                    .content("✅ Successfully linked group from category!")
+                                                    .embed(display.build_embed())
+                                                    .components(display.build_components())
+                                            );
+                                            interaction.create_response(&ctx.http, response).await?;
+                                        },
+                                        Err(e) => {
+                                            let _ = dashboard_channel.unwrap().delete_message(&ctx.http, dashboard_msg_id).await;
+                                            warn!("[{}] Failed to save linked group to database: {}", guild_name, e);
+                                            let response = CIR::Message(
+                                                CIRM::new().content(format!("Failed to save group: {e}")).ephemeral(true)
+                                            );
+                                            interaction.create_response(&ctx.http, response).await?;
+                                        }
+                                    }
+                                },
+                                Err(e) => {
+                                    warn!("[{}] Failed to create dashboard for linked group: {}", guild_name, e);
+                                    let response = CIR::Message(
+                                        CIRM::new().content(format!("Failed to create dashboard: {e}")).ephemeral(true)
+                                    );
+                                    interaction.create_response(&ctx.http, response).await?;
+                                }
+                            }
+                        } else {
+                            // Continue to next channel - recursively trigger the same logic
+                            // by simulating a category selection with updated state
+                            let fake_category_id_str = category_id.get().to_string();
+                            
+                            // Reuse the same logic by creating a fake interaction data
+                            // Actually, let's just redirect back to the category select handler
+                            // by crafting the state as if we just selected the category
+                            
+                            // Get guild name
+                            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                            
+                            // Continue with manual channel selection flow (same code as above)
+                            use serenity::all::{CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption};
+                            
+                            let (text_channels, voice_channels) = {
+                                let guild = ctx.cache.guild(guild_id).ok_or_else(|| anyhow!("Guild not found"))?;
+                                let mut text_chans = Vec::new();
+                                let mut voice_chans = Vec::new();
+                                
+                                for (channel_id, channel) in &guild.channels {
+                                    if channel.parent_id == Some(category_id) {
+                                        match channel.kind {
+                                            serenity::all::ChannelType::Text => {
+                                                text_chans.push((*channel_id, channel.name.clone()));
+                                            }
+                                            serenity::all::ChannelType::Voice => {
+                                                voice_chans.push((*channel_id, channel.name.clone()));
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                (text_chans, voice_chans)
+                            };
+                            
+                            let (next_channel_type, next_channel_name, available_channels) = if dashboard_channel.is_none() {
+                                ("dashboard", "Dashboard (text)", text_channels)
+                            } else if queue_channel.is_none() {
+                                ("queue", "Queue Chat (text)", text_channels)
+                            } else if queue_vc_channel.is_none() {
+                                ("queue_vc", "Queue Voice Channel", voice_channels)
+                            } else if red_channel.is_none() {
+                                ("red", "Red Team Voice Channel", voice_channels)
+                            } else {
+                                ("blue", "Blue Team Voice Channel", voice_channels)
+                            };
+                            
+                            let options: Vec<CreateSelectMenuOption> = available_channels.iter()
+                                .map(|(id, name)| {
+                                    CreateSelectMenuOption::new(name.clone(), id.get().to_string())
+                                })
+                                .collect();
+                            
+                            let type_char = match next_channel_type {
+                                "dashboard" => "d",
+                                "queue" => "q",
+                                "queue_vc" => "v",
+                                "red" => "r",
+                                "blue" => "b",
+                                _ => "x"
+                            };
+                            let state = format!("{:x}_{:x}_{:x}_{:x}_{:x}_{:x}_{}",
+                                category_id.get(),
+                                dashboard_channel.map(|c| c.get()).unwrap_or(0),
+                                queue_channel.map(|c| c.get()).unwrap_or(0),
+                                queue_vc_channel.map(|c| c.get()).unwrap_or(0),
+                                red_channel.map(|c| c.get()).unwrap_or(0),
+                                blue_channel.map(|c| c.get()).unwrap_or(0),
+                                type_char
+                            );
+                            
+                            let select_menu = CreateSelectMenu::new(
+                                format!("link_ch_{}", state),
+                                CreateSelectMenuKind::String { options }
+                            )
+                            .placeholder(format!("Select {}", next_channel_name));
+                            
+                            let mut status = String::from("**Channel Linking Progress:**\n\n");
+                            status.push_str(&format!("✅ Dashboard: {}\n", 
+                                if let Some(id) = dashboard_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            ));
+                            status.push_str(&format!("✅ Queue Chat: {}\n", 
+                                if let Some(id) = queue_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            ));
+                            status.push_str(&format!("✅ Queue Voice: {}\n", 
+                                if let Some(id) = queue_vc_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            ));
+                            status.push_str(&format!("✅ Red Team: {}\n", 
+                                if let Some(id) = red_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            ));
+                            status.push_str(&format!("✅ Blue Team: {}\n", 
+                                if let Some(id) = blue_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            ));
+                            
+                            let embed = CE::new()
+                                .title(format!("{} - Link Channels", guild_name))
+                                .description(format!(
+                                    "{}\n\n**Next:** Select the {} channel from the dropdown below.",
+                                    status, next_channel_name
+                                ))
+                                .color(0x5865F2);
+                            
+                            let components = vec![
+                                CAR::SelectMenu(select_menu),
+                                CAR::Buttons(vec![
+                                    CB::new("server_settings_link_cancel")
+                                        .label("Cancel")
+                                        .style(BS::Secondary),
+                                ]),
+                            ];
+                            
+                            let response = CIR::UpdateMessage(
+                                CIRM::new().embed(embed).components(components)
+                            );
+                            interaction.create_response(&ctx.http, response).await?;
+                        }
+                    }
+                }
+            }
+        }
+        _ if button_id.starts_with("link_existing_remove_dup_") => {
+            // Remove duplicate group and link to existing dashboard
+            let state_str = button_id.strip_prefix("link_existing_remove_dup_").unwrap();
+            let parts: Vec<&str> = state_str.split('_').collect();
+            
+            if parts.len() != 6 {
+                let response = CIR::Message(
+                    CIRM::new().content("Invalid state data").ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+            
+            let dashboard_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[0], 16)?);
+            let queue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[1], 16)?);
+            let queue_vc_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[2], 16)?);
+            let red_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[3], 16)?);
+            let blue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[4], 16)?);
+            let dashboard_msg_id = u64::from_str_radix(parts[5], 16)?;
+            
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            
+            // Find and remove duplicate group
+            let existing_groups = db.groups.get_groups_for_guild(guild_id).await?;
+            let duplicate_group = existing_groups.iter().find(|g| {
+                g.channels.dashboard == dashboard_channel ||
+                g.channels.queue_chat == queue_channel ||
+                g.channels.queue_vc == queue_vc_channel ||
+                g.channels.teams.iter().any(|t| t.red_vc == red_channel || t.blu_vc == blue_channel)
+            });
+            
+            if let Some(dup_group) = duplicate_group {
+                let dup_group_id = dup_group.group_id;
+                
+                // Delete duplicate from database
+                if let Err(e) = db.groups.delete_group(guild_id, dup_group_id).await {
+                    warn!("[{}] Failed to delete duplicate group {}: {}", guild_name, dup_group_id, e);
+                    let response = CIR::Message(
+                        CIRM::new().content(format!("Failed to remove duplicate group: {e}")).ephemeral(true)
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                    return Ok(());
+                }
+                
+                // Remove from in-memory server
+                let mut manager_lock = manager.lock().await;
+                if let Ok(server) = manager_lock.get_server(guild_id) {
+                    server.groups.retain(|g| g.group_id != dup_group_id);
+                }
+                drop(manager_lock);
+                
+                info!("[{}] Removed duplicate group {} before linking", guild_name, dup_group_id);
+            }
+            
+            // Create new group with existing message ID
+            let group_config = crate::database::repositories::group::GroupConfig {
+                dashboard_channel_id: dashboard_channel.get(),
+                chat_channel_id: queue_channel.get(),
+                queue_vc_id: queue_vc_channel.get(),
+                red_vc_id: red_channel.get(),
+                blu_vc_id: blue_channel.get(),
+                quota: crate::DEFAULT_QUOTA,
+            };
+            
+            match db.groups.create_group(guild_id, dashboard_msg_id, group_config).await {
+                Ok(db_group) => {
+                    info!("[{}] Group {} linked to existing dashboard {} (duplicate removed)", guild_name, db_group.group_id, dashboard_msg_id);
+                    
+                    // Add group to in-memory server
+                    let mut manager_lock = manager.lock().await;
+                    if let Ok(server) = manager_lock.get_server(guild_id) {
+                        if let Err(e) = server.add_group(db_group.clone()) {
+                            error!("Failed to add group to server: {e}");
+                        }
+                    }
+                    drop(manager_lock);
+                    
+                    // Show success and return to group list
+                    let groups = db.groups.get_groups_for_guild(guild_id).await?;
+                    let display = crate::handlers::settings_menu::GroupListDisplay {
+                        guild_name: guild_name.clone(),
+                        groups,
+                    };
+                    
+                    let response = CIR::UpdateMessage(
+                        CIRM::new()
+                            .content(format!("✅ Removed duplicate group and linked to existing dashboard!"))
+                            .embed(display.build_embed())
+                            .components(display.build_components())
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                },
+                Err(e) => {
+                    warn!("[{}] Failed to save linked group: {}", guild_name, e);
+                    let response = CIR::Message(
+                        CIRM::new().content(format!("Failed to save group: {e}")).ephemeral(true)
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
+        _ if button_id.starts_with("link_remove_dup_new_") => {
+            // Remove duplicate group and create new dashboard
+            let state_str = button_id.strip_prefix("link_remove_dup_new_").unwrap();
+            let parts: Vec<&str> = state_str.split('_').collect();
+            
+            if parts.len() < 5 {
+                let response = CIR::Message(
+                    CIRM::new().content("Invalid state data").ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+            
+            let dashboard_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[0], 16)?);
+            let queue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[1], 16)?);
+            let queue_vc_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[2], 16)?);
+            let red_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[3], 16)?);
+            let blue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[4], 16)?);
+            
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            
+            // Find and remove duplicate group
+            let existing_groups = db.groups.get_groups_for_guild(guild_id).await?;
+            let duplicate_group = existing_groups.iter().find(|g| {
+                g.channels.dashboard == dashboard_channel ||
+                g.channels.queue_chat == queue_channel ||
+                g.channels.queue_vc == queue_vc_channel ||
+                g.channels.teams.iter().any(|t| t.red_vc == red_channel || t.blu_vc == blue_channel)
+            });
+            
+            if let Some(dup_group) = duplicate_group {
+                let dup_group_id = dup_group.group_id;
+                
+                // Delete duplicate from database
+                if let Err(e) = db.groups.delete_group(guild_id, dup_group_id).await {
+                    warn!("[{}] Failed to delete duplicate group {}: {}", guild_name, dup_group_id, e);
+                    let response = CIR::Message(
+                        CIRM::new().content(format!("Failed to remove duplicate group: {e}")).ephemeral(true)
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                    return Ok(());
+                }
+                
+                // Remove from in-memory server
+                let mut manager_lock = manager.lock().await;
+                if let Ok(server) = manager_lock.get_server(guild_id) {
+                    server.groups.retain(|g| g.group_id != dup_group_id);
+                }
+                drop(manager_lock);
+                
+                info!("[{}] Removed duplicate group {} before creating new dashboard", guild_name, dup_group_id);
+            }
+            
+            // Create new dashboard
+            use crate::models::{Group, Channels, TeamChannel};
+            use serenity::all::MessageId;
+            
+            let mut temp_group = Group {
+                guild_id,
+                group_id:       0,
+                name:           None,
+                quota:          crate::DEFAULT_QUOTA,
+                timeout:        crate::DEFAULT_HOT_JOIN_TIMEOUT,
+                dashboard_msg:  MessageId::new(1),
+                channels:       Channels {
+                    queue_chat: queue_channel,
+                    queue_vc:   queue_vc_channel,
+                    teams:      vec![TeamChannel {
+                        red_vc: red_channel,
+                        blu_vc: blue_channel,
+                    }],
+                    dashboard: dashboard_channel,
+                },
+                sessions:            vec![],
+                connect_info:        None,
+                team_balance_method: crate::models::TeamBalanceMethod::default(),
+                dm_alert_enabled:    false,
+                dm_alert_threshold:  0,
+                dm_alert_users:      vec![],
+            };
+            
+            match temp_group.dash_publish(ctx, dashboard_channel, db, guild_id).await {
+                Ok(_) => {
+                    let dashboard_msg_id = temp_group.dashboard_msg.get();
+                    
+                    let group_config = crate::database::repositories::group::GroupConfig {
+                        dashboard_channel_id: dashboard_channel.get(),
+                        chat_channel_id: queue_channel.get(),
+                        queue_vc_id: queue_vc_channel.get(),
+                        red_vc_id: red_channel.get(),
+                        blu_vc_id: blue_channel.get(),
+                        quota: crate::DEFAULT_QUOTA,
+                    };
+                    
+                    match db.groups.create_group(guild_id, dashboard_msg_id, group_config).await {
+                        Ok(db_group) => {
+                            info!("[{}] Group {} created with new dashboard (duplicate removed)", guild_name, db_group.group_id);
+                            
+                            let mut manager_lock = manager.lock().await;
+                            if let Ok(server) = manager_lock.get_server(guild_id) {
+                                if let Err(e) = server.add_group(db_group.clone()) {
+                                    error!("Failed to add group to server: {e}");
+                                }
+                            }
+                            drop(manager_lock);
+                            
+                            let groups = db.groups.get_groups_for_guild(guild_id).await?;
+                            let display = crate::handlers::settings_menu::GroupListDisplay {
+                                guild_name: guild_name.clone(),
+                                groups,
+                            };
+                            
+                            let response = CIR::UpdateMessage(
+                                CIRM::new()
+                                    .content(format!("✅ Removed duplicate group and created new dashboard!"))
+                                    .embed(display.build_embed())
+                                    .components(display.build_components())
+                            );
+                            interaction.create_response(&ctx.http, response).await?;
+                        },
+                        Err(e) => {
+                            let _ = dashboard_channel.delete_message(&ctx.http, dashboard_msg_id).await;
+                            warn!("[{}] Failed to save group: {}", guild_name, e);
+                            let response = CIR::Message(
+                                CIRM::new().content(format!("Failed to save group: {e}")).ephemeral(true)
+                            );
+                            interaction.create_response(&ctx.http, response).await?;
+                        }
+                    }
+                },
+                Err(e) => {
+                    warn!("[{}] Failed to create dashboard: {}", guild_name, e);
+                    let response = CIR::Message(
+                        CIRM::new().content(format!("Failed to create dashboard: {e}")).ephemeral(true)
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
+        _ if button_id.starts_with("link_manual_msg_") => {
+            // Prompt user to provide message ID manually
+            let response = CIR::Message(
+                CIRM::new()
+                    .content("**Manual Message ID Input**\n\nPlease provide the dashboard message ID.\n\nYou can get this by:\n1. Right-clicking the dashboard message\n2. Selecting \"Copy Message Link\"\n3. The ID is the last number in the URL\n\nExample: `https://discord.com/channels/123/456/789` → Message ID is `789`\n\n*Note: This feature requires a modal input which will be implemented in a future update. For now, please use the automatic detection or create a new dashboard.*")
+                    .ephemeral(true)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_remove_group" => {
+            // Show group selection dropdown for removal
+            use serenity::all::{CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption};
+            
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let groups = db.groups.get_groups_for_guild(guild_id).await?;
+            
+            if groups.is_empty() {
+                let response = CIR::Message(
+                    CIRM::new()
+                        .content("No groups to remove.")
+                        .ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+            
+            // Create dropdown with groups
+            let options: Vec<CreateSelectMenuOption> = groups.iter()
+                .map(|group| {
+                    let name = group.display_name();
+                    CreateSelectMenuOption::new(name.clone(), group.group_id.to_string())
+                        .description(format!("Group ID: {}", group.group_id))
+                })
+                .collect();
+            
+            let select_menu = CreateSelectMenu::new(
+                "server_settings_remove_group_select",
+                CreateSelectMenuKind::String { options }
+            )
+            .placeholder("Select a group to remove");
+            
+            let embed = CE::new()
+                .title(format!("{} - Remove Group", guild_name))
+                .description(
+                    "**⚠️ Warning: This action cannot be undone!**\n\n\
+                    Select a group to remove. This will:\n\
+                    • Delete the group from the database\n\
+                    • Remove it from the server manager\n\
+                    • **NOT** delete the Discord channels\n\n\
+                    You can manually delete the channels afterwards if needed."
+                )
+                .color(0xFF0000);
+            
+            let components = vec![
+                CAR::SelectMenu(select_menu),
+                CAR::Buttons(vec![
+                    CB::new("server_settings_remove_cancel")
+                        .label("Cancel")
+                        .style(BS::Secondary),
+                ]),
+            ];
+            
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(embed).components(components)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_remove_group_select" => {
+            // Show confirmation prompt asking about channel deletion
+            if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
+                if let Some(group_id_str) = values.first() {
+                    if let Ok(group_id) = group_id_str.parse::<u8>() {
+                        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                        
+                        // Get group info and channel list
+                        let (group_name, channel_list) = {
+                            let mut manager_lock = manager.lock().await;
+                            if let Ok(server) = manager_lock.get_server(guild_id) {
+                                if let Some(group) = server.groups.iter().find(|g| g.group_id == group_id) {
+                                    let name = group.display_name();
+                                    let mut channels = Vec::new();
+                                    channels.push(format!("• <#{}> (dashboard)", group.channels.dashboard.get()));
+                                    channels.push(format!("• <#{}> (queue chat)", group.channels.queue_chat.get()));
+                                    channels.push(format!("• <#{}> (queue voice)", group.channels.queue_vc.get()));
+                                    for team in &group.channels.teams {
+                                        channels.push(format!("• <#{}> (red team)", team.red_vc.get()));
+                                        channels.push(format!("• <#{}> (blue team)", team.blu_vc.get()));
+                                    }
+                                    (Some(name), channels.join("\n"))
+                                } else {
+                                    (None, String::new())
+                                }
+                            } else {
+                                (None, String::new())
+                            }
+                        };
+                        
+                        let display_name = group_name.unwrap_or_else(|| format!("Group {}", group_id));
+                        
+                        let embed = CE::new()
+                            .title(format!("{} - Delete Channels?", guild_name))
+                            .description(format!(
+                                "**Removing group: {}**\n\n\
+                                The following Discord channels are associated with this group:\n\n\
+                                {}\n\n\
+                                **Do you want to delete these Discord channels?**\n\n\
+                                ⚠️ This action cannot be undone!",
+                                display_name, channel_list
+                            ))
+                            .color(0xFF0000);
+                        
+                        let components = vec![
+                            CAR::Buttons(vec![
+                                CB::new(format!("server_settings_remove_confirm_delete_{}", group_id))
+                                    .label("Yes, Delete Channels")
+                                    .style(BS::Danger),
+                                CB::new(format!("server_settings_remove_confirm_keep_{}", group_id))
+                                    .label("No, Keep Channels")
+                                    .style(BS::Success),
+                                CB::new("server_settings_remove_cancel")
+                                    .label("Cancel")
+                                    .style(BS::Secondary),
+                            ]),
+                        ];
+                        
+                        let response = CIR::UpdateMessage(
+                            CIRM::new().embed(embed).components(components)
+                        );
+                        interaction.create_response(&ctx.http, response).await?;
+                    }
+                }
+            }
+        }
+        _ if button_id.starts_with("server_settings_remove_confirm_delete_") => {
+            // Confirm removal with channel deletion
+            let group_id_str = button_id.strip_prefix("server_settings_remove_confirm_delete_").unwrap();
+            if let Ok(group_id) = group_id_str.parse::<u8>() {
+                let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                
+                // Get group info and channels before deletion
+                let (group_name, channels_to_delete) = {
+                    let mut manager_lock = manager.lock().await;
+                    if let Ok(server) = manager_lock.get_server(guild_id) {
+                        if let Some(group) = server.groups.iter().find(|g| g.group_id == group_id) {
+                            let name = group.display_name();
+                            let mut channels = vec![
+                                group.channels.dashboard,
+                                group.channels.queue_chat,
+                                group.channels.queue_vc,
+                            ];
+                            for team in &group.channels.teams {
+                                channels.push(team.red_vc);
+                                channels.push(team.blu_vc);
+                            }
+                            (Some(name), channels)
+                        } else {
+                            (None, Vec::new())
+                        }
+                    } else {
+                        (None, Vec::new())
+                    }
+                };
+                
+                // Delete from database first
+                match db.groups.delete_group(guild_id, group_id).await {
+                    Ok(_) => {
+                        info!("[{}] Group {} deleted from database", guild_name, group_id);
+                        
+                        // Remove from in-memory server
+                        let mut manager_lock = manager.lock().await;
+                        if let Ok(server) = manager_lock.get_server(guild_id) {
+                            server.groups.retain(|g| g.group_id != group_id);
+                        }
+                        drop(manager_lock);
+                        
+                        // Delete Discord channels
+                        let mut deleted_count = 0;
+                        for channel_id in channels_to_delete {
+                            match channel_id.delete(&ctx.http).await {
+                                Ok(_) => {
+                                    deleted_count += 1;
+                                    info!("[{}] Deleted channel {}", guild_name, channel_id.get());
+                                },
+                                Err(e) => {
+                                    warn!("[{}] Failed to delete channel {}: {}", guild_name, channel_id.get(), e);
+                                }
+                            }
+                        }
+                        
+                        // Show success and return to group list
+                        let groups = db.groups.get_groups_for_guild(guild_id).await?;
+                        let display = crate::handlers::settings_menu::GroupListDisplay {
+                            guild_name: guild_name.clone(),
+                            groups,
+                        };
+                        
+                        let success_msg = if let Some(name) = group_name {
+                            format!("✅ Successfully removed group: {}\n🗑️ Deleted {} Discord channels", name, deleted_count)
+                        } else {
+                            format!("✅ Successfully removed group {}\n🗑️ Deleted {} Discord channels", group_id, deleted_count)
+                        };
+                        
+                        let response = CIR::UpdateMessage(
+                            CIRM::new()
+                                .content(success_msg)
+                                .embed(display.build_embed())
+                                .components(display.build_components())
+                        );
+                        interaction.create_response(&ctx.http, response).await?;
+                    },
+                    Err(e) => {
+                        warn!("[{}] Failed to delete group {}: {}", guild_name, group_id, e);
+                        let response = CIR::Message(
+                            CIRM::new().content(format!("Failed to remove group: {e}")).ephemeral(true)
+                        );
+                        interaction.create_response(&ctx.http, response).await?;
+                    }
+                }
+            }
+        }
+        _ if button_id.starts_with("server_settings_remove_confirm_keep_") => {
+            // Confirm removal without channel deletion
+            let group_id_str = button_id.strip_prefix("server_settings_remove_confirm_keep_").unwrap();
+            if let Ok(group_id) = group_id_str.parse::<u8>() {
+                let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                
+                // Get group info before deletion
+                let group_name = {
+                    let mut manager_lock = manager.lock().await;
+                    if let Ok(server) = manager_lock.get_server(guild_id) {
+                        server.groups.iter()
+                            .find(|g| g.group_id == group_id)
+                            .map(|g| g.display_name())
+                    } else {
+                        None
+                    }
+                };
+                
+                // Delete from database
+                match db.groups.delete_group(guild_id, group_id).await {
+                    Ok(_) => {
+                        info!("[{}] Group {} deleted from database (channels kept)", guild_name, group_id);
+                        
+                        // Remove from in-memory server
+                        let mut manager_lock = manager.lock().await;
+                        if let Ok(server) = manager_lock.get_server(guild_id) {
+                            server.groups.retain(|g| g.group_id != group_id);
+                        }
+                        drop(manager_lock);
+                        
+                        // Show success and return to group list
+                        let groups = db.groups.get_groups_for_guild(guild_id).await?;
+                        let display = crate::handlers::settings_menu::GroupListDisplay {
+                            guild_name: guild_name.clone(),
+                            groups,
+                        };
+                        
+                        let success_msg = if let Some(name) = group_name {
+                            format!("✅ Successfully removed group: {}\n📁 Discord channels were kept", name)
+                        } else {
+                            format!("✅ Successfully removed group {}\n📁 Discord channels were kept", group_id)
+                        };
+                        
+                        let response = CIR::UpdateMessage(
+                            CIRM::new()
+                                .content(success_msg)
+                                .embed(display.build_embed())
+                                .components(display.build_components())
+                        );
+                        interaction.create_response(&ctx.http, response).await?;
+                    },
+                    Err(e) => {
+                        warn!("[{}] Failed to delete group {}: {}", guild_name, group_id, e);
+                        let response = CIR::Message(
+                            CIRM::new().content(format!("Failed to remove group: {e}")).ephemeral(true)
+                        );
+                        interaction.create_response(&ctx.http, response).await?;
+                    }
+                }
+            }
+        }
+        "server_settings_remove_cancel" => {
+            // Cancel removal and return to group list
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let groups = db.groups.get_groups_for_guild(guild_id).await?;
+            
+            let display = crate::handlers::settings_menu::GroupListDisplay {
+                guild_name,
+                groups,
+            };
+            
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(display.build_embed()).components(display.build_components())
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
         "server_settings_group_select" => {
             // Handle group selection from dropdown - show modal with all settings
             if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
@@ -1356,47 +2818,223 @@ pub async fn handle_server_settings_button(
             );
             interaction.create_response(&ctx.http, response).await?;
         }
-        _ if button_id.starts_with("server_settings_group_select_") => {
-            // Handle group selection from button - show modal with all settings
-            let group_id_str = button_id.strip_prefix("server_settings_group_select_").unwrap();
+        _ if button_id.starts_with("group_settings_link_message_") => {
+            // Handle link message button - search for existing dashboard messages for this specific group
+            let group_id_str = button_id.strip_prefix("group_settings_link_message_").unwrap();
             if let Ok(group_id) = group_id_str.parse::<u8>() {
-                // Find the group
+                let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                
+                // Get the group to find its dashboard channel
                 let groups = db.groups.get_groups_for_guild(guild_id).await?;
                 if let Some(group) = groups.iter().find(|g| g.group_id == group_id) {
-                    let modal = CreateModal::new(format!("server_settings_group_modal_{group_id}"), "Edit Group Settings")
-                        .components(vec![
-                            CreateActionRow::InputText(
-                                CreateInputText::new(InputTextStyle::Short, "Name", "name")
-                                    .placeholder("e.g., NA PUGs, EU Competitive")
-                                    .value(group.name.clone().unwrap_or_default())
-                                    .required(false)
-                                    .max_length(50)
-                            ),
-                            CreateActionRow::InputText(
-                                CreateInputText::new(InputTextStyle::Short, "Quota (2-100)", "quota")
-                                    .placeholder("Number of players required")
-                                    .value(group.quota.to_string())
-                                    .required(true)
-                                    .min_length(1)
-                                    .max_length(3)
-                            ),
-                            CreateActionRow::InputText(
-                                CreateInputText::new(InputTextStyle::Short, "Hot Join Timeout (seconds)", "timeout")
-                                    .placeholder("Seconds to wait before starting game")
-                                    .value(group.timeout.to_string())
-                                    .required(false)
-                                    .min_length(1)
-                                    .max_length(4)
-                            ),
-                        ]);
-
-                    let response = CIR::Modal(modal);
+                    let dashboard_channel = group.channels.dashboard;
+                    
+                    // Search for bot messages in dashboard channel
+                    let bot_user_id = ctx.cache.current_user().id;
+                    let mut existing_dashboard_msgs = Vec::new();
+                    
+                    match dashboard_channel.messages(&ctx.http, serenity::all::GetMessages::new().limit(50)).await {
+                        Ok(messages) => {
+                            for msg in messages {
+                                if msg.author.id == bot_user_id && !msg.embeds.is_empty() {
+                                    // Check if it looks like a dashboard
+                                    if let Some(embed) = msg.embeds.first() {
+                                        let title = embed.title.as_deref().unwrap_or("");
+                                        let desc = embed.description.as_deref().unwrap_or("");
+                                        if title.contains("Queue") || desc.contains("Queue") || desc.contains("Join") {
+                                            existing_dashboard_msgs.push((msg.id, msg.timestamp));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("[{}] Failed to fetch messages from dashboard channel: {}", guild_name, e);
+                        }
+                    }
+                    
+                    // Sort by timestamp (newest first)
+                    existing_dashboard_msgs.sort_by(|a, b| b.1.cmp(&a.1));
+                    
+                    let mut description = String::new();
+                    let mut buttons = Vec::new();
+                    
+                    if !existing_dashboard_msgs.is_empty() {
+                        description.push_str(&format!(
+                            "✅ **Found {} existing dashboard message(s)**\n\n\
+                            Found bot messages in <#{}> that appear to be dashboards.\n\
+                            Most recent: <https://discord.com/channels/{}/{}/{}>\n\n\
+                            **Select an option:**\n\
+                            • Link to existing dashboard (will update group's dashboard_msg)\n\
+                            • Cancel",
+                            existing_dashboard_msgs.len(),
+                            dashboard_channel.get(),
+                            guild_id.get(),
+                            dashboard_channel.get(),
+                            existing_dashboard_msgs[0].0.get()
+                        ));
+                        
+                        // Encode state: group_id + message_id
+                        let state = format!("{}_{:x}", group_id, existing_dashboard_msgs[0].0.get());
+                        
+                        buttons.push(CB::new(format!("group_link_msg_confirm_{}", state))
+                            .label("Link to This Message")
+                            .style(BS::Success));
+                    } else {
+                        description.push_str(&format!(
+                            "ℹ️ **No existing dashboard messages found**\n\n\
+                            Searched recent messages in <#{}> but didn't find any existing dashboards.\n\n\
+                            The bot will continue using the current dashboard message.",
+                            dashboard_channel.get()
+                        ));
+                    }
+                    
+                    buttons.push(CB::new(format!("group_settings_back_{}", group_id))
+                        .label("Back")
+                        .style(BS::Secondary));
+                    
+                    let embed = CE::new()
+                        .title(format!("{} - Link Dashboard Message", group.display_name()))
+                        .description(description)
+                        .color(0x5865F2);
+                    
+                    let response = CIR::UpdateMessage(
+                        CIRM::new().embed(embed).components(vec![CAR::Buttons(buttons)])
+                    );
                     interaction.create_response(&ctx.http, response).await?;
                 } else {
                     warn!("Group {group_id} not found for guild {guild_id}");
                 }
+            }
+        }
+        _ if button_id.starts_with("group_link_msg_confirm_") => {
+            // Confirm linking message to group
+            let state_str = button_id.strip_prefix("group_link_msg_confirm_").unwrap();
+            let parts: Vec<&str> = state_str.split('_').collect();
+            
+            if parts.len() != 2 {
+                let response = CIR::Message(
+                    CIRM::new().content("Invalid state data").ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+            
+            let group_id = parts[0].parse::<u8>()?;
+            let dashboard_msg_id = u64::from_str_radix(parts[1], 16)?;
+            
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            
+            // Update the group's dashboard_msg in database
+            match db.groups.update_dashboard_msg_by_group_id(guild_id, group_id, dashboard_msg_id).await {
+                Ok(_) => {
+                    info!("[{}] Updated group {} dashboard message to {}", guild_name, group_id, dashboard_msg_id);
+                    
+                    // Update in-memory group
+                    let mut manager_lock = manager.lock().await;
+                    if let Ok(server) = manager_lock.get_server(guild_id) {
+                        if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
+                            group.dashboard_msg = serenity::all::MessageId::new(dashboard_msg_id);
+                        }
+                    }
+                    drop(manager_lock);
+                    
+                    // Return to group settings
+                    let groups = db.groups.get_groups_for_guild(guild_id).await?;
+                    if let Some(group) = groups.iter().find(|g| g.group_id == group_id) {
+                        let settings = GroupSettings {
+                            group_id: group.group_id,
+                            name: group.name.clone(),
+                            quota: group.quota,
+                            timeout: group.timeout,
+                            connect_info: group.connect_info.clone(),
+                            team_balance_method: group.team_balance_method,
+                        };
+                        
+                        let embed = build_group_settings_embed(&settings);
+                        let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+                        
+                        let response = CIR::UpdateMessage(
+                            CIRM::new()
+                                .content(format!("✅ Successfully linked dashboard message!"))
+                                .embed(embed)
+                                .components(buttons)
+                        );
+                        interaction.create_response(&ctx.http, response).await?;
+                    }
+                },
+                Err(e) => {
+                    warn!("[{}] Failed to update dashboard message for group {}: {}", guild_name, group_id, e);
+                    let response = CIR::Message(
+                        CIRM::new().content(format!("Failed to link message: {e}")).ephemeral(true)
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
+        _ if button_id.starts_with("group_settings_back_") => {
+            // Return to group settings from link message screen
+            let group_id_str = button_id.strip_prefix("group_settings_back_").unwrap();
+            if let Ok(group_id) = group_id_str.parse::<u8>() {
+                let groups = db.groups.get_groups_for_guild(guild_id).await?;
+                if let Some(group) = groups.iter().find(|g| g.group_id == group_id) {
+                    let settings = GroupSettings {
+                        group_id: group.group_id,
+                        name: group.name.clone(),
+                        quota: group.quota,
+                        timeout: group.timeout,
+                        connect_info: group.connect_info.clone(),
+                        team_balance_method: group.team_balance_method,
+                    };
+                    
+                    let embed = build_group_settings_embed(&settings);
+                    let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+                    
+                    let response = CIR::UpdateMessage(
+                        CIRM::new().embed(embed).components(buttons)
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
+        _ if button_id.starts_with("server_settings_group_select_") => {
+            // Handle group selection from button - show settings screen with Link Message button
+            let value_str = button_id.strip_prefix("server_settings_group_select_").unwrap();
+            
+            // Parse format "groupid_queueid" to handle duplicate group_id values
+            let parts: Vec<&str> = value_str.split('_').collect();
+            if parts.len() == 2 {
+                if let (Ok(group_id), Ok(queue_id)) = (parts[0].parse::<u8>(), parts[1].parse::<u64>()) {
+                    // Find the group by both group_id and queue channel ID
+                    let groups = db.groups.get_groups_for_guild(guild_id).await?;
+                    if let Some(group) = groups.iter().find(|g| g.group_id == group_id && g.channels.queue_vc.get() == queue_id) {
+                        // Show group settings screen with buttons including Link Message
+                        let settings = GroupSettings {
+                            group_id: group.group_id,
+                            name: group.name.clone(),
+                            quota: group.quota,
+                            timeout: group.timeout,
+                            connect_info: group.connect_info.clone(),
+                            team_balance_method: group.team_balance_method,
+                        };
+                        
+                        let embed = build_group_settings_embed(&settings);
+                        let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+                        
+                        let response = CIR::UpdateMessage(
+                            CIRM::new()
+                                .embed(embed)
+                                .components(buttons)
+                        );
+                        interaction.create_response(&ctx.http, response).await?;
+                    } else {
+                        warn!("Group {} not found for guild {}", group_id, guild_id);
+                    }
+                } else {
+                    warn!("Invalid group ID format in button: {}", value_str);
+                }
             } else {
-                warn!("Invalid group ID in button: {group_id_str}");
+                warn!("Invalid group ID format in button: {}", value_str);
             }
         }
         _ => {
@@ -1452,8 +3090,10 @@ fn rank_key_to_position(key: &str) -> u8 {
 
 /// Get server settings from database
 pub async fn get_server_settings(db: &Arc<Database>, guild_id: GI) -> Result<ServerSettings> {
-    let runner_role = db.config.get_config_item("runner_role", guild_id).await?;
-    let admin_role = db.config.get_config_item("admin_role", guild_id).await?;
+    // Query actual columns: runner_id and admin_id (not runner_role/admin_role)
+    let config_map = db.config.get_config_map(guild_id).await?;
+    let runner_role = config_map.get("runner_id").cloned();
+    let admin_role = config_map.get("admin_id").cloned();
 
     Ok(ServerSettings {
         runner_role,
@@ -1462,14 +3102,16 @@ pub async fn get_server_settings(db: &Arc<Database>, guild_id: GI) -> Result<Ser
 }
 
 /// Get rank settings from database (for rank configuration menu)
-pub async fn get_rank_settings(db: &Arc<Database>, guild_id: GI) -> Result<(bool, String)> {
-    let dynamic_elo = db.config.get_config_item("active_elo_enabled", guild_id).await?
-        .map(|v| v.parse::<bool>().unwrap_or(false))
+pub async fn get_rank_settings(db: &Arc<Database>, guild_id: GI) -> Result<(bool, Option<RoleId>)> {
+    // Query actual column: active_elo (INTEGER 0/1, not "active_elo_enabled")
+    let config_map = db.config.get_config_map(guild_id).await?;
+    let dynamic_elo = config_map.get("active_elo")
+        .and_then(|v| v.parse::<i64>().ok())
+        .map(|v| v != 0)
         .unwrap_or(false);
-    let default_rank = db.config.get_config_item("default_rank", guild_id).await?
-        .unwrap_or_else(|| crate::models::DEFAULT_RANK.name().to_string());
+    let default_rank_role = db.config.get_default_rank_role_id(guild_id).await?;
 
-    Ok((dynamic_elo, default_rank))
+    Ok((dynamic_elo, default_rank_role))
 }
 
 /// Handle server settings modal submissions
@@ -1562,13 +3204,13 @@ pub async fn handle_server_settings_modal(
         // Return to rank configuration menu
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
         let rank_roles = get_all_rank_roles(db, guild_id).await?;
-        let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id).await?;
+        let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
         
         let display = crate::handlers::settings_menu::RankConfigDisplay {
             guild_name,
             rank_roles,
             dynamic_elo,
-            default_rank,
+            default_rank_role,
         };
 
         let response = CIR::UpdateMessage(
@@ -1640,13 +3282,13 @@ pub async fn handle_server_settings_modal(
         // Return to rank configuration menu
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
         let rank_roles = get_all_rank_roles(db, guild_id).await?;
-        let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id).await?;
+        let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
         
         let display = crate::handlers::settings_menu::RankConfigDisplay {
             guild_name,
             rank_roles,
             dynamic_elo,
-            default_rank,
+            default_rank_role,
         };
 
         let response = CIR::UpdateMessage(
@@ -1712,13 +3354,13 @@ pub async fn handle_server_settings_modal(
         // Return to rank configuration menu
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
         let rank_roles = get_all_rank_roles(db, guild_id).await?;
-        let (dynamic_elo, default_rank) = get_rank_settings(db, guild_id).await?;
+        let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
         
         let display = crate::handlers::settings_menu::RankConfigDisplay {
             guild_name,
             rank_roles,
             dynamic_elo,
-            default_rank,
+            default_rank_role,
         };
 
         let response = CIR::UpdateMessage(
@@ -1873,7 +3515,7 @@ pub fn build_group_selector(groups: &[crate::models::Group]) -> CAR {
 pub async fn handle_group_settings_button(
     ctx: &Context,
     interaction: &ComponentInteraction,
-    _db: &Arc<Database>,
+    db: &Arc<Database>,
     manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
 ) -> Result<()> {
     let guild_id  = interaction.guild_id.expect("Guild ID not found");
@@ -1966,6 +3608,194 @@ pub async fn handle_group_settings_button(
 
         let response = CIR::Modal(modal);
         interaction.create_response(&ctx.http, response).await?;
+    } else if button_id.starts_with("group_settings_link_message_") {
+        // Handle link message button - search for existing dashboard messages
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+        
+        // Get the group to find its dashboard channel
+        let groups = db.groups.get_groups_for_guild(guild_id).await?;
+        if let Some(group) = groups.iter().find(|g| g.group_id == group_id) {
+            let dashboard_channel = group.channels.dashboard;
+            
+            // Search for bot messages in dashboard channel
+            let bot_user_id = ctx.cache.current_user().id;
+            let mut existing_dashboard_msgs = Vec::new();
+            
+            match dashboard_channel.messages(&ctx.http, serenity::all::GetMessages::new().limit(50)).await {
+                Ok(messages) => {
+                    for msg in messages {
+                        if msg.author.id == bot_user_id && !msg.embeds.is_empty() {
+                            // Check if it looks like a dashboard
+                            if let Some(embed) = msg.embeds.first() {
+                                let title = embed.title.as_deref().unwrap_or("");
+                                let desc = embed.description.as_deref().unwrap_or("");
+                                if title.contains("Queue") || desc.contains("Queue") || desc.contains("Join") {
+                                    existing_dashboard_msgs.push((msg.id, msg.timestamp));
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("[{}] Failed to fetch messages from dashboard channel: {}", guild_name, e);
+                }
+            }
+            
+            // Sort by timestamp (newest first)
+            existing_dashboard_msgs.sort_by(|a, b| b.1.cmp(&a.1));
+            
+            let mut description = String::new();
+            let mut buttons = Vec::new();
+            
+            if !existing_dashboard_msgs.is_empty() {
+                description.push_str(&format!(
+                    "✅ **Found {} existing dashboard message(s)**\n\n\
+                    Found bot messages in <#{}> that appear to be dashboards.\n\n\
+                    **Select a message to link:**",
+                    existing_dashboard_msgs.len(),
+                    dashboard_channel.get()
+                ));
+                
+                // Add a button for each found message (limit to 5 to avoid Discord limits)
+                for (i, (msg_id, timestamp)) in existing_dashboard_msgs.iter().take(5).enumerate() {
+                    let state = format!("{}_{:x}", group_id, msg_id.get());
+                    let time_str = timestamp.unix_timestamp();
+                    let label = if i == 0 {
+                        format!("Most Recent (<t:{}:f>)", time_str)
+                    } else {
+                        format!("Message {} (<t:{}:f>)", i + 1, time_str)
+                    };
+                    
+                    buttons.push(CB::new(format!("group_link_msg_confirm_{}", state))
+                        .label(label)
+                        .style(BS::Success));
+                }
+                
+                if existing_dashboard_msgs.len() > 5 {
+                    description.push_str(&format!("\n\n*Showing 5 of {} messages*", existing_dashboard_msgs.len()));
+                }
+            } else {
+                description.push_str(&format!(
+                    "ℹ️ **No existing dashboard messages found**\n\n\
+                    Searched recent messages in <#{}> but didn't find any existing dashboards.\n\n\
+                    The bot will continue using the current dashboard message.",
+                    dashboard_channel.get()
+                ));
+            }
+            
+            // Add manual input button
+            buttons.push(CB::new(format!("group_link_msg_manual_{}", group_id))
+                .label("Enter Message ID")
+                .style(BS::Primary));
+            
+            buttons.push(CB::new(format!("group_settings_back_{}", group_id))
+                .label("Back")
+                .style(BS::Secondary));
+            
+            let embed = CE::new()
+                .title(format!("{} - Link Dashboard Message", group.display_name()))
+                .description(description)
+                .color(0x5865F2);
+            
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(embed).components(vec![CAR::Buttons(buttons)])
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        } else {
+            warn!("Group {group_id} not found for guild {guild_id}");
+        }
+    } else if button_id.starts_with("group_link_msg_confirm_") {
+        // Confirm linking message to group
+        let state_str = button_id.strip_prefix("group_link_msg_confirm_").unwrap();
+        let parts: Vec<&str> = state_str.split('_').collect();
+        
+        if parts.len() != 2 {
+            warn!("Invalid state format in group_link_msg_confirm: {}", state_str);
+            return Ok(());
+        }
+        
+        let group_id = parts[0].parse::<u8>().map_err(|e| anyhow::anyhow!("Invalid group_id: {}", e))?;
+        let dashboard_msg_id = u64::from_str_radix(parts[1], 16).map_err(|e| anyhow::anyhow!("Invalid message_id: {}", e))?;
+        
+        // Update database
+        match db.groups.update_dashboard_msg_by_group_id(guild_id, group_id, dashboard_msg_id).await {
+            Ok(_) => {
+                // Update in-memory group
+                let mut manager_lock = manager.lock().await;
+                if let Ok(server) = manager_lock.get_server(guild_id) {
+                    if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
+                        group.dashboard_msg = dashboard_msg_id.into();
+                        info!("Updated group {} dashboard_msg to {} in memory", group_id, dashboard_msg_id);
+                    }
+                }
+                drop(manager_lock);
+                
+                let embed = CE::new()
+                    .title("✅ Dashboard Message Linked")
+                    .description(format!(
+                        "Successfully linked existing dashboard message to this group.\n\n\
+                        Message ID: `{}`\n\n\
+                        The bot will now update this message instead of creating a new one.",
+                        dashboard_msg_id
+                    ))
+                    .color(0x57F287);
+                
+                let response = CIR::UpdateMessage(
+                    CIRM::new().embed(embed).components(vec![])
+                );
+                interaction.create_response(&ctx.http, response).await?;
+            }
+            Err(e) => {
+                error!("Failed to update dashboard_msg for group {}: {}", group_id, e);
+                let embed = CE::new()
+                    .title("❌ Failed to Link Message")
+                    .description(format!("Database error: {}", e))
+                    .color(0xED4245);
+                
+                let response = CIR::UpdateMessage(
+                    CIRM::new().embed(embed).components(vec![])
+                );
+                interaction.create_response(&ctx.http, response).await?;
+            }
+        }
+    } else if button_id.starts_with("group_link_msg_manual_") {
+        // Manual message ID input - show modal
+        use serenity::all::{CreateModal, CreateInputText, InputTextStyle, CreateActionRow};
+        
+        let modal = CreateModal::new(format!("group_link_msg_modal_{}", group_id), "Enter Dashboard Message ID")
+            .components(vec![
+                CreateActionRow::InputText(
+                    CreateInputText::new(InputTextStyle::Short, "Message ID or Link", "message_id")
+                        .placeholder("e.g., 1467572971093885086 or https://discord.com/channels/.../...")
+                        .required(true)
+                        .min_length(17)
+                        .max_length(200)
+                ),
+            ]);
+        
+        let response = CIR::Modal(modal);
+        interaction.create_response(&ctx.http, response).await?;
+    } else if button_id.starts_with("group_settings_back_") {
+        // Back button - return to group settings
+        let groups = db.groups.get_groups_for_guild(guild_id).await?;
+        if let Some(group) = groups.iter().find(|g| g.group_id == group_id) {
+            let settings = GroupSettings {
+                group_id: group.group_id,
+                name: group.name.clone(),
+                quota: group.quota,
+                timeout: group.timeout,
+                connect_info: group.connect_info.clone(),
+                team_balance_method: group.team_balance_method,
+            };
+            
+            let embed = build_group_settings_embed(&settings);
+            let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+            
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(embed).components(buttons)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
     } else {
         warn!("Unknown group settings button: {}", button_id);
     }
@@ -2022,6 +3852,126 @@ pub async fn handle_group_settings_select(
     );
     interaction.create_response(&ctx.http, response).await?;
 
+    Ok(())
+}
+
+/// Handle manual dashboard message link modal submissions
+pub async fn handle_group_link_msg_modal(
+    ctx: &Context,
+    interaction: &ModalInteraction,
+    db: &Arc<Database>,
+    manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
+) -> Result<()> {
+    let guild_id = interaction.guild_id.expect("Guild ID not found");
+    let modal_id = &interaction.data.custom_id;
+    
+    // Extract group_id from modal ID (format: group_link_msg_modal_{group_id})
+    let group_id: u8 = modal_id
+        .strip_prefix("group_link_msg_modal_")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!("Invalid modal ID format: {}", modal_id))?;
+    
+    // Get the message ID input
+    let message_input = interaction.data.components.first()
+        .and_then(|row| row.components.first())
+        .and_then(|comp| {
+            if let serenity::all::ActionRowComponent::InputText(input) = comp {
+                input.value.as_ref()
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| anyhow::anyhow!("No message ID provided"))?;
+    
+    // Parse message ID from input (could be just ID or a Discord link)
+    let dashboard_msg_id = if message_input.contains("discord.com/channels/") {
+        // Extract message ID from Discord link
+        // Format: https://discord.com/channels/{guild_id}/{channel_id}/{message_id}
+        message_input.split('/').last()
+            .and_then(|s| s.parse::<u64>().ok())
+            .ok_or_else(|| anyhow::anyhow!("Invalid Discord message link format"))?
+    } else {
+        // Parse as direct message ID
+        message_input.trim().parse::<u64>()
+            .map_err(|_| anyhow::anyhow!("Invalid message ID: must be a number or Discord message link"))?
+    };
+    
+    // Validate that the message exists in the dashboard channel
+    let groups = db.groups.get_groups_for_guild(guild_id).await?;
+    let group = groups.iter().find(|g| g.group_id == group_id)
+        .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?;
+    
+    let dashboard_channel = group.channels.dashboard;
+    
+    // Try to fetch the message to verify it exists
+    match dashboard_channel.message(&ctx.http, dashboard_msg_id).await {
+        Ok(_) => {
+            // Message exists, update database
+            match db.groups.update_dashboard_msg_by_group_id(guild_id, group_id, dashboard_msg_id).await {
+                Ok(_) => {
+                    // Update in-memory group
+                    let mut manager_lock = manager.lock().await;
+                    if let Ok(server) = manager_lock.get_server(guild_id) {
+                        if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
+                            group.dashboard_msg = dashboard_msg_id.into();
+                            info!("Updated group {} dashboard_msg to {} in memory", group_id, dashboard_msg_id);
+                        }
+                    }
+                    drop(manager_lock);
+                    
+                    let embed = CE::new()
+                        .title("✅ Dashboard Message Linked")
+                        .description(format!(
+                            "Successfully linked dashboard message to this group.\n\n\
+                            Message ID: `{}`\n\
+                            Channel: <#{}>\n\n\
+                            The bot will now update this message instead of creating a new one.",
+                            dashboard_msg_id,
+                            dashboard_channel.get()
+                        ))
+                        .color(0x57F287);
+                    
+                    let response = CIR::Message(
+                        CIRM::new().embed(embed).ephemeral(true)
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+                Err(e) => {
+                    error!("Failed to update dashboard_msg for group {}: {}", group_id, e);
+                    let embed = CE::new()
+                        .title("❌ Failed to Link Message")
+                        .description(format!("Database error: {}", e))
+                        .color(0xED4245);
+                    
+                    let response = CIR::Message(
+                        CIRM::new().embed(embed).ephemeral(true)
+                    );
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Message {} not found in channel {}: {}", dashboard_msg_id, dashboard_channel, e);
+            let embed = CE::new()
+                .title("❌ Message Not Found")
+                .description(format!(
+                    "Could not find message `{}` in <#{}>.\n\n\
+                    Please verify:\n\
+                    • The message ID is correct\n\
+                    • The message exists in the dashboard channel\n\
+                    • The bot has permission to view the channel",
+                    dashboard_msg_id,
+                    dashboard_channel.get()
+                ))
+                .color(0xED4245);
+            
+            let response = CIR::Message(
+                CIRM::new().embed(embed).ephemeral(true)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+    }
+    
     Ok(())
 }
 
@@ -2382,7 +4332,7 @@ pub async fn handle_player_settings_button(
     // Get current player data
     let player = db.users.get(target_uid).await?;
     let guild_id = interaction.guild_id.expect("Guild ID not found");
-    let guild_elo = db.elos.get(target_uid, guild_id).await?;
+    let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
 
     if button_id.starts_with("player_settings_edit_steam_") {
         let modal = CreateModal::new(format!("player_settings_modal_steam_{target_user_id}"), "Edit Steam ID")
@@ -2419,7 +4369,7 @@ pub async fn handle_player_settings_button(
                 CreateActionRow::InputText(
                     CreateInputText::new(InputTextStyle::Short, "Rank", "rank")
                         .placeholder("e.g., Gold, Silver, Bronze")
-                        .value(guild_elo.rank.name())
+                        .value(&guild_elo.rank.name)
                         .required(true)
                         .max_length(20)
                 ),
@@ -2526,7 +4476,7 @@ pub async fn handle_player_settings_modal(
 
         // Refresh the settings menu
         let player = db.users.get(target_uid).await?;
-        let guild_elo = db.elos.get(target_uid, guild_id).await?;
+        let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
         let username = ctx.http.get_user(target_uid).await
             .map(|u| u.name.clone())
             .unwrap_or_else(|_| target_user_id.to_string());
@@ -2536,7 +4486,7 @@ pub async fn handle_player_settings_modal(
             username,
             steam_id: player.steam_id,
             elo:      guild_elo.elo,
-            rank: guild_elo.rank.name().to_string(),
+            rank: guild_elo.rank.name.clone(),
             games:    guild_elo.games,
             wins:     guild_elo.wins,
         };
@@ -2574,20 +4524,20 @@ pub async fn handle_player_settings_modal(
         };
 
         // Get current rank and calculate new rank from ELO
-        let guild_elo = db.elos.get(target_uid, guild_id).await?;
+        let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
         let old_rank = guild_elo.rank;
-        let new_rank = crate::models::types::Rank::from_elo(elo, db, guild_id).await;
+        let new_rank = crate::models::types::Rank::from_elo(db, guild_id, elo).await?;
 
         // Update ELO and rank in database
-        db.elos.set(target_uid, guild_id, elo, new_rank).await?;
+        db.elo.set(target_uid, guild_id, elo, new_rank.clone()).await?;
         
-        if old_rank != new_rank {
-            info!("Updated rank for {}: {} -> {}", target_uid, old_rank.name(), new_rank.name());
+        if old_rank.name != new_rank.name {
+            info!("Updated rank for {}: {} -> {}", target_uid, old_rank.name, new_rank.name);
         }
 
         // Refresh the settings menu
         let player = db.users.get(target_uid).await?;
-        let guild_elo = db.elos.get(target_uid, guild_id).await?;
+        let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
         let username = ctx.http.get_user(target_uid).await
             .map(|u| u.name.clone())
             .unwrap_or_else(|_| target_user_id.to_string());
@@ -2597,7 +4547,7 @@ pub async fn handle_player_settings_modal(
             username,
             steam_id: player.steam_id,
             elo:      guild_elo.elo,
-            rank: guild_elo.rank.name().to_string(),
+            rank: guild_elo.rank.name.clone(),
             games:    guild_elo.games,
             wins:     guild_elo.wins,
         };
@@ -2621,23 +4571,23 @@ pub async fn handle_player_settings_modal(
             })
             .unwrap_or_default();
 
-        let new_rank = crate::models::types::Rank::from_name(rank_str.trim());
+        let new_rank = crate::models::types::Rank::from_name(db, guild_id, rank_str.trim()).await?;
 
         // Get current data and calculate new ELO from rank
-        let guild_elo = db.elos.get(target_uid, guild_id).await?;
+        let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
         let old_rank = guild_elo.rank;
-        let new_elo = new_rank.default_rank_elo();
+        let new_elo = new_rank.elo;
 
         // Update ELO and rank in database
-        db.elos.set(target_uid, guild_id, new_elo, new_rank).await?;
+        db.elo.set(target_uid, guild_id, new_elo, new_rank.clone()).await?;
         
-        if old_rank != new_rank {
-            info!("Updated rank for {}: {} -> {}", target_uid, old_rank.name(), new_rank.name());
+        if old_rank.name != new_rank.name {
+            info!("Updated rank for {}: {} -> {}", target_uid, old_rank.name, new_rank.name);
         }
 
         // Refresh the settings menu
         let player = db.users.get(target_uid).await?;
-        let guild_elo = db.elos.get(target_uid, guild_id).await?;
+        let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
         let username = ctx.http.get_user(target_uid).await
             .map(|u| u.name.clone())
             .unwrap_or_else(|_| target_user_id.to_string());
@@ -2647,7 +4597,7 @@ pub async fn handle_player_settings_modal(
             username,
             steam_id: player.steam_id,
             elo:      guild_elo.elo,
-            rank: guild_elo.rank.name().to_string(),
+            rank: guild_elo.rank.name.clone(),
             games:    guild_elo.games,
             wins:     guild_elo.wins,
         };
@@ -2693,7 +4643,7 @@ pub async fn handle_player_settings_modal(
 
         // Refresh the player settings menu
         let player = db.users.get(target_uid).await?;
-        let guild_elo = db.elos.get(target_uid, guild_id).await?;
+        let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
         let username = ctx.http.get_user(target_uid).await
             .map(|u| u.name.clone())
             .unwrap_or_else(|_| target_user_id.to_string());
@@ -2703,7 +4653,7 @@ pub async fn handle_player_settings_modal(
             username,
             steam_id: player.steam_id,
             elo:      guild_elo.elo,
-            rank: guild_elo.rank.name().to_string(),
+            rank: guild_elo.rank.name.clone(),
             games:    guild_elo.games,
             wins:     guild_elo.wins,
         };

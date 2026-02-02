@@ -380,10 +380,10 @@ impl RoleConfigDisplay {
 
 /// Rank configuration display for server settings sub-menu
 pub struct RankConfigDisplay {
-    pub guild_name:   String,
-    pub rank_roles:   Vec<(String, u16, RoleId)>, // (rank_name, elo, role_id)
-    pub dynamic_elo:  bool,
-    pub default_rank: String,
+    pub guild_name:        String,
+    pub rank_roles:        Vec<(String, u16, RoleId)>, // (rank_name, elo, role_id)
+    pub dynamic_elo:       bool,
+    pub default_rank_role: Option<RoleId>, // Discord role ID of default rank
 }
 
 impl RankConfigDisplay {
@@ -412,7 +412,7 @@ impl RankConfigDisplay {
                         .collect();
                     
                     // Check if any of these ranks is the default
-                    let is_default = ranks.iter().any(|(name, _)| name == &self.default_rank);
+                    let is_default = ranks.iter().any(|(_, role_id)| self.default_rank_role.map(|r| r == *role_id).unwrap_or(false));
                     let default_marker = if is_default { " (default)" } else { "" };
                     
                     desc.push_str(&format!("‹**{elo}**› {}{}\n", role_displays.join(", "), default_marker));
@@ -447,13 +447,14 @@ impl RankConfigDisplay {
                 CAR::SelectMenu(
                     CSM::new("server_settings_default_rank_select", CSMK::String {
                         options: self.rank_roles.iter()
-                            .map(|(name, _, _)| {
-                                let label = if name == &self.default_rank {
+                            .map(|(name, _, role_id)| {
+                                let is_default = self.default_rank_role.map(|r| r == *role_id).unwrap_or(false);
+                                let label = if is_default {
                                     format!("{} (current default)", name)
                                 } else {
                                     name.clone()
                                 };
-                                CSMO::new(label, name.clone())
+                                CSMO::new(label, role_id.to_string())
                             })
                             .collect()
                     })
@@ -552,9 +553,7 @@ impl GroupListDisplay {
         let mut description = String::new();
         description.push_str("**Active groups:**\n");
 
-        if self.groups.is_empty() {
-            description.push_str("*No groups configured*\n\nUse 'Create Group' to add a new group.");
-        } else {
+        if !self.groups.is_empty() {
             for group in &self.groups {
                 let name = group.display_name();
                 let quota = group.quota;
@@ -575,8 +574,14 @@ impl GroupListDisplay {
 
         // Add group selector using intelligent selection menu
         if !self.groups.is_empty() {
+            // Use queue channel ID to ensure uniqueness even if group_id is duplicated
             let options: Vec<(String, String)> = self.groups.iter()
-                .map(|g| (g.display_name(), g.group_id.to_string()))
+                .map(|g| {
+                    let label = g.display_name();
+                    // Use format "groupid_queueid" to ensure uniqueness (each group has unique queue channel)
+                    let value = format!("{}_{}", g.group_id, g.channels.queue_vc.get());
+                    (label, value)
+                })
                 .collect();
 
             if let Some(selection_menu) = create_selection_menu(
@@ -588,13 +593,24 @@ impl GroupListDisplay {
             }
         }
 
-        // Add create group and back buttons
-        components.push(CAR::Buttons(vec![
+        // Add create group, remove group, and back buttons
+        let mut buttons = vec![
             CB::new("server_settings_create_group")
-                .label("Add a group")
+                .label("Create New Group")
                 .style(BS::Primary),
-            Eph::back("server_settings_groups_back"),
-        ]));
+        ];
+        
+        // Only show remove button if there are groups to remove
+        if !self.groups.is_empty() {
+            buttons.push(
+                CB::new("server_settings_remove_group")
+                    .label("Remove Group")
+                    .style(BS::Danger)
+            );
+        }
+        
+        buttons.push(Eph::back("server_settings_groups_back"));
+        components.push(CAR::Buttons(buttons));
 
         components
     }
@@ -639,6 +655,7 @@ impl AsSettingsMenu for GroupSettingsDisplay {
             ]))
             .row(SR::Buttons(vec![
                 SB::edit(format!("group_settings_edit_connect_{gid}"), "Edit Connect Info"),
+                SB::action(format!("group_settings_link_message_{gid}"), "Link Message", SBS::Success),
             ]))
             .row(SR::StringSelect {
                 id: format!("group_settings_balance_{gid}"),
