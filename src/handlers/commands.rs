@@ -1,11 +1,13 @@
 use anyhow::{Result, anyhow};
 use serenity::all::{
     CreateEmbed as CE,
+    CreateInteractionResponse as CIR,
+    CreateInteractionResponseMessage as CIRM,
 };
 use tracing::info;
 
 use crate::player::check_adm;
-use crate::{ GREEN, YELLOW };
+use crate::{ GREEN, YELLOW, RED };
 use crate::models::{CommandContext as CC};
 use super::settings::{get_server_settings};
 use crate::models::Ephemeral;
@@ -88,7 +90,22 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
 
     // Get player data (ensure user exists in database)
     let player    = cc.db.users.check_user(target_user, None).await?;
-    let guild_elo = cc.db.elo .get(target_user, guild_id, &cc.db).await?;
+    
+    // Get guild ELO, handle case where default rank is not configured
+    let guild_elo = match cc.db.elo.get(target_user, guild_id, &cc.db).await {
+        Ok(elo) => elo,
+        Err(e) if e.to_string().contains("Failed to get default rank") => {
+            let error_embed = CE::new()
+                .title("Configuration Error")
+                .description("A default rank has not been set for this server.\n\nPlease configure a default rank in the server settings before editing players.")
+                .color(RED);
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
+    
     let username  = cc.ctx.http.get_user(target_user)     .await
         .map(|u| u.name.clone())
         .unwrap_or_else(|_| target_user.to_string());
