@@ -1,5 +1,3 @@
-mod command;
-
 use std::env;
 use std::sync::Arc;
 
@@ -140,9 +138,9 @@ impl EventHandler for Handler {
         let cmds = vec![
             // Player commands
             cmd("buffer",        "Move a player to the start of the queue")
-                .op_user("user",  "User to buffer", true),
+                .op_user("user", "User to buffer", true),
             cmd("fatkid",        "Move a player to the end of the queue")
-                .op_user("user",  "User to fatkid", true),
+                .op_user("user", "User to fatkid", true),
 
             cmd("clear",         "Clear all players from the queue"),
             cmd("elo",           "View ELO and rank information for a player")
@@ -1483,10 +1481,9 @@ async fn main(
                     use serenity::all::CreateEmbedFooter;
                     
                     let offline_embed = CreateEmbed::new()
-                        .title("🔴 Bot Offline")
-                        .description("The PUG bot is currently offline. Please try again later.")
+                        .title("🔴 qBot is offline...")
                         .color(0xFF0000) // Red color
-                        .footer(CreateEmbedFooter::new(format!("Bot shut down at {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"))));
+                        .footer(CreateEmbedFooter::new(format!("Shutdown at {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"))));
                     
                     // Try to update the existing dashboard message
                     let channel_id = group.channels.dashboard;
