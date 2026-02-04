@@ -91,20 +91,44 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     // Get player data (ensure user exists in database)
     let player    = cc.db.users.check_user(target_user, None).await?;
     
-    // Get guild ELO, handle case where default rank is not configured
-    let guild_elo = match cc.db.elo.get(target_user, guild_id, &cc.db).await {
-        Ok(elo) => elo,
-        Err(e) if e.to_string().contains("Failed to get default rank") => {
-            let error_embed = CE::new()
-                .title("Configuration Error")
-                .description("A default rank has not been set for this server.\n\nPlease configure a default rank in the server settings before editing players.")
-                .color(RED);
-            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
-            return Ok(());
+    // First, try to get player's rank from Discord roles (source of truth)
+    use crate::handlers::player::get_user_rank_from_discord_roles;
+    let discord_rank = get_user_rank_from_discord_roles(&cc.ctx, &cc.db, guild_id, target_user).await;
+    
+    // Get guild ELO, using Discord rank if available, otherwise fall back to database
+    let guild_elo = match discord_rank {
+        Some(discord_guild_rank) => {
+            // Convert Discord rank to Rank struct and create GuildElo
+            let rank = crate::models::types::Rank {
+                guild_id,
+                role_id: discord_guild_rank.role_id,
+                name: discord_guild_rank.name.clone(),
+                elo: discord_guild_rank.elo,
+            };
+            Ok::<crate::database::repositories::elo::GuildElo, anyhow::Error>(crate::database::repositories::elo::GuildElo {
+                elo: rank.elo,
+                rank,
+                games: 0,
+                wins: 0,
+            })
         }
-        Err(e) => return Err(e),
-    };
+        None => {
+            // No Discord rank found, fall back to database
+            match cc.db.elo.get(target_user, guild_id, &cc.db).await {
+                Ok(elo) => Ok(elo),
+                Err(e) if e.to_string().contains("Failed to get default rank") => {
+                    let error_embed = CE::new()
+                        .title("Configuration Error")
+                        .description("A default rank has not been set for this server.\n\nPlease configure a default rank in the server settings before editing players.")
+                        .color(RED);
+                    let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+                    cc.intax.create_response(&cc.ctx.http, response).await?;
+                    return Ok(());
+                }
+                Err(e) => return Err(anyhow::anyhow!("Failed to get player ELO: {}", e)),
+            }
+        }
+    }?;
     
     let username  = cc.ctx.http.get_user(target_user)     .await
         .map(|u| u.name.clone())
