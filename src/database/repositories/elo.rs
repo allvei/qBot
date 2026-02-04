@@ -68,12 +68,17 @@ impl EloRepository {
         }
     }
 
-    /// Get a player's ELO for a specific guild (returns default if no record)
+    /// Get a player's ELO for a specific guild (returns Discord role-based rank if no record)
     pub async fn get(&self, user_id: UI, guild_id: GI, db: &crate::Database) -> Result<GuildElo> {
         match self.get_if_exists(user_id, guild_id).await? {
             Some(elo) => Ok(elo),
             None => {
-                // Return default rank from guild config
+                // Player has no ELO record - try to determine rank from Discord roles
+                // Note: This requires a Context, which we don't have here.
+                // We'll need to modify this to accept a Context or use a different approach.
+                
+                // For now, fall back to guild default rank
+                // TODO: This should be updated to check Discord roles when Context is available
                 let default_rank = Rank::get_guild_default(db, guild_id).await
                     .map_err(|_| anyhow::anyhow!("Failed to get default rank for guild {}", guild_id))?;
                 Ok(GuildElo {

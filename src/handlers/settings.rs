@@ -8,6 +8,7 @@ use serenity::all::{
 };
 use std::sync::Arc;
 use tracing::{error, info, warn};
+use crate::colours::RED;
 
 use crate::Database;
 
@@ -3486,7 +3487,21 @@ pub async fn handle_player_settings_rank_select(
     let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
     
     // Get the new rank from the selected name
-    let new_rank = crate::models::types::Rank::from_name(db, guild_id, &selected_rank).await?;
+    let new_rank = match crate::models::types::Rank::from_name(db, guild_id, &selected_rank).await {
+        Ok(rank) => rank,
+        Err(e) => {
+            warn!("Failed to find rank '{}' in database: {}", selected_rank, e);
+            
+            // Send error message to user
+            let error_embed = CE::new()
+                .title("Rank Not Found")
+                .description(format!("The rank '{}' was not found in the database. Please ensure ranks are properly configured in server settings.", selected_rank))
+                .color(RED);
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+    };
     
     // Update ELO and rank in database
     db.elo.set(target_uid, guild_id, new_rank.elo, new_rank.clone()).await?;
