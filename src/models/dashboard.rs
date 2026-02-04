@@ -707,42 +707,22 @@ impl Group {
                 Err(_) => cc.db.new_user(user_id, cc.ctx).await?,
             };
 
-            // Get guild-specific ELO if exists
-            let existing_elo = cc.db.elo.get_if_exists(user_id, guild_id).await.ok().flatten();
-            
-            // Get the valid ELO range for the player's Discord rank
-            let rank_min_elo = discord_rank.elo;
-            // For next rank, we'd need to query the database for ranks with higher ELO
-            // For now, use a simple upper bound
-            let rank_max_elo = 101;
-            
-            info!("DEBUG: discord_rank={}, rank_min_elo={}, rank_max_elo={}",
-                  discord_rank.name, rank_min_elo, rank_max_elo);
-            
-            if let Some(guild_elo) = existing_elo {
-                if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
-                    // ELO is within the Discord rank's range - keep it
-                    info!("Player {} ELO {} within {} range [{}, {}), keeping", 
-                          user_id, guild_elo.elo, discord_rank.name, rank_min_elo, rank_max_elo);
-                    player.elo = guild_elo.elo;
-                } else {
-                    // ELO is outside the Discord rank's range - reset to rank default
-                    info!("Player {} ELO {} outside {} range [{}, {}), resetting to {}", 
-                          user_id, guild_elo.elo, discord_rank.name, rank_min_elo, rank_max_elo, rank_min_elo);
-                    player.elo = rank_min_elo;
-                    if let Err(e) = cc.db.elo.set(user_id, guild_id, player.elo, discord_rank.clone()).await {
-                        warn!("Failed to update guild ELO: {}", e);
-                    }
+            // Validate and normalize ELO based on Discord rank (source of truth)
+            let (validated_elo, was_normalized) = match cc.db.elo.validate_and_normalize_elo(user_id, guild_id, &discord_rank, &cc.db).await {
+                Ok(result) => result,
+                Err(e) => {
+                    warn!("Failed to validate ELO for user {}: {}", user_id, e);
+                    (discord_rank.elo, false)
                 }
+            };
+            
+            if was_normalized {
+                info!("Player {} ELO normalized to {} (Discord rank: {})", user_id, validated_elo, discord_rank.name);
             } else {
-                // No ELO record - new player, use Discord rank's default ELO
-                info!("New player {} in guild, setting ELO to {} from Discord rank {}", 
-                      user_id, rank_min_elo, discord_rank.name);
-                player.elo = rank_min_elo;
-                if let Err(e) = cc.db.elo.set(user_id, guild_id, player.elo, discord_rank.clone()).await {
-                    warn!("Failed to initialize guild ELO: {}", e);
-                }
+                info!("Player {} ELO {} valid for rank {}", user_id, validated_elo, discord_rank.name);
             }
+            
+            player.elo = validated_elo;
             player.rank = Some(discord_rank.clone());
 
             // Fetch discord tag from component user for performance (avoid extra API call)
