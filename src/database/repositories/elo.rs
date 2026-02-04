@@ -260,4 +260,57 @@ impl EloRepository {
 
         Ok(results)
     }
+
+    /// Validate and normalize player ELO based on their Discord rank
+    /// 
+    /// Discord roles define ELO ranges. Each rank has a base ELO (e.g., rank1=50, rank2=65).
+    /// A player's ELO is valid if it's within [rank_base, next_rank_base).
+    /// If ELO is unset or outside this range, it gets normalized to the rank's base ELO.
+    /// 
+    /// # Arguments
+    /// * `user_id` - The player's user ID
+    /// * `guild_id` - The guild ID
+    /// * `discord_rank` - The player's current Discord rank (source of truth)
+    /// * `db` - Database reference for querying ranks
+    /// 
+    /// # Returns
+    /// The validated/normalized ELO and whether it was changed
+    pub async fn validate_and_normalize_elo(
+        &self,
+        user_id: UI,
+        guild_id: GI,
+        discord_rank: &crate::Rank,
+        db: &crate::Database,
+    ) -> Result<(u16, bool)> {
+        // Get all ranks to determine the valid ELO range
+        let ranks = db.ranks.get_ranks(guild_id).await?;
+        
+        // Find the next rank's base ELO to determine upper bound
+        let rank_min_elo = discord_rank.elo;
+        let rank_max_elo = ranks.iter()
+            .find(|r| r.elo > discord_rank.elo)
+            .map(|r| r.elo)
+            .unwrap_or(u16::MAX); // No upper bound if this is the highest rank
+        
+        // Get current ELO from database if it exists
+        let existing_elo = self.get_if_exists(user_id, guild_id).await?;
+        
+        match existing_elo {
+            Some(guild_elo) => {
+                if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
+                    // ELO is within valid range for this rank - keep it
+                    Ok((guild_elo.elo, false))
+                } else {
+                    // ELO is outside valid range - normalize to rank base
+                    self.set(user_id, guild_id, rank_min_elo, discord_rank.clone()).await?;
+                    Ok((rank_min_elo, true))
+                }
+            }
+            None => {
+                // No ELO record - set to rank base
+                self.set(user_id, guild_id, rank_min_elo, discord_rank.clone()).await?;
+                Ok((rank_min_elo, true))
+            }
+        }
+    }
 }

@@ -3507,6 +3507,25 @@ pub async fn handle_player_settings_rank_select(
     // Update ELO and rank in database
     db.elo.set(target_uid, guild_id, new_rank.elo, new_rank.clone()).await?;
     
+    // Validate ELO against player's Discord rank (if they have one)
+    use crate::handlers::player::get_user_rank_from_discord_roles;
+    if let Some(discord_rank_info) = get_user_rank_from_discord_roles(ctx, db, guild_id, target_uid).await {
+        let discord_rank = crate::models::types::Rank {
+            guild_id,
+            role_id: discord_rank_info.role_id,
+            name: discord_rank_info.name.clone(),
+            elo: discord_rank_info.elo,
+        };
+        
+        // Validate and normalize the manually set rank's ELO
+        if let Ok((normalized_elo, was_normalized)) = db.elo.validate_and_normalize_elo(target_uid, guild_id, &discord_rank, db).await {
+            if was_normalized {
+                info!("Admin set rank {} (ELO {}) for {}, but normalized to {} based on Discord rank {}", 
+                      new_rank.name, new_rank.elo, target_uid, normalized_elo, discord_rank.name);
+            }
+        }
+    }
+    
     if guild_elo.rank.name != new_rank.name {
         info!("Updated rank for {}: {} -> {}", target_uid, guild_elo.rank.name, new_rank.name);
     }
@@ -4647,6 +4666,25 @@ pub async fn handle_player_settings_modal(
 
         // Update ELO and rank in database
         db.elo.set(target_uid, guild_id, elo, new_rank.clone()).await?;
+        
+        // Validate ELO against player's Discord rank (if they have one)
+        use crate::handlers::player::get_user_rank_from_discord_roles;
+        if let Some(discord_rank_info) = get_user_rank_from_discord_roles(ctx, db, guild_id, target_uid).await {
+            let discord_rank = crate::models::types::Rank {
+                guild_id,
+                role_id: discord_rank_info.role_id,
+                name: discord_rank_info.name.clone(),
+                elo: discord_rank_info.elo,
+            };
+            
+            // Validate and normalize the manually set ELO
+            if let Ok((normalized_elo, was_normalized)) = db.elo.validate_and_normalize_elo(target_uid, guild_id, &discord_rank, db).await {
+                if was_normalized {
+                    info!("Admin set ELO {} for {}, but normalized to {} based on Discord rank {}", 
+                          elo, target_uid, normalized_elo, discord_rank.name);
+                }
+            }
+        }
         
         if old_rank.name != new_rank.name {
             info!("Updated rank for {}: {} -> {}", target_uid, old_rank.name, new_rank.name);
