@@ -472,7 +472,7 @@ impl EventHandler for Handler {
 
                 // Handle player settings rank selection
                 if itx.data.custom_id.starts_with("player_settings_rank_select_") {
-                    let result = handlers::handle_player_settings_rank_select(&ctx, &itx, &self.db).await;
+                    let result = handlers::handle_player_settings_rank_select(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling player settings rank select: {e}");
                     }
@@ -643,7 +643,7 @@ impl EventHandler for Handler {
                 }
                 // Handle modal submissions for player settings
                 if itx.data.custom_id.starts_with("player_settings_modal_") {
-                    let result = handlers::handle_player_settings_modal(&ctx, &itx, &self.db).await;
+                    let result = handlers::handle_player_settings_modal(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling player settings modal '{}': {}", itx.data.custom_id, e);
                     }

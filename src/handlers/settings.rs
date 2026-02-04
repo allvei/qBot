@@ -3459,6 +3459,7 @@ pub async fn handle_player_settings_rank_select(
     ctx: &Context,
     interaction: &ComponentInteraction,
     db: &Arc<Database>,
+    manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
 ) -> Result<()> {
     let custom_id = &interaction.data.custom_id;
     
@@ -3508,6 +3509,24 @@ pub async fn handle_player_settings_rank_select(
     
     if guild_elo.rank.name != new_rank.name {
         info!("Updated rank for {}: {} -> {}", target_uid, guild_elo.rank.name, new_rank.name);
+    }
+
+    // Update dashboards where this player is queued
+    {
+        let mut manager_lock = manager.lock().await;
+        if let Ok(server) = manager_lock.get_server(guild_id) {
+            for group in &server.groups {
+                // Check if player is in any session in this group
+                let player_in_queue = group.sessions.iter().any(|session| {
+                    session.pool.iter().any(|p| p.player.user_id == target_uid)
+                });
+                
+                if player_in_queue {
+                    info!("Player {} rank changed, updating dashboard for group {}", target_uid, group.group_id);
+                    group.queue_dash_update(ctx, guild_id).await;
+                }
+            }
+        }
     }
 
     // Refresh the settings menu
@@ -4525,6 +4544,7 @@ pub async fn handle_player_settings_modal(
     ctx: &Context,
     interaction: &ModalInteraction,
     db: &Arc<Database>,
+    manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
 ) -> Result<()> {
     let guild_id = interaction.guild_id.expect("Guild ID not found");
     let modal_id = &interaction.data.custom_id;
@@ -4630,6 +4650,24 @@ pub async fn handle_player_settings_modal(
         
         if old_rank.name != new_rank.name {
             info!("Updated rank for {}: {} -> {}", target_uid, old_rank.name, new_rank.name);
+        }
+
+        // Update dashboards where this player is queued
+        {
+            let mut manager_lock = manager.lock().await;
+            if let Ok(server) = manager_lock.get_server(guild_id) {
+                for group in &server.groups {
+                    // Check if player is in any session in this group
+                    let player_in_queue = group.sessions.iter().any(|session| {
+                        session.pool.iter().any(|p| p.player.user_id == target_uid)
+                    });
+                    
+                    if player_in_queue {
+                        info!("Player {} ELO changed, updating dashboard for group {}", target_uid, group.group_id);
+                        group.queue_dash_update(ctx, guild_id).await;
+                    }
+                }
+            }
         }
 
         // Refresh the settings menu
