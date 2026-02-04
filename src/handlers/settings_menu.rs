@@ -727,6 +727,7 @@ pub async fn create_player_settings_with_rank_select(
     
     let uid = settings.user_id.get();
     let steam_display = settings.steam_id
+        .filter(|&id| id != 0)
         .map(|id| format!("https://steamcommunity.com/profiles/{}", id))
         .unwrap_or_else(|| "Not set".to_string());
     
