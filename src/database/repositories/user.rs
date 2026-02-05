@@ -252,9 +252,8 @@ impl UserRepository {
         Ok(())
     }
 
-    /// Get user tag for logging - retrieves from database or fetches from Discord API
-    /// This is a convenience method for use in logs throughout the codebase
-    pub async fn get_tag_for_log(&self, user_id: UI, ctx: &Ctx) -> String {
+    /// Get user tag - retrieves from database or fetches from Discord API
+    pub async fn get_tag(&self, user_id: UI, ctx: &Ctx) -> String {
         // Try to get from database first
         if let Ok(player) = self.get(user_id).await {
             if !player.tag.is_empty() {

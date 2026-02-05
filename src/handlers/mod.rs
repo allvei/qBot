@@ -3,6 +3,7 @@ pub mod player;
 pub mod commands;
 pub mod settings;
 pub mod settings_menu;
+pub mod elo_confirmation;
 
 pub use settings::{
     handle_settings_button, handle_settings_modal,
@@ -15,3 +16,4 @@ pub use settings::{
     handle_player_settings_button, handle_player_settings_modal, handle_player_settings_rank_select,
 };
 pub use settings_menu::{SettingsMenu, SettingsField, SettingsRow, SettingsButton, SettingsButtonStyle, AsSettingsMenu};
+pub use elo_confirmation::handle_elo_change_confirmation;
