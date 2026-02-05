@@ -4661,34 +4661,53 @@ pub async fn handle_player_settings_modal(
 
         // Get current rank and calculate new rank from ELO
         let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
-        let old_rank = guild_elo.rank;
+        let old_rank = guild_elo.rank.clone();
         let new_rank = crate::models::types::Rank::from_elo(db, guild_id, elo).await?;
 
-        // Update ELO and rank in database
+        // Check if this ELO change would cause a rank change
+        if old_rank.role_id != new_rank.role_id {
+            // Rank would change - show confirmation prompt
+            let username = ctx.http.get_user(target_uid).await
+                .map(|u| u.name.clone())
+                .unwrap_or_else(|_| target_user_id.to_string());
+            
+            let confirm_embed = CE::new()
+                .title("⚠️ Rank Change Required")
+                .description(format!(
+                    "Setting **{}'s** ELO to **{}** will change their rank:\n\n\
+                    **Current:** {} (ELO {})\n\
+                    **New:** {} (ELO {})\n\n\
+                    This will update their Discord role from <@&{}> to <@&{}>.\n\n\
+                    Do you want to continue?",
+                    username, elo,
+                    old_rank.name, guild_elo.elo,
+                    new_rank.name, elo,
+                    old_rank.role_id, new_rank.role_id
+                ))
+                .color(0xFFA500);
+            
+            let confirm_buttons = vec![
+                CAR::Buttons(vec![
+                    serenity::all::CreateButton::new(format!("confirm_elo_change_{}_{}", target_user_id, elo))
+                        .label("✓ Confirm")
+                        .style(serenity::all::ButtonStyle::Success),
+                    serenity::all::CreateButton::new(format!("cancel_elo_change_{}", target_user_id))
+                        .label("✗ Cancel")
+                        .style(serenity::all::ButtonStyle::Danger),
+                ])
+            ];
+            
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(confirm_embed).components(confirm_buttons)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+
+        // No rank change - proceed with ELO update
         db.elo.set(target_uid, guild_id, elo, new_rank.clone()).await?;
         
-        // Validate ELO against player's Discord rank (if they have one)
-        use crate::handlers::player::get_user_rank_from_discord_roles;
-        if let Some(discord_rank_info) = get_user_rank_from_discord_roles(ctx, db, guild_id, target_uid).await {
-            let discord_rank = crate::models::types::Rank {
-                guild_id,
-                role_id: discord_rank_info.role_id,
-                name: discord_rank_info.name.clone(),
-                elo: discord_rank_info.elo,
-            };
-            
-            // Validate and normalize the manually set ELO
-            if let Ok((normalized_elo, was_normalized)) = db.elo.validate_and_normalize_elo(target_uid, guild_id, &discord_rank, db).await {
-                if was_normalized {
-                    info!("Admin set ELO {} for {}, but normalized to {} based on Discord rank {}", 
-                          elo, target_uid, normalized_elo, discord_rank.name);
-                }
-            }
-        }
-        
-        if old_rank.name != new_rank.name {
-            info!("Updated rank for {}: {} -> {}", target_uid, old_rank.name, new_rank.name);
-        }
+        info!("Updated ELO for {} to {} (rank: {})", target_uid, elo, new_rank.name);
 
         // Update dashboards where this player is queued
         {

@@ -488,6 +488,15 @@ impl EventHandler for Handler {
                     return;
                 }
 
+                // Handle ELO change confirmation buttons
+                if itx.data.custom_id.starts_with("confirm_elo_change_") || itx.data.custom_id.starts_with("cancel_elo_change_") {
+                    let result = handlers::handle_elo_change_confirmation(&ctx, &itx, &self.db, &self.manager).await;
+                    if let Err(e) = result {
+                        error!("Error handling ELO change confirmation: {e}");
+                    }
+                    return;
+                }
+
                 // Handle player settings buttons
                 if itx.data.custom_id.starts_with("player_settings_") {
                     let result = handlers::handle_player_settings_button(&ctx, &itx, &self.db).await;
