@@ -91,6 +91,7 @@ impl DatabaseMigrations {
                 "CREATE TABLE users (
                     user_id                  INTEGER PRIMARY KEY,
                     steam_id                 INTEGER,
+                    discord_tag              TEXT    DEFAULT NULL,
                     pm_hot_alert             INTEGER DEFAULT 1,
                     pm_queue_alert_threshold INTEGER DEFAULT NULL,
                     timeout                  INTEGER DEFAULT 30,
@@ -126,6 +127,7 @@ impl DatabaseMigrations {
 
             // Add new settings columns if missing
             if has_user_id {
+                add_column!(self, "users", "discord_tag",              "TEXT",    "NULL");
                 add_column!(self, "users", "pm_hot_alert",             "INTEGER", "1");
                 add_column!(self, "users", "pm_queue_alert_threshold", "INTEGER", "NULL");
                 add_column!(self, "users", "timeout",                  "INTEGER", "30");
@@ -171,6 +173,7 @@ impl DatabaseMigrations {
                     "CREATE TABLE users (
                         user_id                  INTEGER PRIMARY KEY,
                         steam_id                 INTEGER,
+                        discord_tag              TEXT    DEFAULT NULL,
                         pm_hot_alert             INTEGER DEFAULT 1,
                         pm_queue_alert_threshold INTEGER DEFAULT NULL,
                         timeout                  INTEGER DEFAULT 30,

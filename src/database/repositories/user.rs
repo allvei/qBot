@@ -92,23 +92,27 @@ impl UserRepository {
     }
 
     pub async fn get(&self, user_id: UI) -> Result<Player> {
-        match sqlx::query("SELECT user_id, steam_id FROM users WHERE user_id = ?").bind(user_id.get() as i64).fetch_one(&self.pool).await {
+        match sqlx::query("SELECT user_id, steam_id, discord_tag FROM users WHERE user_id = ?").bind(user_id.get() as i64).fetch_one(&self.pool).await {
             Ok(result) => Ok(Self::get_player(result)),
             Err(e) => Err(e.into()),
         }
     }
 
     pub async fn get_with_tag(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
-        let result = sqlx::query("SELECT user_id, steam_id FROM users WHERE user_id = ?")
+        let result = sqlx::query("SELECT user_id, steam_id, discord_tag FROM users WHERE user_id = ?")
         .bind(user_id.get() as i64)
         .fetch_one(&self.pool)
         .await?;
 
         let mut player = Self::get_player(result);
         
-        // Fetch tag from Discord API
-        if let Ok(user) = ctx.http.get_user(user_id).await {
-            player.tag = user.display_name().to_string();
+        // If no tag in database, fetch from Discord API and cache it
+        if player.tag.is_empty() {
+            if let Ok(user) = ctx.http.get_user(user_id).await {
+                player.tag = user.display_name().to_string();
+                // Cache the tag for future use
+                let _ = self.update_discord_tag(user_id, &player.tag).await;
+            }
         }
 
         Ok(player)
@@ -132,7 +136,7 @@ impl UserRepository {
             "INSERT INTO users (user_id, steam_id)
              VALUES (?, ?)
              ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id
-             RETURNING user_id, steam_id"
+             RETURNING user_id, steam_id, discord_tag"
         )
         .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
@@ -147,7 +151,7 @@ impl UserRepository {
             "INSERT INTO users (user_id, steam_id)
              VALUES (?, ?)
              ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id
-             RETURNING user_id, steam_id"
+             RETURNING user_id, steam_id, discord_tag"
         )
         .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
@@ -161,11 +165,15 @@ impl UserRepository {
     fn get_player(result: sqlx::sqlite::SqliteRow) -> Player {
         let user_id: i64          = result.get("user_id");
         let steam_id: Option<i64> = result.try_get("steam_id").ok();
+        let discord_tag: Option<String> = result.try_get("discord_tag").ok().flatten();
+        
+        // Use stored discord_tag if available, otherwise empty string
+        let tag = discord_tag.unwrap_or_default();
         
         // No rank available from basic user query - must be set later with guild-specific data
         Player::add(
             (user_id as u64).into(),
-            String::new(),
+            tag,
             steam_id.map(|id| id as u64),
             None // No rank available without guild context
         )
@@ -176,7 +184,7 @@ impl UserRepository {
         info!("DEBUG: get_player_with_guild_rank called for user {} in guild {}", user_id, guild_id);
         
         // Get base player data from users table
-        let result = sqlx::query("SELECT user_id, steam_id FROM users WHERE user_id = ?")
+        let result = sqlx::query("SELECT user_id, steam_id, discord_tag FROM users WHERE user_id = ?")
             .bind(user_id.get() as i64)
             .fetch_one(&self.pool)
             .await?;
@@ -232,6 +240,38 @@ impl UserRepository {
             .execute(&self.pool)
             .await?;
         self.get(*user_id).await
+    }
+
+    /// Update user's discord tag in database
+    pub async fn update_discord_tag(&self, user_id: UI, discord_tag: &str) -> Result<()> {
+        sqlx::query("UPDATE users SET discord_tag = ? WHERE user_id = ?")
+            .bind(discord_tag)
+            .bind(user_id.get() as i64)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Get user tag for logging - retrieves from database or fetches from Discord API
+    /// This is a convenience method for use in logs throughout the codebase
+    pub async fn get_tag_for_log(&self, user_id: UI, ctx: &Ctx) -> String {
+        // Try to get from database first
+        if let Ok(player) = self.get(user_id).await {
+            if !player.tag.is_empty() {
+                return player.tag;
+            }
+        }
+        
+        // Fallback to Discord API and cache it
+        if let Ok(user) = ctx.http.get_user(user_id).await {
+            let tag = user.tag();
+            // Store it for future use
+            let _ = self.update_discord_tag(user_id, &tag).await;
+            return tag;
+        }
+        
+        // Last resort: return user ID as string
+        user_id.to_string()
     }
 
     pub async fn get_pm_hot_alert(&self, user_id: UI) -> Result<bool> {
