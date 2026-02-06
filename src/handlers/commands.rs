@@ -73,7 +73,7 @@ pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
     Ok(())
 }
 
-/// `/editplayer` - Open player settings menu as ephemeral message (admin only)
+/// `/edit` - Open player settings menu as ephemeral message (admin only)
 pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     use crate::handlers::settings::{PlayerSettings};
     
