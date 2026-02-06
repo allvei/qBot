@@ -95,14 +95,14 @@ impl DatabaseMigrations {
                     pm_hot_alert             INTEGER DEFAULT 1,
                     pm_queue_alert_threshold INTEGER DEFAULT NULL,
                     timeout                  INTEGER DEFAULT 30,
-                    vc_auto_join             INTEGER DEFAULT 1,
+                    vc_auto_join             INTEGER DEFAULT 0,
                     join_alert_title         TEXT    DEFAULT NULL,
                     join_alert               TEXT    DEFAULT NULL,
                     join_alert_color         INTEGER DEFAULT 3447003,
                     join_alert_img           TEXT    DEFAULT NULL,
                     join_alert_footer        TEXT    DEFAULT NULL,
                     join_alert_footer_img    TEXT    DEFAULT NULL,
-                    vc_auto_leave            INTEGER DEFAULT 1,
+                    vc_auto_leave            INTEGER DEFAULT 0,
                     leave_alert_title        TEXT    DEFAULT NULL,
                     leave_alert              TEXT    DEFAULT NULL,
                     leave_alert_color        INTEGER DEFAULT 3447003,
@@ -131,14 +131,14 @@ impl DatabaseMigrations {
                 add_column!(self, "users", "pm_hot_alert",             "INTEGER", "1");
                 add_column!(self, "users", "pm_queue_alert_threshold", "INTEGER", "NULL");
                 add_column!(self, "users", "timeout",                  "INTEGER", "30");
-                add_column!(self, "users", "vc_auto_join",             "INTEGER", "1");
+                add_column!(self, "users", "vc_auto_join",             "INTEGER", "0");
                 add_column!(self, "users", "join_alert_title",         "TEXT",    "NULL");
                 add_column!(self, "users", "join_alert",               "TEXT",    "NULL");
                 add_column!(self, "users", "join_alert_color",         "INTEGER", "3447003");
                 add_column!(self, "users", "join_alert_img",           "TEXT",    "NULL");
                 add_column!(self, "users", "join_alert_footer",        "TEXT",    "NULL");
                 add_column!(self, "users", "join_alert_footer_img",    "TEXT",    "NULL");
-                add_column!(self, "users", "vc_auto_leave",            "INTEGER", "1");
+                add_column!(self, "users", "vc_auto_leave",            "INTEGER", "0");
                 add_column!(self, "users", "leave_alert_title",        "TEXT",    "NULL");
                 add_column!(self, "users", "leave_alert",              "TEXT",    "NULL");
                 add_column!(self, "users", "leave_alert_color",        "INTEGER", "3447003");
@@ -177,14 +177,14 @@ impl DatabaseMigrations {
                         pm_hot_alert             INTEGER DEFAULT 1,
                         pm_queue_alert_threshold INTEGER DEFAULT NULL,
                         timeout                  INTEGER DEFAULT 30,
-                        vc_auto_join             INTEGER DEFAULT 1,
+                        vc_auto_join             INTEGER DEFAULT 0,
                         join_alert_title         TEXT    DEFAULT NULL,
                         join_alert               TEXT    DEFAULT NULL,
                         join_alert_color         INTEGER DEFAULT 3447003,
                         join_alert_img           TEXT    DEFAULT NULL,
                         join_alert_footer        TEXT    DEFAULT NULL,
                         join_alert_footer_img    TEXT    DEFAULT NULL,
-                        vc_auto_leave            INTEGER DEFAULT 1,
+                        vc_auto_leave            INTEGER DEFAULT 0,
                         leave_alert_title        TEXT    DEFAULT NULL,
                         leave_alert              TEXT    DEFAULT NULL,
                         leave_alert_color        INTEGER DEFAULT 3447003,

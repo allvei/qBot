@@ -823,24 +823,27 @@ pub async fn handle_server_settings_button(
             interaction.create_response(&ctx.http, response).await?;
         }
         "server_settings_rank_select" => {
-            // Handle rank selection from dropdown (value is now rank name)
+            // Handle rank selection from dropdown (value is role ID)
             if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
-                if let Some(rank_name) = values.first() {
+                if let Some(role_id_str) = values.first() {
                     let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
                     
-                    if let Ok(Some(guild_rank)) = db.ranks.get_rank_by_name(guild_id, rank_name).await {
-                        let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
-                            guild_name,
-                            rank_name: guild_rank.name.clone(),
-                            rank_key: rank_name.clone(),
-                            elo: guild_rank.elo,
-                            role_id: guild_rank.role_id,
-                        };
+                    if let Ok(role_id) = role_id_str.parse::<u64>() {
+                        let rid = serenity::all::RoleId::new(role_id);
+                        if let Ok(guild_rank) = db.ranks.rank_from_role_id(guild_id, rid).await {
+                            let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
+                                guild_name,
+                                rank_name: guild_rank.name.clone(),
+                                rank_key: guild_rank.name.clone(),
+                                elo: guild_rank.elo,
+                                role_id: guild_rank.role_id,
+                            };
 
-                        let response = CIR::UpdateMessage(
-                            CIRM::new().embed(display.build_embed()).components(display.build_components())
-                        );
-                        interaction.create_response(&ctx.http, response).await?;
+                            let response = CIR::UpdateMessage(
+                                CIRM::new().embed(display.build_embed()).components(display.build_components())
+                            );
+                            interaction.create_response(&ctx.http, response).await?;
+                        }
                     }
                 }
             }
@@ -3473,8 +3476,8 @@ pub async fn handle_player_settings_rank_select(
     let target_uid = serenity::all::UserId::new(target_user_id);
     let guild_id = interaction.guild_id.expect("Guild ID not found");
 
-    // Get the selected rank from the select menu
-    let selected_rank = match &interaction.data.kind {
+    // Get the selected role ID from the select menu
+    let selected_role_id_str = match &interaction.data.kind {
         serenity::all::ComponentInteractionDataKind::StringSelect { values } => {
             values.first()
                 .ok_or_else(|| anyhow::anyhow!("No rank selected"))?
@@ -3483,20 +3486,29 @@ pub async fn handle_player_settings_rank_select(
         _ => return Err(anyhow!("Invalid interaction type")),
     };
 
+    let selected_role_id: u64 = selected_role_id_str.parse()
+        .map_err(|_| anyhow::anyhow!("Invalid role ID: {}", selected_role_id_str))?;
+    let role_id = serenity::all::RoleId::new(selected_role_id);
+
     // Get current player data
     let player = db.users.check_user(target_uid, None).await?;
     let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
     
-    // Get the new rank from the selected name
-    let new_rank = match crate::models::types::Rank::from_name(db, guild_id, &selected_rank).await {
-        Ok(rank) => rank,
+    // Get the new rank from the selected role ID
+    let new_rank = match db.ranks.rank_from_role_id(guild_id, role_id).await {
+        Ok(rank) => crate::models::types::Rank {
+            guild_id,
+            role_id: rank.role_id,
+            name: rank.name,
+            elo: rank.elo,
+        },
         Err(e) => {
-            warn!("Failed to find rank '{}' in database: {}", selected_rank, e);
+            warn!("Failed to find rank for role ID {}: {}", selected_role_id, e);
             
             // Send error message to user
             let error_embed = CE::new()
                 .title("Rank Not Found")
-                .description(format!("The rank '{}' was not found in the database. Please ensure ranks are properly configured in server settings.", selected_rank))
+                .description(format!("The rank for role <@&{}> was not found in the database. Please ensure ranks are properly configured in server settings.", selected_role_id))
                 .color(RED);
             let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
             interaction.create_response(&ctx.http, response).await?;

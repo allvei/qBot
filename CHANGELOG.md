@@ -17,7 +17,7 @@ __Improved__
 
 __Fixed__
 - Player rank now correctly determined from Discord roles instead of stale database entries.
-- Players without database records can now be edited via `/editplayer`.
+- Players without database records can now be edited via `/edit`.
 - Missing default rank configuration now shows helpful error message instead of crashing.
 - ELO and rank assignment using invalid database entries resulting in incorrect values.
 - Role checking logic for runner and admin permissions.

@@ -443,16 +443,24 @@ impl RankConfigDisplay {
 
         // Only add rank selection menus if there are valid ranks
         if !self.rank_roles.is_empty() {
-            components.push(
+            components.push({
+                // Detect duplicate rank names for labeling
+                let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+                for (name, _, _) in &self.rank_roles {
+                    *name_counts.entry(name.as_str()).or_insert(0) += 1;
+                }
+
                 CAR::SelectMenu(
                     CSM::new("server_settings_default_rank_select", CSMK::String {
                         options: self.rank_roles.iter()
                             .map(|(name, _, role_id)| {
                                 let is_default = self.default_rank_role.map(|r| r == *role_id).unwrap_or(false);
-                                let label = if is_default {
-                                    format!("{} (current default)", name)
-                                } else {
-                                    name.clone()
+                                let has_duplicate = name_counts.get(name.as_str()).copied().unwrap_or(0) > 1;
+                                let label = match (is_default, has_duplicate) {
+                                    (true, true)   => format!("{} (ID {}, current default)", name, role_id.get()),
+                                    (true, false)  => format!("{} (current default)", name),
+                                    (false, true)  => format!("{} (ID {})", name, role_id.get()),
+                                    (false, false) => name.clone(),
                                 };
                                 CSMO::new(label, role_id.to_string())
                             })
@@ -460,18 +468,31 @@ impl RankConfigDisplay {
                     })
                     .placeholder("Set default rank")
                 )
-            );
+            });
             
-            components.push(
+            components.push({
+                // Detect duplicate rank names
+                let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+                for (name, _, _) in &self.rank_roles {
+                    *name_counts.entry(name.as_str()).or_insert(0) += 1;
+                }
+
                 CAR::SelectMenu(
                     CSM::new("server_settings_rank_select", CSMK::String {
                         options: self.rank_roles.iter()
-                            .map(|(name, _, _)| CSMO::new(name, name.clone()))
+                            .map(|(name, _, role_id)| {
+                                let label = if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
+                                    format!("{} (ID {})", name, role_id.get())
+                                } else {
+                                    name.clone()
+                                };
+                                CSMO::new(label, role_id.to_string())
+                            })
                             .collect()
                     })
                     .placeholder("Select rank to configure")
                 )
-            );
+            });
         }
 
         components.push(
@@ -763,12 +784,25 @@ pub async fn create_player_settings_with_rank_select(
             SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit Steam ID"),
             SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO"),
         ]))
-        .row(SR::StringSelect {
-            id: format!("player_settings_rank_select_{uid}"),
-            placeholder: "Select a rank".to_string(),
-            options: ranks.iter().take(25).map(|rank: &GuildRank| {
-                (rank.name.clone(), format!("ELO: {}", rank.elo))
-            }).collect(),
+        .row({
+            // Detect duplicate rank names
+            let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            for rank in ranks.iter().take(25) {
+                *name_counts.entry(&rank.name).or_insert(0) += 1;
+            }
+
+            SR::StringSelect {
+                id: format!("player_settings_rank_select_{uid}"),
+                placeholder: "Select a rank".to_string(),
+                options: ranks.iter().take(25).map(|rank: &GuildRank| {
+                    let label = if name_counts.get(rank.name.as_str()).copied().unwrap_or(0) > 1 {
+                        format!("{} (ELO: {}, ID {})", rank.name, rank.elo, rank.role_id.get())
+                    } else {
+                        format!("{} (ELO: {})", rank.name, rank.elo)
+                    };
+                    (label, rank.role_id.get().to_string())
+                }).collect(),
+            }
         })
         .row(SR::Buttons(vec![
             SB::edit(format!("player_settings_edit_alerts_{uid}"), "Edit alerts"),

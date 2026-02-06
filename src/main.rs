@@ -147,7 +147,7 @@ impl EventHandler for Handler {
                 .op_user("user", "The Discord user (mention or ID, optional)", false),
             cmd("prefs",         "Open your preferences"),
             cmd("config",        "Open server settings"),
-            cmd("editplayer",    "Open player menu")
+            cmd("edit",    "Open player menu")
                 .op_user("user", "The Discord user to edit", true),
         ];
 
@@ -231,7 +231,7 @@ impl EventHandler for Handler {
                         info();
                         commands::cmd_config(&cmd_ctx).await
                     }
-                    "editplayer" => {
+                    "edit" => {
                         info();
                         commands::cmd_edit_player(&cmd_ctx).await
                     }
