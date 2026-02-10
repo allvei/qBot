@@ -668,8 +668,9 @@ impl AsSettingsMenu for GroupSettingsDisplay {
             .cloned()
             .unwrap_or_else(|| format!("Group {}", self.group_id));
         let connect_display = self.connect_info.as_ref()
+            .filter(|s| !s.trim().is_empty())
             .map(|s| format!("`{s}`"))
-            .unwrap_or_else(|| "*Not configured*".to_string());
+            .unwrap_or_else(|| "-".to_string());
 
         let gid = self.group_id;
 
