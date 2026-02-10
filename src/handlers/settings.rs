@@ -685,12 +685,37 @@ pub async fn handle_server_settings_button(
             // Return to rank configuration menu
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
+            let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
                 dynamic_elo,
+                elo_ranks_linked,
+                default_rank_role,
+            };
+
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(display.build_embed()).components(display.build_components())
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        "server_settings_elo_ranks_linked" => {
+            // Toggle ELO-Rank linking
+            let current = db.config.get_elo_ranks_linked(guild_id).await?;
+            let new_state = !current;
+            db.config.set_elo_ranks_linked(guild_id, new_state).await?;
+
+            // Return to rank configuration menu
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let rank_roles = get_all_rank_roles(db, guild_id).await?;
+            let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
+            
+            let display = crate::handlers::settings_menu::RankConfigDisplay {
+                guild_name,
+                rank_roles,
+                dynamic_elo,
+                elo_ranks_linked,
                 default_rank_role,
             };
 
@@ -785,12 +810,13 @@ pub async fn handle_server_settings_button(
             // Show rank configuration menu
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
+            let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
                 dynamic_elo,
+                elo_ranks_linked,
                 default_rank_role,
             };
 
@@ -892,12 +918,13 @@ pub async fn handle_server_settings_button(
             // Go back to rank list
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
+            let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
                 dynamic_elo,
+                elo_ranks_linked,
                 default_rank_role,
             };
 
@@ -997,12 +1024,13 @@ pub async fn handle_server_settings_button(
             // Return to rank list
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
+            let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
                 dynamic_elo,
+                elo_ranks_linked,
                 default_rank_role,
             };
 
@@ -1057,12 +1085,13 @@ pub async fn handle_server_settings_button(
 
                         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
                         let rank_roles = get_all_rank_roles(db, guild_id).await?;
-                        let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
+                        let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
                         
                         let display = crate::handlers::settings_menu::RankConfigDisplay {
                             guild_name,
                             rank_roles,
                             dynamic_elo,
+                            elo_ranks_linked,
                             default_rank_role,
                         };
 
@@ -2978,16 +3007,17 @@ pub async fn get_server_settings(db: &Arc<Database>, guild_id: GI) -> Result<Ser
 }
 
 /// Get rank settings from database (for rank configuration menu)
-pub async fn get_rank_settings(db: &Arc<Database>, guild_id: GI) -> Result<(bool, Option<RoleId>)> {
+pub async fn get_rank_settings(db: &Arc<Database>, guild_id: GI) -> Result<(bool, bool, Option<RoleId>)> {
     // Query actual column: active_elo (INTEGER 0/1, not "active_elo_enabled")
     let config_map = db.config.get_config_map(guild_id).await?;
     let dynamic_elo = config_map.get("active_elo")
         .and_then(|v| v.parse::<i64>().ok())
         .map(|v| v != 0)
         .unwrap_or(false);
+    let elo_ranks_linked = db.config.get_elo_ranks_linked(guild_id).await?;
     let default_rank_role = db.config.get_default_rank_role_id(guild_id).await?;
 
-    Ok((dynamic_elo, default_rank_role))
+    Ok((dynamic_elo, elo_ranks_linked, default_rank_role))
 }
 
 /// Handle server settings modal submissions
@@ -3081,12 +3111,13 @@ pub async fn handle_server_settings_modal(
         // Return to rank configuration menu
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
         let rank_roles = get_all_rank_roles(db, guild_id).await?;
-        let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
+        let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
         
         let display = crate::handlers::settings_menu::RankConfigDisplay {
             guild_name,
             rank_roles,
             dynamic_elo,
+            elo_ranks_linked,
             default_rank_role,
         };
 
@@ -3159,12 +3190,13 @@ pub async fn handle_server_settings_modal(
         // Return to rank configuration menu
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
         let rank_roles = get_all_rank_roles(db, guild_id).await?;
-        let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
+        let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
         
         let display = crate::handlers::settings_menu::RankConfigDisplay {
             guild_name,
             rank_roles,
             dynamic_elo,
+            elo_ranks_linked,
             default_rank_role,
         };
 
@@ -3231,12 +3263,13 @@ pub async fn handle_server_settings_modal(
         // Return to rank configuration menu
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
         let rank_roles = get_all_rank_roles(db, guild_id).await?;
-        let (dynamic_elo, default_rank_role) = get_rank_settings(db, guild_id).await?;
+        let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
         
         let display = crate::handlers::settings_menu::RankConfigDisplay {
             guild_name,
             rank_roles,
             dynamic_elo,
+            elo_ranks_linked,
             default_rank_role,
         };
 
@@ -3542,30 +3575,38 @@ pub async fn handle_player_settings_rank_select(
         }
     };
     
-    // Update ELO and rank in database
-    db.elo.set(target_uid, guild_id, new_rank.elo, new_rank.clone()).await?;
-    
-    // Validate ELO against player's Discord rank (if they have one)
-    use crate::handlers::player::get_user_rank_from_discord_roles;
-    if let Some(discord_rank_info) = get_user_rank_from_discord_roles(ctx, db, guild_id, target_uid).await {
-        let discord_rank = crate::models::types::Rank {
-            guild_id,
-            role_id: discord_rank_info.role_id,
-            name: discord_rank_info.name.clone(),
-            elo: discord_rank_info.elo,
-        };
+    let elo_ranks_linked = db.config.get_elo_ranks_linked(guild_id).await?;
+
+    if elo_ranks_linked {
+        // Linked: update both rank and ELO
+        db.elo.set(target_uid, guild_id, new_rank.elo, new_rank.clone()).await?;
         
-        // Validate and normalize the manually set rank's ELO
-        if let Ok((normalized_elo, was_normalized)) = db.elo.validate_and_normalize_elo(target_uid, guild_id, &discord_rank, db).await {
-            if was_normalized {
-                info!("Admin set rank {} (ELO {}) for {}, but normalized to {} based on Discord rank {}", 
-                      new_rank.name, new_rank.elo, target_uid, normalized_elo, discord_rank.name);
+        // Validate ELO against player's Discord rank (if they have one)
+        use crate::handlers::player::get_user_rank_from_discord_roles;
+        if let Some(discord_rank_info) = get_user_rank_from_discord_roles(ctx, db, guild_id, target_uid).await {
+            let discord_rank = crate::models::types::Rank {
+                guild_id,
+                role_id: discord_rank_info.role_id,
+                name: discord_rank_info.name.clone(),
+                elo: discord_rank_info.elo,
+            };
+            
+            // Validate and normalize the manually set rank's ELO
+            if let Ok((normalized_elo, was_normalized)) = db.elo.validate_and_normalize_elo(target_uid, guild_id, &discord_rank, db).await {
+                if was_normalized {
+                    info!("Admin set rank {} (ELO {}) for {}, but normalized to {} based on Discord rank {}", 
+                          new_rank.name, new_rank.elo, target_uid, normalized_elo, discord_rank.name);
+                }
             }
         }
+    } else {
+        // Independent: update rank only, keep existing ELO
+        db.elo.set(target_uid, guild_id, guild_elo.elo, new_rank.clone()).await?;
     }
     
     if guild_elo.rank.name != new_rank.name {
-        info!("Updated rank for {}: {} -> {}", target_uid, guild_elo.rank.name, new_rank.name);
+        info!("Updated rank for {}: {} -> {}{}", target_uid, guild_elo.rank.name, new_rank.name,
+              if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" });
     }
 
     // Update dashboards where this player is queued
@@ -5396,52 +5437,59 @@ pub async fn handle_player_settings_modal(
         // Get current rank and calculate new rank from ELO
         let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
         let old_rank = guild_elo.rank.clone();
-        let new_rank = crate::models::types::Rank::from_elo(db, guild_id, elo).await?;
+        let elo_ranks_linked = db.config.get_elo_ranks_linked(guild_id).await?;
 
-        // Check if this ELO change would cause a rank change
-        if old_rank.role_id != new_rank.role_id {
-            // Rank would change - show confirmation prompt
-            let username = ctx.http.get_user(target_uid).await
-                .map(|u| u.name.clone())
-                .unwrap_or_else(|_| target_user_id.to_string());
-            
-            let confirm_embed = CE::new()
-                .title("⚠️ Rank Change Required")
-                .description(format!(
-                    "Setting **{}'s** ELO to **{}** will change their rank:\n\n\
-                    **Current:** {} (ELO {})\n\
-                    **New:** {} (ELO {})\n\n\
-                    This will update their Discord role from <@&{}> to <@&{}>.\n\n\
-                    Do you want to continue?",
-                    username, elo,
-                    old_rank.name, guild_elo.elo,
-                    new_rank.name, elo,
-                    old_rank.role_id, new_rank.role_id
-                ))
-                .color(0xFFA500);
-            
-            let confirm_buttons = vec![
-                CAR::Buttons(vec![
-                    serenity::all::CreateButton::new(format!("confirm_elo_change_{}_{}", target_user_id, elo))
-                        .label("✓ Confirm")
-                        .style(serenity::all::ButtonStyle::Success),
-                    serenity::all::CreateButton::new(format!("cancel_elo_change_{}", target_user_id))
-                        .label("✗ Cancel")
-                        .style(serenity::all::ButtonStyle::Danger),
-                ])
-            ];
-            
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(confirm_embed).components(confirm_buttons)
-            );
-            interaction.create_response(&ctx.http, response).await?;
-            return Ok(());
+        if elo_ranks_linked {
+            let new_rank = crate::models::types::Rank::from_elo(db, guild_id, elo).await?;
+
+            // Check if this ELO change would cause a rank change
+            if old_rank.role_id != new_rank.role_id {
+                // Rank would change - show confirmation prompt
+                let username = ctx.http.get_user(target_uid).await
+                    .map(|u| u.name.clone())
+                    .unwrap_or_else(|_| target_user_id.to_string());
+                
+                let confirm_embed = CE::new()
+                    .title("Rank Change Required")
+                    .description(format!(
+                        "Setting **{}'s** ELO to **{}** will change their rank:\n\n\
+                        **Current:** {} (ELO {})\n\
+                        **New:** {} (ELO {})\n\n\
+                        This will update their Discord role from <@&{}> to <@&{}>.\n\n\
+                        Do you want to continue?",
+                        username, elo,
+                        old_rank.name, guild_elo.elo,
+                        new_rank.name, elo,
+                        old_rank.role_id, new_rank.role_id
+                    ))
+                    .color(0xFFA500);
+                
+                let confirm_buttons = vec![
+                    CAR::Buttons(vec![
+                        serenity::all::CreateButton::new(format!("confirm_elo_change_{}_{}", target_user_id, elo))
+                            .label("Confirm")
+                            .style(serenity::all::ButtonStyle::Success),
+                        serenity::all::CreateButton::new(format!("cancel_elo_change_{}", target_user_id))
+                            .label("Cancel")
+                            .style(serenity::all::ButtonStyle::Danger),
+                    ])
+                ];
+                
+                let response = CIR::UpdateMessage(
+                    CIRM::new().embed(confirm_embed).components(confirm_buttons)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+
+            // No rank change - proceed with ELO update (rank stays the same)
+            db.elo.set(target_uid, guild_id, elo, new_rank.clone()).await?;
+            info!("Updated ELO for {} to {} (rank: {})", target_uid, elo, new_rank.name);
+        } else {
+            // ELO-Rank independent: update ELO only, keep existing rank
+            db.elo.set(target_uid, guild_id, elo, old_rank.clone()).await?;
+            info!("Updated ELO for {} to {} (rank unchanged: {}, ELO-Rank independent)", target_uid, elo, old_rank.name);
         }
-
-        // No rank change - proceed with ELO update
-        db.elo.set(target_uid, guild_id, elo, new_rank.clone()).await?;
-        
-        info!("Updated ELO for {} to {} (rank: {})", target_uid, elo, new_rank.name);
 
         // Update dashboards where this player is queued
         {
@@ -5499,16 +5547,22 @@ pub async fn handle_player_settings_modal(
 
         let new_rank = crate::models::types::Rank::from_name(db, guild_id, rank_str.trim()).await?;
 
-        // Get current data and calculate new ELO from rank
+        // Get current data
         let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
         let old_rank = guild_elo.rank;
-        let new_elo = new_rank.elo;
+        let elo_ranks_linked = db.config.get_elo_ranks_linked(guild_id).await?;
 
-        // Update ELO and rank in database
-        db.elo.set(target_uid, guild_id, new_elo, new_rank.clone()).await?;
+        if elo_ranks_linked {
+            // Linked: update both rank and ELO to the new rank's base
+            db.elo.set(target_uid, guild_id, new_rank.elo, new_rank.clone()).await?;
+        } else {
+            // Independent: update rank only, keep existing ELO
+            db.elo.set(target_uid, guild_id, guild_elo.elo, new_rank.clone()).await?;
+        }
         
         if old_rank.name != new_rank.name {
-            info!("Updated rank for {}: {} -> {}", target_uid, old_rank.name, new_rank.name);
+            info!("Updated rank for {}: {} -> {}{}", target_uid, old_rank.name, new_rank.name,
+                  if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" });
         }
 
         // Refresh the settings menu

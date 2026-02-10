@@ -211,4 +211,29 @@ impl ConfigRepository {
             .await?;
         Ok(())
     }
+
+    /// Get elo_ranks_linked setting (default: true = ELO and ranks are coupled)
+    pub async fn get_elo_ranks_linked(&self, guild_id: GI) -> Result<bool> {
+        let row = sqlx::query("SELECT elo_ranks_linked FROM config WHERE guild_id = ?")
+            .bind(guild_id.get() as i64)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|row| {
+            row.try_get::<Option<i64>, _>("elo_ranks_linked")
+                .ok()
+                .flatten()
+                .map(|val| val != 0)
+        }).unwrap_or(true))
+    }
+
+    /// Set elo_ranks_linked setting
+    pub async fn set_elo_ranks_linked(&self, guild_id: GI, linked: bool) -> Result<()> {
+        sqlx::query("INSERT INTO config (guild_id, elo_ranks_linked) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET elo_ranks_linked = excluded.elo_ranks_linked")
+            .bind(guild_id.get() as i64)
+            .bind(linked as i32)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }

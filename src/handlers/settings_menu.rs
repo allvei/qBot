@@ -391,6 +391,7 @@ pub struct RankConfigDisplay {
     pub guild_name:        String,
     pub rank_roles:        Vec<(String, u16, RoleId)>, // (rank_name, elo, role_id)
     pub dynamic_elo:       bool,
+    pub elo_ranks_linked:  bool,
     pub default_rank_role: Option<RoleId>, // Discord role ID of default rank
 }
 
@@ -446,6 +447,9 @@ impl RankConfigDisplay {
                 CB::new("server_settings_dynamic_elo")
                     .label(if self.dynamic_elo { "Dynamic ELO enabled" } else { "Dynamic ELO disabled" })
                     .style(if self.dynamic_elo { BS::Success } else { BS::Danger }),
+                CB::new("server_settings_elo_ranks_linked")
+                    .label(if self.elo_ranks_linked { "ELO-Rank linked" } else { "ELO-Rank independent" })
+                    .style(if self.elo_ranks_linked { BS::Success } else { BS::Danger }),
             ]),
         ];
 
