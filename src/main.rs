@@ -997,27 +997,39 @@ impl EventHandler for Handler {
 
                                 // Get guild-specific ELO if exists
                                 let existing_elo = self.db.elo.get_if_exists(user_id, server).await.ok().flatten();
+                                let elo_ranks_linked = self.db.config.get_elo_ranks_linked(server).await.unwrap_or(true);
                                 
-                                // Get the valid ELO range for the Discord rank
-                                let rank_min_elo = discord_rank.elo;
-                                let rank_max_elo = 101; // Simple upper bound
-                                
-                                // Update player's ELO based on guild rank and existing ELO records
-                                if let Some(guild_elo) = existing_elo {
-                                    if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
-                                        player.elo = guild_elo.elo;
+                                if elo_ranks_linked {
+                                    // Linked: normalize ELO to rank range
+                                    let rank_min_elo = discord_rank.elo;
+                                    let rank_max_elo = 101;
+                                    
+                                    if let Some(guild_elo) = existing_elo {
+                                        if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
+                                            player.elo = guild_elo.elo;
+                                        } else {
+                                            info!("ELO reset for {}: {} -> {} (outside {} range)", 
+                                                  user_id, guild_elo.elo, rank_min_elo, discord_rank.name);
+                                            player.elo = rank_min_elo;
+                                            if let Err(e) = self.db.elo.set(user_id, server, player.elo, discord_rank.clone()).await {
+                                                warn!("Failed to update guild ELO: {}", e);
+                                            }
+                                        }
                                     } else {
-                                        info!("ELO reset for {}: {} -> {} (outside {} range)", 
-                                              user_id, guild_elo.elo, rank_min_elo, discord_rank.name);
                                         player.elo = rank_min_elo;
                                         if let Err(e) = self.db.elo.set(user_id, server, player.elo, discord_rank.clone()).await {
-                                            warn!("Failed to update guild ELO: {}", e);
+                                            warn!("Failed to initialize guild ELO: {}", e);
                                         }
                                     }
                                 } else {
-                                    player.elo = rank_min_elo;
-                                    if let Err(e) = self.db.elo.set(user_id, server, player.elo, discord_rank.clone()).await {
-                                        warn!("Failed to initialize guild ELO: {}", e);
+                                    // Independent: use existing ELO as-is, or default
+                                    if let Some(guild_elo) = existing_elo {
+                                        player.elo = guild_elo.elo;
+                                    } else {
+                                        player.elo = discord_rank.elo;
+                                        if let Err(e) = self.db.elo.set(user_id, server, player.elo, discord_rank.clone()).await {
+                                            warn!("Failed to initialize guild ELO: {}", e);
+                                        }
                                     }
                                 }
                                 player.rank = Some(discord_rank.clone());
@@ -1216,27 +1228,41 @@ impl Handler {
                     
                     // Get guild-specific ELO if exists
                     let existing_elo = self.db.elo.get_if_exists(user_id, guild.id).await.ok().flatten();
+                    let elo_ranks_linked = self.db.config.get_elo_ranks_linked(guild.id).await.unwrap_or(true);
                     
-                    // Get the valid ELO range for the Discord rank
-                    let rank_min_elo = discord_rank.elo;
-                    let rank_max_elo = 101; // Simple upper bound
-                    
-                    if let Some(guild_elo) = existing_elo {
-                        if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
-                            player.elo = guild_elo.elo;
+                    if elo_ranks_linked {
+                        // Linked: normalize ELO to rank range
+                        let rank_min_elo = discord_rank.elo;
+                        let rank_max_elo = 101;
+                        
+                        if let Some(guild_elo) = existing_elo {
+                            if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
+                                player.elo = guild_elo.elo;
+                            } else {
+                                info!("ELO reset for {}: {} -> {} (outside {} range)", 
+                                      user_id, guild_elo.elo, rank_min_elo, discord_rank.name);
+                                player.elo = rank_min_elo;
+                                if let Err(e) = self.db.elo.set(user_id, guild.id, player.elo, discord_rank.clone()).await {
+                                    warn!("Failed to update guild ELO: {}", e);
+                                }
+                            }
                         } else {
-                            info!("ELO reset for {}: {} -> {} (outside {} range)", 
-                                  user_id, guild_elo.elo, rank_min_elo, discord_rank.name);
+                            info!("New player {} initialized with rank '{}' elo={}", user_id, discord_rank.name, rank_min_elo);
                             player.elo = rank_min_elo;
                             if let Err(e) = self.db.elo.set(user_id, guild.id, player.elo, discord_rank.clone()).await {
-                                warn!("Failed to update guild ELO: {}", e);
+                                warn!("Failed to initialize guild ELO: {}", e);
                             }
                         }
                     } else {
-                        info!("New player {} initialized with rank '{}' elo={}", user_id, discord_rank.name, rank_min_elo);
-                        player.elo = rank_min_elo;
-                        if let Err(e) = self.db.elo.set(user_id, guild.id, player.elo, discord_rank.clone()).await {
-                            warn!("Failed to initialize guild ELO: {}", e);
+                        // Independent: use existing ELO as-is, or default
+                        if let Some(guild_elo) = existing_elo {
+                            player.elo = guild_elo.elo;
+                        } else {
+                            info!("New player {} initialized with default elo={} (ELO-Rank independent)", user_id, discord_rank.elo);
+                            player.elo = discord_rank.elo;
+                            if let Err(e) = self.db.elo.set(user_id, guild.id, player.elo, discord_rank.clone()).await {
+                                warn!("Failed to initialize guild ELO: {}", e);
+                            }
                         }
                     }
                     player.rank = Some(discord_rank);

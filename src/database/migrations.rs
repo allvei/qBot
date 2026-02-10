@@ -67,11 +67,12 @@ impl DatabaseMigrations {
         if !self.check_table("config").await? {
             sqlx::query(
                 "CREATE TABLE config (
-                    guild_id     INTEGER NOT NULL,
-                    runner_id    INTEGER,
-                    admin_id     INTEGER,
-                    active_elo   INTEGER,
-                    default_rank INTEGER,
+                    guild_id          INTEGER NOT NULL,
+                    runner_id         INTEGER,
+                    admin_id          INTEGER,
+                    active_elo        INTEGER,
+                    default_rank      INTEGER,
+                    elo_ranks_linked  INTEGER DEFAULT 1,
                     PRIMARY KEY(guild_id)
                 )"
             )
@@ -83,7 +84,8 @@ impl DatabaseMigrations {
         Ok(())
     }
     async fn verify_config(&self) -> Result<()> {
-        let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank"];
+        let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank", "elo_ranks_linked"];
+        add_column!(self, "config", "elo_ranks_linked", "INTEGER", "1");
         self.verify_columns("config", &required_columns).await?;
         Ok(())
     }
