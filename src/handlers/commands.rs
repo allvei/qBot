@@ -4,7 +4,7 @@ use serenity::all::{
     CreateInteractionResponse as CIR,
     CreateInteractionResponseMessage as CIRM,
 };
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::player::check_adm;
 use crate::{ GREEN, YELLOW, RED };
@@ -143,26 +143,34 @@ pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
     }
 
     let total = matching.len();
-    let mut success = 0u32;
-    let mut failed  = 0u32;
+    let user_ids: Vec<_> = matching.iter().map(|m| m.user.id).collect();
 
-    for member in &matching {
-        match cc.db.elo.set(member.user.id, guild_id, elo, rank.clone()).await {
-            Ok(_) => success += 1,
-            Err(e) => {
-                warn!("Failed to set ELO for {}: {}", member.user.id, e);
-                failed += 1;
-            }
-        }
+    // Batch ensure all users exist, then batch set ELO (2 queries instead of 2*N)
+    if let Err(e) = cc.db.users.batch_ensure(&user_ids).await {
+        let embed = CE::new()
+            .title("Migration Failed")
+            .description(format!("Failed to create user records: {}", e))
+            .color(RED);
+        cc.intax.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
+        return Ok(());
     }
 
-    let mut desc = format!(
+    let success = match cc.db.elo.batch_set(guild_id, elo, &rank, &user_ids).await {
+        Ok(n) => n,
+        Err(e) => {
+            let embed = CE::new()
+                .title("Migration Failed")
+                .description(format!("Failed to set ELO: {}", e))
+                .color(RED);
+            cc.intax.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
+            return Ok(());
+        }
+    };
+
+    let desc = format!(
         "Assigned **{} ELO** (rank: {}) to **{}** member(s) with <@&{}>.",
         elo, rank.name, success, role_id
     );
-    if failed > 0 {
-        desc.push_str(&format!("\n{} member(s) failed.", failed));
-    }
 
     let embed = CE::new()
         .title("Migration Complete")
