@@ -761,27 +761,21 @@ impl Group {
                 let sg_name = self.subgroup(sg_id).map(|sg| sg.name.as_str());
                 log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ, Some((pool_len, sg_quota)), sg_name);
 
-                // Send join announcement (delayed + rate limited)
-                if let Ok(settings) = cc.db.users.get_prefs(user_id).await {
-                    use crate::handlers::settings::build_join_alert_embed;
-                    use crate::models::alert_limiter::schedule_alert;
-
-                    let embed = build_join_alert_embed(
-                        cc.ctx,
-                        user_id,
-                        Some(guild_id),
-                        &settings,
-                        &player_rank.name,
-                        sg_name,
-                    ).await;
+                // Send join announcement (delayed + buffered)
+                {
+                    use crate::models::alert_limiter::{schedule_alert, AlertType};
 
                     schedule_alert(
                         cc.ctx.clone(),
                         self.channels.queue_chat,
-                        embed,
+                        guild_id,
+                        user_id,
+                        cc.db.clone(),
                         self.group_id,
                         sg_id,
-                        user_id.get(),
+                        AlertType::Join,
+                        sg_name.map(|s| s.to_string()),
+                        player_rank.name.clone(),
                     );
                 }
             }
@@ -870,26 +864,21 @@ impl Group {
                 .unwrap_or_else(|| "Unknown".to_string());
             log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BL, Some((pool_len, quota)), sg_name_owned.as_deref());
 
-            // Send leave announcement (delayed + rate limited)
-            if let Ok(settings) = cc.db.users.get_prefs(user_id).await {
-                use crate::handlers::settings::build_leave_alert_embed;
-                use crate::models::alert_limiter::schedule_alert;
-
-                let embed = build_leave_alert_embed(
-                    cc.ctx,
-                    user_id,
-                    Some(guild_id),
-                    &settings,
-                    sg_name_owned.as_deref(),
-                ).await;
+            // Send leave announcement (delayed + buffered)
+            {
+                use crate::models::alert_limiter::{schedule_alert, AlertType};
 
                 schedule_alert(
                     cc.ctx.clone(),
                     queue_chat,
-                    embed,
+                    guild_id,
+                    user_id,
+                    cc.db.clone(),
                     group_id,
                     sg_id,
-                    user_id.get(),
+                    AlertType::Leave,
+                    sg_name_owned.clone(),
+                    String::new(),
                 );
             }
 
