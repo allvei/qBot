@@ -917,7 +917,7 @@ impl Group {
 
         // Regenerate teams if needed (outside the session borrow scope)
         if should_regenerate_teams {
-            self.generate_teams(cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
+            self.generate_teams_sg(sg_id, cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
         }
 
         // Check if team VCs should be cleaned up (OnLastLeave policy)
@@ -930,15 +930,17 @@ impl Group {
     }
 
     /// Handles the shuffle teams button
-    async fn dash_shuffle(&mut self, cc: &CC<'_>, _sg_id: u8) -> Result<()> {
-        let quota = self.subgroups[0].quota as usize;
+    async fn dash_shuffle(&mut self, cc: &CC<'_>, sg_id: u8) -> Result<()> {
+        let quota = self.subgroup(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
 
         // Find the game to shuffle - can be Idle (if quota met) or Hot
-        let session = self.subgroups[0].sessions.iter_mut().find(|s|
-            (s.status == SessionStatus::Idle || s.status == SessionStatus::Hot) && s.pool.len() >= quota
-        );
+        let has_shuffleable = self.subgroup(sg_id)
+            .map(|sg| sg.sessions.iter().any(|s|
+                (s.status == SessionStatus::Idle || s.status == SessionStatus::Hot) && s.pool.len() >= quota
+            ))
+            .unwrap_or(false);
 
-        if session.is_none() {
+        if !has_shuffleable {
             cc.reply(&format!("No game ready for shuffling. Need at least {quota} players in queue.")).await?;
             return Ok(());
         }
@@ -953,7 +955,7 @@ impl Group {
 
         // Call the same team generation logic used by generate_teams
         // This ensures balanced teams using the BCH algorithm
-        self.generate_teams(cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
+        self.generate_teams_sg(sg_id, cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
 
         // Update dashboard to show new teams
         self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
@@ -962,7 +964,7 @@ impl Group {
     }
 
     /// Handles the start match button
-    async fn dash_start(&mut self, cc: &CC<'_>, _sg_id: u8) -> Result<()> {
+    async fn dash_start(&mut self, cc: &CC<'_>, sg_id: u8) -> Result<()> {
         // Check if user has Runner role
         use crate::handlers::player::check_component_role;
         use crate::models::Role;
@@ -982,9 +984,10 @@ impl Group {
             }
         }
 
-        // Check if there's a hot game to start
-        let has_hot_game = self.subgroups[0].sessions.iter().any(|s| s.is_hot());
-        // TODO: use sg_idx to target specific subgroup
+        // Check if there's a hot game to start in the target subgroup
+        let has_hot_game = self.subgroup(sg_id)
+            .map(|sg| sg.sessions.iter().any(|s| s.is_hot()))
+            .unwrap_or(false);
 
         if !has_hot_game {
             cc.reply("No hot game ready to start.").await?;
@@ -995,7 +998,7 @@ impl Group {
         cc.defer_update().await?;
 
         // Move players to team channels (Hot → Push → Live)
-        match self.push(cc.ctx, cc.component.guild_id.unwrap()).await {
+        match self.push_sg(sg_id, cc.ctx, cc.component.guild_id.unwrap()).await {
             Ok(_) => {
                 info!("Players moved to team channels and game is now live");
                 // Update dashboard to reflect Live status
@@ -1010,13 +1013,14 @@ impl Group {
     }
 
     /// Handles the end match button - directly ends the match
-    async fn dash_end(&mut self, cc: &CC<'_>, _sg_id: u8) -> Result<()> {
+    async fn dash_end(&mut self, cc: &CC<'_>, sg_id: u8) -> Result<()> {
         use serenity::all::CreateMessage;
         use std::time::SystemTime;
 
-        // Check if there's an active game to end
-        let active_session = self.subgroups[0].sessions.iter()
-            .find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live);
+        // Check if there's an active game to end in the target subgroup
+        let active_session = self.subgroup(sg_id)
+            .and_then(|sg| sg.sessions.iter()
+                .find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live));
 
         if active_session.is_none() {
             cc.reply("No active match to end.").await?;
@@ -1028,7 +1032,7 @@ impl Group {
         let match_time     = active_session.started_at
             .and_then(|started| SystemTime::now().duration_since(started).ok())
             .map(|d| d.as_secs());
-        let quota = self.subgroups[0].quota as usize;
+        let quota = self.subgroup(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
         let (team_red, team_blu) = get_sorted_teams(&active_session.pool, quota);
 
         // Build match summary embed
@@ -1075,7 +1079,7 @@ impl Group {
         let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
 
         // Move players back to queue channel (Hot/Live → Pull → Idle)
-        match self.pull(cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await {
+        match self.pull_sg(sg_id, cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await {
             Ok(_) => {
                 info!("Match ended, players moved back to queue");
                 Ok(())

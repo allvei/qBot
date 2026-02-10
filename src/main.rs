@@ -175,7 +175,7 @@ impl EventHandler for Handler {
                                 }
                             }
                             // Clean up orphaned dynamic VCs from previous bot runs
-                            for group in &server.groups {
+                            for group in &mut server.groups {
                                 group.cleanup_orphaned_vcs(&ctx).await;
                             }
 

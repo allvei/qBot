@@ -212,6 +212,37 @@ impl GroupRepository {
         Ok(teams)
     }
 
+    pub async fn insert_team(&self, guild_id: GI, group_id: u8, red: CI, blu: CI) -> Result<()> {
+        sqlx::query("INSERT INTO teams (guild_id, group_id, red, blu) VALUES (?, ?, ?, ?)")
+            .bind(guild_id.get() as i64)
+            .bind(group_id as i64)
+            .bind(red.get() as i64)
+            .bind(blu.get() as i64)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_team(&self, guild_id: GI, group_id: u8, red: CI, blu: CI) -> Result<()> {
+        sqlx::query("DELETE FROM teams WHERE guild_id = ? AND group_id = ? AND red = ? AND blu = ?")
+            .bind(guild_id.get() as i64)
+            .bind(group_id as i64)
+            .bind(red.get() as i64)
+            .bind(blu.get() as i64)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn clear_teams(&self, guild_id: GI, group_id: u8) -> Result<()> {
+        sqlx::query("DELETE FROM teams WHERE guild_id = ? AND group_id = ?")
+            .bind(guild_id.get() as i64)
+            .bind(group_id as i64)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Check if a group exists for a guild
     pub async fn group_exists_for_guild(&self, guild_id: GI) -> Result<bool> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM groups WHERE guild_id = ?")
