@@ -187,53 +187,54 @@ impl ConfigRepository {
         Ok(())
     }
 
-    /// Get active_elo setting
-    pub async fn get_active_elo(&self, guild_id: GI) -> Result<bool> {
-        let row = sqlx::query("SELECT active_elo FROM config WHERE guild_id = ?")
+    /// Get a boolean config column by name.
+    /// `default` is returned when the row or column is NULL.
+    pub async fn get_bool(&self, guild_id: GI, column: &str, default: bool) -> Result<bool> {
+        let query = format!("SELECT {column} FROM config WHERE guild_id = ?");
+        let row = sqlx::query(&query)
             .bind(guild_id.get() as i64)
             .fetch_optional(&self.pool)
             .await?;
 
         Ok(row.and_then(|row| {
-            row.try_get::<Option<i64>, _>("active_elo")
+            row.try_get::<Option<i64>, _>(column)
                 .ok()
                 .flatten()
                 .map(|val| val != 0)
-        }).unwrap_or(false))
+        }).unwrap_or(default))
+    }
+
+    /// Set a boolean config column by name.
+    pub async fn set_bool(&self, guild_id: GI, column: &str, value: bool) -> Result<()> {
+        let query = format!(
+            "INSERT INTO config (guild_id, {column}) VALUES (?, ?) \
+             ON CONFLICT(guild_id) DO UPDATE SET {column} = excluded.{column}"
+        );
+        sqlx::query(&query)
+            .bind(guild_id.get() as i64)
+            .bind(value as i32)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Get active_elo setting
+    pub async fn get_active_elo(&self, guild_id: GI) -> Result<bool> {
+        self.get_bool(guild_id, "active_elo", false).await
     }
 
     /// Set active_elo setting
     pub async fn set_active_elo(&self, guild_id: GI, enabled: bool) -> Result<()> {
-        sqlx::query("INSERT INTO config (guild_id, active_elo) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET active_elo = excluded.active_elo")
-            .bind(guild_id.get() as i64)
-            .bind(enabled as i32)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        self.set_bool(guild_id, "active_elo", enabled).await
     }
 
     /// Get elo_ranks_linked setting (default: true = ELO and ranks are coupled)
     pub async fn get_elo_ranks_linked(&self, guild_id: GI) -> Result<bool> {
-        let row = sqlx::query("SELECT elo_ranks_linked FROM config WHERE guild_id = ?")
-            .bind(guild_id.get() as i64)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        Ok(row.and_then(|row| {
-            row.try_get::<Option<i64>, _>("elo_ranks_linked")
-                .ok()
-                .flatten()
-                .map(|val| val != 0)
-        }).unwrap_or(true))
+        self.get_bool(guild_id, "elo_ranks_linked", true).await
     }
 
     /// Set elo_ranks_linked setting
     pub async fn set_elo_ranks_linked(&self, guild_id: GI, linked: bool) -> Result<()> {
-        sqlx::query("INSERT INTO config (guild_id, elo_ranks_linked) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET elo_ranks_linked = excluded.elo_ranks_linked")
-            .bind(guild_id.get() as i64)
-            .bind(linked as i32)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        self.set_bool(guild_id, "elo_ranks_linked", linked).await
     }
 }
