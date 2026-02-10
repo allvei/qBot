@@ -376,20 +376,17 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     }
 
     // Check if player is already in game
-    if group.get_user_session(user).await.is_err() {
-        let mut manager = cc.manager.lock().await;
-        let server = manager.get_server(guild_id)?;
-        let group  = server.get_group(channel)?;
-
-        // Check if we can add to idle session (not Hot/Live)
-        let idle_sessions = group.get_sessions_by_status(&SS::Idle);
-        if idle_sessions.is_empty() {
-            // No idle session means match is in progress
-            drop(manager);
-            cc.reply("Cannot join queue while match is in progress. Please wait for current match to end.").await?;
-            return Ok(());
+    if group.get_user_session(user).await.is_ok() {
+        // Already in queue - refresh timeout
+        if let Ok(session) = group.get_user_session(user).await {
+            if let Some(sp) = session.pool.iter_mut().find(|p| p.player.user_id == user) {
+                sp.joined_at = std::time::SystemTime::now();
+            }
         }
-
+        let current_queue = group.get_queue().await.map(|s| s.pool.len()).unwrap_or(0);
+        cc.reply(&format!("Refreshed your timeout! ({current_queue}/{} players)", group.quota())).await?;
+        group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
+    } else {
         let queue = group.get_queue().await?;
         queue.add_player(player);
 
@@ -397,18 +394,10 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
             group.hot(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await?;
         }
 
+        let current_queue = group.get_queue().await.map(|s| s.pool.len()).unwrap_or(0);
+        cc.reply(&format!("Joined the queue! ({current_queue}/{} players)", group.quota())).await?;
         group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
     }
-
-    // Always acknowledge (silently if already in queue)
-    let current_queue = match group.get_queue().await {
-        Ok(session) => session.pool.len(),
-        Err(_) => 0
-    };
-    cc.reply(&format!("Joined the queue! ({current_queue}/{} players)", group.quota())).await?;
-
-    // Update dashboard
-    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
 
     Ok(())
 }
