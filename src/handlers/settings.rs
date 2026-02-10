@@ -3343,6 +3343,19 @@ pub async fn handle_server_settings_modal(
             db.groups.update_connect_info(guild_id, group_id, connect_info.as_deref()).await?;
         }
 
+        // Update in-memory group
+        {
+            let mut manager_lock = manager.lock().await;
+            if let Ok(server) = manager_lock.get_server(guild_id) {
+                if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
+                    group.name = name.clone();
+                    group.timeout = timeout;
+                    group.set_quota(quota);
+                    group.set_connect_info(connect_info.clone());
+                }
+            }
+        }
+
         // Return to group list
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
         let groups = db.groups.get_groups_for_guild(guild_id).await?;
@@ -4922,8 +4935,9 @@ pub async fn handle_group_settings_modal(
             }
         };
 
-        // Update in-memory
+        // Update in-memory and persist to database
         group.timeout = timeout;
+        db.groups.update_timeout(guild_id, group_id, timeout).await?;
 
         // Get updated settings and refresh the menu
         let settings = GroupSettings::from_group(group);
