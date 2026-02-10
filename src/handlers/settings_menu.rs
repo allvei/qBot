@@ -300,11 +300,11 @@ pub struct ServerSettingsDisplay {
 
 impl AsSettingsMenu for ServerSettingsDisplay {
     fn as_settings_menu(&self) -> SettingsMenu {
-        let runner_display = self.runner_role.as_ref()
+        let _runner_display = self.runner_role.as_ref()
             .map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
             .unwrap_or_else(|| "*Not configured*".to_string());
         
-        let admin_display = self.admin_role.as_ref()
+        let _admin_display = self.admin_role.as_ref()
             .map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
             .unwrap_or_else(|| "*Not configured*".to_string());
 
@@ -585,8 +585,8 @@ impl GroupListDisplay {
         if !self.groups.is_empty() {
             for group in &self.groups {
                 let name = group.display_name();
-                let quota = group.quota();
-                let sessions = group.subgroups[0].sessions.len();
+                let _quota = group.quota();
+                let _sessions = group.subgroups[0].sessions.len();
                 description.push_str(&format!("- {}\n", name));
             }
         }
