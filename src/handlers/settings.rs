@@ -419,25 +419,6 @@ pub async fn handle_settings_modal(
     Ok(())
 }
 
-/// Update the settings menu embed (for button interactions)
-async fn update_settings_menu(
-    ctx: &Context,
-    interaction: &ComponentInteraction,
-    db: &Arc<Database>,
-) -> Result<()> {
-    let user_id = interaction.user.id;
-    let settings = db.users.get_prefs(user_id).await?;
-
-    let embed = build_settings_embed(&settings);
-    let buttons = build_settings_buttons(&settings);
-
-    // Get a mutable reference to the message
-    let mut message = interaction.message.clone();
-    message.edit(&ctx.http, EditMessage::new().embed(embed).components(buttons)).await?;
-
-    Ok(())
-}
-
 /// Update the settings menu embed (for modal interactions)
 async fn update_settings_menu_from_modal(
     ctx: &Context,
@@ -2038,7 +2019,7 @@ pub async fn handle_server_settings_button(
                         } else {
                             // Continue to next channel - recursively trigger the same logic
                             // by simulating a category selection with updated state
-                            let fake_category_id_str = category_id.get().to_string();
+                            let _fake_category_id_str = category_id.get().to_string();
                             
                             // Reuse the same logic by creating a fake interaction data
                             // Actually, let's just redirect back to the category select handler
@@ -2983,38 +2964,6 @@ async fn get_all_rank_roles(db: &Arc<Database>, guild_id: GI) -> Result<Vec<(Str
         .collect();
     
     Ok(result)
-}
-
-/// Convert rank key to display name
-fn rank_key_to_name(key: &str) -> String {
-    match key {
-        "beginner"     => "Beginner"    .to_string(),
-        "newcomer"     => "Newcomer"    .to_string(),
-        "novice"       => "Novice"      .to_string(),
-        "apprentice"   => "Apprentice"  .to_string(),
-        "journeyman"   => "Journeyman"  .to_string(),
-        "expert"       => "Expert"      .to_string(),
-        "master"       => "Master"      .to_string(),
-        "master_elite" => "Master Elite".to_string(),
-        "grandmaster"  => "Grandmaster" .to_string(),
-        _              => key           .to_string(),
-    }
-}
-
-/// Convert rank key to position index
-fn rank_key_to_position(key: &str) -> u8 {
-    match key {
-        "beginner"     => 0,
-        "newcomer"     => 1,
-        "novice"       => 2,
-        "apprentice"   => 3,
-        "journeyman"   => 4,
-        "expert"       => 5,
-        "master"       => 6,
-        "master_elite" => 7,
-        "grandmaster"  => 8,
-        _              => 4, // Default to journeyman
-    }
 }
 
 /// Get server settings from database

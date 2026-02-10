@@ -259,12 +259,6 @@ impl Group {
         CB::new(action).label(label).style(style).disabled(!enabled)
     }
 
-    fn gen_buttons(button_configs: Vec<(&'static str, &'static str, BS, bool)>) -> Vec<CB> {
-        button_configs.into_iter().map(|(action, label, style, enabled)| {
-            CB::new(action).label(label).style(style).disabled(!enabled)
-        }).collect()
-    }
-
     pub async fn has_dashboard(&self, ctx: &Context) -> bool {
         let ch = CI::new(self.channels.dashboard.into());
         let msg = ch.message(&ctx.http, self.dashboard_msg).await;

@@ -4,11 +4,11 @@ use std::sync::Arc;
 use time::macros::format_description;
 use tracing_subscriber::fmt::time::UtcTime;
 use anyhow::Result;
-use pf_pug_bot::{Player, RED, commands, Rank};
+use pf_pug_bot::{RED, commands, Rank};
 use serenity::all::{
     Client, GatewayIntents, EventHandler, Ready, Guild,Interaction,
     VoiceState, Command, Context, User, CommandOptionType as COT,
-    CreateEmbed, EditMessage, UserId
+    CreateEmbed, EditMessage
 };
 use serenity::prelude::TypeMapKey;
 use serenity::async_trait;
@@ -947,7 +947,7 @@ impl EventHandler for Handler {
                                 let role_based_guild_rank = get_user_rank_from_discord_roles(&ctx, &self.db, server, user_id).await;
                                 
                                 // Convert to Rank struct and get ELO
-                                let (discord_rank, rank_min_elo) = if let Some(db_rank) = get_player_rank(&self.db, server, user_id).await {
+                                let (discord_rank, _rank_min_elo) = if let Some(db_rank) = get_player_rank(&self.db, server, user_id).await {
                                     if let Some(guild_rank) = &role_based_guild_rank {
                                         let role_rank = Rank::from_name(&self.db, server, &guild_rank.name).await.unwrap_or(db_rank.clone());
                                         if role_rank != db_rank {
@@ -1162,7 +1162,7 @@ impl Handler {
                     // Use same rank detection as voice join: Discord roles for truth, DB for speed
                     let role_based_guild_rank = get_user_rank_from_discord_roles(&ctx, &self.db, guild.id, user_id).await;
                     
-                    let (discord_rank, rank_min_elo) = if let Some(db_rank) = get_player_rank(&self.db, guild.id, user_id).await {
+                    let (discord_rank, _rank_min_elo) = if let Some(db_rank) = get_player_rank(&self.db, guild.id, user_id).await {
                         // Player has existing rank in database
                         if let Some(guild_rank) = &role_based_guild_rank {
                             // Discord role exists - use its name to determine Rank struct
@@ -1425,7 +1425,7 @@ async fn main(
     client.data.write().await.insert::<GuildKey>(manager.clone());
 
     // Set up signal handling for graceful shutdown
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     
     // Clone necessary data for signal handler
     let manager_for_shutdown = manager.clone();
