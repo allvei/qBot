@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serenity::all::{
     ComponentInteraction, Context, CreateEmbed as CE, CreateInteractionResponse as CIR,
-    CreateInteractionResponseMessage as CIRM, UserId as UI, GuildId as GI,
+    CreateInteractionResponseMessage as CIRM, UserId as UI,
 };
 use std::sync::Arc;
 use tracing::info;
@@ -81,7 +81,7 @@ pub async fn handle_elo_change_confirmation(
         db.elo.set(target_uid, guild_id, new_elo, new_rank.clone()).await?;
         
         // Update Discord roles
-        if let Ok(mut member) = guild_id.member(&ctx.http, target_uid).await {
+        if let Ok(member) = guild_id.member(&ctx.http, target_uid).await {
             // Remove old rank role
             if member.roles.contains(&old_rank.role_id) {
                 if let Err(e) = member.remove_role(&ctx.http, old_rank.role_id).await {

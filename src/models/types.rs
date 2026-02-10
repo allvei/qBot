@@ -7,14 +7,13 @@ use serenity::all::{
 use sqlx::Row;
 use sqlx::prelude::{FromRow};
 use tokio::sync::Mutex;
-use tracing::{error, warn};
+use tracing::warn;
 
 use crate::RED;
 use crate::database::Database;
 use crate::models::{
     Manager as GameManager, Role,
 };
-use crate::repositories::elo;
 
 // ============================================================================
 // Command Contexts
