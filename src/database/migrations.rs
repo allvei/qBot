@@ -617,19 +617,6 @@ impl DatabaseMigrations {
         Ok(())
     }
     async fn create_elo_table(&self) ->    Result<()> {
-        // Check if old elos table exists with foreign key constraints
-        let needs_migration = if self.check_table("elo").await? {
-            // Check if it has foreign key constraints
-            self.check_column("elo", "rank").await?
-        } else {
-            false
-        };
-
-        if needs_migration {
-            // Drop old table and recreate without foreign keys
-            sqlx::query("DROP TABLE elo").execute(&self.pool).await?;
-        }
-
         if !self.check_table("elo").await? {
             sqlx::query(
                 "CREATE TABLE elo (
