@@ -433,7 +433,7 @@ impl Group {
                         players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
 
                         if player.in_queue_vc {
-                            timers_field.push_str("In voice\n");
+                            timers_field.push_str("In VC\n");
                         } else {
                             let timeout = player.timeout;
                             if let Ok(settings) = db.users.get_prefs(player.player.user_id).await {
@@ -646,9 +646,18 @@ impl Group {
         // Store channel IDs before any borrows
         let dashboard_channel = self.channels.dashboard;
 
-        // Check if player is already in THIS subgroup's queue (not all subgroups)
+        // If player is already in this subgroup, refresh their timeout and return
         if self.is_user_in_sg(sg_id, user_id) {
-            cc.reply("You are already in this queue!").await?;
+            if let Some(sg) = self.subgroup_mut(sg_id) {
+                for session in &mut sg.sessions {
+                    if let Some(sp) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+                        sp.joined_at = std::time::SystemTime::now();
+                        break;
+                    }
+                }
+            }
+            cc.defer_update().await?;
+            self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
             return Ok(());
         }
 
@@ -677,7 +686,7 @@ impl Group {
             let role_based_guild_rank = get_user_rank_from_discord_roles(cc.ctx, &cc.db, guild_id, user_id).await;
             
             // Convert to Rank struct and get ELO
-            let (discord_rank, rank_min_elo) = if let Some(db_rank) = get_player_rank(&cc.db, guild_id, user_id).await {
+            let (discord_rank, _rank_min_elo) = if let Some(db_rank) = get_player_rank(&cc.db, guild_id, user_id).await {
                 // Discord role is source of truth if it exists
                 if let Some(guild_rank) = &role_based_guild_rank {
                     let role_rank = Rank::from_name(&cc.db, guild_id, &guild_rank.name).await.unwrap_or(db_rank.clone());
