@@ -386,12 +386,48 @@ impl RoleConfigDisplay {
     }
 }
 
+/// Describes a boolean toggle option in a config menu.
+/// Adding a new toggle only requires:
+/// 1. A DB column + migration
+/// 2. An entry in the relevant TOGGLES array
+/// 3. A handler match arm (or use the generic `handle_config_toggle`)
+pub struct ConfigToggle {
+    /// DB column name in the config table
+    pub column:     &'static str,
+    /// Button custom_id prefix (e.g. "server_settings_dynamic_elo")
+    pub button_id:  &'static str,
+    /// Label shown when enabled
+    pub label_on:   &'static str,
+    /// Label shown when disabled
+    pub label_off:  &'static str,
+    /// Default value when not set in DB
+    pub default:    bool,
+}
+
+/// All boolean toggles shown in the Rank configuration menu.
+/// To add a new toggle: add a DB column, migration, and an entry here.
+pub const RANK_CONFIG_TOGGLES: &[ConfigToggle] = &[
+    ConfigToggle {
+        column:    "active_elo",
+        button_id: "server_settings_dynamic_elo",
+        label_on:  "Dynamic ELO enabled",
+        label_off: "Dynamic ELO disabled",
+        default:   false,
+    },
+    ConfigToggle {
+        column:    "elo_ranks_linked",
+        button_id: "server_settings_elo_ranks_linked",
+        label_on:  "ELO-Rank linked",
+        label_off: "ELO-Rank independent",
+        default:   true,
+    },
+];
+
 /// Rank configuration display for server settings sub-menu
 pub struct RankConfigDisplay {
     pub guild_name:        String,
     pub rank_roles:        Vec<(String, u16, RoleId)>, // (rank_name, elo, role_id)
-    pub dynamic_elo:       bool,
-    pub elo_ranks_linked:  bool,
+    pub toggle_states:     Vec<bool>,
     pub default_rank_role: Option<RoleId>, // Discord role ID of default rank
 }
 
@@ -442,16 +478,17 @@ impl RankConfigDisplay {
     }
 
     pub fn build_components(&self) -> Vec<CAR> {
-        let mut components = vec![
-            CAR::Buttons(vec![
-                CB::new("server_settings_dynamic_elo")
-                    .label(if self.dynamic_elo { "Dynamic ELO enabled" } else { "Dynamic ELO disabled" })
-                    .style(if self.dynamic_elo { BS::Success } else { BS::Danger }),
-                CB::new("server_settings_elo_ranks_linked")
-                    .label(if self.elo_ranks_linked { "ELO-Rank linked" } else { "ELO-Rank independent" })
-                    .style(if self.elo_ranks_linked { BS::Success } else { BS::Danger }),
-            ]),
-        ];
+        // Build toggle buttons from RANK_CONFIG_TOGGLES
+        let toggle_buttons: Vec<CB> = RANK_CONFIG_TOGGLES.iter()
+            .zip(self.toggle_states.iter())
+            .map(|(toggle, &state)| {
+                CB::new(toggle.button_id)
+                    .label(if state { toggle.label_on } else { toggle.label_off })
+                    .style(if state { BS::Success } else { BS::Danger })
+            })
+            .collect();
+
+        let mut components = vec![CAR::Buttons(toggle_buttons)];
 
         // Only add rank selection menus if there are valid ranks
         if !self.rank_roles.is_empty() {

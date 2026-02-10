@@ -673,49 +673,23 @@ pub async fn handle_server_settings_button(
     info!("{} pressed {}", interaction.user.name, button_id);
 
     match button_id.as_str() {
-        "server_settings_dynamic_elo" => {
-            // Toggle dynamic ELO
-            let current = db.config.get_config_item("active_elo_enabled", guild_id).await?
-                .map(|v| v.parse::<bool>().unwrap_or(false))
-                .unwrap_or(false);
-            
-            let new_state = !current;
-            db.config.set_config("active_elo_enabled", &new_state.to_string(), guild_id).await?;
+        // Generic handler for all rank config toggles (dynamic ELO, ELO-Rank linked, etc.)
+        _ if crate::handlers::settings_menu::RANK_CONFIG_TOGGLES.iter().any(|t| t.button_id == button_id) => {
+            let toggle = crate::handlers::settings_menu::RANK_CONFIG_TOGGLES.iter()
+                .find(|t| t.button_id == button_id).unwrap();
+
+            let current = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
+            db.config.set_bool(guild_id, toggle.column, !current).await?;
 
             // Return to rank configuration menu
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
+            let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
-                dynamic_elo,
-                elo_ranks_linked,
-                default_rank_role,
-            };
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(display.build_embed()).components(display.build_components())
-            );
-            interaction.create_response(&ctx.http, response).await?;
-        }
-        "server_settings_elo_ranks_linked" => {
-            // Toggle ELO-Rank linking
-            let current = db.config.get_elo_ranks_linked(guild_id).await?;
-            let new_state = !current;
-            db.config.set_elo_ranks_linked(guild_id, new_state).await?;
-
-            // Return to rank configuration menu
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
-            
-            let display = crate::handlers::settings_menu::RankConfigDisplay {
-                guild_name,
-                rank_roles,
-                dynamic_elo,
-                elo_ranks_linked,
+                toggle_states,
                 default_rank_role,
             };
 
@@ -810,13 +784,12 @@ pub async fn handle_server_settings_button(
             // Show rank configuration menu
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
+            let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
-                dynamic_elo,
-                elo_ranks_linked,
+                toggle_states,
                 default_rank_role,
             };
 
@@ -918,13 +891,12 @@ pub async fn handle_server_settings_button(
             // Go back to rank list
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
+            let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
-                dynamic_elo,
-                elo_ranks_linked,
+                toggle_states,
                 default_rank_role,
             };
 
@@ -1024,13 +996,12 @@ pub async fn handle_server_settings_button(
             // Return to rank list
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
+            let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
             
             let display = crate::handlers::settings_menu::RankConfigDisplay {
                 guild_name,
                 rank_roles,
-                dynamic_elo,
-                elo_ranks_linked,
+                toggle_states,
                 default_rank_role,
             };
 
@@ -1085,13 +1056,12 @@ pub async fn handle_server_settings_button(
 
                         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
                         let rank_roles = get_all_rank_roles(db, guild_id).await?;
-                        let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
+                        let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
                         
                         let display = crate::handlers::settings_menu::RankConfigDisplay {
                             guild_name,
                             rank_roles,
-                            dynamic_elo,
-                            elo_ranks_linked,
+                            toggle_states,
                             default_rank_role,
                         };
 
@@ -3007,17 +2977,14 @@ pub async fn get_server_settings(db: &Arc<Database>, guild_id: GI) -> Result<Ser
 }
 
 /// Get rank settings from database (for rank configuration menu)
-pub async fn get_rank_settings(db: &Arc<Database>, guild_id: GI) -> Result<(bool, bool, Option<RoleId>)> {
-    // Query actual column: active_elo (INTEGER 0/1, not "active_elo_enabled")
-    let config_map = db.config.get_config_map(guild_id).await?;
-    let dynamic_elo = config_map.get("active_elo")
-        .and_then(|v| v.parse::<i64>().ok())
-        .map(|v| v != 0)
-        .unwrap_or(false);
-    let elo_ranks_linked = db.config.get_elo_ranks_linked(guild_id).await?;
+pub async fn get_rank_settings(db: &Arc<Database>, guild_id: GI) -> Result<(Vec<bool>, Option<RoleId>)> {
+    use crate::handlers::settings_menu::RANK_CONFIG_TOGGLES;
+    let mut toggle_states = Vec::with_capacity(RANK_CONFIG_TOGGLES.len());
+    for toggle in RANK_CONFIG_TOGGLES {
+        toggle_states.push(db.config.get_bool(guild_id, toggle.column, toggle.default).await?);
+    }
     let default_rank_role = db.config.get_default_rank_role_id(guild_id).await?;
-
-    Ok((dynamic_elo, elo_ranks_linked, default_rank_role))
+    Ok((toggle_states, default_rank_role))
 }
 
 /// Handle server settings modal submissions
@@ -3111,13 +3078,12 @@ pub async fn handle_server_settings_modal(
         // Return to rank configuration menu
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
         let rank_roles = get_all_rank_roles(db, guild_id).await?;
-        let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
+        let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
         
         let display = crate::handlers::settings_menu::RankConfigDisplay {
             guild_name,
             rank_roles,
-            dynamic_elo,
-            elo_ranks_linked,
+            toggle_states,
             default_rank_role,
         };
 
@@ -3190,13 +3156,12 @@ pub async fn handle_server_settings_modal(
         // Return to rank configuration menu
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
         let rank_roles = get_all_rank_roles(db, guild_id).await?;
-        let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
+        let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
         
         let display = crate::handlers::settings_menu::RankConfigDisplay {
             guild_name,
             rank_roles,
-            dynamic_elo,
-            elo_ranks_linked,
+            toggle_states,
             default_rank_role,
         };
 
@@ -3263,13 +3228,12 @@ pub async fn handle_server_settings_modal(
         // Return to rank configuration menu
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
         let rank_roles = get_all_rank_roles(db, guild_id).await?;
-        let (dynamic_elo, elo_ranks_linked, default_rank_role) = get_rank_settings(db, guild_id).await?;
+        let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
         
         let display = crate::handlers::settings_menu::RankConfigDisplay {
             guild_name,
             rank_roles,
-            dynamic_elo,
-            elo_ranks_linked,
+            toggle_states,
             default_rank_role,
         };
 
