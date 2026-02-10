@@ -90,7 +90,6 @@ impl EventHandler for Handler {
 
             // Start the cleanup background task
             dm_tracker.start_cleanup_task(ctx.http.clone());
-            info!("DM tracker initialized with 10-minute cleanup");
         }
 
         // Start timeout background task
@@ -120,7 +119,6 @@ impl EventHandler for Handler {
                     }
                 }
             });
-            info!("Timeout background task started (checks every 60 seconds)");
         }
 
         // Spawn console command handler in a separate task
@@ -149,6 +147,9 @@ impl EventHandler for Handler {
             cmd("config",        "Open server settings"),
             cmd("edit",    "Open player menu")
                 .op_user("user", "The Discord user to edit", true),
+            cmd("migrate", "Bulk-assign ELO to all members with a role")
+                .op_role("role", "The role to migrate", true)
+                .op_int("elo", "The ELO value to assign", true),
         ];
 
         if let Err(why) = Command::set_global_commands(&ctx.http, cmds).await {
@@ -173,6 +174,11 @@ impl EventHandler for Handler {
                                     error!("Failed to add group: {e}");
                                 }
                             }
+                            // Clean up orphaned dynamic VCs from previous bot runs
+                            for group in &server.groups {
+                                group.cleanup_orphaned_vcs(&ctx).await;
+                            }
+
                             let groups_len = server.groups.len();
                             manager.servers.push(server);
 
@@ -234,6 +240,10 @@ impl EventHandler for Handler {
                     "edit" => {
                         info();
                         commands::cmd_edit_player(&cmd_ctx).await
+                    }
+                    "migrate" => {
+                        info();
+                        commands::cmd_migrate(&cmd_ctx).await
                     }
                     _ => {
                         // All other commands need a server
@@ -461,11 +471,11 @@ impl EventHandler for Handler {
                     return;
                 }
 
-                // Handle group settings team balance method select
-                if itx.data.custom_id.starts_with("group_settings_balance_") {
-                    let result = handlers::handle_group_settings_balance_select(&ctx, &itx, &self.db, &self.manager).await;
+                // Handle server-level team balance method select
+                if itx.data.custom_id == "server_settings_balance" {
+                    let result = handlers::handle_server_settings_balance_select(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
-                        error!("Error handling group settings balance select: {e}");
+                        error!("Error handling server settings balance select: {e}");
                     }
                     return;
                 }
@@ -479,8 +489,8 @@ impl EventHandler for Handler {
                     return;
                 }
 
-                // Handle group settings buttons (including link message buttons)
-                if itx.data.custom_id.starts_with("group_settings_") || itx.data.custom_id.starts_with("group_link_msg_") {
+                // Handle group settings buttons (including link message, subgroup, and rank gate buttons)
+                if itx.data.custom_id.starts_with("group_settings_") || itx.data.custom_id.starts_with("group_link_msg_") || itx.data.custom_id.starts_with("group_sg_") || itx.data.custom_id.starts_with("rank_gate_") {
                     let result = handlers::handle_group_settings_button(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling group settings interaction: {e}");
@@ -631,13 +641,13 @@ impl EventHandler for Handler {
                     || itx.data.custom_id.starts_with("server_settings_rank_modal_")
                     || itx.data.custom_id.starts_with("server_settings_group_modal_") 
                 {
-                    let result = handlers::handle_server_settings_modal(&ctx, &itx, &self.db).await;
+                    let result = handlers::handle_server_settings_modal(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling server settings modal '{}': {}", itx.data.custom_id, e);
                     }
                 }
-                // Handle modal submissions for group settings
-                if itx.data.custom_id.starts_with("group_settings_modal_") {
+                // Handle modal submissions for group settings (including subgroup modals)
+                if itx.data.custom_id.starts_with("group_settings_modal_") || itx.data.custom_id.starts_with("group_sg_modal_") {
                     let result = handlers::handle_group_settings_modal(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling group settings modal '{}': {}", itx.data.custom_id, e);
@@ -725,11 +735,13 @@ impl EventHandler for Handler {
                 let group_name = ctx.cache.channel(group.channels.dashboard)
                     .map(|ch| ch.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
-                log_queue_toggle(&guild_name, &group_name, &tag, VL);
+                let pool_len: usize = group.subgroups[0].sessions.iter().map(|s| s.pool.len()).sum();
+                let sg_name = group.subgroups.first().map(|sg| sg.name.as_str());
+                log_queue_toggle(&guild_name, &group_name, &tag, VL, Some((pool_len, group.quota() as usize)), sg_name);
 
-                let quota = group.quota as usize;
+                let quota = group.quota() as usize;
                 // Get session index before mutable borrow
-                let _ = group.sessions.iter()
+                let _ = group.subgroups[0].sessions.iter()
                     .position(|s| s.pool.iter().any(|p| p.player.user_id == user_id));
 
                 let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
@@ -748,7 +760,6 @@ impl EventHandler for Handler {
                                     player.joined_at = std::time::SystemTime::now();
                                     // Mark as not in VC anymore
                                     player.in_queue_vc = false;
-                                    info!("Reset timeout for {} after leaving VC (auto-leave disabled)", tag);
                                 }
                                 false
                             }
@@ -782,6 +793,7 @@ impl EventHandler for Handler {
                 if should_regenerate {
                     group.generate_teams(&ctx, server, Some(&self.db)).await;
                 }
+                group.check_team_vc_cleanup_on_leave(&ctx).await;
                 group.queue_dash_update(&ctx, server).await;
             },
             VoiceStateUpdate::Connected => {
@@ -800,11 +812,13 @@ impl EventHandler for Handler {
                     let group_name = ctx.cache.channel(group.channels.dashboard)
                         .map(|ch| ch.name.clone())
                         .unwrap_or_else(|| "Unknown".to_string());
-                    log_queue_toggle(&guild_name, &group_name, &tag, VL);
+                    let pool_len: usize = group.subgroups[0].sessions.iter().map(|s| s.pool.len()).sum();
+                    let sg_name = group.subgroups.first().map(|sg| sg.name.as_str());
+                    log_queue_toggle(&guild_name, &group_name, &tag, VL, Some((pool_len, group.quota() as usize)), sg_name);
 
-                    let quota = group.quota as usize;
+                    let quota = group.quota() as usize;
                     // Get session index before mutable borrow
-                    let _ = group.sessions.iter()
+                    let _ = group.subgroups[0].sessions.iter()
                         .position(|s| s.pool.iter().any(|p| p.player.user_id == user_id));
 
                     let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
@@ -823,7 +837,6 @@ impl EventHandler for Handler {
                                         player.joined_at = std::time::SystemTime::now();
                                         // Mark as not in VC anymore
                                         player.in_queue_vc = false;
-                                        info!("Reset timeout for {} after leaving VC (auto-leave disabled)", tag);
                                     }
                                     false
                                 }
@@ -935,37 +948,30 @@ impl EventHandler for Handler {
                                 
                                 // Convert to Rank struct and get ELO
                                 let (discord_rank, rank_min_elo) = if let Some(db_rank) = get_player_rank(&self.db, server, user_id).await {
-                                    // Player has existing rank in database
                                     if let Some(guild_rank) = &role_based_guild_rank {
-                                        // Discord role exists - use its name to determine Rank struct
                                         let role_rank = Rank::from_name(&self.db, server, &guild_rank.name).await.unwrap_or(db_rank.clone());
                                         if role_rank != db_rank {
-                                            info!("Voice join - Player {} Discord role '{}' (ELO {}) differs from DB {}, using Discord role", 
-                                                  user_id, guild_rank.name, guild_rank.elo, db_rank.name);
+                                            info!("Rank mismatch for {}: Discord='{}' DB='{}', using Discord", 
+                                                  &tag, guild_rank.name, db_rank.name);
                                         }
                                         (role_rank, guild_rank.elo)
                                     } else {
-                                        // No Discord role, keep DB rank
                                         let elo = db_rank.elo;
                                         (db_rank, elo)
                                     }
                                 } else {
-                                    // No DB rank - check Discord roles before defaulting
                                     if let Some(guild_rank) = &role_based_guild_rank {
-                                        // Has Discord role, use its name
                                         let role_rank = Rank::from_name(&self.db, server, &guild_rank.name).await.unwrap_or_else(|_| Rank {
                                             guild_id: server,
                                             role_id: guild_rank.role_id,
                                             name: guild_rank.name.clone(),
                                             elo: guild_rank.elo,
                                         });
-                                        info!("Voice join - New player {} has Discord role '{}' (ELO {})", 
-                                              user_id, guild_rank.name, guild_rank.elo);
                                         (role_rank, guild_rank.elo)
                                     } else {
-                                        // No DB rank or Discord role, assign default
                                         match get_or_assign_player_rank(&self.db, server, user_id).await {
                                             Ok(rank) => {
+                                                info!("Assigned default rank '{}' to {}", rank.name, user_id);
                                                 let elo = rank.elo;
                                                 (rank, elo)
                                             },
@@ -996,34 +1002,19 @@ impl EventHandler for Handler {
                                 let rank_min_elo = discord_rank.elo;
                                 let rank_max_elo = 101; // Simple upper bound
                                 
+                                // Update player's ELO based on guild rank and existing ELO records
                                 if let Some(guild_elo) = existing_elo {
                                     if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
-                                        // ELO is within the Discord rank's range - keep it
-                                        info!("Voice join - Player {} ELO {} within {} range [{}, {}), keeping", 
-                                              user_id, guild_elo.elo, discord_rank.name, rank_min_elo, rank_max_elo);
                                         player.elo = guild_elo.elo;
                                     } else {
-                                        // ELO is outside the Discord rank's range - reset to rank default
-                                        info!("Voice join - Player {} ELO {} outside {} range [{}, {}), resetting to {}", 
-                                              user_id, guild_elo.elo, discord_rank.name, rank_min_elo, rank_max_elo, rank_min_elo);
+                                        info!("ELO reset for {}: {} -> {} (outside {} range)", 
+                                              user_id, guild_elo.elo, rank_min_elo, discord_rank.name);
                                         player.elo = rank_min_elo;
                                         if let Err(e) = self.db.elo.set(user_id, server, player.elo, discord_rank.clone()).await {
                                             warn!("Failed to update guild ELO: {}", e);
                                         }
                                     }
                                 } else {
-                                    // No ELO record - new player, use Discord rank's default ELO
-                                    // Get the role_id for this rank for debugging
-                                    let role_id_info = if let Ok(ranks) = self.db.ranks.get_ranks(server).await {
-                                        ranks.iter()
-                                            .find(|r| r.name == discord_rank.name)
-                                            .map(|r| format!(" (role_id: {})", r.role_id))
-                                            .unwrap_or_else(|| String::new())
-                                    } else {
-                                        String::new()
-                                    };
-                                    info!("Voice join - New player {} in guild, setting ELO to {} from Discord rank {}{}", 
-                                          user_id, rank_min_elo, discord_rank.name, role_id_info);
                                     player.elo = rank_min_elo;
                                     if let Err(e) = self.db.elo.set(user_id, server, player.elo, discord_rank.clone()).await {
                                         warn!("Failed to initialize guild ELO: {}", e);
@@ -1046,7 +1037,9 @@ impl EventHandler for Handler {
                                     let group_name = ctx.cache.channel(group.channels.dashboard)
                                         .map(|ch| ch.name.clone())
                                         .unwrap_or_else(|| "Unknown".to_string());
-                                    log_queue_toggle(&guild_name, &group_name, &tag, QueueToggleType::VJ);
+                                    let pool_len: usize = group.subgroups[0].sessions.iter().map(|s| s.pool.len()).sum();
+                                    let sg_name = group.subgroups.first().map(|sg| sg.name.as_str());
+                                    log_queue_toggle(&guild_name, &group_name, &tag, QueueToggleType::VJ, Some((pool_len, group.quota() as usize)), sg_name);
                                 }
 
                                 group.queue_dash_update(&ctx, server).await;
@@ -1111,8 +1104,6 @@ impl Handler {
 
     /// Check for users already in queue voice channels and add them to the queue
     async fn check_existing_voice_users(&self, ctx: &Context, guild: &Guild, manager: &mut Manager) {
-        use pf_pug_bot::handlers::player::get_or_assign_player_rank;
-
         // Get the server from the manager
         let server = match manager.get_server(guild.id) {
             Ok(s) => s,
@@ -1156,6 +1147,7 @@ impl Handler {
             }
 
             // Add all players to the session WITHOUT quota check
+            let sg_name_owned = group.subgroups.first().map(|sg| sg.name.clone());
             if let Ok(session) = group.get_queue().await {
                 // Get server and group names for logging
                 let guild_name = guild.name.clone();
@@ -1165,7 +1157,7 @@ impl Handler {
 
                 use pf_pug_bot::handlers::player::{get_player_rank, get_user_rank_from_discord_roles, get_or_assign_player_rank};
                 
-                for (user_id, _tag) in &players_to_add {
+                for (user_id, tag) in &players_to_add {
                     let user_id = *user_id;
                     // Use same rank detection as voice join: Discord roles for truth, DB for speed
                     let role_based_guild_rank = get_user_rank_from_discord_roles(&ctx, &self.db, guild.id, user_id).await;
@@ -1176,8 +1168,8 @@ impl Handler {
                             // Discord role exists - use its name to determine Rank struct
                             let role_rank = Rank::from_name(&self.db, guild.id, &guild_rank.name).await.unwrap_or(db_rank.clone());
                             if role_rank != db_rank {
-                                info!("Existing VC - Player {} Discord role '{}' (ELO {}) differs from DB {}, using Discord role", 
-                                      user_id, guild_rank.name, guild_rank.elo, db_rank.name);
+                                info!("Rank mismatch for {}: Discord='{}' DB='{}', using Discord", 
+                                      &tag, guild_rank.name, db_rank.name);
                             }
                             (role_rank, guild_rank.elo)
                         } else {
@@ -1194,12 +1186,11 @@ impl Handler {
                                 name: guild_rank.name.clone(),
                                 elo: guild_rank.elo,
                             });
-                            info!("Existing VC - Player {} has Discord role '{}' (ELO {})", user_id, guild_rank.name, guild_rank.elo);
                             (role_rank, guild_rank.elo)
                         } else {
-                            // No DB rank or Discord role, assign default
                             match get_or_assign_player_rank(&self.db, guild.id, user_id).await {
                                 Ok(rank) => {
+                                    info!("Assigned default rank '{}' to {}", rank.name, user_id);
                                     let elo = rank.elo;
                                     (rank, elo)
                                 },
@@ -1232,30 +1223,17 @@ impl Handler {
                     
                     if let Some(guild_elo) = existing_elo {
                         if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
-                            // ELO is within the Discord rank's range - keep it
                             player.elo = guild_elo.elo;
                         } else {
-                            // ELO is outside the Discord rank's range - reset to rank default
-                            info!("Existing VC - Player {} ELO {} outside {} range [{}, {}), resetting to {}", 
-                                  user_id, guild_elo.elo, discord_rank.name, rank_min_elo, rank_max_elo, rank_min_elo);
+                            info!("ELO reset for {}: {} -> {} (outside {} range)", 
+                                  user_id, guild_elo.elo, rank_min_elo, discord_rank.name);
                             player.elo = rank_min_elo;
                             if let Err(e) = self.db.elo.set(user_id, guild.id, player.elo, discord_rank.clone()).await {
                                 warn!("Failed to update guild ELO: {}", e);
                             }
                         }
                     } else {
-                        // No ELO record - use Discord rank's default ELO
-                        // Get the role_id for this rank for debugging
-                        let role_id_info = if let Ok(ranks) = self.db.ranks.get_ranks(guild.id).await {
-                            ranks.iter()
-                                .find(|r| r.name == discord_rank.name)
-                                .map(|r| format!(" (role_id: {})", r.role_id))
-                                .unwrap_or_else(|| String::new())
-                        } else {
-                            String::new()
-                        };
-                        info!("Existing VC - New player {} in guild, setting ELO to {} from Discord rank {}{}", 
-                              user_id, rank_min_elo, discord_rank.name, role_id_info);
+                        info!("New player {} initialized with rank '{}' elo={}", user_id, discord_rank.name, rank_min_elo);
                         player.elo = rank_min_elo;
                         if let Err(e) = self.db.elo.set(user_id, guild.id, player.elo, discord_rank.clone()).await {
                             warn!("Failed to initialize guild ELO: {}", e);
@@ -1263,7 +1241,7 @@ impl Handler {
                     }
                     player.rank = Some(discord_rank);
                     
-                    log_queue_toggle(&guild_name, &group_name, &player.tag.clone(), QueueToggleType::VJ);
+                    log_queue_toggle(&guild_name, &group_name, &player.tag.clone(), QueueToggleType::VJ, None, sg_name_owned.as_deref());
                     session.add_player(player);
                 }
             }
@@ -1418,7 +1396,7 @@ async fn main(
     migrations.verify_schemas().await?;
 
     // Configure the client with the framework and intents
-    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILD_VOICE_STATES | GatewayIntents::GUILDS;
+    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILD_VOICE_STATES | GatewayIntents::GUILDS | GatewayIntents::GUILD_MEMBERS;
 
     // Define TypeMapKey for Manager
     struct GuildKey;
@@ -1430,12 +1408,15 @@ async fn main(
     // Init manager
     let manager = Arc::new(Mutex::new(Manager::default()));
 
+    // Init dashboard queue (shared with Handler and shutdown handler)
+    let dashboard_queue = Arc::new(tokio::sync::Mutex::new(None));
+
     // Init client
     let mut client = Client::builder(&token, intents)
         .event_handler(Handler {
             db:              db.clone(),
             manager:         manager.clone(),
-            dashboard_queue: Arc::new(tokio::sync::Mutex::new(None)),
+            dashboard_queue: dashboard_queue.clone(),
         })
         .await
         .expect("Failed to create client");
@@ -1450,6 +1431,7 @@ async fn main(
     let manager_for_shutdown = manager.clone();
     let cache_for_shutdown = client.cache.clone();
     let http_for_shutdown = client.http.clone();
+    let dashboard_queue_for_shutdown = dashboard_queue.clone();
     
     // Spawn signal handler task
     tokio::spawn(async move {
@@ -1484,6 +1466,47 @@ async fn main(
             }
         }
         
+        // Stop the dashboard update queue to prevent race conditions
+        // (voice state updates during shutdown could overwrite the offline message)
+        {
+            let mut queue_lock = dashboard_queue_for_shutdown.lock().await;
+            let _ = queue_lock.take(); // Drop the queue, closing the channel
+        }
+        // Wait for any in-flight batch to finish
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // Clean up empty team VCs before shutting down
+        if let Ok(mut manager_lock) = manager_for_shutdown.try_lock() {
+            for server in &mut manager_lock.servers {
+                let guild_id = server.guild_id;
+
+                // Collect voice channel members for this guild
+                let vc_members: std::collections::HashSet<u64> = cache_for_shutdown.guild(guild_id)
+                    .map(|g| g.voice_states.values()
+                        .filter_map(|vs| vs.channel_id.map(|c| c.get()))
+                        .collect())
+                    .unwrap_or_default();
+
+                for group in &mut server.groups {
+                    let mut kept = Vec::new();
+                    for tc in &group.channels.teams {
+                        let red_empty = !vc_members.contains(&tc.red_vc.get());
+                        let blu_empty = !vc_members.contains(&tc.blu_vc.get());
+
+                        if red_empty && blu_empty {
+                            let _ = tc.red_vc.delete(&http_for_shutdown).await;
+                            let _ = tc.blu_vc.delete(&http_for_shutdown).await;
+                        } else {
+                            kept.push(tc.clone());
+                        }
+                    }
+                    group.channels.teams = kept;
+                }
+            }
+        } else {
+            warn!("Could not acquire manager lock for team VC cleanup");
+        }
+
         // Mark all dashboards as offline before shutting down
         if let Ok(mut manager_lock) = manager_for_shutdown.try_lock() {
             info!("Marking all dashboards as offline...");
@@ -1507,7 +1530,7 @@ async fn main(
                     let channel_id = group.channels.dashboard;
                     let message_id = group.dashboard_msg;
                     
-                    match channel_id.edit_message(&http_for_shutdown, message_id, EditMessage::new().embed(offline_embed)).await {
+                    match channel_id.edit_message(&http_for_shutdown, message_id, EditMessage::new().embed(offline_embed).components(vec![])).await {
                         Ok(_) => {
                             info!("[{}] Marked dashboard for group {} as offline", guild_name, group.group_id);
                         }

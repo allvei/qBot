@@ -7,7 +7,7 @@ use serenity::all::{
     CreateSelectMenuOption as CSMO, RoleId, GuildId as GI,
 };
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use crate::colours::RED;
 
 use crate::Database;
@@ -74,7 +74,7 @@ pub async fn handle_settings_button(
     let button_id = &interaction.data.custom_id;
     let username  = &interaction.user.name;
 
-    info!("{} pressed {}", username, button_id);
+    debug!("{} pressed {}", username, button_id);
 
     // Update activity timestamp for DM cleanup tracking
     if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
@@ -336,7 +336,7 @@ pub async fn handle_settings_modal(
             db.users.update_settings(user_id, &settings).await?;
 
             // Build preview embed
-            let preview_embed = build_join_alert_embed(ctx, user_id, None, &settings, "Journeyman").await;
+            let preview_embed = build_join_alert_embed(ctx, user_id, None, &settings, "Journeyman", None).await;
 
             // Send ephemeral preview as interaction response (dismissible)
             let response = CIR::Message(
@@ -397,7 +397,7 @@ pub async fn handle_settings_modal(
             db.users.update_settings(user_id, &settings).await?;
 
             // Build preview embed
-            let preview_embed = build_leave_alert_embed(ctx, user_id, None, &settings).await;
+            let preview_embed = build_leave_alert_embed(ctx, user_id, None, &settings, None).await;
 
             // Send ephemeral preview as interaction response (dismissible)
             let response = CIR::Message(
@@ -488,6 +488,7 @@ pub async fn build_join_alert_embed(
     guild_id:  Option<serenity::all::GuildId>,
     settings:  &crate::database::repositories::UserSettings,
     rank_name: &str,
+    sg_name:   Option<&str>,
 ) -> CE {
     // Get display name - try member nickname first, then user name, then user ID
     let display_name = if let Some(gid) = guild_id {
@@ -531,7 +532,10 @@ pub async fn build_join_alert_embed(
 
     // Create embed with title showing nickname + "joined the queue"
     let mut embed = CE::new()
-        .title(format!("{display_name} joined the queue"))
+        .title(match sg_name {
+            Some(name) => format!("{display_name} joined the {name} queue"),
+            None => format!("{display_name} joined the queue"),
+        })
         .color(settings.join_alert_color as u32);
     
     // Only add description if there is one
@@ -569,6 +573,7 @@ pub async fn build_leave_alert_embed(
     user_id: serenity::all::UserId,
     guild_id: Option<serenity::all::GuildId>,
     settings: &crate::database::repositories::UserSettings,
+    sg_name: Option<&str>,
 ) -> CE {
     // Get display name - try member nickname first, then user name, then user ID
     let display_name = if let Some(gid) = guild_id {
@@ -611,7 +616,10 @@ pub async fn build_leave_alert_embed(
 
     // Create embed with title showing nickname + "left the queue"
     let mut embed = CE::new()
-        .title(format!("{} left the queue", display_name))
+        .title(match sg_name {
+            Some(name) => format!("{display_name} left the {name} queue"),
+            None => format!("{display_name} left the queue"),
+        })
         .color(settings.join_alert_color as u32);
     
     // Only add description if there is one
@@ -1183,120 +1191,42 @@ pub async fn handle_server_settings_button(
             interaction.create_response(&ctx.http, response).await?;
         }
         "server_settings_create_group" => {
-            // Create a new group with channels
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            // Show modal to collect group settings before creating channels
+            use serenity::all::{CreateModal, CreateInputText, InputTextStyle, CreateActionRow};
 
-            // Create the category and channels
-            match crate::handlers::admin::create_group_channels(ctx, guild_id).await {
-                Ok((category_id, dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel)) => {
-                    use crate::models::{Group, Channels, TeamChannel};
-                    use serenity::all::MessageId;
+            let modal = CreateModal::new("server_settings_modal_create_group", "Create a new group")
+                .components(vec![
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Short, "Group name", "group_name")
+                            .placeholder("e.g., NA PUGs, EU Competitive")
+                            .required(true)
+                            .max_length(50)
+                    ),
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Short, "Channel prefix", "channel_prefix")
+                            .placeholder("e.g., pug, na, eu")
+                            .required(true)
+                            .max_length(20)
+                    ),
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Short, "Category name", "category_name")
+                            .placeholder("e.g., PUG Queue")
+                            .value("PUG Queue")
+                            .required(true)
+                            .max_length(50)
+                    ),
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Short, "Quota (players per game)", "quota")
+                            .placeholder("e.g., 12")
+                            .value(crate::DEFAULT_QUOTA.to_string())
+                            .required(true)
+                            .min_length(1)
+                            .max_length(3)
+                    ),
+                ]);
 
-                    let mut temp_group = Group {
-                        guild_id,
-                        group_id:       0,
-                        name:           None,
-                        quota:          crate::DEFAULT_QUOTA,
-                        timeout:        crate::DEFAULT_HOT_JOIN_TIMEOUT,
-                        dashboard_msg:  MessageId::new(1),
-                        channels:       Channels {
-                            queue_chat: queue_channel,
-                            queue_vc:   queue_vc_channel,
-                            teams:      vec![TeamChannel {
-                                red_vc: red_channel,
-                                blu_vc: blue_channel,
-                            }],
-                            dashboard: dashboard_channel,
-                        },
-                        sessions:            vec![],
-                        connect_info:        None,
-                        team_balance_method: crate::models::TeamBalanceMethod::default(),
-                        dm_alert_enabled:    false,
-                        dm_alert_threshold:  0,
-                        dm_alert_users:      vec![],
-                    };
-
-                    // Publish the dashboard to get the actual message ID
-                    match temp_group.dash_publish(ctx, dashboard_channel, db, guild_id).await {
-                        Ok(_) => {
-                            let dashboard_msg_id = temp_group.dashboard_msg.get();
-                            info!("[{}] Dashboard message created with ID {}", guild_name, dashboard_msg_id);
-
-                            // Create the group in the database
-                            let group_config = crate::database::repositories::group::GroupConfig {
-                                dashboard_channel_id: dashboard_channel.get(),
-                                chat_channel_id: queue_channel.get(),
-                                queue_vc_id: queue_vc_channel.get(),
-                                red_vc_id: red_channel.get(),
-                                blu_vc_id: blue_channel.get(),
-                                quota: crate::DEFAULT_QUOTA,
-                            };
-                            match db.groups.create_group(guild_id, dashboard_msg_id, group_config).await {
-                                Ok(db_group) => {
-                                    info!("[{}] Group {} saved to database", guild_name, db_group.group_id);
-
-                                    // Add group to in-memory server
-                                    let mut manager_lock = manager.lock().await;
-                                    if let Ok(server) = manager_lock.get_server(guild_id) {
-                                        if let Err(e) = server.add_group(db_group.clone()) {
-                                            error!("Failed to add group to server: {e}");
-                                        }
-                                    }
-                                    drop(manager_lock);
-
-                                    // Refresh the settings menu
-                                    let settings = get_server_settings(db, guild_id).await?;
-                                    let embed = build_server_settings_embed(&settings, &guild_name);
-                                    let buttons = build_server_settings_buttons(&settings, &guild_name);
-
-                                    let response = CIR::UpdateMessage(
-                                        CIRM::new().embed(embed).components(buttons)
-                                    );
-                                    interaction.create_response(&ctx.http, response).await?;
-                                },
-                                Err(e) => {
-                                    // Database save failed - clean up
-                                    let _ = dashboard_channel.delete_message(&ctx.http, dashboard_msg_id).await;
-                                    let _ = dashboard_channel.delete(&ctx.http).await;
-                                    let _ = queue_channel.delete(&ctx.http).await;
-                                    let _ = queue_vc_channel.delete(&ctx.http).await;
-                                    let _ = red_channel.delete(&ctx.http).await;
-                                    let _ = blue_channel.delete(&ctx.http).await;
-                                    let _ = category_id.delete(&ctx.http).await;
-
-                                    warn!("[{}] Failed to save group to database: {}", guild_name, e);
-                                    let response = CIR::Message(
-                                        CIRM::new().content(format!("Failed to save group: {e}")).ephemeral(true)
-                                    );
-                                    interaction.create_response(&ctx.http, response).await?;
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            // Dashboard creation failed - clean up
-                            let _ = dashboard_channel.delete(&ctx.http).await;
-                            let _ = queue_channel.delete(&ctx.http).await;
-                            let _ = queue_vc_channel.delete(&ctx.http).await;
-                            let _ = red_channel.delete(&ctx.http).await;
-                            let _ = blue_channel.delete(&ctx.http).await;
-                            let _ = category_id.delete(&ctx.http).await;
-
-                            warn!("[{}] Failed to create dashboard: {}", guild_name, e);
-                            let response = CIR::Message(
-                                CIRM::new().content(format!("Failed to create dashboard: {e}")).ephemeral(true)
-                            );
-                            interaction.create_response(&ctx.http, response).await?;
-                        }
-                    }
-                },
-                Err(e) => {
-                    warn!("[{}] Failed to create channels: {}", guild_name, e);
-                    let response = CIR::Message(
-                        CIRM::new().content(format!("Failed to create channels: {e}")).ephemeral(true)
-                    );
-                    interaction.create_response(&ctx.http, response).await?;
-                }
-            }
+            let response = CIR::Modal(modal);
+            interaction.create_response(&ctx.http, response).await?;
         }
         "server_settings_link_group" => {
             // Show category selection dropdown to link existing group
@@ -1799,14 +1729,18 @@ pub async fn handle_server_settings_button(
             let red_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[3], 16)?);
             let blue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[4], 16)?);
             let dashboard_msg_id = u64::from_str_radix(parts[5], 16)?;
+
+            // Derive category from dashboard channel's parent
+            let category_id = ctx.cache.channel(dashboard_channel)
+                .and_then(|ch| ch.parent_id)
+                .unwrap_or(serenity::all::ChannelId::new(1));
             
             // Create group with existing message ID
             let group_config = crate::database::repositories::group::GroupConfig {
+                category_id: category_id.get(),
                 dashboard_channel_id: dashboard_channel.get(),
                 chat_channel_id: queue_channel.get(),
                 queue_vc_id: queue_vc_channel.get(),
-                red_vc_id: red_channel.get(),
-                blu_vc_id: blue_channel.get(),
                 quota: crate::DEFAULT_QUOTA,
             };
             
@@ -1867,18 +1801,24 @@ pub async fn handle_server_settings_button(
             let queue_vc_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[2], 16)?);
             let red_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[3], 16)?);
             let blue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[4], 16)?);
+
+            // Derive category from dashboard channel's parent
+            let category_id = ctx.cache.channel(dashboard_channel)
+                .and_then(|ch| ch.parent_id)
+                .unwrap_or(serenity::all::ChannelId::new(1));
             
             use crate::models::{Group, Channels, TeamChannel};
             use serenity::all::MessageId;
             
-            let mut temp_group = Group {
+            let mut temp_group = Group::new(
                 guild_id,
-                group_id:       0,
-                name:           None,
-                quota:          crate::DEFAULT_QUOTA,
-                timeout:        crate::DEFAULT_HOT_JOIN_TIMEOUT,
-                dashboard_msg:  MessageId::new(1),
-                channels:       Channels {
+                0,
+                None,
+                crate::DEFAULT_QUOTA,
+                crate::DEFAULT_HOT_JOIN_TIMEOUT,
+                MessageId::new(1),
+                Channels {
+                    category:   category_id,
                     queue_chat: queue_channel,
                     queue_vc:   queue_vc_channel,
                     teams:      vec![TeamChannel {
@@ -1887,13 +1827,8 @@ pub async fn handle_server_settings_button(
                     }],
                     dashboard: dashboard_channel,
                 },
-                sessions:            vec![],
-                connect_info:        None,
-                team_balance_method: crate::models::TeamBalanceMethod::default(),
-                dm_alert_enabled:    false,
-                dm_alert_threshold:  0,
-                dm_alert_users:      vec![],
-            };
+                vec![],
+            );
             
             let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
             
@@ -1905,11 +1840,10 @@ pub async fn handle_server_settings_button(
                                 
                                 // Create the group in the database
                                 let group_config = crate::database::repositories::group::GroupConfig {
+                                    category_id: category_id.get(),
                                     dashboard_channel_id: dashboard_channel.get(),
                                     chat_channel_id: queue_channel.get(),
                                     queue_vc_id: queue_vc_channel.get(),
-                                    red_vc_id: red_channel.get(),
-                                    blu_vc_id: blue_channel.get(),
                                     quota: crate::DEFAULT_QUOTA,
                                 };
                                 match db.groups.create_group(guild_id, dashboard_msg_id, group_config).await {
@@ -2014,15 +1948,21 @@ pub async fn handle_server_settings_button(
                             
                             use crate::models::{Group, Channels, TeamChannel};
                             use serenity::all::MessageId;
+
+                            // Derive category from dashboard channel's parent
+                            let category_id = ctx.cache.channel(dashboard_channel.unwrap())
+                                .and_then(|ch| ch.parent_id)
+                                .unwrap_or(serenity::all::ChannelId::new(1));
                             
-                            let mut temp_group = Group {
+                            let mut temp_group = Group::new(
                                 guild_id,
-                                group_id:       0,
-                                name:           None,
-                                quota:          crate::DEFAULT_QUOTA,
-                                timeout:        crate::DEFAULT_HOT_JOIN_TIMEOUT,
-                                dashboard_msg:  MessageId::new(1),
-                                channels:       Channels {
+                                0,
+                                None,
+                                crate::DEFAULT_QUOTA,
+                                crate::DEFAULT_HOT_JOIN_TIMEOUT,
+                                MessageId::new(1),
+                                Channels {
+                                    category:   category_id,
                                     queue_chat: queue_channel.unwrap(),
                                     queue_vc:   queue_vc_channel.unwrap(),
                                     teams:      vec![TeamChannel {
@@ -2031,13 +1971,8 @@ pub async fn handle_server_settings_button(
                                     }],
                                     dashboard: dashboard_channel.unwrap(),
                                 },
-                                sessions:            vec![],
-                                connect_info:        None,
-                                team_balance_method: crate::models::TeamBalanceMethod::default(),
-                                dm_alert_enabled:    false,
-                                dm_alert_threshold:  0,
-                                dm_alert_users:      vec![],
-                            };
+                                vec![],
+                            );
                             
                             // Publish the dashboard
                             match temp_group.dash_publish(ctx, dashboard_channel.unwrap(), db, guild_id).await {
@@ -2047,11 +1982,10 @@ pub async fn handle_server_settings_button(
                                     
                                     // Create the group in the database
                                     let group_config = crate::database::repositories::group::GroupConfig {
+                                        category_id: category_id.get(),
                                         dashboard_channel_id: dashboard_channel.unwrap().get(),
                                         chat_channel_id: queue_channel.unwrap().get(),
                                         queue_vc_id: queue_vc_channel.unwrap().get(),
-                                        red_vc_id: red_channel.unwrap().get(),
-                                        blu_vc_id: blue_channel.unwrap().get(),
                                         quota: crate::DEFAULT_QUOTA,
                                     };
                                     
@@ -2276,13 +2210,17 @@ pub async fn handle_server_settings_button(
                 info!("[{}] Removed duplicate group {} before linking", guild_name, dup_group_id);
             }
             
+            // Derive category from dashboard channel's parent
+            let category_id = ctx.cache.channel(dashboard_channel)
+                .and_then(|ch| ch.parent_id)
+                .unwrap_or(serenity::all::ChannelId::new(1));
+
             // Create new group with existing message ID
             let group_config = crate::database::repositories::group::GroupConfig {
+                category_id: category_id.get(),
                 dashboard_channel_id: dashboard_channel.get(),
                 chat_channel_id: queue_channel.get(),
                 queue_vc_id: queue_vc_channel.get(),
-                red_vc_id: red_channel.get(),
-                blu_vc_id: blue_channel.get(),
                 quota: crate::DEFAULT_QUOTA,
             };
             
@@ -2379,15 +2317,21 @@ pub async fn handle_server_settings_button(
             // Create new dashboard
             use crate::models::{Group, Channels, TeamChannel};
             use serenity::all::MessageId;
+
+            // Derive category from dashboard channel's parent
+            let category_id = ctx.cache.channel(dashboard_channel)
+                .and_then(|ch| ch.parent_id)
+                .unwrap_or(serenity::all::ChannelId::new(1));
             
-            let mut temp_group = Group {
+            let mut temp_group = Group::new(
                 guild_id,
-                group_id:       0,
-                name:           None,
-                quota:          crate::DEFAULT_QUOTA,
-                timeout:        crate::DEFAULT_HOT_JOIN_TIMEOUT,
-                dashboard_msg:  MessageId::new(1),
-                channels:       Channels {
+                0,
+                None,
+                crate::DEFAULT_QUOTA,
+                crate::DEFAULT_HOT_JOIN_TIMEOUT,
+                MessageId::new(1),
+                Channels {
+                    category:   category_id,
                     queue_chat: queue_channel,
                     queue_vc:   queue_vc_channel,
                     teams:      vec![TeamChannel {
@@ -2396,24 +2340,18 @@ pub async fn handle_server_settings_button(
                     }],
                     dashboard: dashboard_channel,
                 },
-                sessions:            vec![],
-                connect_info:        None,
-                team_balance_method: crate::models::TeamBalanceMethod::default(),
-                dm_alert_enabled:    false,
-                dm_alert_threshold:  0,
-                dm_alert_users:      vec![],
-            };
+                vec![],
+            );
             
             match temp_group.dash_publish(ctx, dashboard_channel, db, guild_id).await {
                 Ok(_) => {
                     let dashboard_msg_id = temp_group.dashboard_msg.get();
                     
                     let group_config = crate::database::repositories::group::GroupConfig {
+                        category_id: category_id.get(),
                         dashboard_channel_id: dashboard_channel.get(),
                         chat_channel_id: queue_channel.get(),
                         queue_vc_id: queue_vc_channel.get(),
-                        red_vc_id: red_channel.get(),
-                        blu_vc_id: blue_channel.get(),
                         quota: crate::DEFAULT_QUOTA,
                     };
                     
@@ -2543,6 +2481,9 @@ pub async fn handle_server_settings_button(
                                 if let Some(group) = server.groups.iter().find(|g| g.group_id == group_id) {
                                     let name = group.display_name();
                                     let mut channels = Vec::new();
+                                    if group.channels.category.get() > 1 {
+                                        channels.push(format!("• <#{}> (category)", group.channels.category.get()));
+                                    }
                                     channels.push(format!("• <#{}> (dashboard)", group.channels.dashboard.get()));
                                     channels.push(format!("• <#{}> (queue chat)", group.channels.queue_chat.get()));
                                     channels.push(format!("• <#{}> (queue voice)", group.channels.queue_vc.get()));
@@ -2607,6 +2548,7 @@ pub async fn handle_server_settings_button(
                     if let Ok(server) = manager_lock.get_server(guild_id) {
                         if let Some(group) = server.groups.iter().find(|g| g.group_id == group_id) {
                             let name = group.display_name();
+                            let category = group.channels.category;
                             let mut channels = vec![
                                 group.channels.dashboard,
                                 group.channels.queue_chat,
@@ -2615,6 +2557,10 @@ pub async fn handle_server_settings_button(
                             for team in &group.channels.teams {
                                 channels.push(team.red_vc);
                                 channels.push(team.blu_vc);
+                            }
+                            // Category last so children are deleted first
+                            if category.get() > 1 {
+                                channels.push(category);
                             }
                             (Some(name), channels)
                         } else {
@@ -2778,7 +2724,7 @@ pub async fn handle_server_settings_button(
                                     CreateActionRow::InputText(
                                         CreateInputText::new(InputTextStyle::Short, "Quota (2-100)", "quota")
                                             .placeholder("Number of players required")
-                                            .value(group.quota.to_string())
+                                            .value(group.quota().to_string())
                                             .required(true)
                                             .min_length(1)
                                             .max_length(3)
@@ -2794,7 +2740,7 @@ pub async fn handle_server_settings_button(
                                     CreateActionRow::InputText(
                                         CreateInputText::new(InputTextStyle::Paragraph, "Connect info", "connect")
                                             .placeholder("e.g., connect 192.168.1.1:27015; password secret")
-                                            .value(group.connect_info.clone().unwrap_or_default())
+                                            .value(group.connect_info().unwrap_or_default().to_string())
                                             .required(false)
                                             .max_length(500)
                                     ),
@@ -2946,17 +2892,10 @@ pub async fn handle_server_settings_button(
                     // Return to group settings
                     let groups = db.groups.get_groups_for_guild(guild_id).await?;
                     if let Some(group) = groups.iter().find(|g| g.group_id == group_id) {
-                        let settings = GroupSettings {
-                            group_id: group.group_id,
-                            name: group.name.clone(),
-                            quota: group.quota,
-                            timeout: group.timeout,
-                            connect_info: group.connect_info.clone(),
-                            team_balance_method: group.team_balance_method,
-                        };
+                        let settings = GroupSettings::from_group(group);
                         
                         let embed = build_group_settings_embed(&settings);
-                        let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+                        let buttons = build_group_settings_buttons(settings.group_id);
                         
                         let response = CIR::UpdateMessage(
                             CIRM::new()
@@ -2982,17 +2921,10 @@ pub async fn handle_server_settings_button(
             if let Ok(group_id) = group_id_str.parse::<u8>() {
                 let groups = db.groups.get_groups_for_guild(guild_id).await?;
                 if let Some(group) = groups.iter().find(|g| g.group_id == group_id) {
-                    let settings = GroupSettings {
-                        group_id: group.group_id,
-                        name: group.name.clone(),
-                        quota: group.quota,
-                        timeout: group.timeout,
-                        connect_info: group.connect_info.clone(),
-                        team_balance_method: group.team_balance_method,
-                    };
+                    let settings = GroupSettings::from_group(group);
                     
                     let embed = build_group_settings_embed(&settings);
-                    let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+                    let buttons = build_group_settings_buttons(settings.group_id);
                     
                     let response = CIR::UpdateMessage(
                         CIRM::new().embed(embed).components(buttons)
@@ -3013,17 +2945,10 @@ pub async fn handle_server_settings_button(
                     let groups = db.groups.get_groups_for_guild(guild_id).await?;
                     if let Some(group) = groups.iter().find(|g| g.group_id == group_id && g.channels.queue_vc.get() == queue_id) {
                         // Show group settings screen with buttons including Link Message
-                        let settings = GroupSettings {
-                            group_id: group.group_id,
-                            name: group.name.clone(),
-                            quota: group.quota,
-                            timeout: group.timeout,
-                            connect_info: group.connect_info.clone(),
-                            team_balance_method: group.team_balance_method,
-                        };
+                        let settings = GroupSettings::from_group(group);
                         
                         let embed = build_group_settings_embed(&settings);
-                        let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+                        let buttons = build_group_settings_buttons(settings.group_id);
                         
                         let response = CIR::UpdateMessage(
                             CIRM::new()
@@ -3123,6 +3048,7 @@ pub async fn handle_server_settings_modal(
     ctx: &Context,
     interaction: &ModalInteraction,
     db: &Arc<Database>,
+    manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
 ) -> Result<()> {
     let guild_id = interaction.guild_id.expect("Guild ID not found");
     let modal_id = &interaction.data.custom_id;
@@ -3450,6 +3376,159 @@ pub async fn handle_server_settings_modal(
             CIRM::new().embed(display.build_embed()).components(display.build_components())
         );
         interaction.create_response(&ctx.http, response).await?;
+    } else if modal_id == "server_settings_modal_create_group" {
+        // Extract modal fields
+        let mut group_name = String::new();
+        let mut channel_prefix = String::new();
+        let mut category_name = String::new();
+        let mut quota_str = String::new();
+
+        for row in &interaction.data.components {
+            for component in &row.components {
+                if let serenity::all::ActionRowComponent::InputText(input) = component {
+                    match input.custom_id.as_str() {
+                        "group_name"      => group_name      = input.value.clone().unwrap_or_default(),
+                        "channel_prefix" => channel_prefix = input.value.clone().unwrap_or_default(),
+                        "category_name"  => category_name  = input.value.clone().unwrap_or_default(),
+                        "quota"          => quota_str      = input.value.clone().unwrap_or_default(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        let group_name = group_name.trim().to_string();
+        let channel_prefix = channel_prefix.trim().to_lowercase().replace(' ', "-");
+        let category_name = category_name.trim().to_string();
+
+        if group_name.is_empty() || channel_prefix.is_empty() || category_name.is_empty() {
+            let response = CIR::Message(
+                CIRM::new().content("Group name, channel prefix, and category name cannot be empty.").ephemeral(true)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+
+        let quota: u8 = match quota_str.trim().parse() {
+            Ok(q) if (2..=100).contains(&q) => q,
+            _ => {
+                let response = CIR::Message(
+                    CIRM::new().content("Invalid quota. Must be between 2 and 100.").ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+        };
+
+        // Defer the response so we have time to create channels
+        interaction.create_response(&ctx.http, CIR::Defer(CIRM::new().ephemeral(true))).await?;
+
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+
+        // Create channels
+        match crate::handlers::admin::create_group_channels(ctx, guild_id, &category_name, &channel_prefix).await {
+            Ok((category_id, dashboard_channel, queue_channel, queue_vc_channel)) => {
+                use crate::models::{Group, Channels};
+                use serenity::all::MessageId;
+
+                let mut temp_group = Group::new(
+                    guild_id,
+                    0,
+                    Some(group_name.clone()),
+                    quota,
+                    crate::DEFAULT_HOT_JOIN_TIMEOUT,
+                    MessageId::new(1),
+                    Channels {
+                        category:   category_id,
+                        queue_chat: queue_channel,
+                        queue_vc:   queue_vc_channel,
+                        teams:      vec![],
+                        dashboard:  dashboard_channel,
+                    },
+                    vec![],
+                );
+
+                // Publish the dashboard
+                match temp_group.dash_publish(ctx, dashboard_channel, db, guild_id).await {
+                    Ok(_) => {
+                        let dashboard_msg_id = temp_group.dashboard_msg.get();
+                        info!("[{}] Dashboard message created with ID {}", guild_name, dashboard_msg_id);
+
+                        let group_config = crate::database::repositories::group::GroupConfig {
+                            category_id: category_id.get(),
+                            dashboard_channel_id: dashboard_channel.get(),
+                            chat_channel_id: queue_channel.get(),
+                            queue_vc_id: queue_vc_channel.get(),
+                            quota,
+                        };
+                        match db.groups.create_group(guild_id, dashboard_msg_id, group_config).await {
+                            Ok(db_group) => {
+                                info!("[{}] Group {} saved to database", guild_name, db_group.group_id);
+
+                                // Update group name in DB
+                                let _ = db.groups.update_name(guild_id, db_group.group_id, Some(&group_name)).await;
+
+                                // Add group to in-memory server
+                                let mut manager_lock = manager.lock().await;
+                                if let Ok(server) = manager_lock.get_server(guild_id) {
+                                    let mut group = db_group.clone();
+                                    group.name = Some(group_name.clone());
+                                    if let Err(e) = server.add_group(group) {
+                                        error!("Failed to add group to server: {e}");
+                                    }
+                                }
+                                drop(manager_lock);
+
+                                // Follow up with success
+                                let groups = db.groups.get_groups_for_guild(guild_id).await?;
+                                let display = crate::handlers::settings_menu::GroupListDisplay {
+                                    guild_name: guild_name.clone(),
+                                    groups,
+                                };
+
+                                let followup = serenity::all::CreateInteractionResponseFollowup::new()
+                                    .embed(display.build_embed())
+                                    .components(display.build_components())
+                                    .ephemeral(true);
+                                interaction.create_followup(&ctx.http, followup).await?;
+                            },
+                            Err(e) => {
+                                let _ = dashboard_channel.delete_message(&ctx.http, dashboard_msg_id).await;
+                                let _ = dashboard_channel.delete(&ctx.http).await;
+                                let _ = queue_channel.delete(&ctx.http).await;
+                                let _ = queue_vc_channel.delete(&ctx.http).await;
+                                let _ = category_id.delete(&ctx.http).await;
+
+                                warn!("[{}] Failed to save group to database: {}", guild_name, e);
+                                let followup = serenity::all::CreateInteractionResponseFollowup::new()
+                                    .content(format!("Failed to save group: {e}"))
+                                    .ephemeral(true);
+                                interaction.create_followup(&ctx.http, followup).await?;
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        let _ = dashboard_channel.delete(&ctx.http).await;
+                        let _ = queue_channel.delete(&ctx.http).await;
+                        let _ = queue_vc_channel.delete(&ctx.http).await;
+                        let _ = category_id.delete(&ctx.http).await;
+
+                        warn!("[{}] Failed to create dashboard: {}", guild_name, e);
+                        let followup = serenity::all::CreateInteractionResponseFollowup::new()
+                            .content(format!("Failed to create dashboard: {e}"))
+                            .ephemeral(true);
+                        interaction.create_followup(&ctx.http, followup).await?;
+                    }
+                }
+            },
+            Err(e) => {
+                warn!("[{}] Failed to create channels: {}", guild_name, e);
+                let followup = serenity::all::CreateInteractionResponseFollowup::new()
+                    .content(format!("Failed to create channels: {e}"))
+                    .ephemeral(true);
+                interaction.create_followup(&ctx.http, followup).await?;
+            }
+        }
     } else {
         warn!("Unknown server settings modal: {}", modal_id);
     }
@@ -3548,7 +3627,7 @@ pub async fn handle_player_settings_rank_select(
         if let Ok(server) = manager_lock.get_server(guild_id) {
             for group in &server.groups {
                 // Check if player is in any session in this group
-                let player_in_queue = group.sessions.iter().any(|session| {
+                let player_in_queue = group.subgroups[0].sessions.iter().any(|session| {
                     session.pool.iter().any(|p| p.player.user_id == target_uid)
                 });
                 
@@ -3606,38 +3685,63 @@ pub async fn handle_player_settings_rank_select(
 
 /// Group settings structure for display
 pub struct GroupSettings {
-    pub group_id:            u8,
-    pub name:                Option<String>,
-    pub quota:               u8,
-    pub timeout:             u16,
-    pub connect_info:        Option<String>,
-    pub team_balance_method: crate::models::TeamBalanceMethod,
+    pub group_id:       u8,
+    pub name:           Option<String>,
+    pub quota:          u8,
+    pub timeout:        u16,
+    pub connect_info:   Option<String>,
+    pub subgroup_count: usize,
+    pub vc_create:      String,
+    pub vc_destroy:     String,
+    pub vc_keep_min:    bool,
+}
+
+impl GroupSettings {
+    pub fn from_group(group: &crate::models::Group) -> Self {
+        Self {
+            group_id:       group.group_id,
+            name:           group.name.clone(),
+            quota:          group.quota(),
+            timeout:        group.timeout,
+            connect_info:   group.connect_info().map(|s| s.to_string()),
+            subgroup_count: group.subgroups.len(),
+            vc_create:      group.team_vc_settings.create_policy.to_string(),
+            vc_destroy:     group.team_vc_settings.destroy_policy.to_string(),
+            vc_keep_min:    group.team_vc_settings.keep_minimum,
+        }
+    }
 }
 
 /// Build group settings embed
 pub fn build_group_settings_embed(settings: &GroupSettings) -> CE {
     use crate::handlers::settings_menu::{AsSettingsMenu, GroupSettingsDisplay};
     let display = GroupSettingsDisplay {
-        group_id:            settings.group_id,
-        name:                settings.name.clone(),
-        quota:               settings.quota,
-        timeout:             settings.timeout,
-        connect_info:        settings.connect_info.clone(),
-        team_balance_method: settings.team_balance_method,
+        group_id:       settings.group_id,
+        name:           settings.name.clone(),
+        quota:          settings.quota,
+        timeout:        settings.timeout,
+        connect_info:   settings.connect_info.clone(),
+        subgroup_count: settings.subgroup_count,
+        vc_create:      settings.vc_create.clone(),
+        vc_destroy:     settings.vc_destroy.clone(),
+        vc_keep_min:    settings.vc_keep_min,
     };
     display.as_settings_menu().build_embed()
 }
 
 /// Build group settings buttons with group_id embedded in custom_id
-pub fn build_group_settings_buttons(group_id: u8, team_balance_method: crate::models::TeamBalanceMethod) -> Vec<CAR> {
+pub fn build_group_settings_buttons(group_id: u8) -> Vec<CAR> {
     use crate::handlers::settings_menu::{AsSettingsMenu, GroupSettingsDisplay};
     let display = GroupSettingsDisplay {
         group_id,
-        name:                None,
-        quota:               0,
-        timeout:             0,
-        connect_info:        None,
-        team_balance_method,
+        name:           None,
+        quota:          0,
+        timeout:        0,
+        connect_info:   None,
+        subgroup_count: 0,
+        vc_create:      String::new(),
+        vc_destroy:     String::new(),
+        vc_keep_min:    true,
     };
     display.as_settings_menu().build_components()
 }
@@ -3670,6 +3774,129 @@ pub async fn handle_group_settings_button(
 
     info!("[Group Settings] {} pressed {}", interaction.user.name, button_id);
 
+    // Handle subgroup remove confirmation (button: group_sg_confirm_remove_{gid}_{sgid}, select: group_sg_confirm_remove with value gid_sgid)
+    if button_id == "group_sg_confirm_remove" || button_id.starts_with("group_sg_confirm_remove_") {
+        let selected = if button_id == "group_sg_confirm_remove" {
+            match &interaction.data.kind {
+                serenity::all::ComponentInteractionDataKind::StringSelect { values } => {
+                    values.first().cloned().unwrap_or_default()
+                }
+                _ => return Err(anyhow::anyhow!("Expected string select")),
+            }
+        } else {
+            button_id.strip_prefix("group_sg_confirm_remove_").unwrap().to_string()
+        };
+        let parts: Vec<&str> = selected.split('_').collect();
+        if parts.len() != 2 {
+            return Err(anyhow::anyhow!("Invalid remove selection format"));
+        }
+        let group_id: u8 = parts[0].parse().map_err(|_| anyhow::anyhow!("Invalid group_id"))?;
+        let sg_id: u8 = parts[1].parse().map_err(|_| anyhow::anyhow!("Invalid subgroup_id"))?;
+
+        let mut manager_lock = manager.lock().await;
+        let group = {
+            let server = manager_lock.get_server(guild_id)?;
+            server.groups.iter_mut()
+                .find(|g| g.group_id == group_id)
+                .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?
+        };
+
+        match group.remove_subgroup(sg_id) {
+            Ok(_) => {
+                // Persist to DB
+                db.groups.save_all_subgroups(guild_id, group_id, &group.subgroups).await?;
+
+                // Update dashboard
+                group.queue_dash_update(ctx, guild_id).await;
+
+                let display = crate::handlers::settings_menu::SubgroupListDisplay {
+                    group_id,
+                    group_name: group.display_name(),
+                    subgroups: group.subgroups.iter()
+                        .map(|sg| (sg.id, sg.name.clone(), sg.quota))
+                        .collect(),
+                };
+                drop(manager_lock);
+                let response = CIR::UpdateMessage(
+                    CIRM::new().embed(display.build_embed()).components(display.build_components())
+                );
+                interaction.create_response(&ctx.http, response).await?;
+            }
+            Err(e) => {
+                drop(manager_lock);
+                let response = CIR::Message(
+                    CIRM::new().content(format!("Failed to remove subgroup: {}", e)).ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+            }
+        }
+        return Ok(());
+    }
+
+    // Handle subgroup edit (button: group_sg_edit_{gid}_{sgid}, select: group_sg_edit with value gid_sgid)
+    if button_id == "group_sg_edit" || button_id.starts_with("group_sg_edit_") {
+        let selected = if button_id == "group_sg_edit" {
+            // Select menu variant
+            match &interaction.data.kind {
+                serenity::all::ComponentInteractionDataKind::StringSelect { values } => {
+                    values.first().cloned().unwrap_or_default()
+                }
+                _ => return Err(anyhow::anyhow!("Expected string select")),
+            }
+        } else {
+            // Button variant: strip prefix to get "gid_sgid"
+            button_id.strip_prefix("group_sg_edit_").unwrap().to_string()
+        };
+        let parts: Vec<&str> = selected.split('_').collect();
+        if parts.len() != 2 {
+            return Err(anyhow::anyhow!("Invalid edit selection format"));
+        }
+        let group_id: u8 = parts[0].parse().map_err(|_| anyhow::anyhow!("Invalid group_id"))?;
+        let sg_id: u8 = parts[1].parse().map_err(|_| anyhow::anyhow!("Invalid subgroup_id"))?;
+
+        // Show modal to edit the subgroup's name and quota
+        use serenity::all::{CreateModal, CreateInputText, InputTextStyle, CreateActionRow};
+
+        let mut manager_lock = manager.lock().await;
+        let sg_name;
+        let sg_quota;
+        {
+            let server = manager_lock.get_server(guild_id)?;
+            let group = server.groups.iter()
+                .find(|g| g.group_id == group_id)
+                .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?;
+            let sg = group.subgroups.iter()
+                .find(|s| s.id == sg_id)
+                .ok_or_else(|| anyhow::anyhow!("Subgroup {} not found", sg_id))?;
+            sg_name = sg.name.clone();
+            sg_quota = sg.quota.to_string();
+        }
+        drop(manager_lock);
+
+        let modal = CreateModal::new(
+            format!("group_sg_modal_edit_{}_{}", group_id, sg_id),
+            format!("Edit subgroup: {}", sg_name),
+        )
+        .components(vec![
+            CreateActionRow::InputText(
+                CreateInputText::new(InputTextStyle::Short, "Subgroup name", "name")
+                    .value(&sg_name)
+                    .required(true)
+                    .max_length(32)
+            ),
+            CreateActionRow::InputText(
+                CreateInputText::new(InputTextStyle::Short, "Quota (players per match)", "quota")
+                    .value(&sg_quota)
+                    .required(true)
+                    .max_length(3)
+            ),
+        ]);
+
+        let response = CIR::Modal(modal);
+        interaction.create_response(&ctx.http, response).await?;
+        return Ok(());
+    }
+
     // Extract group_id from button custom_id (format: group_settings_edit_<action>_<group_id>)
     let group_id: u8 = button_id
         .rsplit('_')
@@ -3686,14 +3913,7 @@ pub async fn handle_group_settings_button(
             .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?
             .clone()
     };
-    let settings = GroupSettings {
-        group_id:            group.group_id,
-        name:                group.name.clone(),
-        quota:               group.quota,
-        timeout:             group.timeout,
-        connect_info:        group.connect_info.clone(),
-        team_balance_method: group.team_balance_method,
-    };
+    let settings = GroupSettings::from_group(&group);
     drop(manager_lock);
 
     // Match button action (button_id format: group_settings_edit_<action>_<group_id>)
@@ -3755,6 +3975,63 @@ pub async fn handle_group_settings_button(
 
         let response = CIR::Modal(modal);
         interaction.create_response(&ctx.http, response).await?;
+    } else if button_id.starts_with("group_settings_edit_vc_create_") {
+        // Cycle through create policies
+        use crate::models::TeamVcCreatePolicy;
+        let mut manager_lock = manager.lock().await;
+        if let Ok(server) = manager_lock.get_server(guild_id) {
+            if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
+                let next = match group.team_vc_settings.create_policy {
+                    TeamVcCreatePolicy::OnFirstJoin => TeamVcCreatePolicy::OnHot,
+                    TeamVcCreatePolicy::OnHot       => TeamVcCreatePolicy::OnGameStart,
+                    TeamVcCreatePolicy::OnGameStart  => TeamVcCreatePolicy::OnFirstJoin,
+                };
+                group.team_vc_settings.create_policy = next;
+                let _ = db.groups.update_team_vc_settings(guild_id, group_id, &group.team_vc_settings).await;
+                let settings = GroupSettings::from_group(group);
+                let embed = build_group_settings_embed(&settings);
+                let buttons = build_group_settings_buttons(settings.group_id);
+                let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
+                interaction.create_response(&ctx.http, response).await?;
+            }
+        }
+        drop(manager_lock);
+    } else if button_id.starts_with("group_settings_edit_vc_destroy_") {
+        // Cycle through destroy policies
+        use crate::models::TeamVcDestroyPolicy;
+        let mut manager_lock = manager.lock().await;
+        if let Ok(server) = manager_lock.get_server(guild_id) {
+            if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
+                let next = match group.team_vc_settings.destroy_policy {
+                    TeamVcDestroyPolicy::OnLastLeave => TeamVcDestroyPolicy::AfterPull,
+                    TeamVcDestroyPolicy::AfterPull   => TeamVcDestroyPolicy::AfterTimeout,
+                    TeamVcDestroyPolicy::AfterTimeout => TeamVcDestroyPolicy::OnLastLeave,
+                };
+                group.team_vc_settings.destroy_policy = next;
+                let _ = db.groups.update_team_vc_settings(guild_id, group_id, &group.team_vc_settings).await;
+                let settings = GroupSettings::from_group(group);
+                let embed = build_group_settings_embed(&settings);
+                let buttons = build_group_settings_buttons(settings.group_id);
+                let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
+                interaction.create_response(&ctx.http, response).await?;
+            }
+        }
+        drop(manager_lock);
+    } else if button_id.starts_with("group_settings_edit_vc_keepmin_") {
+        // Toggle keep_minimum
+        let mut manager_lock = manager.lock().await;
+        if let Ok(server) = manager_lock.get_server(guild_id) {
+            if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
+                group.team_vc_settings.keep_minimum = !group.team_vc_settings.keep_minimum;
+                let _ = db.groups.update_team_vc_settings(guild_id, group_id, &group.team_vc_settings).await;
+                let settings = GroupSettings::from_group(group);
+                let embed = build_group_settings_embed(&settings);
+                let buttons = build_group_settings_buttons(settings.group_id);
+                let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
+                interaction.create_response(&ctx.http, response).await?;
+            }
+        }
+        drop(manager_lock);
     } else if button_id.starts_with("group_settings_link_message_") {
         // Handle link message button - search for existing dashboard messages
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
@@ -3922,31 +4199,424 @@ pub async fn handle_group_settings_button(
         
         let response = CIR::Modal(modal);
         interaction.create_response(&ctx.http, response).await?;
-    } else if button_id.starts_with("group_settings_back_") {
-        // Back button - return to group settings
-        let groups = db.groups.get_groups_for_guild(guild_id).await?;
-        if let Some(group) = groups.iter().find(|g| g.group_id == group_id) {
-            let settings = GroupSettings {
-                group_id: group.group_id,
-                name: group.name.clone(),
-                quota: group.quota,
-                timeout: group.timeout,
-                connect_info: group.connect_info.clone(),
-                team_balance_method: group.team_balance_method,
-            };
-            
-            let embed = build_group_settings_embed(&settings);
-            let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
-            
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(embed).components(buttons)
+    } else if button_id.starts_with("group_settings_subgroups_") {
+        // Show subgroups list screen
+        let display = crate::handlers::settings_menu::SubgroupListDisplay {
+            group_id,
+            group_name: group.display_name(),
+            subgroups: group.subgroups.iter()
+                .map(|sg| (sg.id, sg.name.clone(), sg.quota))
+                .collect(),
+        };
+        let response = CIR::UpdateMessage(
+            CIRM::new().embed(display.build_embed()).components(display.build_components())
+        );
+        interaction.create_response(&ctx.http, response).await?;
+    } else if button_id.starts_with("group_sg_back_") {
+        // Back from subgroups list -> group settings
+        let settings = GroupSettings::from_group(&group);
+        let embed = build_group_settings_embed(&settings);
+        let buttons = build_group_settings_buttons(settings.group_id);
+        let response = CIR::UpdateMessage(
+            CIRM::new().embed(embed).components(buttons)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+    } else if button_id.starts_with("group_sg_add_") {
+        // Show modal to add a new subgroup
+        use serenity::all::{CreateModal, CreateInputText, InputTextStyle, CreateActionRow};
+
+        let modal = CreateModal::new(format!("group_sg_modal_add_{}", group_id), "Add subgroup")
+            .components(vec![
+                CreateActionRow::InputText(
+                    CreateInputText::new(InputTextStyle::Short, "Subgroup name", "name")
+                        .placeholder("e.g., Competitive, Casual")
+                        .required(true)
+                        .max_length(32)
+                ),
+                CreateActionRow::InputText(
+                    CreateInputText::new(InputTextStyle::Short, "Quota (players per match)", "quota")
+                        .placeholder("e.g., 12")
+                        .required(true)
+                        .max_length(3)
+                ),
+            ]);
+
+        let response = CIR::Modal(modal);
+        interaction.create_response(&ctx.http, response).await?;
+    } else if button_id.starts_with("group_sg_remove_") {
+        // Show select menu to pick which subgroup to remove
+        // Only non-default subgroups (id != 0) can be removed
+        let removable: Vec<(String, String)> = group.subgroups.iter()
+            .filter(|sg| sg.id != 0)
+            .map(|sg| (format!("{} (quota: {})", sg.name, sg.quota), format!("{}_{}", group_id, sg.id)))
+            .collect();
+
+        if removable.is_empty() {
+            let response = CIR::Message(
+                CIRM::new().content("No removable subgroups (the default subgroup cannot be removed).").ephemeral(true)
             );
             interaction.create_response(&ctx.http, response).await?;
+        } else {
+            use crate::handlers::settings_menu::create_selection_menu;
+            let mut components = Vec::new();
+            if let Some(menu) = create_selection_menu(
+                "group_sg_confirm_remove",
+                "Select subgroup to remove",
+                removable,
+            ) {
+                components.push(menu);
+            }
+            components.push(CAR::Buttons(vec![
+                crate::models::embeds::Ephemeral::back(format!("group_sg_back_{}", group_id)),
+            ]));
+            let embed = CE::new()
+                .title("Remove subgroup")
+                .description("Select a subgroup to remove. The default subgroup cannot be removed.")
+                .color(0xED4245);
+            let response = CIR::UpdateMessage(
+                CIRM::new().embed(embed).components(components)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+        }
+    } else if button_id.starts_with("group_settings_rank_gate_") {
+        // Show rank gate configuration screen
+        let group_id_str = button_id.strip_prefix("group_settings_rank_gate_").unwrap();
+        if let Ok(group_id) = group_id_str.parse::<u8>() {
+            let ranks = db.ranks.get_ranks(guild_id).await?;
+            if ranks.is_empty() {
+                let embed = CE::new()
+                    .title("No ranks configured")
+                    .description("You need to configure ranks before setting up a rank gate.\nGo to server settings and set up ranks first.")
+                    .color(RED);
+                let response = CIR::UpdateMessage(
+                    CIRM::new().embed(embed).components(vec![
+                        CAR::Buttons(vec![
+                            CB::new(format!("group_settings_back_{group_id}"))
+                                .label("Back")
+                                .style(BS::Secondary),
+                        ]),
+                    ])
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+
+            let embed = CE::new()
+                .title("Rank Gate - Select minimum rank")
+                .description("Select the **minimum** rank that can view this group's category.\nAll ranks from min to max (inclusive) will have access.")
+                .color(0x5865F2);
+
+            let options: Vec<(String, String)> = ranks.iter().enumerate()
+                .map(|(i, r)| (format!("{} (ELO {})", r.name, r.elo), format!("{}_{}", group_id, i)))
+                .collect();
+
+            let mut components = Vec::new();
+            if let Some(menu) = crate::handlers::settings_menu::create_selection_menu(
+                "rank_gate_min",
+                "Select minimum rank",
+                options,
+            ) {
+                components.push(menu);
+            }
+            components.push(CAR::Buttons(vec![
+                CB::new(format!("rank_gate_clear_{group_id}"))
+                    .label("Clear rank gate")
+                    .style(BS::Danger),
+                CB::new(format!("group_settings_back_{group_id}"))
+                    .label("Back")
+                    .style(BS::Secondary),
+            ]));
+
+            let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
+            interaction.create_response(&ctx.http, response).await?;
+        }
+    } else if button_id == "rank_gate_min" || button_id.starts_with("rank_gate_min_") {
+        // User selected a min rank
+        // Button variant: rank_gate_min_{group_id}_{rank_index}
+        // Select variant: rank_gate_min with value "{group_id}_{rank_index}"
+        let selected = if button_id == "rank_gate_min" {
+            match &interaction.data.kind {
+                serenity::all::ComponentInteractionDataKind::StringSelect { values } => {
+                    values.first().cloned().unwrap_or_default()
+                }
+                _ => return Err(anyhow::anyhow!("Expected string select")),
+            }
+        } else {
+            button_id.strip_prefix("rank_gate_min_").unwrap().to_string()
+        };
+        let parts: Vec<&str> = selected.splitn(2, '_').collect();
+        if parts.len() == 2 {
+            let group_id: u8 = parts[0].parse().unwrap_or(0);
+            let min_idx: usize = parts[1].parse().unwrap_or(0);
+
+            let ranks = db.ranks.get_ranks(guild_id).await?;
+            let min_rank_name = ranks.get(min_idx).map(|r| r.name.as_str()).unwrap_or("?");
+
+            let embed = CE::new()
+                .title("Rank Gate - Select maximum rank")
+                .description(format!(
+                    "Minimum rank: **{}**\n\nNow select the **maximum** rank that can view this group's category.",
+                    min_rank_name
+                ))
+                .color(0x5865F2);
+
+            // Only show ranks >= min rank index
+            let options: Vec<(String, String)> = ranks.iter().enumerate()
+                .filter(|(i, _)| *i >= min_idx)
+                .map(|(i, r)| (format!("{} (ELO {})", r.name, r.elo), format!("{}_{}_{}", group_id, min_idx, i)))
+                .collect();
+
+            let mut components = Vec::new();
+            if let Some(menu) = crate::handlers::settings_menu::create_selection_menu(
+                "rank_gate_max",
+                "Select maximum rank",
+                options,
+            ) {
+                components.push(menu);
+            }
+            components.push(CAR::Buttons(vec![
+                CB::new(format!("group_settings_rank_gate_{group_id}"))
+                    .label("Back")
+                    .style(BS::Secondary),
+            ]));
+
+            let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
+            interaction.create_response(&ctx.http, response).await?;
+        }
+    } else if button_id == "rank_gate_max" || button_id.starts_with("rank_gate_max_") {
+        // User selected a max rank
+        // Button variant: rank_gate_max_{group_id}_{min_idx}_{max_idx}
+        // Select variant: rank_gate_max with value "{group_id}_{min_idx}_{max_idx}"
+        let selected = if button_id == "rank_gate_max" {
+            match &interaction.data.kind {
+                serenity::all::ComponentInteractionDataKind::StringSelect { values } => {
+                    values.first().cloned().unwrap_or_default()
+                }
+                _ => return Err(anyhow::anyhow!("Expected string select")),
+            }
+        } else {
+            button_id.strip_prefix("rank_gate_max_").unwrap().to_string()
+        };
+        let parts: Vec<&str> = selected.splitn(3, '_').collect();
+        if parts.len() == 3 {
+            let group_id: u8 = parts[0].parse().unwrap_or(0);
+            let min_idx: usize = parts[1].parse().unwrap_or(0);
+            let max_idx: usize = parts[2].parse().unwrap_or(0);
+
+            let ranks = db.ranks.get_ranks(guild_id).await?;
+            let category_id = {
+                let mut manager_lock = manager.lock().await;
+                let server = manager_lock.get_server(guild_id)?;
+                let group = server.groups.iter()
+                    .find(|g| g.group_id == group_id)
+                    .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?;
+                group.channels.category
+            };
+
+            match apply_rank_gate(ctx, guild_id, category_id, &ranks, min_idx, max_idx).await {
+                Ok(count) => {
+                    let min_name = ranks.get(min_idx).map(|r| r.name.as_str()).unwrap_or("?");
+                    let max_name = ranks.get(max_idx).map(|r| r.name.as_str()).unwrap_or("?");
+                    let embed = CE::new()
+                        .title("Rank Gate Applied")
+                        .description(format!(
+                            "Category visibility restricted to ranks **{}** through **{}**.\n{} rank role(s) granted view access.",
+                            min_name, max_name, count
+                        ))
+                        .color(crate::GREEN);
+
+                    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+                        CAR::Buttons(vec![
+                            CB::new(format!("group_settings_back_{group_id}"))
+                                .label("Back to group settings")
+                                .style(BS::Secondary),
+                        ]),
+                    ]));
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+                Err(e) => {
+                    let embed = CE::new()
+                        .title("Rank Gate Failed")
+                        .description(format!("Failed to apply permissions: {}", e))
+                        .color(RED);
+                    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+                        CAR::Buttons(vec![
+                            CB::new(format!("group_settings_rank_gate_{group_id}"))
+                                .label("Retry")
+                                .style(BS::Primary),
+                            CB::new(format!("group_settings_back_{group_id}"))
+                                .label("Back")
+                                .style(BS::Secondary),
+                        ]),
+                    ]));
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
+    } else if button_id.starts_with("rank_gate_clear_") {
+        // Clear rank gate - remove view channel restrictions from category
+        let group_id_str = button_id.strip_prefix("rank_gate_clear_").unwrap();
+        if let Ok(group_id) = group_id_str.parse::<u8>() {
+            let category_id = {
+                let mut manager_lock = manager.lock().await;
+                let server = manager_lock.get_server(guild_id)?;
+                let group = server.groups.iter()
+                    .find(|g| g.group_id == group_id)
+                    .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?;
+                group.channels.category
+            };
+
+            match clear_rank_gate(ctx, guild_id, category_id).await {
+                Ok(_) => {
+                    let embed = CE::new()
+                        .title("Rank Gate Cleared")
+                        .description("Category is now visible to everyone.")
+                        .color(crate::GREEN);
+                    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+                        CAR::Buttons(vec![
+                            CB::new(format!("group_settings_back_{group_id}"))
+                                .label("Back to group settings")
+                                .style(BS::Secondary),
+                        ]),
+                    ]));
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+                Err(e) => {
+                    let embed = CE::new()
+                        .title("Clear Rank Gate Failed")
+                        .description(format!("Failed to clear permissions: {}", e))
+                        .color(RED);
+                    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+                        CAR::Buttons(vec![
+                            CB::new(format!("rank_gate_clear_{group_id}"))
+                                .label("Retry")
+                                .style(BS::Primary),
+                            CB::new(format!("group_settings_back_{group_id}"))
+                                .label("Back")
+                                .style(BS::Secondary),
+                        ]),
+                    ]));
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
+    } else if button_id.starts_with("group_settings_back_") {
+        // Back button - return to group settings screen
+        let group_id_str = button_id.strip_prefix("group_settings_back_").unwrap();
+        if let Ok(group_id) = group_id_str.parse::<u8>() {
+            let groups = db.groups.get_groups_for_guild(guild_id).await?;
+            if let Some(group) = groups.iter().find(|g| g.group_id == group_id) {
+                let settings = GroupSettings::from_group(group);
+                let embed = build_group_settings_embed(&settings);
+                let buttons = build_group_settings_buttons(settings.group_id);
+                let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
+                interaction.create_response(&ctx.http, response).await?;
+            }
         }
     } else {
         warn!("Unknown group settings button: {}", button_id);
     }
 
+    Ok(())
+}
+
+/// Apply rank gate permissions on a category channel.
+/// Denies VIEW_CHANNEL for @everyone, allows VIEW_CHANNEL for rank roles in [min_idx..=max_idx].
+/// Also ensures the bot can still see the category.
+async fn apply_rank_gate(
+    ctx: &Context,
+    guild_id: GI,
+    category_id: serenity::all::ChannelId,
+    ranks: &[crate::database::repositories::rank::GuildRank],
+    min_idx: usize,
+    max_idx: usize,
+) -> Result<usize> {
+    use serenity::all::{PermissionOverwrite, PermissionOverwriteType, Permissions};
+
+    let guild = guild_id.to_partial_guild(&ctx.http).await?;
+    let bot_user_id = ctx.cache.current_user().id;
+
+    // Find bot's integration role
+    let bot_role = guild.roles.values()
+        .find(|r| r.managed && r.tags.bot_id == Some(bot_user_id))
+        .map(|r| r.id);
+
+    // Deny @everyone VIEW_CHANNEL on the category
+    category_id.create_permission(&ctx.http, PermissionOverwrite {
+        allow: Permissions::empty(),
+        deny: Permissions::VIEW_CHANNEL,
+        kind: PermissionOverwriteType::Role(guild_id.everyone_role()),
+    }).await?;
+
+    // Allow bot user
+    category_id.create_permission(&ctx.http, PermissionOverwrite {
+        allow: Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES | Permissions::EMBED_LINKS | Permissions::CONNECT | Permissions::MOVE_MEMBERS,
+        deny: Permissions::empty(),
+        kind: PermissionOverwriteType::Member(bot_user_id),
+    }).await?;
+
+    // Allow bot integration role if present
+    if let Some(role_id) = bot_role {
+        category_id.create_permission(&ctx.http, PermissionOverwrite {
+            allow: Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES | Permissions::EMBED_LINKS | Permissions::CONNECT | Permissions::MOVE_MEMBERS,
+            deny: Permissions::empty(),
+            kind: PermissionOverwriteType::Role(role_id),
+        }).await?;
+    }
+
+    // Collect all rank role IDs so we can deny those outside the range
+    let mut allowed_count = 0usize;
+    for (i, rank) in ranks.iter().enumerate() {
+        if i >= min_idx && i <= max_idx {
+            // Allow this rank to view
+            category_id.create_permission(&ctx.http, PermissionOverwrite {
+                allow: Permissions::VIEW_CHANNEL,
+                deny: Permissions::empty(),
+                kind: PermissionOverwriteType::Role(rank.role_id),
+            }).await?;
+            allowed_count += 1;
+        } else {
+            // Explicitly deny this rank
+            category_id.create_permission(&ctx.http, PermissionOverwrite {
+                allow: Permissions::empty(),
+                deny: Permissions::VIEW_CHANNEL,
+                kind: PermissionOverwriteType::Role(rank.role_id),
+            }).await?;
+        }
+    }
+
+    info!("Applied rank gate on category {} in guild {}: ranks {}..={} ({} roles allowed)",
+        category_id, guild_id, min_idx, max_idx, allowed_count);
+
+    Ok(allowed_count)
+}
+
+/// Clear rank gate permissions from a category channel.
+/// Removes the VIEW_CHANNEL deny from @everyone and removes all rank role overwrites.
+async fn clear_rank_gate(
+    ctx: &Context,
+    guild_id: GI,
+    category_id: serenity::all::ChannelId,
+) -> Result<()> {
+    use serenity::all::PermissionOverwriteType;
+
+    // Remove @everyone VIEW_CHANNEL deny by deleting the overwrite
+    category_id.delete_permission(&ctx.http, PermissionOverwriteType::Role(guild_id.everyone_role())).await?;
+
+    // Get the current channel to find existing overwrites
+    let channel = ctx.http.get_channel(category_id).await?;
+    if let Some(guild_channel) = channel.guild() {
+        for overwrite in &guild_channel.permission_overwrites {
+            // Remove role overwrites (but keep member overwrites like the bot's)
+            if let PermissionOverwriteType::Role(role_id) = overwrite.kind {
+                if role_id != guild_id.everyone_role() {
+                    let _ = category_id.delete_permission(&ctx.http, PermissionOverwriteType::Role(role_id)).await;
+                }
+            }
+        }
+    }
+
+    info!("Cleared rank gate on category {} in guild {}", category_id, guild_id);
     Ok(())
 }
 
@@ -3982,17 +4652,10 @@ pub async fn handle_group_settings_select(
     };
     drop(manager_lock);
 
-    let settings = GroupSettings {
-        group_id:            group.group_id,
-        name:                group.name.clone(),
-        quota:               group.quota,
-        timeout:             group.timeout,
-        connect_info:        group.connect_info.clone(),
-        team_balance_method: group.team_balance_method,
-    };
+    let settings = GroupSettings::from_group(&group);
 
     let embed = build_group_settings_embed(&settings);
-    let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+    let buttons = build_group_settings_buttons(settings.group_id);
 
     let response = CIR::UpdateMessage(
         CIRM::new().embed(embed).components(buttons)
@@ -4134,6 +4797,12 @@ pub async fn handle_group_settings_modal(
 
     info!("[Group Settings] {} submitted modal {}", interaction.user.name, modal_id);
 
+    // Handle subgroup modals first (format: group_sg_modal_{action}_{group_id}_{sg_id})
+    // These have two trailing IDs so they must be handled before the generic rsplit extraction.
+    if modal_id.starts_with("group_sg_modal_edit_") || modal_id.starts_with("group_sg_modal_add_") {
+        return handle_subgroup_modal(ctx, interaction, db, manager, guild_id, modal_id).await;
+    }
+
     // Extract group_id from modal custom_id (format: group_settings_modal_<action>_<group_id>)
     let group_id: u8 = modal_id
         .rsplit('_')
@@ -4171,21 +4840,14 @@ pub async fn handle_group_settings_modal(
 
         // Update in-memory and build settings while holding lock
         group.name = name.clone();
-        let settings = GroupSettings {
-            group_id:            group.group_id,
-            name:                group.name.clone(),
-            quota:               group.quota,
-            timeout:             group.timeout,
-            connect_info:        group.connect_info.clone(),
-            team_balance_method: group.team_balance_method,
-        };
+        let settings = GroupSettings::from_group(group);
         drop(manager_lock);
 
         // Update in database (after releasing lock)
         db.groups.update_name(guild_id, group_id, name.as_deref()).await?;
 
         let embed = build_group_settings_embed(&settings);
-        let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+        let buttons = build_group_settings_buttons(settings.group_id);
 
         let response = CIR::UpdateMessage(
             CIRM::new().embed(embed).components(buttons)
@@ -4218,16 +4880,15 @@ pub async fn handle_group_settings_modal(
         };
 
         // Update in-memory
-        group.quota = quota;
+        group.set_quota(quota);
 
         // Update in database
         db.set_group(
             guild_id,
+            group.channels.category.get(),
             group.channels.queue_vc.get(),
             group.channels.dashboard.get(),
             group.channels.queue_chat.get(),
-            group.channels.teams[0].red_vc.get(),
-            group.channels.teams[0].blu_vc.get(),
             quota,
         ).await?;
 
@@ -4235,17 +4896,10 @@ pub async fn handle_group_settings_modal(
         group.queue_dash_update(ctx, guild_id).await;
 
         // Get updated settings and refresh the menu
-        let settings = GroupSettings {
-            group_id:            group.group_id,
-            name:                group.name.clone(),
-            quota:               group.quota,
-            timeout:             group.timeout,
-            connect_info:        group.connect_info.clone(),
-            team_balance_method: group.team_balance_method,
-        };
+        let settings = GroupSettings::from_group(group);
 
         let embed = build_group_settings_embed(&settings);
-        let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+        let buttons = build_group_settings_buttons(settings.group_id);
 
         let response = CIR::UpdateMessage(
             CIRM::new().embed(embed).components(buttons)
@@ -4281,17 +4935,10 @@ pub async fn handle_group_settings_modal(
         group.timeout = timeout;
 
         // Get updated settings and refresh the menu
-        let settings = GroupSettings {
-            group_id:            group.group_id,
-            name:                group.name.clone(),
-            quota:               group.quota,
-            timeout:             group.timeout,
-            connect_info:        group.connect_info.clone(),
-            team_balance_method: group.team_balance_method,
-        };
+        let settings = GroupSettings::from_group(group);
 
         let embed = build_group_settings_embed(&settings);
-        let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+        let buttons = build_group_settings_buttons(settings.group_id);
 
         let response = CIR::UpdateMessage(
             CIRM::new().embed(embed).components(buttons)
@@ -4317,23 +4964,16 @@ pub async fn handle_group_settings_modal(
         };
 
         // Update in-memory
-        group.connect_info = connect_info;
+        group.set_connect_info(connect_info);
 
         // Update dashboard
         group.queue_dash_update(ctx, guild_id).await;
 
         // Get updated settings and refresh the menu
-        let settings = GroupSettings {
-            group_id:            group.group_id,
-            name:                group.name.clone(),
-            quota:               group.quota,
-            timeout:             group.timeout,
-            connect_info:        group.connect_info.clone(),
-            team_balance_method: group.team_balance_method,
-        };
+        let settings = GroupSettings::from_group(group);
 
         let embed = build_group_settings_embed(&settings);
-        let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+        let buttons = build_group_settings_buttons(settings.group_id);
 
         let response = CIR::UpdateMessage(
             CIRM::new().embed(embed).components(buttons)
@@ -4346,24 +4986,164 @@ pub async fn handle_group_settings_modal(
     Ok(())
 }
 
-/// Handle group settings team balance method selection
-pub async fn handle_group_settings_balance_select(
+/// Handle subgroup modal submissions (add and edit)
+/// Separated from handle_group_settings_modal because the modal ID format
+/// (group_sg_modal_{action}_{group_id}_{sg_id}) has two trailing IDs,
+/// which breaks the generic rsplit('_').next() group_id extraction.
+async fn handle_subgroup_modal(
+    ctx: &Context,
+    interaction: &ModalInteraction,
+    db: &Arc<Database>,
+    manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
+    guild_id: serenity::all::GuildId,
+    modal_id: &str,
+) -> Result<()> {
+    // Extract name and quota from modal fields
+    let name_str = interaction.data.components.first()
+        .and_then(|row| row.components.first())
+        .and_then(|c| {
+            if let serenity::all::ActionRowComponent::InputText(input) = c {
+                input.value.clone()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    let quota_str = interaction.data.components.get(1)
+        .and_then(|row| row.components.first())
+        .and_then(|c| {
+            if let serenity::all::ActionRowComponent::InputText(input) = c {
+                input.value.clone()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    let name = name_str.trim().to_string();
+    if name.is_empty() {
+        let response = CIR::Message(
+            CIRM::new().content("Subgroup name cannot be empty.").ephemeral(true)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+        return Ok(());
+    }
+
+    let quota: u8 = match quota_str.trim().parse() {
+        Ok(q) if q >= 2 => q,
+        _ => {
+            let response = CIR::Message(
+                CIRM::new().content("Invalid quota. Must be a number >= 2.").ephemeral(true)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+    };
+
+    if modal_id.starts_with("group_sg_modal_edit_") {
+        let suffix = modal_id.strip_prefix("group_sg_modal_edit_").unwrap();
+        let parts: Vec<&str> = suffix.split('_').collect();
+        if parts.len() != 2 {
+            return Err(anyhow::anyhow!("Invalid edit modal ID format"));
+        }
+        let group_id: u8 = parts[0].parse().map_err(|_| anyhow::anyhow!("Invalid group_id"))?;
+        let sg_id: u8 = parts[1].parse().map_err(|_| anyhow::anyhow!("Invalid subgroup_id"))?;
+
+        let mut manager_lock = manager.lock().await;
+        let group = {
+            let server = manager_lock.get_server(guild_id)?;
+            server.groups.iter_mut()
+                .find(|g| g.group_id == group_id)
+                .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?
+        };
+
+        if let Some(sg) = group.subgroups.iter_mut().find(|s| s.id == sg_id) {
+            sg.name = name;
+            sg.quota = quota;
+        } else {
+            let response = CIR::Message(
+                CIRM::new().content(format!("Subgroup {} not found.", sg_id)).ephemeral(true)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+
+        // Persist to DB
+        db.groups.save_all_subgroups(guild_id, group_id, &group.subgroups).await?;
+
+        // Update dashboard
+        group.queue_dash_update(ctx, guild_id).await;
+
+        // Show updated subgroups list
+        let display = crate::handlers::settings_menu::SubgroupListDisplay {
+            group_id,
+            group_name: group.display_name(),
+            subgroups: group.subgroups.iter()
+                .map(|sg| (sg.id, sg.name.clone(), sg.quota))
+                .collect(),
+        };
+        let response = CIR::UpdateMessage(
+            CIRM::new().embed(display.build_embed()).components(display.build_components())
+        );
+        interaction.create_response(&ctx.http, response).await?;
+    } else if modal_id.starts_with("group_sg_modal_add_") {
+        let group_id: u8 = modal_id
+            .strip_prefix("group_sg_modal_add_")
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| anyhow::anyhow!("Invalid add modal ID format"))?;
+
+        let mut manager_lock = manager.lock().await;
+        let group = {
+            let server = manager_lock.get_server(guild_id)?;
+            server.groups.iter_mut()
+                .find(|g| g.group_id == group_id)
+                .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?
+        };
+
+        match group.add_subgroup(name, quota) {
+            Ok(_) => {
+                // Persist to DB
+                db.groups.save_all_subgroups(guild_id, group_id, &group.subgroups).await?;
+
+                // Update dashboard
+                group.queue_dash_update(ctx, guild_id).await;
+
+                // Show updated subgroups list
+                let display = crate::handlers::settings_menu::SubgroupListDisplay {
+                    group_id,
+                    group_name: group.display_name(),
+                    subgroups: group.subgroups.iter()
+                        .map(|sg| (sg.id, sg.name.clone(), sg.quota))
+                        .collect(),
+                };
+                let response = CIR::UpdateMessage(
+                    CIRM::new().embed(display.build_embed()).components(display.build_components())
+                );
+                interaction.create_response(&ctx.http, response).await?;
+            }
+            Err(e) => {
+                let response = CIR::Message(
+                    CIRM::new().content(format!("Failed to add subgroup: {}", e)).ephemeral(true)
+                );
+                interaction.create_response(&ctx.http, response).await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle server-level team balance method selection
+pub async fn handle_server_settings_balance_select(
     ctx: &Context,
     interaction: &ComponentInteraction,
     db: &Arc<Database>,
     manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
 ) -> Result<()> {
     let guild_id = interaction.guild_id.expect("Guild ID not found");
-    let custom_id = &interaction.data.custom_id;
 
-    info!("[Group Settings] {} selected team balance method", interaction.user.name);
-
-    // Extract group_id from custom_id (format: group_settings_balance_<group_id>)
-    let group_id: u8 = custom_id
-        .rsplit('_')
-        .next()
-        .and_then(|s| s.parse().ok())
-        .ok_or_else(|| anyhow::anyhow!("Invalid custom_id format: {}", custom_id))?;
+    info!("[Server Settings] {} selected team balance method", interaction.user.name);
 
     // Extract selected value
     let method_str = match &interaction.data.kind {
@@ -4377,32 +5157,24 @@ pub async fn handle_group_settings_balance_select(
 
     let method = crate::models::TeamBalanceMethod::from_str(&method_str);
 
-    // Update in-memory and database
+    // Update all groups in-memory
     let mut manager_lock = manager.lock().await;
-    let group = {
+    {
         let server = manager_lock.get_server(guild_id)?;
-        server.groups.iter_mut()
-            .find(|g| g.group_id == group_id)
-            .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?
-    };
+        for group in server.groups.iter_mut() {
+            group.team_balance_method = method;
+        }
+    }
+    drop(manager_lock);
 
-    group.team_balance_method = method;
+    // Persist to config table
+    db.config.set_config("team_balance_method", &method_str, guild_id).await?;
 
-    // Update in database
-    db.groups.update_team_balance_method(guild_id, group_id, method).await?;
-
-    // Get updated settings and refresh the menu
-    let settings = GroupSettings {
-        group_id:            group.group_id,
-        name:                group.name.clone(),
-        quota:               group.quota,
-        timeout:             group.timeout,
-        connect_info:        group.connect_info.clone(),
-        team_balance_method: group.team_balance_method,
-    };
-
-    let embed = build_group_settings_embed(&settings);
-    let buttons = build_group_settings_buttons(settings.group_id, settings.team_balance_method);
+    // Return to server settings
+    let settings = get_server_settings(db, guild_id).await?;
+    let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+    let embed = build_server_settings_embed(&settings, &guild_name);
+    let buttons = build_server_settings_buttons(&settings, &guild_name);
 
     let response = CIR::UpdateMessage(
         CIRM::new().embed(embed).components(buttons)
@@ -4727,7 +5499,7 @@ pub async fn handle_player_settings_modal(
             if let Ok(server) = manager_lock.get_server(guild_id) {
                 for group in &server.groups {
                     // Check if player is in any session in this group
-                    let player_in_queue = group.sessions.iter().any(|session| {
+                    let player_in_queue = group.subgroups[0].sessions.iter().any(|session| {
                         session.pool.iter().any(|p| p.player.user_id == target_uid)
                     });
                     

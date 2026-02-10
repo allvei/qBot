@@ -6,12 +6,10 @@ use serde::{Deserialize, Serialize};
 use serenity::all::VoiceState;
 use sqlx::FromRow;
 
-use super::types::Rank;
-
 pub const DEFAULT_ALERT_COLOR:      u32  = 3447003;
 pub const DEFAULT_ACTIVE_ELO:       bool = false;
 pub const DEFAULT_QUOTA:            u8   = 8;
-pub const DEFAULT_HOT_JOIN_TIMEOUT: u16  = 120; // Seconds for players to join VC when queue goes hot
+pub const DEFAULT_HOT_JOIN_TIMEOUT: u16  = 300; // Seconds for players to join VC when queue goes hot
 pub const CLEANUP_INTERVAL_SECS:    u64  = 60;  // Check every minute
 pub const INACTIVITY_TIMEOUT_SECS:  u64  = 600; // 10m
 pub const DEFAULT_TIMEOUT:          u8   = 120; // 2h default user queue expiry

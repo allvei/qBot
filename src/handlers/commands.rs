@@ -4,7 +4,7 @@ use serenity::all::{
     CreateInteractionResponse as CIR,
     CreateInteractionResponseMessage as CIRM,
 };
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::player::check_adm;
 use crate::{ GREEN, YELLOW, RED };
@@ -70,6 +70,107 @@ pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
     cc.intax.create_response(&cc.ctx.http, Ephemeral::send_config(&settings, &guild_name)).await?;
 
     info!("Sent server settings menu to {} (ephemeral)", cc.intax.user.name);
+    Ok(())
+}
+
+/// `/migrate` - Bulk-assign ELO to all members with a given role (admin only)
+pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
+    if !check_adm(cc).await? { return Ok(()); }
+
+    let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+
+    // Parse options
+    let role_id = cc.intax.data.options.iter()
+        .find(|o| o.name == "role")
+        .and_then(|o| o.value.as_role_id())
+        .ok_or_else(|| anyhow!("Role option not found"))?;
+
+    let elo = cc.intax.data.options.iter()
+        .find(|o| o.name == "elo")
+        .and_then(|o| o.value.as_i64())
+        .ok_or_else(|| anyhow!("ELO option not found"))? as u16;
+
+    // Resolve rank for this ELO
+    let rank = match crate::Rank::from_elo(&cc.db, guild_id, elo).await {
+        Ok(r) => r,
+        Err(_) => {
+            let embed = CE::new()
+                .title("Migration Failed")
+                .description(format!("No rank configured for ELO {}. Set up ranks first.", elo))
+                .color(RED);
+            cc.intax.create_response(&cc.ctx.http, CIR::Message(CIRM::new().embed(embed).ephemeral(true))).await?;
+            return Ok(());
+        }
+    };
+
+    // Defer response since fetching members can take a while
+    cc.intax.create_response(&cc.ctx.http, CIR::Defer(CIRM::new().ephemeral(true))).await?;
+
+    // Fetch guild members in chunks (Discord API returns max 1000 per call)
+    // Requires GUILD_MEMBERS privileged intent
+    let mut all_members = Vec::new();
+    let mut last_id = None;
+    loop {
+        let members = match guild_id.members(&cc.ctx.http, Some(1000), last_id).await {
+            Ok(m) => m,
+            Err(e) => {
+                let embed = CE::new()
+                    .title("Migration Failed")
+                    .description(format!("Failed to fetch guild members: {}\n\nEnsure the bot has the **Server Members** privileged intent enabled.", e))
+                    .color(RED);
+                cc.intax.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
+                return Ok(());
+            }
+        };
+        if members.is_empty() { break; }
+        last_id = members.last().map(|m| m.user.id);
+        all_members.extend(members);
+        if all_members.len() >= 100_000 { break; } // safety cap
+    }
+
+    // Filter to members with the target role
+    let matching: Vec<_> = all_members.iter()
+        .filter(|m| m.roles.contains(&role_id))
+        .collect();
+
+    if matching.is_empty() {
+        let embed = CE::new()
+            .title("Migration Complete")
+            .description(format!("No members found with <@&{}>.", role_id))
+            .color(YELLOW);
+        cc.intax.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
+        return Ok(());
+    }
+
+    let total = matching.len();
+    let mut success = 0u32;
+    let mut failed  = 0u32;
+
+    for member in &matching {
+        match cc.db.elo.set(member.user.id, guild_id, elo, rank.clone()).await {
+            Ok(_) => success += 1,
+            Err(e) => {
+                warn!("Failed to set ELO for {}: {}", member.user.id, e);
+                failed += 1;
+            }
+        }
+    }
+
+    let mut desc = format!(
+        "Assigned **{} ELO** (rank: {}) to **{}** member(s) with <@&{}>.",
+        elo, rank.name, success, role_id
+    );
+    if failed > 0 {
+        desc.push_str(&format!("\n{} member(s) failed.", failed));
+    }
+
+    let embed = CE::new()
+        .title("Migration Complete")
+        .description(desc)
+        .color(GREEN);
+    cc.intax.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
+
+    info!("[migrate] Assigned ELO {} to {}/{} members with role {} in guild {}", elo, success, total, role_id, guild_id);
     Ok(())
 }
 

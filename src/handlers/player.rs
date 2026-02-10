@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use rand::seq::SliceRandom;
 use serenity::all::{Context as Ctx, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, GuildId as GI, Member, UserId as UI};
 
-use tracing::{info, warn, error};
+use tracing::{debug, info, warn, error};
 
 use crate::{ComponentContext as CC, Database as DB};
 use crate::models::{
@@ -43,7 +43,7 @@ pub async fn get_user_rank_from_discord_roles(ctx: &Ctx, db: &DB, guild_id: GI, 
     // Find the highest rank the user has (ranks are sorted by ELO ascending, so check in reverse)
     for rank in ranks.iter().rev() {
         if member.roles.contains(&rank.role_id) {
-            info!("User {} has Discord role '{}' (role_id: {}, ELO: {})", 
+            debug!("User {} has Discord role '{}' (role_id: {}, ELO: {})", 
                   user_id, rank.name, rank.role_id, rank.elo);
             return Some(rank.clone());
         }
@@ -268,7 +268,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         let group = guild.get_group(channel)?;
 
         // Find and remove player from any game
-        for game in &mut group.sessions {
+        for game in &mut group.subgroups[0].sessions {
             if game.status == SS::Idle {
                 let initial_len = game.pool.len();
                 game.pool.retain(|p| p.player.user_id != user);
@@ -281,7 +281,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         }
 
         if found {
-            cc.reply(&format!("Left the queue! ({queue_count}/{} players)", group.quota)).await?;
+            cc.reply(&format!("Left the queue! ({queue_count}/{} players)", group.quota())).await?;
         }
 
         group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
@@ -405,7 +405,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         Ok(session) => session.pool.len(),
         Err(_) => 0
     };
-    cc.reply(&format!("Joined the queue! ({current_queue}/{} players)", group.quota)).await?;
+    cc.reply(&format!("Joined the queue! ({current_queue}/{} players)", group.quota())).await?;
 
     // Update dashboard
     group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
@@ -423,7 +423,7 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         let idle_games = group.get_sessions_by_status(&SS::Idle);
 
         if idle_games.is_empty() {
-            (0, "No active queue found.".to_string(), group.quota)
+            (0, "No active queue found.".to_string(), group.quota())
         } else {
             let game = &idle_games[0];
             let count = game.pool.len();
@@ -434,7 +434,7 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
             } else {
                 "Queue is empty".to_string()
             };
-            (count, list, group.quota)
+            (count, list, group.quota())
         }
     }; // Manager lock is dropped here
 
@@ -453,14 +453,14 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 
     // Get active group with game
     let group = guild.get_group(cc.intax.channel_id)?;
-    let quota = group.quota as usize;
+    let quota = group.quota() as usize;
 
-    if group.sessions.is_empty() {
+    if group.subgroups[0].sessions.is_empty() {
         cc.reply("No active games.").await?;
         return Ok(());
     }
 
-    let game = group.sessions.last().ok_or_else(|| anyhow!("No active game"))?;
+    let game = group.subgroups[0].sessions.last().ok_or_else(|| anyhow!("No active game"))?;
 
     if game.pool.len() < quota {
         cc.reply(&format!("Not enough players in game. Need {} more.", quota - game.pool.len())).await?;
@@ -480,7 +480,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     }
 
     // Update pool with new team assignments
-    let last_session = updated_group.sessions.last_mut()
+    let last_session = updated_group.subgroups[0].sessions.last_mut()
         .ok_or_else(|| anyhow!("No session available for team assignment"))?;
     last_session.pool.clear();
     last_session.pool.extend(red_team.into_iter());
@@ -518,7 +518,7 @@ pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     let group = guild.get_group(channel_id)?;
 
     // Check hot game count first
-    let hot_game_count = group.sessions.iter().filter(|g| g.status == SS::Hot).count();
+    let hot_game_count = group.subgroups[0].sessions.iter().filter(|g| g.status == SS::Hot).count();
     match hot_game_count {
         0 => {
             cc.reply("No hot games found in this group.").await?;
@@ -533,7 +533,7 @@ pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     }
 
     // Now get mutable access to the hot game
-    let hot_game = group.sessions.iter_mut()
+    let hot_game = group.subgroups[0].sessions.iter_mut()
         .find(|g| g.status == SS::Hot)
         .ok_or_else(|| anyhow!("Hot game not found after verification"))?;
 
@@ -555,7 +555,7 @@ pub async fn end(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     let group = guild.get_group(channel_id)?;
 
     // Check if there's an active game to end
-    let has_active = group.sessions.iter().any(|s| s.status == SS::Hot || s.status == SS::Live);
+    let has_active = group.subgroups[0].sessions.iter().any(|s| s.status == SS::Hot || s.status == SS::Live);
 
     if !has_active {
         cc.reply("No active game found to end.").await?;

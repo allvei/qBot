@@ -1,29 +1,11 @@
 # Todo
 
 ## Priority
-
-- Add remove group button
-- Add a special method for creating selection menus:
-  - Use a list if const LIST_THRESHOLD => options.len()
-  - Use buttons if options.len() < LIST_THRESHOLD
-  - Auto select option if only one option
-- Make pretty:
-  - Dashboard
-  - Preferences
-  - Menu
-  - Match summary
-- Dashboard
-  - Show time since start
-  - Don't show time left if in vc.
-  - Before quitting app, mark bot as offline
-  - Connect info
 - Notifications
   - DM when game is close to ready
 - Queue
   - Prevent multiple fatkids, count +1 on a player for each time
-- Rank name = role name
 - Config bool for role management (auto fix, auto assign to new players, etc)
-- Dynamic team channels
 
 ## Secondary
 
@@ -37,7 +19,6 @@
     - bot sends a ping to request a sub
 - Scheduled add up with options for length and delay.
 - 4 team gen
-- Make server config keys into config command arguments rather than values part of the key argument allowing to autocomplete the command.
 - Autopings is 50/50, people want personalisation, but at the same time I can see areas where this would benefit, so yes
 - Game server integration
   - Map pool voting in dashboard
@@ -46,7 +27,6 @@
     - Display game info in the dashboard
     - Track game statistics
     - Discord and steam link
-  - New elo system
   - Command to list stats
   - Captain team generation
 - Burger!

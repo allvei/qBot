@@ -9,11 +9,10 @@ use crate::models::{Channels, Group, TeamBalanceMethod, TeamChannel};
 
 /// Configuration for creating or updating a group
 pub struct GroupConfig {
+    pub category_id:          u64,
     pub dashboard_channel_id: u64,
     pub chat_channel_id:      u64,
     pub queue_vc_id:          u64,
-    pub red_vc_id:            u64,
-    pub blu_vc_id:            u64,
     pub quota:                u8,
 }
 
@@ -39,18 +38,17 @@ impl GroupRepository {
         .await?;
 
         let result = sqlx::query(
-            "INSERT INTO groups (guild_id, group_id, dashboard, chat, queue, dashboard_msg, red, blu, quota)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-             RETURNING id, group_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, quota, connect_info"
+            "INSERT INTO groups (guild_id, group_id, category, dashboard, chat, queue, dashboard_msg, red, blu, quota)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
+             RETURNING id, group_id, name, timeout, guild_id, category, dashboard, chat, queue, dashboard_msg, red, blu, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum"
         )
         .bind(guild_id.get()              as i64)
         .bind(next_group_id)
+        .bind(config.category_id          as i64)
         .bind(config.dashboard_channel_id as i64)
         .bind(config.chat_channel_id      as i64)
         .bind(config.queue_vc_id          as i64)
         .bind(dashboard_msg               as i64)
-        .bind(config.red_vc_id            as i64)
-        .bind(config.blu_vc_id            as i64)
         .bind(config.quota                as i64)
         .fetch_one(&self.pool)
         .await?;
@@ -62,15 +60,14 @@ impl GroupRepository {
         info!("Updating group with queue_id: {}", config.queue_vc_id);
 
         let result = sqlx::query("UPDATE groups
-                                  SET guild_id = ?, dashboard = ?, chat = ?, red = ?, blu = ?, quota = ?
+                                  SET guild_id = ?, category = ?, dashboard = ?, chat = ?, quota = ?
                                   WHERE queue = ?
-                                  RETURNING id, group_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info"
+                                  RETURNING id, group_id, name, timeout, guild_id, category, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum"
         )
-        .bind(guild_id.get()                    as i64)
+        .bind(guild_id.get()              as i64)
+        .bind(config.category_id          as i64)
         .bind(config.dashboard_channel_id as i64)
         .bind(config.chat_channel_id      as i64)
-        .bind(config.red_vc_id            as i64)
-        .bind(config.blu_vc_id            as i64)
         .bind(config.quota                as i64)
         .bind(config.queue_vc_id          as i64)
         .fetch_one(&self.pool)
@@ -102,8 +99,6 @@ impl GroupRepository {
         let invalid_ids = [
             (chat_id          == 0, "chat"),
             (queue_id         == 0, "queue"),
-            (red_id           == 0, "red"),
-            (blu_id           == 0, "blu"),
             (dashboard_id     == 0, "dashboard"),
             (dashboard_msg_id == 0, "dashboard_msg")
         ];
@@ -113,9 +108,9 @@ impl GroupRepository {
 
         let chat      = CI::new(chat_id);
         let queue     = CI::new(queue_id);
-        let red       = CI::new(red_id);
-        let blu       = CI::new(blu_id);
         let dashboard = CI::new(dashboard_id);
+        let category_id = result.try_get::<i64, _>("category").unwrap_or(0) as u64;
+        let category  = if category_id == 0 { dashboard } else { CI::new(category_id) };
 
         let guild_id     = GI::new(result.get::<i64, _>("guild_id") as u64);
         let group_id     = result.try_get::<i64, _>("group_id").unwrap_or(0) as u8;
@@ -126,10 +121,16 @@ impl GroupRepository {
             .map(|s| TeamBalanceMethod::from_str(&s))
             .unwrap_or_default();
 
-        // Load teams from teams table, fallback to single team from groups table
+        // Load teams from teams table; fallback to legacy red/blu columns only if they hold real IDs
         let teams = match self.get_teams_for_group(guild_id, group_id).await {
             Ok(teams) if !teams.is_empty() => teams,
-            _ => vec![TeamChannel::new(red, blu)], // Fallback to groups table red/blu
+            _ => {
+                if red_id > 1 && blu_id > 1 {
+                    vec![TeamChannel::new(CI::new(red_id), CI::new(blu_id))]
+                } else {
+                    vec![]
+                }
+            }
         };
 
         let mut group = Group::new(
@@ -139,12 +140,42 @@ impl GroupRepository {
             result.try_get::<i64, _>("quota")  .unwrap_or(12)  as u8,
             result.try_get::<i64, _>("timeout").unwrap_or(120) as u16,
             MI::new(dashboard_msg_id),
-            Channels::new(chat, queue, teams, dashboard),
+            Channels::new(category, chat, queue, teams, dashboard),
             Vec::new(),
         );
-        group.connect_info = connect_info;
         group.team_balance_method = team_balance_method;
-        
+
+        // Load team VC lifecycle settings
+        {
+            use crate::models::{TeamVcCreatePolicy, TeamVcDestroyPolicy, TeamVcSettings};
+            let create_policy = result.try_get::<String, _>("team_vc_create_policy")
+                .ok()
+                .map(|s| TeamVcCreatePolicy::from_str(&s))
+                .unwrap_or_default();
+            let destroy_policy = result.try_get::<String, _>("team_vc_destroy_policy")
+                .ok()
+                .map(|s| TeamVcDestroyPolicy::from_str(&s))
+                .unwrap_or_default();
+            let keep_minimum = result.try_get::<i64, _>("team_vc_keep_minimum").unwrap_or(1) != 0;
+            group.team_vc_settings = TeamVcSettings {
+                create_policy,
+                destroy_policy,
+                keep_minimum,
+            };
+        }
+
+        // Load subgroups from DB; if present, replace the default subgroup
+        match self.get_subgroups(guild_id, group_id).await {
+            Ok(sgs) if !sgs.is_empty() => {
+                group.subgroups = sgs;
+            }
+            _ => {
+                // No DB subgroups yet - keep the default created by Group::new
+                // and apply connect_info from the groups table
+                group.set_connect_info(connect_info);
+            }
+        }
+
         // Load DM alert settings
         group.dm_alert_enabled = result.try_get::<i64, _>("dm_alert_enabled").unwrap_or(0) != 0;
         group.dm_alert_threshold = result.try_get::<i64, _>("dm_alert_threshold").unwrap_or(0) as u8;
@@ -193,7 +224,7 @@ impl GroupRepository {
 
     /// Get all groups for a guild
     pub async fn get_groups_for_guild(&self, guild_id: GI) -> Result<Vec<Group>> {
-        let rows = sqlx::query("SELECT id, group_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info
+        let rows = sqlx::query("SELECT id, group_id, name, timeout, guild_id, category, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum
                                 FROM groups
                                 WHERE guild_id = ?"
         )
@@ -314,6 +345,21 @@ impl GroupRepository {
 
         Ok(())
     }
+
+    pub async fn update_team_vc_settings(&self, guild_id: GI, group_id: u8, settings: &crate::models::TeamVcSettings) -> Result<()> {
+        sqlx::query(
+            "UPDATE groups SET team_vc_create_policy = ?, team_vc_destroy_policy = ?, team_vc_keep_minimum = ? WHERE guild_id = ? AND group_id = ?"
+        )
+        .bind(settings.create_policy.to_db_str())
+        .bind(settings.destroy_policy.to_db_str())
+        .bind(if settings.keep_minimum { 1i64 } else { 0i64 })
+        .bind(guild_id.get() as i64)
+        .bind(group_id as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -325,22 +371,19 @@ impl Repository<Group, u8> for GroupRepository {
         let dashboard_msg = group.dashboard_msg      .get();
         let chat          = group.channels.queue_chat.get();
         let queue         = group.channels.queue_vc  .get();
-        let red           = group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0);
-        let blu           = group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0);
-
+        let category      = group.channels.category  .get();
         let config = GroupConfig {
+            category_id:          category,
             dashboard_channel_id: dashboard_ch,
             chat_channel_id:      chat,
             queue_vc_id:          queue,
-            red_vc_id:            red,
-            blu_vc_id:            blu,
-            quota:                group.quota,
+            quota:                group.quota(),
         };
         self.create_group(guild_id, dashboard_msg, config).await
     }
 
     async fn get_by_id(&self, group_id: u8) -> Result<Group> {
-        let result = sqlx::query("SELECT id, group_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info
+        let result = sqlx::query("SELECT id, group_id, name, timeout, guild_id, category, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum
                                   FROM groups WHERE group_id = ?"
         )
         .bind(group_id as i64)
@@ -355,16 +398,13 @@ impl Repository<Group, u8> for GroupRepository {
         let dashboard_ch = group.channels.dashboard .get();
         let chat         = group.channels.queue_chat.get();
         let queue        = group.channels.queue_vc  .get();
-        let red          = group.channels.teams.first().map(|t| t.red_vc.get()).unwrap_or(0);
-        let blu          = group.channels.teams.first().map(|t| t.blu_vc.get()).unwrap_or(0);
-
+        let category     = group.channels.category  .get();
         let config = GroupConfig {
+            category_id:          category,
             dashboard_channel_id: dashboard_ch,
             chat_channel_id:      chat,
             queue_vc_id:          queue,
-            red_vc_id:            red,
-            blu_vc_id:            blu,
-            quota:                group.quota,
+            quota:                group.quota(),
         };
         self.update_group(guild_id, config).await
     }
@@ -395,6 +435,89 @@ impl GroupRepository {
         .execute(&self.pool)
         .await?;
         
+        Ok(())
+    }
+
+    // ========================================================================
+    // Subgroup methods
+    // ========================================================================
+
+    /// Get all subgroups for a group
+    pub async fn get_subgroups(&self, guild_id: GI, group_id: u8) -> Result<Vec<crate::models::Subgroup>> {
+        let rows = sqlx::query(
+            "SELECT subgroup_id, name, quota, connect_info FROM subgroups
+             WHERE guild_id = ? AND group_id = ?
+             ORDER BY subgroup_id"
+        )
+        .bind(guild_id.get() as i64)
+        .bind(group_id as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut subgroups = Vec::new();
+        for row in rows {
+            let id: u8 = row.get::<i64, _>("subgroup_id") as u8;
+            let name: String = row.get("name");
+            let quota: u8 = row.get::<i64, _>("quota") as u8;
+            let connect_info: Option<String> = row.try_get("connect_info").ok().flatten();
+            let mut sg = crate::models::Subgroup::new(id, name, quota);
+            sg.connect_info = connect_info;
+            subgroups.push(sg);
+        }
+
+        Ok(subgroups)
+    }
+
+    /// Save a single subgroup (upsert)
+    pub async fn save_subgroup(&self, guild_id: GI, group_id: u8, sg: &crate::models::Subgroup) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO subgroups (guild_id, group_id, subgroup_id, name, quota, connect_info)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(guild_id, group_id, subgroup_id) DO UPDATE SET
+                name = excluded.name,
+                quota = excluded.quota,
+                connect_info = excluded.connect_info"
+        )
+        .bind(guild_id.get() as i64)
+        .bind(group_id as i64)
+        .bind(sg.id as i64)
+        .bind(&sg.name)
+        .bind(sg.quota as i64)
+        .bind(&sg.connect_info)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Delete a subgroup
+    pub async fn delete_subgroup(&self, guild_id: GI, group_id: u8, subgroup_id: u8) -> Result<()> {
+        sqlx::query(
+            "DELETE FROM subgroups WHERE guild_id = ? AND group_id = ? AND subgroup_id = ?"
+        )
+        .bind(guild_id.get() as i64)
+        .bind(group_id as i64)
+        .bind(subgroup_id as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Save all subgroups for a group (replaces existing)
+    pub async fn save_all_subgroups(&self, guild_id: GI, group_id: u8, subgroups: &[crate::models::Subgroup]) -> Result<()> {
+        // Delete all existing subgroups for this group
+        sqlx::query("DELETE FROM subgroups WHERE guild_id = ? AND group_id = ?")
+            .bind(guild_id.get() as i64)
+            .bind(group_id as i64)
+            .execute(&self.pool)
+            .await?;
+
+        // Insert all current subgroups
+        for sg in subgroups {
+            self.save_subgroup(guild_id, group_id, sg).await?;
+        }
+
         Ok(())
     }
 

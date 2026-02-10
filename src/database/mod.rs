@@ -91,20 +91,18 @@ impl Database {
     pub async fn new_group(
         &self,
         guild_id:      GI,
+        category:      u64,
         dashboard:     u64,
         chat:          u64,
         queue:         u64,
         dashboard_msg: u64,
-        red:           u64,
-        blu:           u64,
         quota:         u8,
     ) -> Result<Group> {
         let config = repositories::group::GroupConfig {
+            category_id:          category,
             dashboard_channel_id: dashboard,
             chat_channel_id:      chat,
             queue_vc_id:          queue,
-            red_vc_id:            red,
-            blu_vc_id:            blu,
             quota,
         };
         self.groups.create_group(guild_id, dashboard_msg, config).await
@@ -115,19 +113,17 @@ impl Database {
     pub async fn set_group(
         &self,
         guild_id:      GI,
+        category:      u64,
         queue_id:      u64,
         dashboard:     u64,
         chat:          u64,
-        red:           u64,
-        blu:           u64,
         quota:         u8,
     ) -> Result<Group> {
         let config = repositories::group::GroupConfig {
+            category_id:          category,
             dashboard_channel_id: dashboard,
             chat_channel_id:      chat,
             queue_vc_id:          queue_id,
-            red_vc_id:            red,
-            blu_vc_id:            blu,
             quota,
         };
         self.groups.update_group(guild_id, config).await

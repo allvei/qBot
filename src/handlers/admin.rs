@@ -152,7 +152,7 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
 /// Creates a category and all necessary group channels
 /// Flow: Create category -> Create dashboard -> Test message send -> Create other channels
 /// If dashboard message send fails, cleanup and abort
-pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, CI, CI, CI, CI, CI)> {
+pub async fn create_group_channels(ctx: &Context, guild_id: GI, category_name: &str, channel_prefix: &str) -> Result<(CI, CI, CI, CI)> {
     use serenity::all::{CreateChannel, CreateEmbed, CreateMessage, PermissionOverwrite, PermissionOverwriteType, Permissions};
 
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -164,9 +164,33 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
         .find(|r| r.name == "qBot" && r.managed)
         .map(|r| r.id);
 
+    // Pre-flight: check bot permissions
+    let bot_member = guild_id.member(&ctx.http, bot_user_id).await
+        .map_err(|e| anyhow!("Failed to fetch bot member: {e}"))?;
+    let bot_perms = guild.member_permissions(&bot_member);
+    info!("[{}] Bot permissions: {:?}", guild_name, bot_perms);
+    let required = [
+        (Permissions::MANAGE_CHANNELS, "Manage Channels"),
+        (Permissions::MANAGE_ROLES,    "Manage Roles"),
+        (Permissions::SEND_MESSAGES,   "Send Messages"),
+        (Permissions::EMBED_LINKS,     "Embed Links"),
+        (Permissions::VIEW_CHANNEL,    "View Channels"),
+        (Permissions::CONNECT,         "Connect"),
+        (Permissions::MOVE_MEMBERS,    "Move Members"),
+    ];
+    let missing: Vec<&str> = required.iter()
+        .filter(|(perm, _)| !bot_perms.contains(*perm))
+        .map(|(_, name)| *name)
+        .collect();
+    if !missing.is_empty() {
+        let list = missing.join(", ");
+        error!("[{}] Bot missing permissions: {}", guild_name, list);
+        return Err(anyhow!("Bot is missing permissions: {list}"));
+    }
+
     // Step 1: Create category
     let category = match guild_id.create_channel(&ctx.http,
-        CreateChannel::new("PUG Queue")
+        CreateChannel::new(category_name)
             .kind(ChannelType::Category)
     ).await {
         Ok(cat) => cat,
@@ -179,11 +203,22 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
     let category_id = category.id;
 
     // Step 2: Create dashboard text channel with proper permissions
+    // Only deny permissions the bot itself has (Discord requires this)
+    let mut everyone_deny = Permissions::SEND_MESSAGES;
+    if let Ok(member) = guild_id.member(&ctx.http, bot_user_id).await {
+        let bot_perms = guild.member_permissions(&member);
+        if bot_perms.contains(Permissions::CREATE_PUBLIC_THREADS) {
+            everyone_deny |= Permissions::CREATE_PUBLIC_THREADS;
+        }
+        if bot_perms.contains(Permissions::CREATE_PRIVATE_THREADS) {
+            everyone_deny |= Permissions::CREATE_PRIVATE_THREADS;
+        }
+    }
     let mut permissions = vec![
-        // Deny @everyone from sending messages and creating threads
+        // Deny @everyone from sending messages (and threads if bot has those perms)
         PermissionOverwrite {
             allow: Permissions::empty(),
-            deny: Permissions::SEND_MESSAGES | Permissions::CREATE_PUBLIC_THREADS | Permissions::CREATE_PRIVATE_THREADS,
+            deny: everyone_deny,
             kind: PermissionOverwriteType::Role(guild_id.everyone_role()),
         },
         // Allow bot user explicitly
@@ -204,7 +239,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
     }
 
     let dashboard_channel = match guild_id.create_channel(&ctx.http,
-        CreateChannel::new("dashboard")
+        CreateChannel::new(format!("{channel_prefix}-dashboard"))
             .kind(ChannelType::Text)
             .category(category_id)
             .topic("PUG queue dashboard - use buttons to join/leave")
@@ -212,7 +247,14 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
     ).await {
         Ok(ch) => ch,
         Err(e) => {
-            error!("[{}] Failed to create dashboard channel: {}", guild_name, e);
+            // Diagnostic: log bot permissions and attempted overwrites
+            if let Ok(member) = guild_id.member(&ctx.http, bot_user_id).await {
+                let bot_perms = guild.member_permissions(&member);
+                error!("[{}] Failed to create dashboard channel: {} | Bot perms: {:?} | Deny overwrites: {:?} | Allow overwrites: SEND_MESSAGES|VIEW_CHANNEL|EMBED_LINKS",
+                    guild_name, e, bot_perms, everyone_deny);
+            } else {
+                error!("[{}] Failed to create dashboard channel: {}", guild_name, e);
+            }
             // Clean up category
             let _ = category_id.delete(&ctx.http).await;
             return Err(anyhow!("Failed to create dashboard channel: {e}"));
@@ -247,7 +289,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
 
     // Step 4: Create remaining channels (only if dashboard works)
     let queue_channel = match guild_id.create_channel(&ctx.http,
-        CreateChannel::new("pug-add-up")
+        CreateChannel::new(format!("{channel_prefix}-chat"))
             .kind(ChannelType::Text)
             .category(category_id)
             .topic("Queue discussion and commands")
@@ -276,48 +318,13 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI) -> Result<(CI, C
         }
     };
 
-    let red_channel = match guild_id.create_channel(&ctx.http,
-        CreateChannel::new("🔴 RED")
-            .kind(ChannelType::Voice)
-            .category(category_id)
-    ).await {
-        Ok(ch) => ch,
-        Err(e) => {
-            error!("[{}] Failed to create red team channel: {}", guild_name, e);
-            let _ = queue_vc_channel.id.delete(&ctx.http).await;
-            let _ = queue_channel.id.delete(&ctx.http).await;
-            let _ = dashboard_channel.id.delete(&ctx.http).await;
-            let _ = category_id.delete(&ctx.http).await;
-            return Err(anyhow!("Failed to create red team channel: {e}"));
-        }
-    };
-
-    let blue_channel = match guild_id.create_channel(&ctx.http,
-        CreateChannel::new("🔵 BLU")
-            .kind(ChannelType::Voice)
-            .category(category_id)
-    ).await {
-        Ok(ch) => ch,
-        Err(e) => {
-            error!("[{}] Failed to create blue team channel: {}", guild_name, e);
-            let _ = red_channel.id.delete(&ctx.http).await;
-            let _ = queue_vc_channel.id.delete(&ctx.http).await;
-            let _ = queue_channel.id.delete(&ctx.http).await;
-            let _ = dashboard_channel.id.delete(&ctx.http).await;
-            let _ = category_id.delete(&ctx.http).await;
-            return Err(anyhow!("Failed to create blue team channel: {e}"));
-        }
-    };
-
-    info!("[{}] Successfully created all group channels", guild_name);
+    info!("[{}] Successfully created all group channels (team VCs are dynamic)", guild_name);
 
     Ok((
         category_id,
         dashboard_channel.id,
         queue_channel.id,
         queue_vc_channel.id,
-        red_channel.id,
-        blue_channel.id,
     ))
 }
 
@@ -848,13 +855,18 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
         warn!("[{}] Failed to initialize default ranks: {}", guild_name, e);
     }
 
+    // Derive category from dashboard channel's parent
+    let category = ctx.cache.channel(CI::new(dashboard_channel))
+        .and_then(|ch| ch.parent_id)
+        .map(|id| id.get())
+        .unwrap_or(0);
+
     // Create the group configuration in database
     let group_config = crate::database::repositories::group::GroupConfig {
+        category_id: category,
         dashboard_channel_id: dashboard_channel,
         chat_channel_id: queue_channel,
         queue_vc_id: queue_vc_channel,
-        red_vc_id: red_channel,
-        blu_vc_id: blue_channel,
         quota: crate::DEFAULT_QUOTA,
     };
     match db.groups.create_group(
@@ -1163,13 +1175,18 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
         warn!("[{}] Failed to initialize default ranks: {}", guild_name, e);
     }
 
+    // Derive category from dashboard channel's parent
+    let category = ctx.cache.channel(CI::new(dashboard_channel))
+        .and_then(|ch| ch.parent_id)
+        .map(|id| id.get())
+        .unwrap_or(0);
+
     // Create the group configuration in database with actual dashboard message ID
     let group_config = crate::database::repositories::group::GroupConfig {
+        category_id: category,
         dashboard_channel_id: dashboard_channel,
         chat_channel_id: queue_channel,
         queue_vc_id: queue_vc_channel,
-        red_vc_id: red_channel,
-        blu_vc_id: blue_channel,
         quota: DEFAULT_QUOTA,
     };
     match db.groups.create_group(
@@ -1551,14 +1568,20 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
     use crate::models::{Group, Channels, TeamChannel};
     use serenity::all::MessageId;
 
-    let mut temp_group = Group {
+    // Derive category from dashboard channel's parent
+    let category_id = ctx.cache.channel(dashboard_channel)
+        .and_then(|ch| ch.parent_id)
+        .unwrap_or(CI::new(1));
+
+    let mut temp_group = Group::new(
         guild_id,
-        group_id: 0,
-        name: None,
-        quota: crate::DEFAULT_QUOTA,
-        timeout: crate::DEFAULT_HOT_JOIN_TIMEOUT,
-        dashboard_msg: MessageId::new(1),
-        channels: Channels {
+        0,
+        None,
+        crate::DEFAULT_QUOTA,
+        crate::DEFAULT_HOT_JOIN_TIMEOUT,
+        MessageId::new(1),
+        Channels {
+            category: category_id,
             queue_chat: queue_channel,
             queue_vc: queue_vc_channel,
             teams: vec![TeamChannel {
@@ -1567,13 +1590,8 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
             }],
             dashboard: dashboard_channel,
         },
-        sessions: vec![],
-        connect_info: None,
-        team_balance_method: crate::models::TeamBalanceMethod::default(),
-        dm_alert_enabled: false,
-        dm_alert_threshold: 0,
-        dm_alert_users: vec![],
-    };
+        vec![],
+    );
 
     // Publish dashboard to get message ID
     match temp_group.dash_publish(ctx, dashboard_channel, db, guild_id).await {
@@ -1582,11 +1600,10 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
 
             // Save to database
             let group_config = crate::database::repositories::group::GroupConfig {
+                category_id:          category_id.get(),
                 dashboard_channel_id: dashboard_channel.get(),
                 chat_channel_id:      queue_channel    .get(),
                 queue_vc_id:          queue_vc_channel .get(),
-                red_vc_id:            red_channel      .get(),
-                blu_vc_id:            blue_channel     .get(),
                 quota:                crate::DEFAULT_QUOTA,
             };
             match db.groups.create_group(
