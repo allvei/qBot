@@ -85,7 +85,12 @@ impl Server {
     pub fn add_group(&mut self, group: Group) -> Result<()> {
         self.groups.push(group);
         if let Some(group) = self.groups.last_mut() {
-            let _ = group.create_session();
+            // Create an idle session for every subgroup
+            for sg in &mut group.subgroups {
+                if sg.sessions.is_empty() {
+                    sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
+                }
+            }
         }
         Ok(())
     }
@@ -151,6 +156,141 @@ impl std::fmt::Display for TeamBalanceMethod {
     }
 }
 
+/// When to create team voice channels
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TeamVcCreatePolicy {
+    /// Create when the first player joins the queue
+    OnFirstJoin,
+    /// Create when the game goes hot (quota met)
+    #[default]
+    OnHot,
+    /// Create when runners start the game (push)
+    OnGameStart,
+}
+
+impl TeamVcCreatePolicy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::OnFirstJoin => "First player joins",
+            Self::OnHot       => "Game goes hot",
+            Self::OnGameStart => "Runners start game",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "on_first_join" => Self::OnFirstJoin,
+            "on_hot"        => Self::OnHot,
+            "on_game_start" => Self::OnGameStart,
+            _ => Self::default(),
+        }
+    }
+
+    pub fn to_db_str(&self) -> &'static str {
+        match self {
+            Self::OnFirstJoin => "on_first_join",
+            Self::OnHot       => "on_hot",
+            Self::OnGameStart => "on_game_start",
+        }
+    }
+}
+
+impl std::fmt::Display for TeamVcCreatePolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// When to destroy team voice channels
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TeamVcDestroyPolicy {
+    /// Destroy when the last player leaves the queue
+    OnLastLeave,
+    /// Destroy after players are moved back to queue VC (after pull)
+    #[default]
+    AfterPull,
+    /// Destroy after a timeout post-game if no new game starts
+    AfterTimeout,
+}
+
+impl TeamVcDestroyPolicy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::OnLastLeave => "Last player leaves",
+            Self::AfterPull   => "After game ends",
+            Self::AfterTimeout => "After post-game timeout",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "on_last_leave"  => Self::OnLastLeave,
+            "after_pull"     => Self::AfterPull,
+            "after_timeout"  => Self::AfterTimeout,
+            _ => Self::default(),
+        }
+    }
+
+    pub fn to_db_str(&self) -> &'static str {
+        match self {
+            Self::OnLastLeave  => "on_last_leave",
+            Self::AfterPull    => "after_pull",
+            Self::AfterTimeout => "after_timeout",
+        }
+    }
+}
+
+impl std::fmt::Display for TeamVcDestroyPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Settings controlling dynamic team voice channel lifecycle
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct TeamVcSettings {
+    pub create_policy:  TeamVcCreatePolicy,
+    pub destroy_policy: TeamVcDestroyPolicy,
+    /// Always keep at least 1 set of team channels; create more as needed
+    pub keep_minimum:   bool,
+}
+
+impl Default for TeamVcSettings {
+    fn default() -> Self {
+        Self {
+            create_policy:  TeamVcCreatePolicy::default(),
+            destroy_policy: TeamVcDestroyPolicy::default(),
+            keep_minimum:   true,
+        }
+    }
+}
+
+// Subgroup
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Subgroup {
+    pub id:           u8,
+    pub name:         String,
+    pub quota:        u8,
+    pub sessions:     Vec<Session>,
+    pub connect_info: Option<String>,
+}
+
+impl Subgroup {
+    pub fn new(id: u8, name: String, quota: u8) -> Self {
+        Self {
+            id,
+            name,
+            quota,
+            sessions: Vec::new(),
+            connect_info: None,
+        }
+    }
+
+    pub fn display_name(&self) -> &str {
+        &self.name
+    }
+}
+
 // Group
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Group {
@@ -158,12 +298,11 @@ pub struct Group {
     pub group_id:            u8,
     pub name:                Option<String>,
     pub timeout:             u16,
-    pub quota:               u8,
     pub dashboard_msg:       MI,
     pub channels:            Channels,
-    pub sessions:            Vec<Session>,
-    pub connect_info:        Option<String>,
+    pub subgroups:           Vec<Subgroup>,
     pub team_balance_method: TeamBalanceMethod,
+    pub team_vc_settings:    TeamVcSettings,
     pub dm_alert_enabled:    bool,
     pub dm_alert_threshold:  u8,
     pub dm_alert_users:      Vec<UI>,
@@ -180,21 +319,98 @@ impl Group {
         channels:      Channels,
         games:         Vec<Session>,
     ) -> Self {
+        let default_name = name.clone()
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| format!("Group {}", group_id));
+        let mut sg = Subgroup::new(0, default_name, quota);
+        sg.sessions = games;
+
         Self {
             guild_id,
             group_id,
             name,
-            quota,
             timeout,
             dashboard_msg,
             channels,
-            sessions: games,
-            connect_info: None,
+            subgroups: vec![sg],
             team_balance_method: TeamBalanceMethod::default(),
+            team_vc_settings: TeamVcSettings::default(),
             dm_alert_enabled: false,
             dm_alert_threshold: 0,
             dm_alert_users: Vec::new(),
         }
+    }
+
+    /// Get subgroup by index, defaulting to subgroup 0
+    pub fn subgroup(&self, idx: u8) -> Option<&Subgroup> {
+        self.subgroups.iter().find(|sg| sg.id == idx)
+    }
+
+    /// Get mutable subgroup by index, defaulting to subgroup 0
+    pub fn subgroup_mut(&mut self, idx: u8) -> Option<&mut Subgroup> {
+        self.subgroups.iter_mut().find(|sg| sg.id == idx)
+    }
+
+    // --- Backward-compatible accessors delegating to subgroup 0 ---
+
+    /// Sessions of the default subgroup (subgroup 0)
+    pub fn sessions(&self) -> &Vec<Session> {
+        &self.subgroups[0].sessions
+    }
+
+    /// Mutable sessions of the default subgroup (subgroup 0)
+    pub fn sessions_mut(&mut self) -> &mut Vec<Session> {
+        &mut self.subgroups[0].sessions
+    }
+
+    /// Quota of the default subgroup (subgroup 0)
+    pub fn quota(&self) -> u8 {
+        self.subgroups[0].quota
+    }
+
+    /// Connect info of the default subgroup (subgroup 0)
+    pub fn connect_info(&self) -> Option<&str> {
+        self.subgroups[0].connect_info.as_deref()
+    }
+
+    /// Set connect info on the default subgroup (subgroup 0)
+    pub fn set_connect_info(&mut self, info: Option<String>) {
+        self.subgroups[0].connect_info = info;
+    }
+
+    /// Set quota on the default subgroup (subgroup 0)
+    pub fn set_quota(&mut self, quota: u8) {
+        self.subgroups[0].quota = quota;
+    }
+
+    /// Add a new subgroup. Returns error if max (3) reached.
+    /// Automatically creates an idle session for the new subgroup.
+    pub fn add_subgroup(&mut self, name: String, quota: u8) -> Result<&Subgroup> {
+        if self.subgroups.len() >= 3 {
+            return Err(anyhow!("Maximum of 3 subgroups per group"));
+        }
+        let id = self.next_subgroup_id();
+        let mut sg = Subgroup::new(id, name, quota);
+        sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
+        self.subgroups.push(sg);
+        Ok(self.subgroups.last().unwrap())
+    }
+
+    /// Remove a subgroup by ID. Cannot remove subgroup 0 (default).
+    pub fn remove_subgroup(&mut self, id: u8) -> Result<()> {
+        if id == 0 {
+            return Err(anyhow!("Cannot remove the default subgroup"));
+        }
+        let idx = self.subgroups.iter().position(|sg| sg.id == id)
+            .ok_or_else(|| anyhow!("Subgroup {} not found", id))?;
+        self.subgroups.remove(idx);
+        Ok(())
+    }
+
+    /// Get the next available subgroup ID
+    fn next_subgroup_id(&self) -> u8 {
+        (0..=255).find(|id| !self.subgroups.iter().any(|sg| sg.id == *id))
+            .unwrap_or(0)
     }
 
     /// Get display name for the group (name or "Group {id}")
@@ -205,61 +421,119 @@ impl Group {
     }
 
     pub fn create_session(&mut self) -> Result<&mut Session> {
-        // Check if an inactive session already exists
-        if !self.get_inactives().is_empty() {
+        self.create_session_sg(0)
+    }
+
+    pub fn create_session_sg(&mut self, sg_id: u8) -> Result<&mut Session> {
+        let sg = self.subgroup_mut(sg_id)
+            .ok_or_else(|| anyhow!("Subgroup {} not found", sg_id))?;
+        let has_inactive = sg.sessions.iter().any(|s| !s.is_active());
+        if has_inactive {
             return Err(anyhow!("Cannot create new session: inactive session already exists"));
         }
-
-        self.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
-        self.sessions.last_mut().ok_or_else(|| anyhow!("Failed to create session"))
+        sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
+        let sg = self.subgroup_mut(sg_id).unwrap();
+        sg.sessions.last_mut().ok_or_else(|| anyhow!("Failed to create session"))
     }
 
     pub fn end_game(&mut self) -> bool {
-        if let Some(pos) = self.sessions.iter().position(|s| s.status == SessionStatus::Idle) {
-            self.sessions.remove(pos);
-            true
-        } else {
-            false
+        self.end_game_sg(0)
+    }
+
+    pub fn end_game_sg(&mut self, sg_id: u8) -> bool {
+        if let Some(sg) = self.subgroup_mut(sg_id) {
+            if let Some(pos) = sg.sessions.iter().position(|s| s.status == SessionStatus::Idle) {
+                sg.sessions.remove(pos);
+                return true;
+            }
         }
+        false
     }
 
     pub async fn get_queue(&mut self) -> Result<&mut Session, Error> {
-        // Get either Idle or Hot session (both are joinable)
-        self.sessions.iter_mut()
+        self.get_queue_sg(0).await
+    }
+
+    pub async fn get_queue_sg(&mut self, sg_id: u8) -> Result<&mut Session, Error> {
+        let sg = self.subgroup_mut(sg_id)
+            .ok_or_else(|| anyhow!("Subgroup {} not found", sg_id))?;
+        sg.sessions.iter_mut()
             .find(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)
-            .ok_or(anyhow!("No joinable session found"))
+            .ok_or(anyhow!("No joinable session found in subgroup {}", sg_id))
     }
 
     pub fn get_inactives(&self) -> Vec<&Session> {
-        self.sessions.iter()
+        self.subgroups[0].sessions.iter()
             .filter(|s| !s.is_active())
             .collect()
     }
 
     pub fn get_actives(&self) -> Vec<&Session> {
-        self.sessions.iter()
+        self.subgroups[0].sessions.iter()
             .filter(|s| s.is_active())
             .collect()
     }
 
+    /// Delete any orphaned dynamic VCs left under the category from a previous bot run.
+    /// Compares channels in the category against known static channel IDs and deletes unknowns.
+    pub async fn cleanup_orphaned_vcs(&self, ctx: &Context) {
+        use serenity::all::ChannelType;
+
+        let category_id = self.channels.category;
+        if category_id.get() <= 1 {
+            return;
+        }
+
+        let known_ids = self.channels.known_channel_ids();
+
+        let guild = match ctx.cache.guild(self.guild_id) {
+            Some(g) => g.clone(),
+            None => return,
+        };
+
+        for (_id, channel) in &guild.channels {
+            // Only consider voice channels parented under our category
+            if channel.kind != ChannelType::Voice {
+                continue;
+            }
+            if channel.parent_id != Some(category_id) {
+                continue;
+            }
+            if known_ids.contains(&channel.id) {
+                continue;
+            }
+
+            // This is an unknown VC under our category - likely an orphaned dynamic VC
+            info!("[{}] Cleaning up orphaned team VC: {}", guild.name, channel.name);
+            if let Err(e) = channel.id.delete(&ctx.http).await {
+                warn!("Failed to delete team VC {} ({}): {}", channel.name, channel.id, e);
+            }
+        }
+    }
+
     pub fn get_sessions_by_status(&self, status: &SessionStatus) -> Vec<&Session> {
-        self.sessions.iter()
+        self.subgroups[0].sessions.iter()
             .filter(|s| s.status == *status)
             .collect()
     }
 
+    pub fn get_sessions_by_status_sg(&self, sg_id: u8, status: &SessionStatus) -> Vec<&Session> {
+        self.subgroup(sg_id)
+            .map(|sg| sg.sessions.iter().filter(|s| s.status == *status).collect())
+            .unwrap_or_default()
+    }
+
     /// Get session index (position in Vec) for logging purposes
     pub fn get_session_index(&self, session: &Session) -> Option<usize> {
-        self.sessions.iter().position(|s| std::ptr::eq(s, session))
+        self.subgroups[0].sessions.iter().position(|s| std::ptr::eq(s, session))
     }
 
 
 
     /// Send a personal DM alert to a specific user based on their threshold
     async fn send_personal_dm_alert(&self, ctx: &serenity::all::Context, user_id: serenity::all::UserId, current_size: u8, user_threshold: u8) -> Result<()> {
-        use serenity::all::{CreateMessage, CreateEmbed, CreateEmbedFooter};
+        use serenity::all::{CreateEmbed, CreateEmbedFooter};
 
-        let user = ctx.http.get_user(user_id).await?;
         let guild_name = ctx.cache.guild(self.guild_id)
             .map(|g| g.name.clone())
             .unwrap_or_else(|| "Unknown".to_string());
@@ -272,30 +546,59 @@ impl Group {
                 guild_name,
                 current_size
             ))
-            .color(GREEN) // Green color
+            .color(GREEN)
             .footer(CreateEmbedFooter::new("You're getting this because you set a quota alert in your preferences!"));
 
-        user.direct_message(&ctx.http, CreateMessage::new().embed(embed)).await?;
-
-        info!("Sent personal DM alert to {} for {} queue ({} players, threshold: {})", user.name, self.display_name(), current_size, user_threshold);
+        if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
+            if let Err(e) = dm_tracker.send_dm(ctx, user_id, embed).await {
+                warn!("Failed to send personal DM alert to {}: {e}", user_id);
+            } else {
+                info!("Sent personal DM alert to {} for {} queue ({} players, threshold: {})", user_id, self.display_name(), current_size, user_threshold);
+            }
+        } else {
+            warn!("DM tracker not available for personal DM alert");
+        }
         Ok(())
     }
 
     pub fn get_games_by_status_mut(&mut self, status: &SessionStatus) -> Vec<&mut Session> {
-        self.sessions.iter_mut()
+        self.subgroups[0].sessions.iter_mut()
             .filter(|s| s.status == *status)
             .collect()
     }
 
     pub async fn get_user_session(&mut self, user_id: UI) -> Result<&mut Session> {
-        match self.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.user_id == user_id)) {
+        match self.subgroups[0].sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.user_id == user_id)) {
             Some(game) => Ok(game),
             None       => Err(anyhow!("User not found in any game")),
         }
     }
 
+    /// Check if user is in a session within a specific subgroup
+    pub fn get_user_session_sg(&mut self, sg_id: u8, user_id: UI) -> Result<&mut Session> {
+        let sg = self.subgroup_mut(sg_id)
+            .ok_or_else(|| anyhow!("Subgroup {} not found", sg_id))?;
+        sg.sessions.iter_mut()
+            .find(|s| s.pool.iter().any(|p| p.player.user_id == user_id))
+            .ok_or_else(|| anyhow!("User not found in subgroup {}", sg_id))
+    }
+
+    /// Check if user is in any session across all subgroups
+    pub fn is_user_in_any_session(&self, user_id: UI) -> bool {
+        self.subgroups.iter().any(|sg|
+            sg.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.user_id == user_id))
+        )
+    }
+
+    /// Check if user is in a specific subgroup's sessions
+    pub fn is_user_in_sg(&self, sg_id: u8, user_id: UI) -> bool {
+        self.subgroup(sg_id)
+            .map(|sg| sg.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.user_id == user_id)))
+            .unwrap_or(false)
+    }
+
     pub fn get_player(&mut self, user_id: UI) -> Result<&mut SessionPlayer> {
-        match self.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.user_id == user_id)) {
+        match self.subgroups[0].sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.user_id == user_id)) {
             Some(game) => Ok(game.pool.iter_mut().find(|p| p.player.user_id == user_id).unwrap()),
             None       => Err(anyhow!("User not found in any game")),
         }
@@ -303,11 +606,20 @@ impl Group {
 
     pub async fn hot(&mut self, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
         // Get session index before calling hot()
-        let _session_idx = self.sessions.iter()
+        let _session_idx = self.subgroups[0].sessions.iter()
             .position(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)
             .unwrap_or(0);
 
         let _ = self.get_queue().await?.hot();
+
+        // Create team VCs if policy is OnHot
+        if self.team_vc_settings.create_policy == TeamVcCreatePolicy::OnHot {
+            if let Some(gid) = guild_id {
+                if let Err(e) = self.ensure_team_vcs(ctx, gid).await {
+                    warn!("Failed to ensure team VCs on hot: {e}");
+                }
+            }
+        }
 
         // Refresh player ranks from Discord roles before generating teams
         if let (Some(gid), Some(database)) = (guild_id, db) {
@@ -360,54 +672,59 @@ impl Group {
     /// Returns true if any changes were made that require dashboard update
     pub async fn check_hot_timeout(&mut self, ctx: &Context, guild_id: GI) -> bool {
         let mut changes_made = false;
-        let quota = self.quota as usize;
         let timeout_seconds = self.timeout as u64;
 
-        // Find hot sessions that have timed out
-        let hot_sessions: Vec<usize> = self.sessions.iter().enumerate()
-            .filter_map(|(idx, s)| {
-                if s.is_hot_timeout(timeout_seconds) {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        // Check hot sessions across all subgroups
+        for sg in &mut self.subgroups {
+            let quota = sg.quota as usize;
 
-        for idx in hot_sessions {
-            let session = &mut self.sessions[idx];
-
-            // Get players who are not in VC (timed out)
-            let timed_out_players: Vec<_> = session.pool.iter().take(quota)
-                .filter(|p| !p.in_queue_vc)
-                .map(|p| p.player.user_id)
+            // Find hot sessions that have timed out
+            let hot_sessions: Vec<usize> = sg.sessions.iter().enumerate()
+                .filter_map(|(idx, s)| {
+                    if s.is_hot_timeout(timeout_seconds) {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
                 .collect();
 
-            if timed_out_players.is_empty() {continue;}
+            for idx in hot_sessions {
+                let session = &mut sg.sessions[idx];
 
-            info!("Removing {} timed-out players from hot session", timed_out_players.len());
+                // Get players who are not in VC (timed out)
+                let timed_out_players: Vec<_> = session.pool.iter().take(quota)
+                    .filter(|p| !p.in_queue_vc)
+                    .map(|p| p.player.user_id)
+                    .collect();
 
-            // Remove timed out players - retain() preserves order of remaining elements
-            session.pool.retain(|p| !timed_out_players.contains(&p.player.user_id));
+                if timed_out_players.is_empty() {continue;}
 
-            // Check if we still have enough players after removals
-            if session.pool.len() >= quota {
-                // We have replacements (overflow players took their spots)
-                // Re-generate teams with the new first quota players
-                info!("Regenerating teams after timeout with {} players", session.pool.len());
-                changes_made = true;
-            } else {
-                // Not enough players left, revert to idle
-                info!("Not enough players after timeout, reverting to idle");
-                session.idle();
-                changes_made = true;
+                info!("Removing {} timed-out players from hot session in subgroup {}", timed_out_players.len(), sg.id);
+
+                // Remove timed out players - retain() preserves order of remaining elements
+                session.pool.retain(|p| !timed_out_players.contains(&p.player.user_id));
+
+                // Check if we still have enough players after removals
+                if session.pool.len() >= quota {
+                    info!("Regenerating teams after timeout with {} players", session.pool.len());
+                    changes_made = true;
+                } else {
+                    info!("Not enough players after timeout, reverting to idle");
+                    session.idle();
+                    changes_made = true;
+                }
             }
         }
 
-        // If changes were made and we still have a hot session with enough players, regenerate teams
-        if changes_made && self.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= quota) {
-            // Re-generate teams for the hot session
-            self.generate_teams(ctx, guild_id, None).await;
+        // If changes were made and any subgroup still has a hot session, regenerate teams
+        if changes_made {
+            let any_hot = self.subgroups.iter().any(|sg|
+                sg.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= sg.quota as usize)
+            );
+            if any_hot {
+                self.generate_teams(ctx, guild_id, None).await;
+            }
         }
 
         changes_made
@@ -418,67 +735,69 @@ impl Group {
     pub async fn check_timeout(&mut self, db: &DB, ctx: &Context, guild_id: GI) -> bool {
         let mut changes_made = false;
 
-        // Only check idle sessions (not hot/push/live)
-        for session in self.sessions.iter_mut() {
-            if !session.is_idle() {
-                continue;
-            }
-
-            let mut players_to_remove = Vec::new();
-
-            for player in &session.pool {
-                // Use per-instance timeout if set, otherwise get user's setting
-                let timeout = if let duration = player.timeout {
-                    duration
-                } else {
-                    match db.users.get_prefs(player.player.user_id).await {
-                        Ok(settings) => settings.timeout,
-                        Err(_) => {
-                            // If we can't get settings, skip this player
-                            continue;
-                        }
-                    }
-                };
-
-                // Clamp to valid range (EXPIRY_MIN to EXPIRY_MAX)
-                let expiry_mins = timeout.clamp(MIN_TIMEOUT, MAX_TIMEOUT);
-
-                // Skip if timeout is disabled (below EXPIRY_MIN)
-                if expiry_mins < MIN_TIMEOUT {
+        // Check idle sessions across all subgroups (not hot/push/live)
+        for sg in &mut self.subgroups {
+            for session in sg.sessions.iter_mut() {
+                if !session.is_idle() {
                     continue;
                 }
 
-                // Check if player has exceeded their timeout time
-                if let Ok(elapsed) = SystemTime::now().duration_since(player.joined_at) {
-                    if elapsed.as_secs() >= Duration::from_mins(expiry_mins as u64).as_secs() {
-                        info!("Auto-removing player {} after {} seconds (limit: {})",
-                            player.player.tag,
-                            elapsed.as_secs(),
-                            expiry_mins
-                        );
-                        players_to_remove.push(player.player.user_id);
+                let mut players_to_remove = Vec::new();
+
+                for player in &session.pool {
+                    // Use per-instance timeout if set, otherwise get user's setting
+                    let timeout = if let duration = player.timeout {
+                        duration
+                    } else {
+                        match db.users.get_prefs(player.player.user_id).await {
+                            Ok(settings) => settings.timeout,
+                            Err(_) => {
+                                // If we can't get settings, skip this player
+                                continue;
+                            }
+                        }
+                    };
+
+                    // Clamp to valid range (EXPIRY_MIN to EXPIRY_MAX)
+                    let expiry_mins = timeout.clamp(MIN_TIMEOUT, MAX_TIMEOUT);
+
+                    // Skip if timeout is disabled (below EXPIRY_MIN)
+                    if expiry_mins < MIN_TIMEOUT {
+                        continue;
+                    }
+
+                    // Check if player has exceeded their timeout time
+                    if let Ok(elapsed) = SystemTime::now().duration_since(player.joined_at) {
+                        if elapsed.as_secs() >= Duration::from_mins(expiry_mins as u64).as_secs() {
+                            info!("Auto-removing player {} after {} seconds (limit: {})",
+                                player.player.tag,
+                                elapsed.as_secs(),
+                                expiry_mins
+                            );
+                            players_to_remove.push(player.player.user_id);
+                        }
                     }
                 }
-            }
 
-            if !players_to_remove.is_empty() {
-                // Remove the timed-out players
-                for user_id in &players_to_remove {
-                    session.remove_player(*user_id);
-                    
-                    // Optionally: disconnect from VC if vc_kick is enabled
-                    if let Ok(settings) = db.users.get_prefs(*user_id).await {
-                        if settings.vc_auto_leave {
-                            if let Ok(member) = guild_id.member(&ctx.http, *user_id).await {
-                                if let Err(e) = member.disconnect_from_voice(&ctx.http).await {
-                                    warn!("Failed to disconnect timeoutd player from VC: {e}");
+                if !players_to_remove.is_empty() {
+                    // Remove the timed-out players
+                    for user_id in &players_to_remove {
+                        session.remove_player(*user_id);
+                        
+                        // Optionally: disconnect from VC if vc_kick is enabled
+                        if let Ok(settings) = db.users.get_prefs(*user_id).await {
+                            if settings.vc_auto_leave {
+                                if let Ok(member) = guild_id.member(&ctx.http, *user_id).await {
+                                    if let Err(e) = member.disconnect_from_voice(&ctx.http).await {
+                                        warn!("Failed to disconnect timeoutd player from VC: {e}");
+                                    }
                                 }
                             }
                         }
                     }
+                    changes_made = true;
+                    info!("Timeoutd {} player(s) from queue", players_to_remove.len());
                 }
-                changes_made = true;
-                info!("Timeoutd {} player(s) from queue", players_to_remove.len());
             }
         }
 
@@ -486,21 +805,34 @@ impl Group {
     }
 
     pub async fn push(&mut self, ctx: &Context, guild_id: GI) -> Result<(), Error> {
-        // Extract channel IDs first to avoid borrowing conflicts
-        let red_vc = self.channels.teams[0].red_vc;
-        let blu_vc = self.channels.teams[0].blu_vc;
+        // Ensure a free team VC pair exists (creates one if needed)
+        self.ensure_team_vcs(ctx, guild_id).await?;
+
+        // Now find the free pair
+        let occupied_teams: Vec<TeamChannel> = self.subgroups[0].sessions.iter()
+            .filter(|s| s.is_active())
+            .filter_map(|s| s.team_channels.clone())
+            .collect();
+
+        let team_pair = self.channels.teams.iter().find(|t| {
+            !occupied_teams.iter().any(|o| o.red_vc == t.red_vc && o.blu_vc == t.blu_vc)
+        }).cloned().ok_or_else(|| anyhow!("No free team VC pair available after ensure"))?;
+
+        let red_vc = team_pair.red_vc;
+        let blu_vc = team_pair.blu_vc;
 
         // Get the hot game (should be the most recent session that's hot)
-        let game = self.sessions.iter_mut()
+        let game = self.subgroups[0].sessions.iter_mut()
             .find(|s| s.status == SessionStatus::Hot)
             .ok_or(anyhow!("No hot session found for push"))?;
+
+        // Store the team channels on the session
+        game.team_channels = Some(team_pair);
 
         // Set status to Push and extract player moves
         game.push();
         let player_moves: Vec<(UI, CI, String)> = game.pool.iter()
             .filter_map(|player| {
-                // Only move players who are actually in the queue VC
-                // This prevents disconnecting players who aren't in voice
                 if !player.in_queue_vc {
                     return None;
                 }
@@ -529,13 +861,13 @@ impl Group {
         }
 
         // Set game status to Live and extract overflow players
-        let session_idx = self.sessions.iter()
+        let quota = self.subgroups[0].quota as usize;
+        let session_idx = self.subgroups[0].sessions.iter()
             .position(|s| s.status == SessionStatus::Push)
             .ok_or(anyhow!("Push session not found"))?;
-        let game = &mut self.sessions[session_idx];
+        let game = &mut self.subgroups[0].sessions[session_idx];
         game.live();
 
-        let quota = self.quota as usize;
         let game_pool_len = game.pool.len();
 
         // Extract overflow players (those beyond quota)
@@ -549,7 +881,6 @@ impl Group {
         self.create_session()?;
 
         // Add overflow players to the new idle session
-        // Overflow players are already in join-time order, so just push them
         if !overflow_players.is_empty() {
             let idle_session = self.get_queue().await?;
             for player in overflow_players {
@@ -562,15 +893,117 @@ impl Group {
 
     }
 
+    /// Ensure at least one free team VC pair exists under the category.
+    /// Called at the lifecycle point determined by `team_vc_settings.create_policy`.
+    /// Returns the newly created pair, or None if a free pair already exists.
+    pub async fn ensure_team_vcs(&mut self, ctx: &Context, guild_id: GI) -> Result<Option<TeamChannel>, Error> {
+        use serenity::all::{CreateChannel, ChannelType};
+
+        // Check which team pairs are currently occupied by active sessions
+        let occupied: Vec<TeamChannel> = self.subgroups[0].sessions.iter()
+            .filter(|s| s.is_active())
+            .filter_map(|s| s.team_channels.clone())
+            .collect();
+
+        // Check if there's already a free pair
+        let has_free = self.channels.teams.iter().any(|t| {
+            !occupied.iter().any(|o| o.red_vc == t.red_vc && o.blu_vc == t.blu_vc)
+        });
+
+        if has_free {
+            return Ok(None);
+        }
+
+        // Create a new pair
+        let category = self.channels.category;
+        let pair_num = self.channels.teams.len() + 1;
+
+        let red_ch = guild_id.create_channel(&ctx.http,
+            CreateChannel::new(format!("🔴 RED #{}", pair_num))
+                .kind(ChannelType::Voice)
+                .category(category)
+        ).await.map_err(|e| anyhow!("Failed to create RED VC: {e}"))?;
+
+        let blu_ch = guild_id.create_channel(&ctx.http,
+            CreateChannel::new(format!("🔵 BLU #{}", pair_num))
+                .kind(ChannelType::Voice)
+                .category(category)
+        ).await.map_err(|e| anyhow!("Failed to create BLU VC: {e}"))?;
+
+        let pair = TeamChannel::new(red_ch.id, blu_ch.id);
+        self.channels.teams.push(pair.clone());
+        info!("Created set {} of team VCs", pair_num);
+
+        Ok(Some(pair))
+    }
+
+    /// Remove unused team VC pairs based on the destroy policy.
+    /// `keep_minimum` preserves at least 1 pair even if unused.
+    pub async fn cleanup_team_vcs(&mut self, ctx: &Context) {
+        // Collect occupied pairs from active sessions
+        let occupied: Vec<TeamChannel> = self.subgroups[0].sessions.iter()
+            .filter(|s| s.is_active())
+            .filter_map(|s| s.team_channels.clone())
+            .collect();
+
+        // Partition into occupied and free
+        let (keep, mut removable): (Vec<_>, Vec<_>) = self.channels.teams.iter().cloned()
+            .partition(|t| occupied.iter().any(|o| o.red_vc == t.red_vc && o.blu_vc == t.blu_vc));
+
+        // If keep_minimum, preserve one free pair
+        let min_free = if self.team_vc_settings.keep_minimum && keep.is_empty() { 1 } else { 0 };
+        let to_delete_count = removable.len().saturating_sub(min_free);
+        let to_delete: Vec<TeamChannel> = removable.drain(..to_delete_count).collect();
+
+        for tc in &to_delete {
+            info!("Deleting unused team VCs: RED={} BLU={}", tc.red_vc, tc.blu_vc);
+            if let Err(e) = tc.red_vc.delete(&ctx.http).await {
+                warn!("Failed to delete RED VC {}: {}", tc.red_vc, e);
+            }
+            if let Err(e) = tc.blu_vc.delete(&ctx.http).await {
+                warn!("Failed to delete BLU VC {}: {}", tc.blu_vc, e);
+            }
+        }
+
+        // Rebuild teams list: occupied + remaining free
+        let mut new_teams = keep;
+        new_teams.extend(removable);
+        self.channels.teams = new_teams;
+    }
+
+    /// Called after a player leaves the queue. If the destroy policy is OnLastLeave
+    /// and no idle sessions have players, clean up team VCs.
+    pub async fn check_team_vc_cleanup_on_leave(&mut self, ctx: &Context) {
+        if self.team_vc_settings.destroy_policy != TeamVcDestroyPolicy::OnLastLeave {
+            return;
+        }
+
+        // Check if all idle sessions are empty (no queued players)
+        let all_idle_empty = self.subgroups.iter().all(|sg|
+            sg.sessions.iter()
+                .filter(|s| s.is_idle())
+                .all(|s| s.pool.is_empty())
+        );
+
+        // Also check there are no active games
+        let no_active = !self.subgroups.iter().any(|sg|
+            sg.sessions.iter().any(|s| s.is_active())
+        );
+
+        if all_idle_empty && no_active {
+            self.cleanup_team_vcs(ctx).await;
+        }
+    }
+
     pub async fn pull(&mut self, ctx: &Context, guild_id: GI, db: &DB, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
         // Extract queue vc channel ID
         let queue_vc = self.channels.queue_vc;
 
         // Find the active game (Hot or Live status)
-        let active_session_idx = self.sessions.iter()
+        let active_session_idx = self.subgroups[0].sessions.iter()
             .position(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live)
             .ok_or(anyhow!("No active game to pull"))?;
-        let game = &mut self.sessions[active_session_idx];
+        let game = &mut self.subgroups[0].sessions[active_session_idx];
 
         game.pull();
 
@@ -597,17 +1030,51 @@ impl Group {
             }
         }
 
+        // Clean up team VCs based on destroy policy
+        match self.team_vc_settings.destroy_policy {
+            TeamVcDestroyPolicy::AfterPull => {
+                self.cleanup_team_vcs(ctx).await;
+            },
+            TeamVcDestroyPolicy::AfterTimeout => {
+                // Spawn a timer that cleans up team VCs if no new game starts
+                if let Some(mgr) = manager.clone() {
+                    let group_id = self.group_id;
+                    let timeout_secs = self.timeout as u64;
+                    let ctx_clone = ctx.clone();
+
+                    tokio::spawn(async move {
+                        use tokio::time::{sleep, Duration};
+                        sleep(Duration::from_secs(timeout_secs)).await;
+
+                        let mut manager_lock = mgr.lock().await;
+                        if let Ok(server) = manager_lock.get_server(guild_id) {
+                            if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
+                                // Only clean up if no active games are running
+                                let has_active = group.subgroups.iter().any(|sg|
+                                    sg.sessions.iter().any(|s| s.is_active())
+                                );
+                                if !has_active {
+                                    group.cleanup_team_vcs(&ctx_clone).await;
+                                }
+                            }
+                        }
+                    });
+                }
+            },
+            _ => {} // OnLastLeave handled elsewhere
+        }
+
         // Find or create the idle session (queue) and add all players back to it
-        let idle_session_idx = match self.sessions.iter().position(|s| s.status == SessionStatus::Idle) {
+        let idle_session_idx = match self.subgroups[0].sessions.iter().position(|s| s.status == SessionStatus::Idle) {
             Some(idx) => idx,
             None => {
                 // No idle session exists (game ended from Hot without push), create one
                 info!("No idle session found, creating one for re-queuing players");
-                self.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
-                self.sessions.len() - 1
+                self.subgroups[0].sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
+                self.subgroups[0].sessions.len() - 1
             }
         };
-        let idle_session = &mut self.sessions[idle_session_idx];
+        let idle_session = &mut self.subgroups[0].sessions[idle_session_idx];
 
         // Only re-add players who were successfully moved (i.e., were still in voice)
         for player in players_to_requeue {
@@ -623,7 +1090,7 @@ impl Group {
         }
 
         // Remove the finished session
-        self.sessions.retain(|s| s.status != SessionStatus::Pull);
+        self.subgroups[0].sessions.retain(|s| s.status != SessionStatus::Pull);
 
         // Check if the queue now meets quota and transition to Hot if needed
         if self.is_quota() {
@@ -638,10 +1105,12 @@ impl Group {
     pub async fn refresh_player_ranks(&mut self, _ctx: &Context, guild_id: GI, db: &DB) {
         use crate::handlers::player::get_player_rank;
 
-        for session in &mut self.sessions {
-            for player in &mut session.pool {
-                if let Some(updated_rank) = get_player_rank(db, guild_id, player.player.user_id).await {
-                    player.player.rank = Some(updated_rank);
+        for sg in &mut self.subgroups {
+            for session in &mut sg.sessions {
+                for player in &mut session.pool {
+                    if let Some(updated_rank) = get_player_rank(db, guild_id, player.player.user_id).await {
+                        player.player.rank = Some(updated_rank);
+                    }
                 }
             }
         }
@@ -670,18 +1139,18 @@ impl Group {
             })
             .collect();
 
-        // Update flags for all players in all sessions
-        for session in &mut self.sessions {
-            for player in &mut session.pool {
-                let user_id      = player.player.user_id.get();
-                let actual_in_vc = users_in_vc.contains(&user_id);
+        // Update flags for all players in all sessions across all subgroups
+        let mut corrected: Vec<String> = Vec::new();
+        for sg in &mut self.subgroups {
+            for session in &mut sg.sessions {
+                for player in &mut session.pool {
+                    let user_id      = player.player.user_id.get();
+                    let actual_in_vc = users_in_vc.contains(&user_id);
 
-                // Log if we're correcting a desync
-                if player.in_queue_vc != actual_in_vc {
-                    let username = &player.player.tag;
-                    info!("[validate_vc_status] Correcting VC status for {}: was {}, now {}", 
-                        username, player.in_queue_vc, actual_in_vc);
-                    player.in_queue_vc = actual_in_vc;
+                    if player.in_queue_vc != actual_in_vc {
+                        corrected.push(player.player.tag.clone());
+                        player.in_queue_vc = actual_in_vc;
+                    }
                 }
             }
         }
@@ -690,16 +1159,16 @@ impl Group {
     pub async fn generate_teams(&mut self, ctx: &Context, guild_id: GI, _db: Option<&DB>) {
         use itertools::Itertools;
 
-        let quota = self.quota as usize;
+        let quota = self.subgroups[0].quota as usize;
 
         // Get the hot game (session was just set to hot before this is called)
-        let Some(session_idx) = self.sessions.iter()
+        let Some(session_idx) = self.subgroups[0].sessions.iter()
             .position(|s| s.status == SessionStatus::Hot) else {
             warn!("No hot session found for team generation");
             return;
         };
 
-        let game = &mut self.sessions[session_idx];
+        let game = &mut self.subgroups[0].sessions[session_idx];
 
         if game.pool.len() < quota {
             warn!("Not enough players for team generation: {}", game.pool.len());
@@ -822,13 +1291,59 @@ impl Group {
         self.queue_player_with_vc_status(player, rank, queue_ctx, false).await
     }
 
+    pub async fn queue_player_sg(
+        &mut self,
+        sg_id: u8,
+        player: Player,
+        rank: Rank,
+        ctx: &Context,
+        guild_id: Option<GI>,
+        db: Option<&DB>,
+        manager: Option<Arc<Mutex<Manager>>>,
+    ) -> Result<()> {
+        let queue_ctx = QueueContext { ctx, guild_id, db, manager };
+        self.queue_player_with_vc_status_sg(sg_id, player, rank, queue_ctx, false).await
+    }
+
     pub async fn queue_player_with_vc_status(&mut self, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
+        let was_empty = self.get_queue().await?.pool.is_empty();
         let session = self.get_queue().await?;
 
         if in_vc {session.add_player_in_vc(player);}
         else {session.add_player(player);}
 
+        // Create team VCs on first join if policy requires it
+        if was_empty && self.team_vc_settings.create_policy == TeamVcCreatePolicy::OnFirstJoin {
+            if let Some(gid) = queue_ctx.guild_id {
+                if let Err(e) = self.ensure_team_vcs(queue_ctx.ctx, gid).await {
+                    warn!("Failed to ensure team VCs on first join: {e}");
+                }
+            }
+        }
+
         if self.is_quota() {
+            self.hot(queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn queue_player_with_vc_status_sg(&mut self, sg_id: u8, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
+        let was_empty = self.get_queue_sg(sg_id).await?.pool.is_empty();
+        let session = self.get_queue_sg(sg_id).await?;
+
+        if in_vc {session.add_player_in_vc(player);}
+        else {session.add_player(player);}
+
+        // Create team VCs on first join if policy requires it
+        if was_empty && self.team_vc_settings.create_policy == TeamVcCreatePolicy::OnFirstJoin {
+            if let Some(gid) = queue_ctx.guild_id {
+                if let Err(e) = self.ensure_team_vcs(queue_ctx.ctx, gid).await {
+                    warn!("Failed to ensure team VCs on first join: {e}");
+                }
+            }
+        }
+
+        if self.is_quota_sg(sg_id) {
             self.hot(queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager).await?;
         }
         Ok(())
@@ -847,7 +1362,7 @@ impl Group {
         let queue_vc = self.channels.queue_vc;
 
         // Get current queue count from idle sessions
-        let current_count = self.sessions.iter()
+        let current_count = self.subgroups[0].sessions.iter()
             .find(|s| s.status == SessionStatus::Idle)
             .map(|s| s.pool.len())
             .unwrap_or(0);
@@ -897,7 +1412,7 @@ impl Group {
         }
 
         // Build new name with count
-        let new_name = format!("{} {}/{}", base_name, current_count, self.quota);
+        let new_name = format!("{} {}/{}", base_name, current_count, self.subgroups[0].quota);
 
         // Update the channel name
         if new_name != current_name {
@@ -921,21 +1436,25 @@ impl Group {
     }
 
     pub fn is_quota(&self) -> bool {
-        let g = self.get_sessions_by_status(&SessionStatus::Idle);
+        self.is_quota_sg(0)
+    }
+
+    pub fn is_quota_sg(&self, sg_id: u8) -> bool {
+        let g = self.get_sessions_by_status_sg(sg_id, &SessionStatus::Idle);
         if g.is_empty() {
-            warn!("No idle sessions found when checking quota");
+            warn!("No idle sessions found when checking quota for subgroup {}", sg_id);
             return false;
         }
         if g.len() > 1 {
-            warn!("Multiple idle games found, faulty");
+            warn!("Multiple idle games found in subgroup {}, faulty", sg_id);
         }
         let l = g[0].pool.len();
-        let q = self.quota as usize;
+        let q = self.subgroup(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
         match l.cmp(&q) {
             std::cmp::Ordering::Less    => false,
             std::cmp::Ordering::Equal   => true,
             std::cmp::Ordering::Greater => {
-                warn!("Quota met late, more players than quota");
+                warn!("Quota met late, more players than quota in subgroup {}", sg_id);
                 true
             },
         }
@@ -953,9 +1472,9 @@ impl Group {
         let queue_chat = self.channels.queue_chat;
         let mut player_mentions = Vec::new();
         let mut players_to_dm = Vec::new();
-        let quota = self.quota as usize;
+        let quota = self.subgroups[0].quota as usize;
 
-        if let Some(game) = self.sessions.last() {
+        if let Some(game) = self.subgroups[0].sessions.last() {
             // Only mention players who are NOT in the voice channel
             // AND only the first 'quota' players (not extras queued for next match)
             for player in game.pool.iter().take(quota) {
@@ -979,29 +1498,36 @@ impl Group {
 
         let content = player_mentions.join(" ");
         let msg = CM::new().embed(embed).content(content);
-        let _ = queue_chat.send_message(&ctx.http, msg).await;
+        if let Ok(sent) = queue_chat.send_message(&ctx.http, msg).await {
+            let http = ctx.http.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+                let _ = sent.delete(&http).await;
+            });
+        }
 
         // Send DMs to users who have pm_hot_alert=true
         if let Some(database) = db {
+            let dm_tracker = ctx.data.read().await.get::<crate::models::DmTrackerKey>().cloned();
+
             for user_id in players_to_dm {
                 // Check if user has DM notifications enabled
                 match database.users.get_pm_hot_alert(user_id).await {
                     Ok(true) => {
-                        // Send DM
-                        if let Ok(user) = ctx.http.get_user(user_id).await {
-                            let dm_embed = CreateEmbed::new()
-                                .title("PUG Ready!")
-                                .description(format!(
-                                    "A game is ready in **{}**!\nPlease join the queue channel.",
-                                    ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "the server".to_string())
-                                ))
-                                .color(GREEN);
+                        let dm_embed = CreateEmbed::new()
+                            .title("PUG Ready!")
+                            .description(format!(
+                                "A game is ready in **{}**!\nPlease join the queue channel.",
+                                ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "the server".to_string())
+                            ))
+                            .color(GREEN);
 
-                            if let Err(e) = user.direct_message(&ctx.http,
-                                serenity::all::CreateMessage::new().embed(dm_embed)
-                            ).await {
+                        if let Some(ref tracker) = dm_tracker {
+                            if let Err(e) = tracker.send_dm(ctx, user_id, dm_embed).await {
                                 warn!("Failed to send DM to user {}: {}", user_id, e);
                             }
+                        } else {
+                            warn!("DM tracker not available for hot alert DM to {}", user_id);
                         }
                     }
                     Ok(false) => {
@@ -1093,6 +1619,7 @@ impl Role {
 // Channels
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Channels {
+    pub category:   CI,
     pub queue_chat: CI,
     pub queue_vc:   CI,
     pub teams:      Vec<TeamChannel>,
@@ -1100,8 +1627,9 @@ pub struct Channels {
 }
 
 impl Channels {
-    pub fn new(queue_chat: CI, queue_vc: CI, teams: Vec<TeamChannel>, dashboard: CI) -> Self {
+    pub fn new(category: CI, queue_chat: CI, queue_vc: CI, teams: Vec<TeamChannel>, dashboard: CI) -> Self {
         Self {
+            category,
             queue_chat,
             queue_vc,
             teams,
@@ -1116,6 +1644,7 @@ impl Channels {
 
     pub fn empty() -> Self {
         Self {
+            category:   CI::new(1),
             queue_chat: CI::new(1),
             queue_vc:   CI::new(1),
             teams:      Vec::new(),
@@ -1129,5 +1658,15 @@ impl Channels {
             || self.queue_vc  == channel_id
             || self.dashboard == channel_id
             || self.teams.iter().any(|team| team.contains_channel(channel_id))
+    }
+
+    /// Returns all known static channel IDs (category, chat, queue, dashboard, team VCs)
+    pub fn known_channel_ids(&self) -> Vec<CI> {
+        let mut ids = vec![self.category, self.queue_chat, self.queue_vc, self.dashboard];
+        for team in &self.teams {
+            ids.push(team.red_vc);
+            ids.push(team.blu_vc);
+        }
+        ids
     }
 }

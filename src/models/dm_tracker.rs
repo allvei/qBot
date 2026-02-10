@@ -1,4 +1,4 @@
-use serenity::all::{ChannelId, Http, MessageId, UserId};
+use serenity::all::{ChannelId, Context, CreateEmbed, CreateMessage, Http, MessageId, UserId, GetMessages};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -74,6 +74,73 @@ impl DmMessageTracker {
             // If no more messages, remove the session
             if session.message_ids.is_empty() {
                 sessions.remove(&user_id);
+            }
+        }
+    }
+
+    /// Send a DM to a user, deleting any previously tracked DMs first.
+    /// Also cleans up old untracked bot messages in the DM channel.
+    /// Returns Ok(()) on success, Err if the DM could not be sent.
+    pub async fn send_dm(
+        &self,
+        ctx: &Context,
+        user_id: UserId,
+        embed: CreateEmbed,
+    ) -> Result<(), serenity::Error> {
+        let user = ctx.http.get_user(user_id).await?;
+        let dm_channel = user.create_dm_channel(&ctx.http).await?;
+        let username = user.name.clone();
+
+        // Delete previously tracked messages for this user
+        self.delete_tracked(user_id, &ctx.http).await;
+
+        // Clean up old untracked bot messages in the DM channel
+        self.cleanup_old_bot_dms(ctx, dm_channel.id).await;
+
+        // Send the new DM
+        let sent = dm_channel.send_message(&ctx.http, CreateMessage::new().embed(embed)).await?;
+
+        // Track the new message
+        self.track_message(user_id, dm_channel.id, sent.id, username.clone()).await;
+
+        info!("[DM/{}] Sent and tracked DM", username);
+        Ok(())
+    }
+
+    /// Delete all tracked messages for a user without removing the session
+    async fn delete_tracked(&self, user_id: UserId, http: &Http) {
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(&user_id) {
+            for message_id in session.message_ids.drain(..) {
+                if let Err(e) = http.delete_message(session.channel_id, message_id, None).await {
+                    warn!("[DM/{}] Failed to delete tracked message {}: {e}", session.username, message_id);
+                }
+            }
+        }
+    }
+
+    /// Clean up old bot messages in a DM channel that aren't tracked
+    /// (handles messages sent before tracking was added)
+    async fn cleanup_old_bot_dms(&self, ctx: &Context, channel_id: ChannelId) {
+        let bot_id = ctx.cache.current_user().id;
+
+        let messages = match channel_id.messages(&ctx.http, GetMessages::new().limit(25)).await {
+            Ok(msgs) => msgs,
+            Err(_) => return,
+        };
+
+        for msg in messages {
+            if msg.author.id == bot_id {
+                // Skip messages we're currently tracking (they were already handled)
+                let is_tracked = {
+                    let sessions = self.sessions.read().await;
+                    sessions.values().any(|s| s.message_ids.contains(&msg.id))
+                };
+                if !is_tracked {
+                    if let Err(e) = msg.delete(&ctx.http).await {
+                        warn!("[DM] Failed to delete old bot message {}: {e}", msg.id);
+                    }
+                }
             }
         }
     }

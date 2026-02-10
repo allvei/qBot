@@ -109,7 +109,7 @@ pub async fn handle_elo_change_confirmation(
             let mut manager_lock = manager.lock().await;
             if let Ok(server) = manager_lock.get_server(guild_id) {
                 for group in &server.groups {
-                    let player_in_queue = group.sessions.iter().any(|session| {
+                    let player_in_queue = group.subgroups[0].sessions.iter().any(|session| {
                         session.pool.iter().any(|p| p.player.user_id == target_uid)
                     });
                     

@@ -211,28 +211,45 @@ impl Group {
     }
 
     /// Creates buttons for the dashboard
+    /// When multiple subgroups exist, each subgroup gets its own button row.
     pub async fn create_dashboard_buttons(&self) -> Result<Vec<CAR>> {
-        let _quota = self.quota as usize;
+        let has_multiple = self.subgroups.len() > 1;
+        let mut buttons = Vec::new();
 
-        // Check if any session is hot AND still has enough players
-        let is_hot  = self.sessions.iter().any(|s| s.is_hot());
-        let is_live = self.sessions.iter().any(|s| s.is_active());
+        for sg in &self.subgroups {
+            let is_hot  = sg.sessions.iter().any(|s| s.is_hot());
+            let is_live = sg.sessions.iter().any(|s| s.is_active());
+            let has_queued_players = sg.sessions.iter()
+                .any(|s| (s.is_idle() || s.is_hot()) && !s.pool.is_empty());
 
-        let buttons = vec![
-            CAR::Buttons(vec![
-                Self::gen_button(("join_queue",    "Join",         BS::Success,   true)),
-                Self::gen_button(("leave_queue",   "Leave",        BS::Danger,    true)),
-                Self::gen_button(("change_expiry", "Edit timeout", BS::Secondary, true)),
-            ]),
-            CAR::Buttons(vec![
-                Self::gen_button(("start_match",   "Start",        BS::Success,   is_hot)),
-                Self::gen_button(("end_match",     "End",          BS::Danger,    is_live)),
-                Self::gen_button(("shuffle_teams", "Shuffle",      BS::Secondary, is_hot)),
-            ]),
-            CAR::Buttons(vec![
-                Self::gen_button(("show_settings",  "Preferences", BS::Secondary, true)),
-            ]),
-        ];
+            let sg_suffix = format!(":{}", sg.id);
+            let join_label = if has_multiple {
+                format!("Join {}", sg.name)
+            } else {
+                "Join".to_string()
+            };
+
+            // Row: Join {name} | [Leave | Edit timeout] | Start/End | [Shuffle]
+            let mut row = vec![
+                CB::new(format!("join_queue{sg_suffix}")).label(&join_label).style(BS::Success),
+            ];
+            if has_queued_players {
+                row.push(CB::new(format!("leave_queue{sg_suffix}")).label("Leave").style(BS::Danger));
+                row.push(CB::new(format!("change_expiry{sg_suffix}")).label("Edit timeout").style(BS::Secondary));
+            }
+            if is_hot {
+                row.push(CB::new(format!("start_match{sg_suffix}")).label("Start").style(BS::Success));
+                row.push(CB::new(format!("shuffle_teams{sg_suffix}")).label("Shuffle").style(BS::Secondary));
+            } else if is_live {
+                row.push(CB::new(format!("start_match{sg_suffix}")).label("End").style(BS::Danger));
+            }
+            buttons.push(CAR::Buttons(row));
+        }
+
+        // Last row: Preferences (always)
+        buttons.push(CAR::Buttons(vec![
+            Self::gen_button(("show_settings", "Preferences", BS::Secondary, true)),
+        ]));
 
         Ok(buttons)
     }
@@ -267,127 +284,157 @@ impl Group {
         }
     }
 
-    /// Builds dashboard embed and components based on current group state
+    /// Builds dashboard embed and components based on current group state.
+    /// Uses group name as title. Each subgroup gets its own queue section.
+    /// All content for a subgroup is rendered together (header, players, teams)
+    /// before moving to the next subgroup.
     pub async fn build_dashboard_content(&self, db: &crate::Database, guild_id: GI) -> Result<(CE, Vec<CAR>)> {
-        let quota     = self.quota as usize;
         let timeout_seconds = self.timeout as u64;
-        let inactives = self.get_inactives();
-        let actives   = self.get_actives();
+        let has_multiple = self.subgroups.len() > 1;
 
-        let mut embed = CE::new().title("PUG Dashboard");
-        let mut description = String::new();
+        let mut embed = CE::new().title(self.display_name());
 
-        // Show active games first (Hot/Push/Live/Pull)
-        if !actives.is_empty() {
-            description.push_str("**Current Match:**\n");
-            for session in &actives {
-                // Only show missing players check for Hot sessions
-                // For Push/Live/Pull, players are in team channels, not queue VC
-                if session.is_hot() {
-                    // Check for players who have NEVER joined the VC (not just currently not in VC)
-                    let players_never_joined: Vec<_> = session.pool.iter()
-                        .take(quota)
-                        .filter(|p| !p.in_queue_vc)
-                        .collect();
+        // Single loop: each subgroup renders all its content together
+        let sg_count = self.subgroups.len();
+        for (sg_i, sg) in self.subgroups.iter().enumerate() {
+            let quota = sg.quota as usize;
+            let inactives: Vec<_> = sg.sessions.iter().filter(|s| !s.is_active()).collect();
+            let actives: Vec<_>   = sg.sessions.iter().filter(|s| s.is_active()).collect();
 
-                    // Only show countdown and missing players if there are players who have never joined
-                    if !players_never_joined.is_empty() {
-                        // Display countdown timer
-                        if let Some(ready_at) = session.ready_at {
-                            if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
-                                let ready_timestamp = duration_since_epoch.as_secs();
-                                let deadline_timestamp = ready_timestamp + timeout_seconds;
-                                description.push_str(&format!("Join deadline: <t:{deadline_timestamp}:R>\n"));
-                                description.push_str("Missing players will be removed. Overflow players will take their spots.\n\n");
+            let sg_label = if has_multiple { format!("{} queue", sg.name) } else { "Queue".to_string() };
+
+            // --- Active games (Hot/Push/Live/Pull) ---
+            if !actives.is_empty() {
+                let mut match_info = String::new();
+                for session in &actives {
+                    if session.is_hot() {
+                        let players_never_joined: Vec<_> = session.pool.iter()
+                            .take(quota)
+                            .filter(|p| !p.in_queue_vc)
+                            .collect();
+
+                        if !players_never_joined.is_empty() {
+                            if let Some(ready_at) = session.ready_at {
+                                if let Ok(d) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
+                                    let deadline = d.as_secs() + timeout_seconds;
+                                    match_info.push_str(&format!("Join deadline: <t:{deadline}:R>\n"));
+                                    match_info.push_str("Missing players will be removed.\n\n");
+                                }
+                            }
+                            match_info.push_str("**Missing players:**\n");
+                            for player in players_never_joined {
+                                match_info.push_str(&format!("  • ‹**{}**› <@{}>\n", player.player.elo, player.player.user_id));
+                            }
+                        } else {
+                            match_info.push_str("All players ready");
+                        }
+                    } else {
+                        let status_text = match session.status {
+                            SessionStatus::Push => "Moving players to team channels...",
+                            SessionStatus::Live => "In progress",
+                            SessionStatus::Pull => "Moving players back to queue...",
+                            _ => ""
+                        };
+                        match_info.push_str(status_text);
+                    }
+                }
+                embed = embed.field(
+                    format!("{sg_label} - Current Match"),
+                    match_info,
+                    false,
+                );
+
+                // Team fields for active sessions
+                for session in &actives {
+                    if session.pool.len() >= quota {
+                        if let Some(started_at) = session.started_at {
+                            if let Ok(timestamp) = started_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
+                                embed = embed.field("Session started", format!("<t:{}:R>", timestamp.as_secs()), false);
                             }
                         }
 
-                        description.push_str("**Missing players:**\n");
-                        for player in players_never_joined {
-                            let elo_str = format!("‹**{}**› ", player.player.elo);
-                            description.push_str(&format!("  • {elo_str}<@{}>\n", player.player.user_id));
-                        }
-                        description.push_str("\n\n");
+                        let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
+                        embed = embed.field("🔴 RED", format_team_field(&team_red, db, guild_id).await, true);
+                        embed = embed.field("🔵 BLU", format_team_field(&team_blu, db, guild_id).await, true);
                     }
-                } else {
-                    // For Push/Live/Pull sessions, just show status
-                    let status_text = match session.status {
-                        SessionStatus::Push => "Moving players to team channels...",
-                        SessionStatus::Live => "In progress", // TODO: show time since start <t:1767979320:R>
-                        SessionStatus::Pull => "Moving players back to queue...",
-                        _ => ""
-                    };
-                    description.push_str(&format!("• {status_text}\n"));
+                }
+
+                // Show overflow players for idle session (when there's an active game)
+                if let Some(next_session) = inactives.first() {
+                    if !next_session.pool.is_empty() {
+                        let fatkid: Vec<_> = next_session.pool.iter()
+                            .map(|p| format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id))
+                            .collect();
+                        embed = embed.field(format!("Waiting for next game ({})", next_session.pool.len()), fatkid.join("\n"), false);
+                    }
                 }
             }
-            description.push('\n');
-        }
-        // Show idle session
-        else {
-            // No active games - show queue status or hot game info
-            if let Some(current_session) = inactives.first() {
-                // If session is Hot, show missing players info
+            // --- Idle/Hot session ---
+            else if let Some(current_session) = inactives.first() {
+                let queue_players = current_session.pool.len();
+
                 if current_session.is_hot() {
-                    // Check for players who have NEVER joined the VC (not just currently not in VC)
+                    // Hot session - show missing players and teams
+                    let mut hot_info = String::new();
                     let players_never_joined: Vec<_> = current_session.pool.iter()
                         .take(quota)
                         .filter(|p| !p.in_queue_vc)
                         .collect();
 
-                    // Only show countdown and missing players if there are players who have never joined
                     if !players_never_joined.is_empty() {
-                        // Display countdown timer
                         if let Some(ready_at) = current_session.ready_at {
-                            if let Ok(duration_since_epoch) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
-                                let ready_timestamp = duration_since_epoch.as_secs();
-                                let deadline_timestamp = ready_timestamp + timeout_seconds;
-                                description.push_str(&format!("Join deadline: <t:{deadline_timestamp}:R>\n"));
-                                description.push_str("Missing players will be removed. Overflow players will take their spots.\n\n");
+                            if let Ok(d) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
+                                let deadline = d.as_secs() + timeout_seconds;
+                                hot_info.push_str(&format!("Join deadline: <t:{deadline}:R>\n"));
+                                hot_info.push_str("Missing players will be removed.\n\n");
                             }
                         }
-
-                        description.push_str("**Missing players:**\n");
-                        for player in players_never_joined {
-                            let elo_str = format!("‹**{}**› ", player.player.elo);
-                            description.push_str(&format!("  • {elo_str}<@{}>\n", player.player.user_id));
+                        hot_info.push_str("**Missing players:**\n");
+                        for player in &players_never_joined {
+                            hot_info.push_str(&format!("  • ‹**{}**› <@{}>\n", player.player.elo, player.player.user_id));
                         }
-                        description.push_str("\n\n");
                     }
-                    // Note: Next Queue for overflow will be shown after teams
+                    embed = embed.field(
+                        format!("{sg_label} ({queue_players}/{quota})"),
+                        hot_info,
+                        false,
+                    );
+
+                    // Team fields
+                    if queue_players >= quota {
+                        let (team_red, team_blu) = get_sorted_teams(&current_session.pool, quota);
+                        embed = embed.field("🔴 RED", format_team_field(&team_red, db, guild_id).await, true);
+                        embed = embed.field("🔵 BLU", format_team_field(&team_blu, db, guild_id).await, true);
+
+                        // Overflow players
+                        if queue_players > quota {
+                            let overflow_count = queue_players - quota;
+                            let fatkid: Vec<_> = current_session.pool.iter().skip(quota)
+                                .map(|p| format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id))
+                                .collect();
+                            embed = embed.field(format!("Waiting for next game ({overflow_count}/{quota})"), fatkid.join("\n"), false);
+                        }
+                    }
+                } else if queue_players == 0 {
+                    // Empty queue
+                    embed = embed.field(
+                        format!("{sg_label} (0/{quota})"),
+                        "*Join to get started!*",
+                        false,
+                    );
                 } else {
-                    // Session is Idle - show normal queue
-                    let queue_players = current_session.pool.len();
-                    description.push_str(&format!("**Queue ({queue_players}/{quota})**\n"));
-
-                    if queue_players == 0 {
-                        description.push_str("*No players in queue.\nJoin to get started!*\n");
-                    }
-                    description.push('\n');
-                }
-            } else {
-                description.push_str("**Queue status**\n* Join to get started!\n\n");
-            }
-        }
-
-        embed = embed.description(description);
-
-        // Add queue fields for idle session (before quota is met)
-        if actives.is_empty() {
-            if let Some(current_session) = inactives.first() {
-                if !current_session.is_hot() && !current_session.pool.is_empty() && current_session.pool.len() < quota {
+                    // Idle with players - show player list and timers
+                    // Queue header as a field so it stays grouped with player fields
                     let mut players_field = String::new();
                     let mut timers_field  = String::new();
 
                     for player in current_session.pool.iter() {
-                        // Build player list with ELO - use player's actual ELO
                         let elo_str = format!("‹**{}**› ", player.player.elo);
                         players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
 
-                        // Build timeout list - show "In voice" for players in VC
                         if player.in_queue_vc {
                             timers_field.push_str("In voice\n");
                         } else {
-                            // Use per-instance timeout if set, otherwise get user's setting
                             let timeout = player.timeout;
                             if let Ok(settings) = db.users.get_prefs(player.player.user_id).await {
                                 settings.timeout
@@ -408,75 +455,42 @@ impl Group {
                         }
                     }
 
-                    embed = embed.field("Players", players_field, true);
-                    embed = embed.field("Status",  timers_field,  true);
+                    // Use subgroup name in the field title
+                    embed = embed.field(
+                        format!("{sg_label} ({queue_players}/{quota})"),
+                        players_field,
+                        true,
+                    );
+                    embed = embed.field("Status", timers_field, true);
                 }
-            }
-        }
-
-        // Add connect info if available
-        if let Some(ref connect_info) = self.connect_info {
-            let mut field_value = format!("```{connect_info}```");
-
-            // Try to extract IP:PORT and create a Steam link
-            // Discord doesn't support steam:// protocol links, so display as copyable text
-            if let Some(steam_link) = Self::extract_steam_link(connect_info) {
-                field_value.push_str(&format!("\n**Steam Link:**\n```{steam_link}```"));
+            } else {
+                // No sessions at all
+                embed = embed.field(
+                    format!("{sg_label} (0/{quota})"),
+                    "*Empty, join to get started!*",
+                    false,
+                );
             }
 
-            embed = embed.field("Server connect info:", field_value, false);
-        }
+            // Separator between subgroups
+            if has_multiple && sg_i < sg_count - 1 {
+                embed = embed.field("\u{200B}", "", false);
+            }
 
-        // Add team fields for inactive sessions with enough players
-        if let Some(current_session) = inactives.first() {
-            let queue_players = current_session.pool.len();
-            if queue_players >= quota {
-                let (team_red, team_blu) = get_sorted_teams(&current_session.pool, quota);
-                embed = embed.field("🔴 RED", format_team_field(&team_red, db, guild_id).await, true);
-                embed = embed.field("🔵 BLU", format_team_field(&team_blu, db, guild_id).await, true);
+            // Add connect info if available and non-empty
+            if let Some(ref connect_info) = sg.connect_info.as_ref().filter(|s| !s.trim().is_empty()) {
+                let label = if has_multiple {
+                    format!("{} - Connect info:", sg.name)
+                } else {
+                    "Server connect info:".to_string()
+                };
+                let mut field_value = format!("```{connect_info}```");
 
-                // Show fatkidded players AFTER teams if there are overflow players
-                if current_session.is_hot() && queue_players > quota {
-                    let overflow_count = queue_players - quota;
-                    let mut fatkid = format!("**Waiting for next game ({overflow_count}/{quota}):**\n");
-                    for player in current_session.pool.iter().skip(quota) {
-                        // Use player's actual ELO, not rank default
-                        let elo_str = format!("‹**{}**› ", player.player.elo);
-                        fatkid.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
-                    }
-                    embed = embed.field("\u{200B}", fatkid, false); // Full-width field
+                if let Some(steam_link) = Self::extract_steam_link(connect_info) {
+                    field_value.push_str(&format!("\n**Steam Link:**\n```{steam_link}```"));
                 }
-            }
-        }
 
-        // Add team fields for active sessions
-        for session in &actives {
-            if session.pool.len() >= quota {
-                // Add session start time if available
-                if let Some(started_at) = session.started_at {
-                    if let Ok(timestamp) = started_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
-                        embed = embed.field("Session started", format!("<t:{}:R>", timestamp.as_secs()), false);
-                    }
-                }
-                
-                let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
-                embed = embed.field("🔴 RED", format_team_field(&team_red, db, guild_id).await, true);
-                embed = embed.field("🔵 BLU", format_team_field(&team_blu, db, guild_id).await, true);
-            }
-        }
-
-        // Show fatkidded players for idle session (when there's an active game)
-        if !actives.is_empty() {
-            if let Some(next_session) = inactives.first() {
-                if !next_session.pool.is_empty() {
-                    let mut fatkid = format!("**Waiting for next game** ‹**{}**›**:**\n", next_session.pool.len());
-                    for player in next_session.pool.iter() {
-                        // Use player's actual ELO, not rank default
-                        let elo_str = format!("‹**{}**› ", player.player.elo);
-                        fatkid.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
-                    }
-                    embed = embed.field("\u{200B}", fatkid, false); // Full-width field
-                }
+                embed = embed.field(label, field_value, false);
             }
         }
 
@@ -620,25 +634,30 @@ impl Group {
     }
 
     /// Handles the join queue button
-    async fn dash_join_queue(&mut self, cc: &CC<'_>) -> Result<()> {
+    async fn dash_join_queue(&mut self, cc: &CC<'_>, sg_id: u8) -> Result<()> {
         let user_id = cc.component.user.id;
-        //
+
+        // Get player tag from database (primary source)
+        let tag = match cc.db.get_user(user_id, cc.ctx).await {
+            Ok(player) => player.tag,
+            Err(_) => cc.component.user.display_name().to_string(),
+        };
 
         // Store channel IDs before any borrows
         let dashboard_channel = self.channels.dashboard;
 
-        // Check if player is already in queue
-        if self.get_user_session(user_id).await.is_ok() {
-            //
-            cc.reply("You are already in the queue!").await?;
+        // Check if player is already in THIS subgroup's queue (not all subgroups)
+        if self.is_user_in_sg(sg_id, user_id) {
+            cc.reply("You are already in this queue!").await?;
             return Ok(());
         }
 
-        // Check if we have an idle or hot session to join
-        let has_joinable_session = self.sessions.iter().any(|s|
-            s.status == SessionStatus::Idle || s.status == SessionStatus::Hot
-        );
-        //
+        // Check if we have an idle or hot session to join in the target subgroup
+        let has_joinable_session = self.subgroup(sg_id)
+            .map(|sg| sg.sessions.iter().any(|s|
+                s.status == SessionStatus::Idle || s.status == SessionStatus::Hot
+            ))
+            .unwrap_or(false);
 
         if !has_joinable_session {
             cc.reply("Cannot join - match is in progress. Please wait.").await?;
@@ -659,18 +678,16 @@ impl Group {
             
             // Convert to Rank struct and get ELO
             let (discord_rank, rank_min_elo) = if let Some(db_rank) = get_player_rank(&cc.db, guild_id, user_id).await {
-                info!("DEBUG: User {} has existing rank {} in database", user_id, db_rank.name);
                 // Discord role is source of truth if it exists
                 if let Some(guild_rank) = &role_based_guild_rank {
                     let role_rank = Rank::from_name(&cc.db, guild_id, &guild_rank.name).await.unwrap_or(db_rank.clone());
                     if role_rank != db_rank {
-                        info!("DEBUG: User {} Discord role '{}' (ELO {}) differs from DB {}, using Discord role", 
-                              user_id, guild_rank.name, guild_rank.elo, db_rank.name);
+                        info!("Rank mismatch for {}: Discord='{}' DB='{}', using Discord", 
+                              &tag, guild_rank.name, db_rank.name);
                     }
                     (role_rank, guild_rank.elo)
                 } else {
                     // No Discord role, keep DB rank (they may have lost role but keep earned rank)
-                    info!("DEBUG: User {} has no Discord rank role, keeping DB rank {}", user_id, db_rank.name);
                     let elo = db_rank.elo;
                     (db_rank, elo)
                 }
@@ -683,13 +700,12 @@ impl Group {
                         name: guild_rank.name.clone(),
                         elo: guild_rank.elo,
                     });
-                    info!("DEBUG: User {} has Discord role '{}' (ELO {})", user_id, guild_rank.name, guild_rank.elo);
                     (role_rank, guild_rank.elo)
                 } else {
                     // No DB rank or Discord roles, assign default
                     match get_or_assign_player_rank(&cc.db, guild_id, user_id).await {
                         Ok(rank) => {
-                            info!("DEBUG: User {} assigned default rank {}", user_id, rank.name);
+                            info!("Assigned default rank '{}' to {}", rank.name, user_id);
                             let elo = rank.elo;
                             (rank, elo)
                         },
@@ -717,9 +733,7 @@ impl Group {
             };
             
             if was_normalized {
-                info!("Player {} ELO normalized to {} (Discord rank: {})", user_id, validated_elo, discord_rank.name);
-            } else {
-                info!("Player {} ELO {} valid for rank {}", user_id, validated_elo, discord_rank.name);
+                info!("ELO normalized for {}: {} -> {} (rank: {})", user_id, discord_rank.elo, validated_elo, discord_rank.name);
             }
             
             player.elo = validated_elo;
@@ -732,7 +746,7 @@ impl Group {
             let player_rank = discord_rank.clone();
 
             //
-            if let Err(e) = self.queue_player(player, discord_rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
+            if let Err(e) = self.queue_player_sg(sg_id, player, discord_rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
                 warn!("Failed to queue player: {e}");
             } else {
                 // Log successful queue join via button
@@ -741,23 +755,34 @@ impl Group {
                     .map(|ch| ch.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
                 let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
-                log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ);
+                let (pool_len, sg_quota) = self.subgroup(sg_id)
+                    .map(|sg| (sg.sessions.iter().map(|s| s.pool.len()).sum::<usize>(), sg.quota as usize))
+                    .unwrap_or((0, 0));
+                let sg_name = self.subgroup(sg_id).map(|sg| sg.name.as_str());
+                log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ, Some((pool_len, sg_quota)), sg_name);
 
-                // Send join announcement using shared function
+                // Send join announcement (delayed + rate limited)
                 if let Ok(settings) = cc.db.users.get_prefs(user_id).await {
-                    use serenity::all::CreateMessage;
                     use crate::handlers::settings::build_join_alert_embed;
+                    use crate::models::alert_limiter::schedule_alert;
 
                     let embed = build_join_alert_embed(
                         cc.ctx,
                         user_id,
                         Some(guild_id),
                         &settings,
-                        &player_rank.name
+                        &player_rank.name,
+                        sg_name,
                     ).await;
 
-                    let queue_chat = self.channels.queue_chat;
-                    let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
+                    schedule_alert(
+                        cc.ctx.clone(),
+                        self.channels.queue_chat,
+                        embed,
+                        self.group_id,
+                        sg_id,
+                        user_id.get(),
+                    );
                 }
             }
         } else {
@@ -774,21 +799,24 @@ impl Group {
     }
 
     /// Handles the leave queue button
-    async fn dash_leave_queue(&mut self, cc: &CC<'_>) -> Result<()> {
+    async fn dash_leave_queue(&mut self, cc: &CC<'_>, sg_id: u8) -> Result<()> {
         let user_id = cc.component.user.id;
 
-        let quota = self.quota as usize;
+        let quota = self.subgroup(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
 
-        // Store channel IDs before any borrows
+        // Store fields before any borrows
         let dashboard_channel = self.channels.dashboard;
         let queue_chat = self.channels.queue_chat;
+        let group_id = self.group_id;
 
-        // Get session index before mutable borrow
-        let session_idx = self.sessions.iter()
-            .position(|s| s.pool.iter().any(|p| p.player.user_id == user_id));
+        // Get session index and subgroup name before mutable borrow
+        let sg_name_owned = self.subgroup(sg_id).map(|sg| sg.name.clone());
+        let session_idx = self.subgroup(sg_id)
+            .and_then(|sg| sg.sessions.iter()
+                .position(|s| s.pool.iter().any(|p| p.player.user_id == user_id)));
 
         // Check if player is in queue
-        let should_regenerate_teams = if let Ok(session) = self.get_user_session(user_id).await {
+        let should_regenerate_teams = if let Ok(session) = self.get_user_session_sg(sg_id, user_id) {
             // Check if player is physically in the queue VC
             let player_in_vc = if let Some(player) = session.pool.iter().find(|p| p.player.user_id == user_id) {
                 player.in_queue_vc
@@ -840,21 +868,29 @@ impl Group {
             let group_name = cc.ctx.cache.channel(dashboard_channel)
                 .map(|ch| ch.name.clone())
                 .unwrap_or_else(|| "Unknown".to_string());
-            log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BL);
+            log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BL, Some((pool_len, quota)), sg_name_owned.as_deref());
 
-            // Send leave announcement using shared function
+            // Send leave announcement (delayed + rate limited)
             if let Ok(settings) = cc.db.users.get_prefs(user_id).await {
-                use serenity::all::CreateMessage;
                 use crate::handlers::settings::build_leave_alert_embed;
+                use crate::models::alert_limiter::schedule_alert;
 
                 let embed = build_leave_alert_embed(
                     cc.ctx,
                     user_id,
                     Some(guild_id),
-                    &settings
+                    &settings,
+                    sg_name_owned.as_deref(),
                 ).await;
 
-                let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
+                schedule_alert(
+                    cc.ctx.clone(),
+                    queue_chat,
+                    embed,
+                    group_id,
+                    sg_id,
+                    user_id.get(),
+                );
             }
 
             // If session was hot, check what to do next
@@ -892,6 +928,9 @@ impl Group {
             self.generate_teams(cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
         }
 
+        // Check if team VCs should be cleaned up (OnLastLeave policy)
+        self.check_team_vc_cleanup_on_leave(cc.ctx).await;
+
         // Update dashboard to reflect changes (queue count now only shown in dashboard)
         self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
 
@@ -899,11 +938,11 @@ impl Group {
     }
 
     /// Handles the shuffle teams button
-    async fn dash_shuffle(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
-        let quota = self.quota as usize;
+    async fn dash_shuffle(&mut self, cc: &CC<'_>, _sg_id: u8) -> Result<()> {
+        let quota = self.subgroups[0].quota as usize;
 
         // Find the game to shuffle - can be Idle (if quota met) or Hot
-        let session = self.sessions.iter_mut().find(|s|
+        let session = self.subgroups[0].sessions.iter_mut().find(|s|
             (s.status == SessionStatus::Idle || s.status == SessionStatus::Hot) && s.pool.len() >= quota
         );
 
@@ -931,7 +970,7 @@ impl Group {
     }
 
     /// Handles the start match button
-    async fn dash_start(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
+    async fn dash_start(&mut self, cc: &CC<'_>, _sg_id: u8) -> Result<()> {
         // Check if user has Runner role
         use crate::handlers::player::check_component_role;
         use crate::models::Role;
@@ -952,7 +991,8 @@ impl Group {
         }
 
         // Check if there's a hot game to start
-        let has_hot_game = self.sessions.iter().any(|s| s.is_hot());
+        let has_hot_game = self.subgroups[0].sessions.iter().any(|s| s.is_hot());
+        // TODO: use sg_idx to target specific subgroup
 
         if !has_hot_game {
             cc.reply("No hot game ready to start.").await?;
@@ -978,12 +1018,12 @@ impl Group {
     }
 
     /// Handles the end match button - directly ends the match
-    async fn dash_end(&mut self, cc: &CC<'_>, _game_id: Option<String>) -> Result<()> {
+    async fn dash_end(&mut self, cc: &CC<'_>, _sg_id: u8) -> Result<()> {
         use serenity::all::CreateMessage;
         use std::time::SystemTime;
 
         // Check if there's an active game to end
-        let active_session = self.sessions.iter()
+        let active_session = self.subgroups[0].sessions.iter()
             .find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live);
 
         if active_session.is_none() {
@@ -996,7 +1036,7 @@ impl Group {
         let match_time     = active_session.started_at
             .and_then(|started| SystemTime::now().duration_since(started).ok())
             .map(|d| d.as_secs());
-        let quota = self.quota as usize;
+        let quota = self.subgroups[0].quota as usize;
         let (team_red, team_blu) = get_sorted_teams(&active_session.pool, quota);
 
         // Build match summary embed
@@ -1060,12 +1100,19 @@ impl Group {
     /// Processes all button interactions in a modular way
     ///
     /// * `cc` - The component context with button information
+    /// Parse subgroup ID from button custom_id suffix (format: action:sg_id).
+    /// Returns 0 if no suffix or invalid.
+    fn parse_sg_id(parts: &[&str]) -> u8 {
+        parts.get(1)
+            .and_then(|s| s.parse::<u8>().ok())
+            .unwrap_or(0)
+    }
+
     pub async fn dash_handle_button_interaction(&mut self, cc: &CC<'_>) -> Result<()> {
         let custom_id = &cc.component.data.custom_id;
 
         let parts: Vec<&str> = custom_id.split(':').collect();
         let action  = parts[0];
-        let game_id = parts.get(1).map(|s| s.to_string());
 
         // Get server and group names for logging - store channel ID before any mut borrows
         let guild_id = cc.component.guild_id.unwrap();
@@ -1076,18 +1123,18 @@ impl Group {
             .unwrap_or_else(|| "Unknown".to_string());
         let username = cc.ctx.cache.user(cc.component.user.id).map(|u| u.name.clone()).unwrap_or_else(|| cc.component.user.id.to_string());
 
+        let sg_id = Self::parse_sg_id(&parts);
+
         match action {
             "join_queue"        => {
-                // Log will be done inside dash_join_queue with proper context
-                self.dash_join_queue(cc).await
+                self.dash_join_queue(cc, sg_id).await
             },
             "leave_queue"       => {
-                // Log will be done inside dash_leave_queue with proper context
-                self.dash_leave_queue(cc).await
+                self.dash_leave_queue(cc, sg_id).await
             },
             "change_expiry"     => {
                 info!("[{}][{}] {} requested expiry time change", server_name, group_name, username);
-                self.dash_change_expiry(cc).await
+                self.dash_change_expiry(cc, sg_id).await
             },
             "set_expiry"        => {
                 info!("[{}][{}] {} changed expiry time", server_name, group_name, username);
@@ -1099,15 +1146,24 @@ impl Group {
             },
             "shuffle_teams"     => {
                 info!("[{}][{}] {} used Shuffle", server_name, group_name, username);
-                self.dash_shuffle(cc, game_id).await
+                self.dash_shuffle(cc, sg_id).await
             },
             "start_match"       => {
-                info!("[{}][{}] {} used Start", server_name, group_name, username);
-                self.dash_start(cc,   game_id).await
+                // Combined Start/End button: dispatch based on current subgroup state
+                let is_live = self.subgroup(sg_id)
+                    .map(|sg| sg.sessions.iter().any(|s| s.is_active()))
+                    .unwrap_or(false);
+                if is_live {
+                    info!("[{}][{}] {} used End", server_name, group_name, username);
+                    self.dash_end(cc, sg_id).await
+                } else {
+                    info!("[{}][{}] {} used Start", server_name, group_name, username);
+                    self.dash_start(cc, sg_id).await
+                }
             },
             "end_match"         => {
                 info!("[{}][{}] {} used End", server_name, group_name, username);
-                self.dash_end(cc,     game_id).await
+                self.dash_end(cc, sg_id).await
             },
             _ => {
                 cc.reply(&format!("Unknown button action: {action}"))
@@ -1118,13 +1174,13 @@ impl Group {
     }
 
     /// Show expiry time options
-    async fn dash_change_expiry(&mut self, cc: &CC<'_>) -> Result<()> {
+    async fn dash_change_expiry(&mut self, cc: &CC<'_>, _sg_id: u8) -> Result<()> {
         use serenity::all::{CreateButton as CB, ButtonStyle as BS};
 
-        // Check if user is in queue
+        // Check if user is in queue (across all subgroups)
         let user_id = cc.component.user.id;
-        let is_in_queue = self.sessions.iter()
-            .any(|s| s.pool.iter().any(|p| p.player.user_id == user_id));
+        let is_in_queue = self.subgroups.iter()
+            .any(|sg| sg.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.user_id == user_id)));
 
         if !is_in_queue {
             cc.reply("You must be in the queue to change your expiry time.").await?;
@@ -1168,13 +1224,15 @@ impl Group {
             }
         };
 
-        // Find and update the player's expiry duration in any session they're in
+        // Find and update the player's expiry duration in any session across all subgroups
         let mut found = false;
-        for session in self.sessions.iter_mut() {
-            if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
-                player.timeout = duration;
-                found = true;
-                break;
+        'outer: for sg in self.subgroups.iter_mut() {
+            for session in sg.sessions.iter_mut() {
+                if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+                    player.timeout = duration;
+                    found = true;
+                    break 'outer;
+                }
             }
         }
 
@@ -1400,7 +1458,7 @@ impl DashboardUpdateQueue {
                     };
 
                     // Log current session state
-                    let pool_size = group.sessions.first().map(|s| s.pool.len()).unwrap_or(0);
+                    let pool_size = group.subgroups[0].sessions.first().map(|s| s.pool.len()).unwrap_or(0);
                     //
 
                     // Refresh player ranks from Discord to ensure dashboard shows current ranks

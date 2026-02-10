@@ -315,13 +315,21 @@ impl AsSettingsMenu for ServerSettingsDisplay {
             .and_then(|s| s.parse::<u64>().ok())
             .map(RoleId::new);
 
-        SettingsMenu::new(format!("{} Server Settings", self.guild_name))
+        SettingsMenu::new(format!("{} - Server settings", self.guild_name))
             .color(0x5865F2)
             .row(SR::Buttons(vec![
                 SB::action("server_settings_roles",  "Roles", SBS::Secondary),
                 SB::action("server_settings_ranks",  "Ranks", SBS::Secondary),
                 SB::action("server_settings_groups", "Groups", SBS::Secondary),
             ]))
+            .row(SR::StringSelect {
+                id: "server_settings_balance".to_string(),
+                placeholder: "Team balance method...".to_string(),
+                options: vec![
+                    ("Custom distribution algorithm".to_string(), "bch".to_string()),
+                    ("Average distribution".to_string(),          "average".to_string()),
+                ],
+            })
             .footer("Select a category to manage:")
     }
 }
@@ -577,8 +585,8 @@ impl GroupListDisplay {
         if !self.groups.is_empty() {
             for group in &self.groups {
                 let name = group.display_name();
-                let quota = group.quota;
-                let sessions = group.sessions.len();
+                let quota = group.quota();
+                let sessions = group.subgroups[0].sessions.len();
                 description.push_str(&format!("- {}\n", name));
             }
         }
@@ -643,12 +651,15 @@ impl GroupListDisplay {
 
 /// Group settings for display
 pub struct GroupSettingsDisplay {
-    pub group_id:            u8,
-    pub name:                Option<String>,
-    pub quota:               u8,
-    pub timeout:             u16,
-    pub connect_info:        Option<String>,
-    pub team_balance_method: crate::models::TeamBalanceMethod,
+    pub group_id:       u8,
+    pub name:           Option<String>,
+    pub quota:          u8,
+    pub timeout:        u16,
+    pub connect_info:   Option<String>,
+    pub subgroup_count: usize,
+    pub vc_create:      String,
+    pub vc_destroy:     String,
+    pub vc_keep_min:    bool,
 }
 
 impl AsSettingsMenu for GroupSettingsDisplay {
@@ -667,7 +678,10 @@ impl AsSettingsMenu for GroupSettingsDisplay {
             .field(SF::new("Quota", format!("{} players", self.quota)))
             .field(SF::new("Confirm expiry", format!("{} seconds", self.timeout)))
             .field(SF::new("Connect info", connect_display).inline(false))
-            .field(SF::new("Team balance", self.team_balance_method.as_str()))
+            .field(SF::new("Subgroups", format!("{}", self.subgroup_count)))
+            .field(SF::new("Team VC create", &self.vc_create))
+            .field(SF::new("Team VC destroy", &self.vc_destroy))
+            .field(SF::new("Keep minimum VCs", if self.vc_keep_min { "Yes" } else { "No" }))
             .color(0x5865F2)
             .row(SR::Buttons(vec![
                 SB::edit(format!("group_settings_edit_name_{gid}"),      "Name"),
@@ -676,16 +690,95 @@ impl AsSettingsMenu for GroupSettingsDisplay {
             ]))
             .row(SR::Buttons(vec![
                 SB::edit(format!("group_settings_edit_connect_{gid}"),   "Connect info"),
-                SB::action(format!("group_settings_link_message_{gid}"), "Re-link a dashboard message", SBS::Success),
+                SB::action(format!("group_settings_subgroups_{gid}"),    "Subgroups", SBS::Primary),
+                SB::action(format!("group_settings_link_message_{gid}"), "Re-link dashboard", SBS::Success),
             ]))
-            .row(SR::StringSelect {
-                id: format!("group_settings_balance_{gid}"),
-                placeholder: "Select team balance method...".to_string(),
-                options: vec![
-                    ("Custom distribution algorithm".to_string(), "bch".to_string()),
-                    ("Average distribution".to_string(),          "average".to_string()),
-                ],
-            })
+            .row(SR::Buttons(vec![
+                SB::edit(format!("group_settings_edit_vc_create_{gid}"),  "VC create"),
+                SB::edit(format!("group_settings_edit_vc_destroy_{gid}"), "VC destroy"),
+                SB::edit(format!("group_settings_edit_vc_keepmin_{gid}"), "Keep min VCs"),
+            ]))
+            .row(SR::Buttons(vec![
+                SB::action(format!("group_settings_rank_gate_{gid}"), "Rank gate", SBS::Primary),
+                SB::action(format!("group_settings_back_{gid}"), "Back", SBS::Secondary),
+            ]))
+    }
+}
+
+// ============================================================================
+// SubgroupList implementation
+// ============================================================================
+
+/// Subgroup list display for group settings sub-menu
+pub struct SubgroupListDisplay {
+    pub group_id:   u8,
+    pub group_name: String,
+    pub subgroups:  Vec<(u8, String, u8)>, // (id, name, quota)
+}
+
+impl SubgroupListDisplay {
+    pub fn build_embed(&self) -> CE {
+        let mut description = String::new();
+
+        for (id, name, quota) in &self.subgroups {
+            description.push_str(&format!("- **{}** (quota: {}, id: {})\n", name, quota, id));
+        }
+
+        if description.is_empty() {
+            description.push_str("*No subgroups configured.*\n");
+        }
+
+        CE::new()
+            .title(format!("{} - Subgroups", self.group_name))
+            .description(description)
+            .color(0x5865F2)
+            .footer(CreateEmbedFooter::new("Manage subgroups for this group"))
+    }
+
+    pub fn build_components(&self) -> Vec<CAR> {
+        let gid = self.group_id;
+        let can_add = self.subgroups.len() < 3;
+
+        let mut buttons = Vec::new();
+
+        if can_add {
+            buttons.push(
+                CB::new(format!("group_sg_add_{gid}"))
+                    .label("Add subgroup")
+                    .style(BS::Primary)
+            );
+        }
+
+        if self.subgroups.len() > 1 {
+            buttons.push(
+                CB::new(format!("group_sg_remove_{gid}"))
+                    .label("Remove subgroup")
+                    .style(BS::Danger)
+            );
+        }
+
+        buttons.push(Eph::back(format!("group_sg_back_{gid}")));
+
+        let mut components = vec![CAR::Buttons(buttons)];
+
+        // Add select menu for editing if there are subgroups
+        if !self.subgroups.is_empty() {
+            let options: Vec<(String, String)> = self.subgroups.iter()
+                .map(|(id, name, quota)| {
+                    (format!("{} (quota: {})", name, quota), format!("{}_{}", gid, id))
+                })
+                .collect();
+
+            if let Some(menu) = create_selection_menu(
+                "group_sg_edit",
+                "Select subgroup to edit",
+                options,
+            ) {
+                components.push(menu);
+            }
+        }
+
+        components
     }
 }
 

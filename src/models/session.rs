@@ -12,12 +12,14 @@ use crate::{DEFAULT_TIMEOUT, models::Player};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
-    pub status:     SessionStatus,
-    pub pool:       Vec<SessionPlayer>,
+    pub status:        SessionStatus,
+    pub pool:          Vec<SessionPlayer>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ready_at:   Option<SystemTime>,
+    pub ready_at:      Option<SystemTime>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub started_at: Option<SystemTime>,
+    pub started_at:    Option<SystemTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_channels: Option<TeamChannel>,
 }
 
 impl Session {
@@ -52,8 +54,9 @@ impl Session {
         Self {
             status,
             pool,
-            ready_at: None,
-            started_at: None,
+            ready_at:      None,
+            started_at:    None,
+            team_channels: None,
         }
     }
 
@@ -74,9 +77,10 @@ impl Session {
 
     /// Set the session to idle and clear team assignments
     pub fn idle(&mut self) {
-        self.status     = SessionStatus::Idle;
-        self.ready_at   = None;
-        self.started_at = None;
+        self.status        = SessionStatus::Idle;
+        self.ready_at      = None;
+        self.started_at    = None;
+        self.team_channels = None;
         // Clear team assignments and VC join tracking when going back to idle
         for player in &mut self.pool {
             player.team = None;
@@ -109,10 +113,11 @@ impl Session {
     /// Create an empty session
     pub fn empty() -> Self {
         Self {
-            status:     SessionStatus::Idle,
-            pool:       Vec::new(),
-            ready_at:   None,
-            started_at: None,
+            status:        SessionStatus::Idle,
+            pool:          Vec::new(),
+            ready_at:      None,
+            started_at:    None,
+            team_channels: None,
         }
     }
 

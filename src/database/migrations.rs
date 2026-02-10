@@ -37,12 +37,13 @@ impl DatabaseMigrations {
     
     /// Run all migrations in order
     pub async fn create_tables(&self) -> Result<()> {
-        self.create_config_table().await?;
-        self.create_users_table() .await?;
-        self.create_groups_table().await?;
-        self.create_teams_table() .await?;
-        self.create_elo_table()   .await?;
-        self.create_ranks_table() .await?;
+        self.create_config_table()   .await?;
+        self.create_users_table()    .await?;
+        self.create_groups_table()   .await?;
+        self.create_teams_table()    .await?;
+        self.create_subgroups_table().await?;
+        self.create_elo_table()      .await?;
+        self.create_ranks_table()    .await?;
         
         // Add foreign key constraint after both tables exist
         self.add_config_foreign_key().await?;
@@ -50,12 +51,13 @@ impl DatabaseMigrations {
         Ok(())
     }
     pub async fn verify_schemas(&self) -> Result<()> {
-        self.verify_config().await?;
-        self.verify_users() .await?;
-        self.verify_groups().await?;
-        self.verify_teams() .await?;
-        self.verify_elos()  .await?;
-        self.verify_ranks() .await?;
+        self.verify_config()   .await?;
+        self.verify_users()    .await?;
+        self.verify_groups()   .await?;
+        self.verify_teams()    .await?;
+        self.verify_subgroups().await?;
+        self.verify_elos()     .await?;
+        self.verify_ranks()    .await?;
         Ok(())
     }
 
@@ -246,6 +248,7 @@ impl DatabaseMigrations {
                     name              TEXT,
                     timeout           INTEGER DEFAULT {DEFAULT_HOT_JOIN_TIMEOUT},
                     guild_id          INTEGER NOT NULL,
+                    category          INTEGER DEFAULT 0,
                     dashboard         INTEGER NOT NULL UNIQUE,
                     chat              INTEGER NOT NULL UNIQUE,
                     queue             INTEGER NOT NULL UNIQUE,
@@ -375,9 +378,33 @@ impl DatabaseMigrations {
                     .await?;
             }
 
+            // Add category column if missing
+            if !self.check_column("groups", "category").await? {
+                sqlx::query("ALTER TABLE groups ADD COLUMN category INTEGER DEFAULT 0")
+                    .execute(&self.pool)
+                    .await?;
+            }
+
             // Add dm_alert_users column if missing (JSON array of user IDs)
             if !self.check_column("groups", "dm_alert_users").await? {
                 sqlx::query("ALTER TABLE groups ADD COLUMN dm_alert_users TEXT DEFAULT '[]'")
+                    .execute(&self.pool)
+                    .await?;
+            }
+
+            // Add team VC lifecycle settings columns if missing
+            if !self.check_column("groups", "team_vc_create_policy").await? {
+                sqlx::query("ALTER TABLE groups ADD COLUMN team_vc_create_policy TEXT DEFAULT 'on_hot'")
+                    .execute(&self.pool)
+                    .await?;
+            }
+            if !self.check_column("groups", "team_vc_destroy_policy").await? {
+                sqlx::query("ALTER TABLE groups ADD COLUMN team_vc_destroy_policy TEXT DEFAULT 'after_pull'")
+                    .execute(&self.pool)
+                    .await?;
+            }
+            if !self.check_column("groups", "team_vc_keep_minimum").await? {
+                sqlx::query("ALTER TABLE groups ADD COLUMN team_vc_keep_minimum INTEGER DEFAULT 1")
                     .execute(&self.pool)
                     .await?;
             }
@@ -433,7 +460,7 @@ impl DatabaseMigrations {
                         
                         // Backup all data
                         let backup_data = sqlx::query(
-                            "SELECT id, group_id, name, timeout, guild_id, dashboard, chat, queue, 
+                            "SELECT id, group_id, name, timeout, guild_id, category, dashboard, chat, queue, 
                              dashboard_msg, red, blu, game, game_increment, quota, connect_info,
                              team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users
                              FROM groups"
@@ -450,6 +477,7 @@ impl DatabaseMigrations {
                                 name              TEXT,
                                 timeout           INTEGER DEFAULT {DEFAULT_HOT_JOIN_TIMEOUT},
                                 guild_id          INTEGER NOT NULL,
+                                category          INTEGER DEFAULT 0,
                                 dashboard         INTEGER NOT NULL UNIQUE,
                                 chat              INTEGER NOT NULL UNIQUE,
                                 queue             INTEGER NOT NULL UNIQUE,
@@ -486,22 +514,24 @@ impl DatabaseMigrations {
                             let game_increment: i64 = row.try_get("game_increment").unwrap_or(0);
                             let quota: i64 = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
                             let connect_info: Option<String> = row.try_get("connect_info").ok();
+                            let category: i64 = row.try_get("category").unwrap_or(0);
                             let team_balance_method: Option<String> = row.try_get("team_balance_method").ok();
                             let dm_alert_enabled: i64 = row.try_get("dm_alert_enabled").unwrap_or(0);
                             let dm_alert_threshold: i64 = row.try_get("dm_alert_threshold").unwrap_or(0);
                             let dm_alert_users: String = row.try_get("dm_alert_users").unwrap_or_else(|_| "[]".to_string());
 
                             sqlx::query(
-                                "INSERT INTO groups (id, group_id, name, timeout, guild_id, dashboard, chat, queue, 
+                                "INSERT INTO groups (id, group_id, name, timeout, guild_id, category, dashboard, chat, queue, 
                                  dashboard_msg, red, blu, game, game_increment, quota, connect_info,
                                  team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                             )
                             .bind(id)
                             .bind(group_id)
                             .bind(name)
                             .bind(timeout)
                             .bind(guild_id)
+                            .bind(category)
                             .bind(dashboard)
                             .bind(chat)
                             .bind(queue)
@@ -532,7 +562,7 @@ impl DatabaseMigrations {
         add_column!(self, "groups", "name", "TEXT", "NULL");
         
         let required_columns = vec![
-            "id", "group_id", "timeout", "guild_id", "dashboard",
+            "id", "group_id", "timeout", "guild_id", "category", "dashboard",
             "chat", "queue", "dashboard_msg", "red", "blu",
             "game", "game_increment", "quota", "connect_info",
             "team_balance_method", "dm_alert_enabled", "dm_alert_threshold",
@@ -560,6 +590,30 @@ impl DatabaseMigrations {
     async fn verify_teams(&self)  -> Result<()> {
         let required_columns = vec!["id", "guild_id", "group_id", "red", "blu"];
         self.verify_columns("teams", &required_columns).await?;
+        Ok(())
+    }
+    async fn create_subgroups_table(&self) -> Result<()> {
+        if !self.check_table("subgroups").await? {
+            sqlx::query(
+                "CREATE TABLE subgroups (
+                    id            INTEGER PRIMARY KEY,
+                    guild_id      INTEGER NOT NULL,
+                    group_id      INTEGER NOT NULL,
+                    subgroup_id   INTEGER NOT NULL DEFAULT 0,
+                    name          TEXT NOT NULL,
+                    quota         INTEGER NOT NULL DEFAULT 12,
+                    connect_info  TEXT,
+                    UNIQUE(guild_id, group_id, subgroup_id)
+                )"
+            )
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+    async fn verify_subgroups(&self) -> Result<()> {
+        let required_columns = vec!["id", "guild_id", "group_id", "subgroup_id", "name", "quota", "connect_info"];
+        self.verify_columns("subgroups", &required_columns).await?;
         Ok(())
     }
     async fn create_elo_table(&self) ->    Result<()> {
