@@ -1707,8 +1707,6 @@ pub async fn handle_server_settings_button(
             let dashboard_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[0], 16)?);
             let queue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[1], 16)?);
             let queue_vc_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[2], 16)?);
-            let red_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[3], 16)?);
-            let blue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[4], 16)?);
             let dashboard_msg_id = u64::from_str_radix(parts[5], 16)?;
 
             // Derive category from dashboard channel's parent
@@ -3937,6 +3935,7 @@ pub async fn handle_group_settings_button(
                 };
                 group.team_vc_settings.create_policy = next;
                 let _ = db.groups.update_team_vc_settings(guild_id, group_id, &group.team_vc_settings).await;
+                group.reconcile_team_vcs(ctx, guild_id).await;
                 let settings = GroupSettings::from_group(group);
                 let embed = build_group_settings_embed(&settings);
                 let buttons = build_group_settings_buttons(settings.group_id);
@@ -3958,6 +3957,7 @@ pub async fn handle_group_settings_button(
                 };
                 group.team_vc_settings.destroy_policy = next;
                 let _ = db.groups.update_team_vc_settings(guild_id, group_id, &group.team_vc_settings).await;
+                group.reconcile_team_vcs(ctx, guild_id).await;
                 let settings = GroupSettings::from_group(group);
                 let embed = build_group_settings_embed(&settings);
                 let buttons = build_group_settings_buttons(settings.group_id);
@@ -3973,6 +3973,7 @@ pub async fn handle_group_settings_button(
             if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
                 group.team_vc_settings.keep_minimum = !group.team_vc_settings.keep_minimum;
                 let _ = db.groups.update_team_vc_settings(guild_id, group_id, &group.team_vc_settings).await;
+                group.reconcile_team_vcs(ctx, guild_id).await;
                 let settings = GroupSettings::from_group(group);
                 let embed = build_group_settings_embed(&settings);
                 let buttons = build_group_settings_buttons(settings.group_id);
