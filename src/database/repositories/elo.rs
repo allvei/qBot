@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serenity::all::{UserId as UI, GuildId as GI};
 use sqlx::{Row, SqlitePool};
 
