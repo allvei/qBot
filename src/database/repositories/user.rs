@@ -146,6 +146,31 @@ impl UserRepository {
         Ok(Self::get_player(result))
     }
 
+    /// Batch ensure multiple users exist in the database (single transaction)
+    pub async fn batch_ensure(&self, user_ids: &[UI]) -> Result<()> {
+        if user_ids.is_empty() { return Ok(()); }
+
+        let mut tx = self.pool.begin().await?;
+        for chunk in user_ids.chunks(500) {
+            let mut query = String::from(
+                "INSERT INTO users (user_id, steam_id) VALUES "
+            );
+            let placeholders: Vec<String> = chunk.iter()
+                .map(|_| "(?, 0)".to_string())
+                .collect();
+            query.push_str(&placeholders.join(", "));
+            query.push_str(" ON CONFLICT(user_id) DO NOTHING");
+
+            let mut q = sqlx::query(&query);
+            for uid in chunk {
+                q = q.bind(uid.get() as i64);
+            }
+            q.execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn upsert(&self, user_id: UI, steam_id: Option<u64>) -> Result<Player> {
         let result = sqlx::query(
             "INSERT INTO users (user_id, steam_id)

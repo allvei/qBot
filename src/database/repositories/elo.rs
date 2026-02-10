@@ -119,6 +119,49 @@ impl EloRepository {
         Ok(())
     }
 
+    /// Batch set ELO and rank for multiple users in a single transaction
+    pub async fn batch_set(&self, guild_id: GI, elo: u16, rank: &Rank, user_ids: &[UI]) -> Result<u32> {
+        if user_ids.is_empty() { return Ok(0); }
+
+        // Resolve rank_id once
+        let rank_id: i64 = sqlx::query_scalar(
+            "SELECT id FROM ranks WHERE guild_id = ? AND name = ? AND role_id = ?"
+        )
+        .bind(guild_id.get() as i64)
+        .bind(&rank.name)
+        .bind(rank.role_id.get() as i64)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to find rank ID for rank '{}': {}", rank.name, e))?;
+
+        let mut tx = self.pool.begin().await?;
+        let mut success = 0u32;
+
+        for chunk in user_ids.chunks(500) {
+            let mut query = String::from(
+                "INSERT INTO elo (guild_id, user_id, elo, rank) VALUES "
+            );
+            let placeholders: Vec<String> = chunk.iter()
+                .map(|_| "(?, ?, ?, ?)".to_string())
+                .collect();
+            query.push_str(&placeholders.join(", "));
+            query.push_str(" ON CONFLICT(guild_id, user_id) DO UPDATE SET elo = excluded.elo, rank = excluded.rank");
+
+            let mut q = sqlx::query(&query);
+            for uid in chunk {
+                q = q.bind(guild_id.get() as i64)
+                     .bind(uid.get() as i64)
+                     .bind(elo as i64)
+                     .bind(rank_id);
+            }
+            let result = q.execute(&mut *tx).await?;
+            success += result.rows_affected() as u32;
+        }
+
+        tx.commit().await?;
+        Ok(success)
+    }
+
     /// Update only the ELO value (rank will be recalculated)
     pub async fn update_elo(&self, user_id: UI, guild_id: GI, elo: u16, db: &crate::Database) -> Result<()> {
         let rank = Rank::from_elo(db, guild_id, elo).await?;
