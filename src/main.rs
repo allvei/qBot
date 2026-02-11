@@ -4,7 +4,7 @@ use std::sync::Arc;
 use time::macros::format_description;
 use tracing_subscriber::fmt::time::UtcTime;
 use anyhow::Result;
-use pf_pug_bot::{RED, commands, Rank};
+use pf_pug_bot::{RED, commands};
 use serenity::all::{
     Client, GatewayIntents, EventHandler, Ready, Guild,Interaction,
     VoiceState, Command, Context, User, CommandOptionType as COT,
@@ -347,16 +347,8 @@ impl EventHandler for Handler {
 
                     let is_admin = match member {
                         Some(member) => {
-                            // Get admin role from database config
-                            match self.db.config.get_config_item("admin_role", guild_id).await {
-                                Ok(Some(admin_role_str)) => {
-                                    if let Ok(admin_role_id) = admin_role_str.parse::<u64>() {
-                                        let admin_role = serenity::all::RoleId::new(admin_role_id);
-                                        member.roles.contains(&admin_role)
-                                    } else {
-                                        false
-                                    }
-                                }
+                            match self.db.config.get_admin_role_id(guild_id).await {
+                                Ok(Some(admin_role)) => member.roles.contains(&admin_role),
                                 _ => {
                                     // If no admin role configured, check for server Administrator permission
                                     if let Some(guild_ref) = guild_id.to_guild_cached(&ctx.cache) {
@@ -524,7 +516,7 @@ impl EventHandler for Handler {
                     Ok(group) => group,
                     Err(_) => {
                         // Group not in manager - try to recover from database
-                        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                        let guild_name = pf_pug_bot::guild_name(&ctx, guild_id);
                         let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{channel_id}"));
                         info!("[{}] Group not found in manager for #{}, attempting recovery from database", guild_name, channel_name);
 
@@ -730,76 +722,11 @@ impl EventHandler for Handler {
 
         match state {
             VoiceStateUpdate::Disconnected => {
-                // Player disconnected from queue VC (not moved, actually left)
-                let guild_name = ctx.cache.guild(server).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-                let group_name = ctx.cache.channel(group.channels.dashboard)
-                    .map(|ch| ch.name.clone())
-                    .unwrap_or_else(|| "Unknown".to_string());
-                let pool_len: usize = group.subgroups[0].sessions.iter().map(|s| s.pool.len()).sum();
-                let sg_name = group.subgroups.first().map(|sg| sg.name.as_str());
-                log_queue_toggle(&guild_name, &group_name, &tag, VL, Some((pool_len, group.quota() as usize)), sg_name);
-
-                let quota = group.quota() as usize;
-                // Get session index before mutable borrow
-                let _ = group.subgroups[0].sessions.iter()
-                    .position(|s| s.pool.iter().any(|p| p.player.user_id == user_id));
-
-                let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
-                    if !sesh.is_active() {
-                        let was_hot = sesh.is_hot();
-
-                        // Check if player has auto-leave disabled
-                        let should_remove_player = if let Ok(settings) = self.db.users.get_prefs(user_id).await {
-                            if settings.vc_auto_leave {
-                                // Auto-leave enabled - remove player from queue
-                                true
-                            } else {
-                                // Auto-leave disabled - reset timeout and keep player in queue
-                                if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
-                                    // Reset the join time to restart the timeout
-                                    player.joined_at = std::time::SystemTime::now();
-                                    // Mark as not in VC anymore
-                                    player.in_queue_vc = false;
-                                }
-                                false
-                            }
-                        } else {
-                            // Default to removing player if settings can't be retrieved
-                            true
-                        };
-
-                        if should_remove_player {
-                            // Remove player from session when they disconnect
-                            sesh.remove_player(user_id);
-                        }
-
-                        // If session was hot and still has enough players, regenerate teams
-                        if was_hot && sesh.pool.len() >= quota {
-                            true
-                        } else if was_hot && sesh.pool.len() < quota {
-                            // Dropped below quota, transition to Idle
-                            sesh.idle();
-                            false
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-                if should_regenerate {
-                    group.generate_teams(&ctx, server, Some(&self.db)).await;
-                }
+                self.handle_player_leave_vc(&ctx, group, server, user_id, &tag).await;
                 group.check_team_vc_cleanup_on_leave(&ctx).await;
                 group.queue_dash_update(&ctx, server).await;
             },
             VoiceStateUpdate::Connected => {
-                // Player addition is handled in the later section (lines 680+)
-                // which properly uses get_or_assign_player_rank
-                // This just ensures a session exists for them to join
                 if group.get_inactives().is_empty() {
                     if let Err(e) = group.create_session() {
                         warn!("Failed to create session on VC connect: {e}");
@@ -808,69 +735,7 @@ impl EventHandler for Handler {
             },
             VoiceStateUpdate::Moved => {
                 if group.channels.queue_vc == lookup_channel {
-                    let guild_name = ctx.cache.guild(server).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-                    let group_name = ctx.cache.channel(group.channels.dashboard)
-                        .map(|ch| ch.name.clone())
-                        .unwrap_or_else(|| "Unknown".to_string());
-                    let pool_len: usize = group.subgroups[0].sessions.iter().map(|s| s.pool.len()).sum();
-                    let sg_name = group.subgroups.first().map(|sg| sg.name.as_str());
-                    log_queue_toggle(&guild_name, &group_name, &tag, VL, Some((pool_len, group.quota() as usize)), sg_name);
-
-                    let quota = group.quota() as usize;
-                    // Get session index before mutable borrow
-                    let _ = group.subgroups[0].sessions.iter()
-                        .position(|s| s.pool.iter().any(|p| p.player.user_id == user_id));
-
-                    let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
-                        if !sesh.is_active() {
-                            let was_hot = sesh.is_hot();
-
-                            // Check if player has auto-leave disabled
-                            let should_remove_player = if let Ok(settings) = self.db.users.get_prefs(user_id).await {
-                                if settings.vc_auto_leave {
-                                    // Auto-leave enabled - remove player from queue
-                                    true
-                                } else {
-                                    // Auto-leave disabled - reset timeout and keep player in queue
-                                    if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
-                                        // Reset the join time to restart the timeout
-                                        player.joined_at = std::time::SystemTime::now();
-                                        // Mark as not in VC anymore
-                                        player.in_queue_vc = false;
-                                    }
-                                    false
-                                }
-                            } else {
-                                // Default to removing player if settings can't be retrieved
-                                true
-                            };
-
-                            if should_remove_player {
-                                // Remove player from session when they move out of queue VC
-                                sesh.remove_player(user_id);
-                            }
-
-                            // If session was hot and still has enough players, regenerate teams
-                            if was_hot && sesh.pool.len() >= quota {
-                                true
-                            } else if was_hot && sesh.pool.len() < quota {
-                                // Dropped below quota, transition to Idle
-                                sesh.idle();
-                                false
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
-
-                    if should_regenerate {
-                        group.generate_teams(&ctx, server, Some(&self.db)).await;
-                    }
-                    // Queue count now only displayed in dashboard
+                    self.handle_player_leave_vc(&ctx, group, server, user_id, &tag).await;
                     group.queue_dash_update(&ctx, server).await;
                 }
             },
@@ -940,100 +805,16 @@ impl EventHandler for Handler {
 
                             // Now we're guaranteed to have a session
                             {
-                                // Get player rank: DB for speed, Discord roles for truth
-                                use pf_pug_bot::handlers::player::{get_player_rank, get_user_rank_from_discord_roles, get_or_assign_player_rank};
-                                
-                                // First, get Discord role (source of truth) - returns GuildRank with ELO
-                                let role_based_guild_rank = get_user_rank_from_discord_roles(&ctx, &self.db, server, user_id).await;
-                                
-                                // Convert to Rank struct and get ELO
-                                let (discord_rank, _rank_min_elo) = if let Some(db_rank) = get_player_rank(&self.db, server, user_id).await {
-                                    if let Some(guild_rank) = &role_based_guild_rank {
-                                        let role_rank = Rank::from_name(&self.db, server, &guild_rank.name).await.unwrap_or(db_rank.clone());
-                                        if role_rank != db_rank {
-                                            info!("Rank mismatch for {}: Discord='{}' DB='{}', using Discord", 
-                                                  &tag, guild_rank.name, db_rank.name);
-                                        }
-                                        (role_rank, guild_rank.elo)
-                                    } else {
-                                        let elo = db_rank.elo;
-                                        (db_rank, elo)
-                                    }
-                                } else {
-                                    if let Some(guild_rank) = &role_based_guild_rank {
-                                        let role_rank = Rank::from_name(&self.db, server, &guild_rank.name).await.unwrap_or_else(|_| Rank {
-                                            guild_id: server,
-                                            role_id: guild_rank.role_id,
-                                            name: guild_rank.name.clone(),
-                                            elo: guild_rank.elo,
-                                        });
-                                        (role_rank, guild_rank.elo)
-                                    } else {
-                                        match get_or_assign_player_rank(&self.db, server, user_id).await {
-                                            Ok(rank) => {
-                                                info!("Assigned default rank '{}' to {}", rank.name, user_id);
-                                                let elo = rank.elo;
-                                                (rank, elo)
-                                            },
-                                            Err(e) => {
-                                                error!("Failed to get or assign rank for user {}: {}", user_id, e);
-                                                return;
-                                            }
-                                        }
-                                    }
-                                };
-                                
-                                // Get base player info
-                                let mut player = match self.db.get_user(user_id, &ctx).await {
-                                    Ok(p) => p,
-                                    Err(_) => match self.db.new_user(user_id, &ctx).await {
-                                        Ok(p) => p,
-                                        Err(e) => {
-                                            error!("Failed to create new user: {}", e);
-                                            return;
-                                        }
+                                use pf_pug_bot::handlers::player::resolve_player_for_queue;
+
+                                let (player, discord_rank) = match resolve_player_for_queue(&ctx, &self.db, server, user_id).await {
+                                    Ok(result) => result,
+                                    Err(e) => {
+                                        error!("Failed to resolve player for queue: {e}");
+                                        return;
                                     }
                                 };
 
-                                // Get guild-specific ELO if exists
-                                let existing_elo = self.db.elo.get_if_exists(user_id, server).await.ok().flatten();
-                                let elo_ranks_linked = self.db.config.get_elo_ranks_linked(server).await.unwrap_or(true);
-                                
-                                if elo_ranks_linked {
-                                    // Linked: normalize ELO to rank range
-                                    let rank_min_elo = discord_rank.elo;
-                                    let rank_max_elo = 101;
-                                    
-                                    if let Some(guild_elo) = existing_elo {
-                                        if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
-                                            player.elo = guild_elo.elo;
-                                        } else {
-                                            info!("ELO reset for {}: {} -> {} (outside {} range)", 
-                                                  user_id, guild_elo.elo, rank_min_elo, discord_rank.name);
-                                            player.elo = rank_min_elo;
-                                            if let Err(e) = self.db.elo.set(user_id, server, player.elo, discord_rank.clone()).await {
-                                                warn!("Failed to update guild ELO: {}", e);
-                                            }
-                                        }
-                                    } else {
-                                        player.elo = rank_min_elo;
-                                        if let Err(e) = self.db.elo.set(user_id, server, player.elo, discord_rank.clone()).await {
-                                            warn!("Failed to initialize guild ELO: {}", e);
-                                        }
-                                    }
-                                } else {
-                                    // Independent: use existing ELO as-is, or default
-                                    if let Some(guild_elo) = existing_elo {
-                                        player.elo = guild_elo.elo;
-                                    } else {
-                                        player.elo = discord_rank.elo;
-                                        if let Err(e) = self.db.elo.set(user_id, server, player.elo, discord_rank.clone()).await {
-                                            warn!("Failed to initialize guild ELO: {}", e);
-                                        }
-                                    }
-                                }
-                                player.rank = Some(discord_rank.clone());
-                                
                                 // Use queue_player_with_vc_status to set in_queue_vc BEFORE quota check/notification
                                 let queue_ctx = pf_pug_bot::models::server::QueueContext {
                                     ctx: &ctx,
@@ -1044,8 +825,7 @@ impl EventHandler for Handler {
                                 if let Err(e) = group.queue_player_with_vc_status(player.clone(), discord_rank, queue_ctx, true).await {
                                     error!("Failed to add player to queue: {e}");
                                 } else {
-                                    // Log successful queue join via voice channel
-                                    let guild_name = ctx.cache.guild(server).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                                    let guild_name = pf_pug_bot::guild_name(&ctx, server);
                                     let group_name = ctx.cache.channel(group.channels.dashboard)
                                         .map(|ch| ch.name.clone())
                                         .unwrap_or_else(|| "Unknown".to_string());
@@ -1073,6 +853,68 @@ impl EventHandler for Handler {
 }
 
 impl Handler {
+    /// Handle a player leaving the queue VC (disconnect or move away).
+    /// Checks auto-leave preference, removes or resets timeout, and regenerates teams if needed.
+    async fn handle_player_leave_vc(
+        &self,
+        ctx: &Context,
+        group: &mut pf_pug_bot::models::Group,
+        guild_id: serenity::all::GuildId,
+        user_id: serenity::all::UserId,
+        tag: &str,
+    ) {
+        let guild_name = pf_pug_bot::guild_name(&ctx, guild_id);
+        let group_name = ctx.cache.channel(group.channels.dashboard)
+            .map(|ch| ch.name.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+        let pool_len: usize = group.subgroups[0].sessions.iter().map(|s| s.pool.len()).sum();
+        let sg_name = group.subgroups.first().map(|sg| sg.name.as_str());
+        log_queue_toggle(&guild_name, &group_name, tag, VL, Some((pool_len, group.quota() as usize)), sg_name);
+
+        let quota = group.quota() as usize;
+
+        let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
+            if !sesh.is_active() {
+                let was_hot = sesh.is_hot();
+
+                let should_remove_player = if let Ok(settings) = self.db.users.get_prefs(user_id).await {
+                    if settings.vc_auto_leave {
+                        true
+                    } else {
+                        if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+                            player.joined_at = std::time::SystemTime::now();
+                            player.in_queue_vc = false;
+                        }
+                        false
+                    }
+                } else {
+                    true
+                };
+
+                if should_remove_player {
+                    sesh.remove_player(user_id);
+                }
+
+                if was_hot && sesh.pool.len() >= quota {
+                    true
+                } else if was_hot && sesh.pool.len() < quota {
+                    sesh.idle();
+                    false
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if should_regenerate {
+            group.generate_teams(ctx, guild_id, Some(&self.db)).await;
+        }
+    }
+
     /// Check if bot has necessary permissions in the guild
     async fn check_bot_permissions(&self, ctx: &Context, guild: &Guild) -> (bool, String) {
         use serenity::all::Permissions;
@@ -1167,106 +1009,19 @@ impl Handler {
                     .map(|ch| ch.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
 
-                use pf_pug_bot::handlers::player::{get_player_rank, get_user_rank_from_discord_roles, get_or_assign_player_rank};
-                
-                for (user_id, tag) in &players_to_add {
+                use pf_pug_bot::handlers::player::resolve_player_for_queue;
+
+                for (user_id, _tag) in &players_to_add {
                     let user_id = *user_id;
-                    // Use same rank detection as voice join: Discord roles for truth, DB for speed
-                    let role_based_guild_rank = get_user_rank_from_discord_roles(&ctx, &self.db, guild.id, user_id).await;
-                    
-                    let (discord_rank, _rank_min_elo) = if let Some(db_rank) = get_player_rank(&self.db, guild.id, user_id).await {
-                        // Player has existing rank in database
-                        if let Some(guild_rank) = &role_based_guild_rank {
-                            // Discord role exists - use its name to determine Rank struct
-                            let role_rank = Rank::from_name(&self.db, guild.id, &guild_rank.name).await.unwrap_or(db_rank.clone());
-                            if role_rank != db_rank {
-                                info!("Rank mismatch for {}: Discord='{}' DB='{}', using Discord", 
-                                      &tag, guild_rank.name, db_rank.name);
-                            }
-                            (role_rank, guild_rank.elo)
-                        } else {
-                            // No Discord role, keep DB rank
-                            let elo = db_rank.elo;
-                            (db_rank, elo)
-                        }
-                    } else {
-                        // No DB rank - check Discord roles before defaulting
-                        if let Some(guild_rank) = &role_based_guild_rank {
-                            let role_rank = Rank::from_name(&self.db, guild.id, &guild_rank.name).await.unwrap_or_else(|_| Rank {
-                                guild_id: guild.id,
-                                role_id: guild_rank.role_id,
-                                name: guild_rank.name.clone(),
-                                elo: guild_rank.elo,
-                            });
-                            (role_rank, guild_rank.elo)
-                        } else {
-                            match get_or_assign_player_rank(&self.db, guild.id, user_id).await {
-                                Ok(rank) => {
-                                    info!("Assigned default rank '{}' to {}", rank.name, user_id);
-                                    let elo = rank.elo;
-                                    (rank, elo)
-                                },
-                                Err(e) => {
-                                    error!("Failed to get or assign rank for user {}: {}", user_id, e);
-                                    continue;
-                                }
-                            }
+
+                    let player = match resolve_player_for_queue(ctx, &self.db, guild.id, user_id).await {
+                        Ok((p, _rank)) => p,
+                        Err(e) => {
+                            error!("Failed to resolve player {} for queue: {e}", user_id);
+                            continue;
                         }
                     };
-                    
-                    // Get base player info
-                    let mut player = match self.db.get_user(user_id, &ctx).await {
-                        Ok(p) => p,
-                        Err(_) => match self.db.new_user(user_id, &ctx).await {
-                            Ok(p) => p,
-                            Err(e) => {
-                                error!("Failed to create new user: {}", e);
-                                continue;
-                            }
-                        }
-                    };
-                    
-                    // Get guild-specific ELO if exists
-                    let existing_elo = self.db.elo.get_if_exists(user_id, guild.id).await.ok().flatten();
-                    let elo_ranks_linked = self.db.config.get_elo_ranks_linked(guild.id).await.unwrap_or(true);
-                    
-                    if elo_ranks_linked {
-                        // Linked: normalize ELO to rank range
-                        let rank_min_elo = discord_rank.elo;
-                        let rank_max_elo = 101;
-                        
-                        if let Some(guild_elo) = existing_elo {
-                            if guild_elo.elo >= rank_min_elo && guild_elo.elo < rank_max_elo {
-                                player.elo = guild_elo.elo;
-                            } else {
-                                info!("ELO reset for {}: {} -> {} (outside {} range)", 
-                                      user_id, guild_elo.elo, rank_min_elo, discord_rank.name);
-                                player.elo = rank_min_elo;
-                                if let Err(e) = self.db.elo.set(user_id, guild.id, player.elo, discord_rank.clone()).await {
-                                    warn!("Failed to update guild ELO: {}", e);
-                                }
-                            }
-                        } else {
-                            info!("New player {} initialized with rank '{}' elo={}", user_id, discord_rank.name, rank_min_elo);
-                            player.elo = rank_min_elo;
-                            if let Err(e) = self.db.elo.set(user_id, guild.id, player.elo, discord_rank.clone()).await {
-                                warn!("Failed to initialize guild ELO: {}", e);
-                            }
-                        }
-                    } else {
-                        // Independent: use existing ELO as-is, or default
-                        if let Some(guild_elo) = existing_elo {
-                            player.elo = guild_elo.elo;
-                        } else {
-                            info!("New player {} initialized with default elo={} (ELO-Rank independent)", user_id, discord_rank.elo);
-                            player.elo = discord_rank.elo;
-                            if let Err(e) = self.db.elo.set(user_id, guild.id, player.elo, discord_rank.clone()).await {
-                                warn!("Failed to initialize guild ELO: {}", e);
-                            }
-                        }
-                    }
-                    player.rank = Some(discord_rank);
-                    
+
                     log_queue_toggle(&guild_name, &group_name, &player.tag.clone(), QueueToggleType::VJ, None, sg_name_owned.as_deref());
                     session.add_player(player);
                 }
