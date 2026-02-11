@@ -255,8 +255,8 @@ impl DatabaseMigrations {
                     chat              INTEGER NOT NULL UNIQUE,
                     queue             INTEGER NOT NULL UNIQUE,
                     dashboard_msg     INTEGER DEFAULT 0,
-                    red               INTEGER NOT NULL UNIQUE,
-                    blu               INTEGER NOT NULL UNIQUE,
+                    red               INTEGER NOT NULL DEFAULT 1,
+                    blu               INTEGER NOT NULL DEFAULT 1,
                     game              INTEGER DEFAULT 0,
                     game_increment    INTEGER DEFAULT 0,
                     quota             INTEGER DEFAULT {DEFAULT_QUOTA},
@@ -294,8 +294,8 @@ impl DatabaseMigrations {
                         chat              INTEGER NOT NULL UNIQUE,
                         queue             INTEGER NOT NULL UNIQUE,
                         dashboard_msg     INTEGER DEFAULT 0,
-                        red               INTEGER NOT NULL UNIQUE,
-                        blu               INTEGER NOT NULL UNIQUE,
+                        red               INTEGER NOT NULL DEFAULT 1,
+                        blu               INTEGER NOT NULL DEFAULT 1,
                         game              INTEGER DEFAULT 0,
                         game_increment    INTEGER DEFAULT 0,
                         quota             INTEGER DEFAULT {DEFAULT_QUOTA},
@@ -420,10 +420,6 @@ impl DatabaseMigrations {
                     SELECT chat FROM groups GROUP BY chat HAVING COUNT(*) > 1
                     UNION ALL
                     SELECT queue FROM groups GROUP BY queue HAVING COUNT(*) > 1
-                    UNION ALL
-                    SELECT red FROM groups GROUP BY red HAVING COUNT(*) > 1
-                    UNION ALL
-                    SELECT blu FROM groups GROUP BY blu HAVING COUNT(*) > 1
                 )"
             )
             .fetch_one(&self.pool)
@@ -484,8 +480,8 @@ impl DatabaseMigrations {
                                 chat              INTEGER NOT NULL UNIQUE,
                                 queue             INTEGER NOT NULL UNIQUE,
                                 dashboard_msg     INTEGER DEFAULT 0,
-                                red               INTEGER NOT NULL UNIQUE,
-                                blu               INTEGER NOT NULL UNIQUE,
+                                red               INTEGER NOT NULL DEFAULT 1,
+                                blu               INTEGER NOT NULL DEFAULT 1,
                                 game              INTEGER DEFAULT 0,
                                 game_increment    INTEGER DEFAULT 0,
                                 quota             INTEGER DEFAULT {DEFAULT_QUOTA},
@@ -556,7 +552,119 @@ impl DatabaseMigrations {
                     }
                 }
             }
+
+            // Drop UNIQUE constraint from legacy red/blu columns (now in teams table)
+            self.migrate_groups_drop_red_blu_unique().await?;
         }
+        Ok(())
+    }
+
+    /// Recreate the groups table without UNIQUE on red/blu if needed.
+    /// These legacy columns now hold placeholder value 1 for every row;
+    /// the real team channels live in the `teams` table.
+    async fn migrate_groups_drop_red_blu_unique(&self) -> Result<()> {
+        use crate::DEFAULT_QUOTA;
+
+        // Quick probe: try inserting two rows with the same red value.
+        // If the second insert fails, UNIQUE still exists and we must migrate.
+        let probe_ok = sqlx::query(
+            "INSERT INTO groups (guild_id, dashboard, chat, queue, red, blu, quota)
+             VALUES (999999, 999991, 999992, 999993, 1, 1, 12)"
+        )
+        .execute(&self.pool)
+        .await
+        .is_ok();
+
+        // Clean up probe row
+        let _ = sqlx::query("DELETE FROM groups WHERE guild_id = 999999")
+            .execute(&self.pool)
+            .await;
+
+        if probe_ok {
+            // No UNIQUE on red/blu (or table was empty) - nothing to do
+            return Ok(());
+        }
+
+        info!("Dropping UNIQUE constraints from legacy red/blu columns...");
+
+        let backup_data = sqlx::query(
+            "SELECT id, group_id, name, timeout, guild_id, category, dashboard, chat, queue,
+             dashboard_msg, red, blu, game, game_increment, quota, connect_info,
+             team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users,
+             team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum
+             FROM groups"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        sqlx::query("DROP TABLE groups").execute(&self.pool).await?;
+        sqlx::query(&format!(
+            "CREATE TABLE groups (
+                id                    INTEGER PRIMARY KEY,
+                group_id              INTEGER DEFAULT 0,
+                name                  TEXT,
+                timeout               INTEGER DEFAULT {DEFAULT_HOT_JOIN_TIMEOUT},
+                guild_id              INTEGER NOT NULL,
+                category              INTEGER DEFAULT 0,
+                dashboard             INTEGER NOT NULL UNIQUE,
+                chat                  INTEGER NOT NULL UNIQUE,
+                queue                 INTEGER NOT NULL UNIQUE,
+                dashboard_msg         INTEGER DEFAULT 0,
+                red                   INTEGER NOT NULL DEFAULT 1,
+                blu                   INTEGER NOT NULL DEFAULT 1,
+                game                  INTEGER DEFAULT 0,
+                game_increment        INTEGER DEFAULT 0,
+                quota                 INTEGER DEFAULT {DEFAULT_QUOTA},
+                connect_info          TEXT,
+                team_balance_method   TEXT DEFAULT 'BCH',
+                dm_alert_enabled      INTEGER DEFAULT 0,
+                dm_alert_threshold    INTEGER DEFAULT 0,
+                dm_alert_users        TEXT DEFAULT '[]',
+                team_vc_create_policy  TEXT DEFAULT 'on_hot',
+                team_vc_destroy_policy TEXT DEFAULT 'after_pull',
+                team_vc_keep_minimum   INTEGER DEFAULT 1
+            )"
+        ))
+        .execute(&self.pool)
+        .await?;
+
+        for row in backup_data {
+            sqlx::query(
+                "INSERT INTO groups (id, group_id, name, timeout, guild_id, category,
+                 dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment,
+                 quota, connect_info, team_balance_method, dm_alert_enabled,
+                 dm_alert_threshold, dm_alert_users,
+                 team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum)
+                 VALUES (?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?)"
+            )
+            .bind(row.get::<i64, _>("id"))
+            .bind(row.try_get::<i64, _>("group_id").unwrap_or(0))
+            .bind(row.try_get::<Option<String>, _>("name").ok().flatten())
+            .bind(row.try_get::<i64, _>("timeout").unwrap_or(DEFAULT_HOT_JOIN_TIMEOUT as i64))
+            .bind(row.get::<i64, _>("guild_id"))
+            .bind(row.try_get::<i64, _>("category").unwrap_or(0))
+            .bind(row.get::<i64, _>("dashboard"))
+            .bind(row.get::<i64, _>("chat"))
+            .bind(row.get::<i64, _>("queue"))
+            .bind(row.try_get::<i64, _>("dashboard_msg").unwrap_or(0))
+            .bind(row.get::<i64, _>("red"))
+            .bind(row.get::<i64, _>("blu"))
+            .bind(row.try_get::<i64, _>("game").unwrap_or(0))
+            .bind(row.try_get::<i64, _>("game_increment").unwrap_or(0))
+            .bind(row.try_get::<i64, _>("quota").unwrap_or(DEFAULT_QUOTA as i64))
+            .bind(row.try_get::<Option<String>, _>("connect_info").ok().flatten())
+            .bind(row.try_get::<Option<String>, _>("team_balance_method").ok().flatten())
+            .bind(row.try_get::<i64, _>("dm_alert_enabled").unwrap_or(0))
+            .bind(row.try_get::<i64, _>("dm_alert_threshold").unwrap_or(0))
+            .bind(row.try_get::<String, _>("dm_alert_users").unwrap_or_else(|_| "[]".to_string()))
+            .bind(row.try_get::<Option<String>, _>("team_vc_create_policy").ok().flatten())
+            .bind(row.try_get::<Option<String>, _>("team_vc_destroy_policy").ok().flatten())
+            .bind(row.try_get::<i64, _>("team_vc_keep_minimum").unwrap_or(1))
+            .execute(&self.pool)
+            .await?;
+        }
+
+        info!("Successfully dropped UNIQUE from red/blu columns");
         Ok(())
     }
     async fn verify_groups(&self) -> Result<()> {
@@ -921,7 +1029,23 @@ impl DatabaseMigrations {
         Ok(existing_cols.contains(&column_name.to_string()))
     }
     /// Check if a unique constraint exists on a column
-    async fn check_unique(&self, table: &str, _column: &str) -> Result<bool> {
+    async fn check_unique(&self, table: &str, column: &str) -> Result<bool> {
+        // INTEGER PRIMARY KEY is the rowid alias in SQLite and won't appear in index_list,
+        // so check table_info for the pk flag first.
+        let table_info = sqlx::query(&format!("PRAGMA table_info({table})"))
+            .fetch_all(&self.pool)
+            .await?;
+
+        let is_pk = table_info.iter().any(|row| {
+            let name: String = row.try_get("name").unwrap_or_default();
+            let pk: i64 = row.try_get("pk").unwrap_or(0);
+            name == column && pk > 0
+        });
+
+        if is_pk {
+            return Ok(true);
+        }
+
         let index_info = sqlx::query(&format!("PRAGMA index_list({table})"))
             .fetch_all(&self.pool)
             .await?;
