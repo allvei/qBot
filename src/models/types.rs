@@ -62,7 +62,7 @@ impl CommandContext<'_> {
 
     pub fn guild_name(&self) -> String {
         self.intax.guild_id
-            .and_then(|gid| self.ctx.cache.guild(gid).map(|g| g.name.clone()))
+            .map(|gid| crate::guild_name(self.ctx, gid))
             .unwrap_or_else(|| "Unknown".to_string())
     }
 }
@@ -92,7 +92,7 @@ impl ComponentContext<'_> {
 
     pub fn guild_name(&self) -> String {
         self.component.guild_id
-            .and_then(|gid| self.ctx.cache.guild(gid).map(|g| g.name.clone()))
+            .map(|gid| crate::guild_name(self.ctx, gid))
             .unwrap_or_else(|| "Unknown".to_string())
     }
 }

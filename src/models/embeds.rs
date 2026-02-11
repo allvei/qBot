@@ -29,6 +29,14 @@ impl Ephemeral {
         CIR::Message(CIRM::new().embed(embed).components(buttons).ephemeral(true))
     }
 
+    pub fn update(embed: CE) -> CIR {
+        CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![]))
+    }
+
+    pub fn update_with(embed: CE, components: Vec<serenity::all::CreateActionRow>) -> CIR {
+        CIR::UpdateMessage(CIRM::new().embed(embed).components(components))
+    }
+
     pub fn back(id: impl Into<String>) -> CB {
         CB::new(id.into())
             .label("Back")
