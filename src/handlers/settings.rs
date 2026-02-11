@@ -1076,6 +1076,13 @@ pub async fn handle_server_settings_button(
                             .min_length(1)
                             .max_length(3)
                     ),
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Paragraph, "Bot-only dashboard (yes/no)", "bot_only_dashboard")
+                            .placeholder("Set to 'yes' to restrict dashboard channel to bot-only messages")
+                            .value("yes")
+                            .required(true)
+                            .max_length(3)
+                    ),
                 ]);
 
             let response = CIR::Modal(modal);
@@ -3126,6 +3133,7 @@ pub async fn handle_server_settings_modal(
         let mut channel_prefix = String::new();
         let mut category_name = String::new();
         let mut quota_str = String::new();
+        let mut bot_only_dashboard_str = String::new();
 
         for row in &interaction.data.components {
             for component in &row.components {
@@ -3135,6 +3143,7 @@ pub async fn handle_server_settings_modal(
                         "channel_prefix" => channel_prefix = input.value.clone().unwrap_or_default(),
                         "category_name"  => category_name  = input.value.clone().unwrap_or_default(),
                         "quota"          => quota_str      = input.value.clone().unwrap_or_default(),
+                        "bot_only_dashboard" => bot_only_dashboard_str = input.value.clone().unwrap_or_default(),
                         _ => {}
                     }
                 }
@@ -3144,10 +3153,19 @@ pub async fn handle_server_settings_modal(
         let group_name = group_name.trim().to_string();
         let channel_prefix = channel_prefix.trim().to_lowercase().replace(' ', "-");
         let category_name = category_name.trim().to_string();
+        let bot_only_dashboard = bot_only_dashboard_str.trim().to_lowercase();
 
         if group_name.is_empty() || channel_prefix.is_empty() || category_name.is_empty() {
             let response = CIR::Message(
                 CIRM::new().content("Group name, channel prefix, and category name cannot be empty.").ephemeral(true)
+            );
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+        }
+
+        if !["yes", "no"].contains(&bot_only_dashboard.as_str()) {
+            let response = CIR::Message(
+                CIRM::new().content("Bot-only dashboard must be 'yes' or 'no'.").ephemeral(true)
             );
             interaction.create_response(&ctx.http, response).await?;
             return Ok(());
@@ -3170,7 +3188,7 @@ pub async fn handle_server_settings_modal(
         let guild_name = crate::guild_name(ctx, guild_id);
 
         // Create channels
-        match crate::handlers::admin::create_group_channels(ctx, guild_id, &category_name, &channel_prefix).await {
+        match crate::handlers::admin::create_group_channels(ctx, guild_id, &category_name, &channel_prefix, bot_only_dashboard.as_str() == "yes").await {
             Ok((category_id, dashboard_channel, queue_channel, queue_vc_channel)) => {
                 use crate::models::{Group, Channels};
                 use serenity::all::MessageId;
