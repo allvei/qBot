@@ -1,4 +1,5 @@
-__12.02.26__
+# v0.5.0
+__ 12.02.26__
 ## Users & Admins
 __Added__
 - **Subgroups support** - Groups can now contain multiple subgroups, each with their own quota, sessions, and settings.
@@ -9,16 +10,15 @@ __Added__
 - **Group creation wizard** - Create new groups with custom names, categories, and quotas through an intuitive modal interface.
 - **Complete group removal** - Delete entire groups including all channels and categories with detailed feedback.
 - **Alert rate limiting** - Join/leave alerts are now buffered and rate-limited to prevent spam.
-- **Offline mode indicators** - Dashboard shows when bot is offline and disables interactions during downtime.
+- **Offline mode indicators** - Dashboard now shows when bot is offline and hides buttons during downtime.
 
 __Improved__
 - **Multi-subgroup dashboard** - Dashboard now displays and manages multiple subgroups within a group.
-- **Team voice channel lifecycle** - Configurable policies for when to create/destroy team channels (on join, on hot, on game start, on leave, after pull, after timeout).
+- **Team voice channel lifecycle** - Configurable policies for when to create/destroy team channels (on join, on hot, on game start & on leave, after pull, after timeout).
 - **Queue timeout refresh** - Re-joining via dashboard button now refreshes your queue timeout.
 - **Better setup flow** - Enhanced 7-step setup process with queue voice channel configuration.
 - **Player ELO validation** - Automatic ELO normalization based on Discord rank ranges.
 - **Cross-group player tracking** - See in-game status across all subgroups on dashboards.
-- **Bulk dashboard updates** - Efficient refresh system for multiple dashboards simultaneously.
 
 __Fixed__
 - **Team voice channel reuse** - Channels can now be reused across multiple games without conflicts.
