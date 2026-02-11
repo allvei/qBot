@@ -223,7 +223,7 @@ impl EventHandler for Handler {
                 let cdo = &cd.options;
 
                 let info = || {
-                    let guild_name = itx.guild_id.and_then(|gid| ctx.cache.guild(gid).map(|g| g.name.clone())).unwrap_or_else(|| "DM".to_string());
+                    let guild_name = itx.guild_id.and_then(|gid| ctx.cache.guild(gid).map(|g| g.name.clone()));
                     info!("[{}] {} used /{}", guild_name, tag, itx.data.name);
                 };
 
