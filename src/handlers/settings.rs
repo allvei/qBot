@@ -44,22 +44,12 @@ fn exceeds_alert_limits(text: &str) -> bool {
     text.matches('\n').count() > MAX_ALERT_NEWLINES || text.chars().count() > MAX_ALERT_CHARS
 }
 
-/// Process text and replace with spam message if limits exceeded
-fn sanitize_announcement_text(text: &str) -> String {
+/// Process text and replace with a random message from `replacements` if limits exceeded
+fn sanitize_text(text: &str, replacements: &[&str]) -> String {
     if SANITIZE_ALERTS_ENABLED && exceeds_alert_limits(text) {
         use rand::Rng;
-        let idx = rand::rng().random_range(0..SPAM_REPLACEMENT_MESSAGES.len());
-        return SPAM_REPLACEMENT_MESSAGES[idx].to_string();
-    }
-    text.to_string()
-}
-
-/// Process footer text and replace with spam message if limits exceeded
-fn sanitize_footer_text(text: &str) -> String {
-    if SANITIZE_ALERTS_ENABLED && exceeds_alert_limits(text) {
-        use rand::Rng;
-        let idx = rand::rng().random_range(0..FOOTER_SPAM_REPLACEMENT_MESSAGES.len());
-        return FOOTER_SPAM_REPLACEMENT_MESSAGES[idx].to_string();
+        let idx = rand::rng().random_range(0..replacements.len());
+        return replacements[idx].to_string();
     }
     text.to_string()
 }
@@ -496,7 +486,7 @@ pub async fn build_join_alert_embed(
         Some(custom_desc) if !custom_desc.trim().is_empty() => {
             // Sanitize newline spam only for actual announcements (not previews)
             let text_to_use = if guild_id.is_some() {
-                sanitize_announcement_text(custom_desc)
+                sanitize_text(custom_desc, SPAM_REPLACEMENT_MESSAGES)
             } else {
                 custom_desc.to_string()
             };
@@ -528,7 +518,7 @@ pub async fn build_join_alert_embed(
     if let Some(footer_text) = &settings.join_alert_footer {
         // Sanitize footer spam only for actual announcements (not previews)
         let footer_to_use = if guild_id.is_some() {
-            sanitize_footer_text(footer_text)
+            sanitize_text(footer_text, FOOTER_SPAM_REPLACEMENT_MESSAGES)
         } else {
             footer_text.to_string()
         };
@@ -581,7 +571,7 @@ pub async fn build_leave_alert_embed(
         Some(custom_desc) if !custom_desc.trim().is_empty() => {
             // Sanitize newline spam only for actual announcements (not previews)
             let text_to_use = if guild_id.is_some() {
-                sanitize_announcement_text(custom_desc)
+                sanitize_text(custom_desc, SPAM_REPLACEMENT_MESSAGES)
             } else {
                 custom_desc.to_string()
             };
@@ -612,7 +602,7 @@ pub async fn build_leave_alert_embed(
     if let Some(footer_text) = &settings.leave_alert_footer {
         // Sanitize footer spam only for actual announcements (not previews)
         let footer_to_use = if guild_id.is_some() {
-            sanitize_footer_text(footer_text)
+            sanitize_text(footer_text, FOOTER_SPAM_REPLACEMENT_MESSAGES)
         } else {
             footer_text.to_string()
         };
@@ -660,6 +650,58 @@ pub fn build_server_settings_buttons(settings: &ServerSettings, guild_name: &str
     display.as_settings_menu().build_components()
 }
 
+/// Build a CIR navigating back to the main server settings page
+async fn nav_server_settings(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
+    let settings = get_server_settings(db, guild_id).await?;
+    let guild_name = crate::guild_name(ctx, guild_id);
+    let embed = build_server_settings_embed(&settings, &guild_name);
+    let buttons = build_server_settings_buttons(&settings, &guild_name);
+    Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
+}
+
+/// Build a CIR navigating back to the role configuration page
+async fn nav_role_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
+    let guild_name = crate::guild_name(ctx, guild_id);
+    let settings = get_server_settings(db, guild_id).await?;
+    let display = crate::handlers::settings_menu::RoleConfigDisplay {
+        guild_name,
+        runner_role: settings.runner_role,
+        admin_role: settings.admin_role,
+    };
+    Ok(CIR::UpdateMessage(
+        CIRM::new().embed(display.build_embed()).components(display.build_components())
+    ))
+}
+
+/// Build a CIR navigating back to the rank configuration page
+async fn nav_rank_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
+    let guild_name = crate::guild_name(ctx, guild_id);
+    let rank_roles = get_all_rank_roles(db, guild_id).await?;
+    let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
+    let display = crate::handlers::settings_menu::RankConfigDisplay {
+        guild_name,
+        rank_roles,
+        toggle_states,
+        default_rank_role,
+    };
+    Ok(CIR::UpdateMessage(
+        CIRM::new().embed(display.build_embed()).components(display.build_components())
+    ))
+}
+
+/// Build a CIR navigating back to the group list page
+async fn nav_group_list(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
+    let guild_name = crate::guild_name(ctx, guild_id);
+    let groups = db.groups.get_groups_for_guild(guild_id).await?;
+    let display = crate::handlers::settings_menu::GroupListDisplay {
+        guild_name,
+        groups,
+    };
+    Ok(CIR::UpdateMessage(
+        CIRM::new().embed(display.build_embed()).components(display.build_components())
+    ))
+}
+
 /// Handle server settings button interactions
 pub async fn handle_server_settings_button(
     ctx:         &Context,
@@ -680,141 +722,41 @@ pub async fn handle_server_settings_button(
 
             let current = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
             db.config.set_bool(guild_id, toggle.column, !current).await?;
-
-            // Return to rank configuration menu
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
-            
-            let display = crate::handlers::settings_menu::RankConfigDisplay {
-                guild_name,
-                rank_roles,
-                toggle_states,
-                default_rank_role,
-            };
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(display.build_embed()).components(display.build_components())
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
         }
         "server_settings_roles" => {
-            // Show role configuration menu
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let settings = get_server_settings(db, guild_id).await?;
-            
-            let display = crate::handlers::settings_menu::RoleConfigDisplay {
-                guild_name,
-                runner_role: settings.runner_role,
-                admin_role: settings.admin_role,
-            };
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(display.build_embed()).components(display.build_components())
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            interaction.create_response(&ctx.http, nav_role_config(ctx, db, guild_id).await?).await?;
         }
         "server_settings_roles_back" => {
-            // Go back to main server settings
-            let settings = get_server_settings(db, guild_id).await?;
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let embed = build_server_settings_embed(&settings, &guild_name);
-            let buttons = build_server_settings_buttons(&settings, &guild_name);
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(embed).components(buttons)
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            interaction.create_response(&ctx.http, nav_server_settings(ctx, db, guild_id).await?).await?;
         }
         "server_settings_runner_role" => {
-            // Handle runner role selection
             if let serenity::all::ComponentInteractionDataKind::RoleSelect { values } = &interaction.data.kind {
-                let role_id = values.first().map(|r| r.get().to_string());
-                
-                if let Some(id) = &role_id {
-                    db.config.set_config("runner_role", id, guild_id).await?;
-                } else {
-                    db.config.delete_config("runner_role", guild_id).await?;
+                if let Some(role_id) = values.first() {
+                    db.config.set_runner_role_id(guild_id, *role_id).await?;
                 }
-
-                // Return to role configuration menu
-                let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-                let settings = get_server_settings(db, guild_id).await?;
-                
-                let display = crate::handlers::settings_menu::RoleConfigDisplay {
-                    guild_name,
-                    runner_role: settings.runner_role,
-                    admin_role: settings.admin_role,
-                };
-
-                let response = CIR::UpdateMessage(
-                    CIRM::new().embed(display.build_embed()).components(display.build_components())
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                interaction.create_response(&ctx.http, nav_role_config(ctx, db, guild_id).await?).await?;
             }
         }
         "server_settings_admin_role" => {
-            // Handle admin role selection
             if let serenity::all::ComponentInteractionDataKind::RoleSelect { values } = &interaction.data.kind {
-                let role_id = values.first().map(|r| r.get().to_string());
-                
-                if let Some(id) = &role_id {
-                    db.config.set_config("admin_role", id, guild_id).await?;
-                } else {
-                    db.config.delete_config("admin_role", guild_id).await?;
+                if let Some(role_id) = values.first() {
+                    db.config.set_admin_role_id(guild_id, *role_id).await?;
                 }
-
-                // Return to role configuration menu
-                let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-                let settings = get_server_settings(db, guild_id).await?;
-                
-                let display = crate::handlers::settings_menu::RoleConfigDisplay {
-                    guild_name,
-                    runner_role: settings.runner_role,
-                    admin_role: settings.admin_role,
-                };
-
-                let response = CIR::UpdateMessage(
-                    CIRM::new().embed(display.build_embed()).components(display.build_components())
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                interaction.create_response(&ctx.http, nav_role_config(ctx, db, guild_id).await?).await?;
             }
         }
         "server_settings_ranks" => {
-            // Show rank configuration menu
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
-            
-            let display = crate::handlers::settings_menu::RankConfigDisplay {
-                guild_name,
-                rank_roles,
-                toggle_states,
-                default_rank_role,
-            };
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(display.build_embed()).components(display.build_components())
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
         }
         "server_settings_ranks_back" => {
-            // Go back to main server settings
-            let settings = get_server_settings(db, guild_id).await?;
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let embed = build_server_settings_embed(&settings, &guild_name);
-            let buttons = build_server_settings_buttons(&settings, &guild_name);
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(embed).components(buttons)
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            interaction.create_response(&ctx.http, nav_server_settings(ctx, db, guild_id).await?).await?;
         }
         "server_settings_rank_select" => {
             // Handle rank selection from dropdown (value is role ID)
             if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
                 if let Some(role_id_str) = values.first() {
-                    let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                    let guild_name = crate::guild_name(ctx, guild_id);
                     
                     if let Ok(role_id) = role_id_str.parse::<u64>() {
                         let rid = serenity::all::RoleId::new(role_id);
@@ -888,22 +830,7 @@ pub async fn handle_server_settings_button(
             interaction.create_response(&ctx.http, response).await?;
         }
         "server_settings_rank_back" => {
-            // Go back to rank list
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
-            
-            let display = crate::handlers::settings_menu::RankConfigDisplay {
-                guild_name,
-                rank_roles,
-                toggle_states,
-                default_rank_role,
-            };
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(display.build_embed()).components(display.build_components())
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
         }
         _ if button_id.starts_with("server_settings_rank_edit_") => {
             // Handle rank name/ELO edit button
@@ -986,29 +913,10 @@ pub async fn handle_server_settings_button(
             interaction.create_response(&ctx.http, response).await?;
         }
         _ if button_id.starts_with("server_settings_rank_delete_") => {
-            // Remove rank from DB
             let rank_name = button_id.strip_prefix("server_settings_rank_delete_").unwrap();
-            // Delete rank from DB by name
             db.ranks.delete_rank(guild_id, rank_name).await?;
-            
             info!("{} deleted rank {}", interaction.user.name, rank_name);
-
-            // Return to rank list
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let rank_roles = get_all_rank_roles(db, guild_id).await?;
-            let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
-            
-            let display = crate::handlers::settings_menu::RankConfigDisplay {
-                guild_name,
-                rank_roles,
-                toggle_states,
-                default_rank_role,
-            };
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(display.build_embed()).components(display.build_components())
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
         }
         _ if button_id.starts_with("server_settings_rank_role_") => {
             // Handle role selector for linking Discord role to rank
@@ -1028,7 +936,7 @@ pub async fn handle_server_settings_button(
             info!("{} linked rank {} to role {}", interaction.user.name, rank_name, role_display);
 
             // Refresh the rank config display
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let guild_name = crate::guild_name(ctx, guild_id);
             if let Ok(Some(guild_rank)) = db.ranks.get_rank_by_name(guild_id, rank_name).await {
                 let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
                     guild_name,
@@ -1054,61 +962,26 @@ pub async fn handle_server_settings_button(
                         // Set default rank as role ID
                         db.config.set_default_rank_role_id(guild_id, role_id).await?;
 
-                        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-                        let rank_roles = get_all_rank_roles(db, guild_id).await?;
-                        let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
-                        
-                        let display = crate::handlers::settings_menu::RankConfigDisplay {
-                            guild_name,
-                            rank_roles,
-                            toggle_states,
-                            default_rank_role,
-                        };
-
-                        let response = CIR::UpdateMessage(
-                            CIRM::new().embed(display.build_embed()).components(display.build_components())
-                        );
-                        interaction.create_response(&ctx.http, response).await?;
+                        interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
                     }
                 }
             }
         }
         "server_settings_groups" => {
-            // Show group configuration menu
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let groups = db.groups.get_groups_for_guild(guild_id).await?;
-            
-            let display = crate::handlers::settings_menu::GroupListDisplay {
-                guild_name,
-                groups,
-            };
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(display.build_embed()).components(display.build_components())
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            interaction.create_response(&ctx.http, nav_group_list(ctx, db, guild_id).await?).await?;
         }
         "server_settings_groups_back" => {
-            // Go back to main server settings
-            let settings = get_server_settings(db, guild_id).await?;
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let embed = build_server_settings_embed(&settings, &guild_name);
-            let buttons = build_server_settings_buttons(&settings, &guild_name);
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(embed).components(buttons)
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            interaction.create_response(&ctx.http, nav_server_settings(ctx, db, guild_id).await?).await?;
         }
         "server_settings_create_roles" => {
             // Create runner, admin, and rank roles
             use serenity::all::Permissions;
             use serenity::builder::EditRole;
 
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let guild_name = crate::guild_name(ctx, guild_id);
 
             // Create Runner role if not configured
-            let runner_role = db.config.get_config_item("runner_role", guild_id).await?;
+            let runner_role = db.config.get_runner_role_id(guild_id).await?;
             if runner_role.is_none() {
                 match guild_id.create_role(&ctx.http,
                     EditRole::new()
@@ -1117,7 +990,7 @@ pub async fn handle_server_settings_button(
                         .permissions(Permissions::empty())
                 ).await {
                     Ok(role) => {
-                        if let Err(e) = db.config.set_config("runner_role", &role.id.to_string(), guild_id).await {
+                        if let Err(e) = db.config.set_runner_role_id(guild_id, role.id).await {
                             warn!("Failed to save runner_role config: {e}");
                         }
                         info!("[{}] Created PUG Runner role", guild_name);
@@ -1129,7 +1002,7 @@ pub async fn handle_server_settings_button(
             }
 
             // Create Admin role if not configured
-            let admin_role = db.config.get_config_item("admin_role", guild_id).await?;
+            let admin_role = db.config.get_admin_role_id(guild_id).await?;
             if admin_role.is_none() {
                 match guild_id.create_role(&ctx.http,
                     EditRole::new()
@@ -1138,7 +1011,7 @@ pub async fn handle_server_settings_button(
                         .permissions(Permissions::empty())
                 ).await {
                     Ok(role) => {
-                        if let Err(e) = db.config.set_config("admin_role", &role.id.to_string(), guild_id).await {
+                        if let Err(e) = db.config.set_admin_role_id(guild_id, role.id).await {
                             warn!("Failed to save admin_role config: {e}");
                         }
                         info!("[{}] Created PUG Admin role", guild_name);
@@ -1156,19 +1029,7 @@ pub async fn handle_server_settings_button(
                 info!("[{}] Initialized default ranks", guild_name);
             }
 
-            // Return to role configuration menu
-            let settings = get_server_settings(db, guild_id).await?;
-            
-            let display = crate::handlers::settings_menu::RoleConfigDisplay {
-                guild_name,
-                runner_role: settings.runner_role,
-                admin_role: settings.admin_role,
-            };
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(display.build_embed()).components(display.build_components())
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            interaction.create_response(&ctx.http, nav_role_config(ctx, db, guild_id).await?).await?;
         }
         "server_settings_create_group" => {
             // Show modal to collect group settings before creating channels
@@ -1212,7 +1073,7 @@ pub async fn handle_server_settings_button(
             // Show category selection dropdown to link existing group
             use serenity::all::{ChannelType, CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption};
             
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let guild_name = crate::guild_name(ctx, guild_id);
             
             // Get all categories in the guild - extract data before any awaits
             let mut categories: Vec<(serenity::all::ChannelId, String)> = {
@@ -1290,7 +1151,7 @@ pub async fn handle_server_settings_button(
                 if let Some(category_id_str) = values.first() {
                     if let Ok(category_id_u64) = category_id_str.parse::<u64>() {
                         let category_id = serenity::all::ChannelId::new(category_id_u64);
-                        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                        let guild_name = crate::guild_name(ctx, guild_id);
                         
                         // Find channels in this category - extract data before any awaits
                         let (dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel) = {
@@ -1676,19 +1537,7 @@ pub async fn handle_server_settings_button(
             }
         }
         "server_settings_link_cancel" => {
-            // Cancel linking and return to group list
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let groups = db.groups.get_groups_for_guild(guild_id).await?;
-            
-            let display = crate::handlers::settings_menu::GroupListDisplay {
-                guild_name,
-                groups,
-            };
-            
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(display.build_embed()).components(display.build_components())
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            interaction.create_response(&ctx.http, nav_group_list(ctx, db, guild_id).await?).await?;
         }
         _ if button_id.starts_with("link_use_existing_") => {
             // Link to existing dashboard message
@@ -1722,7 +1571,7 @@ pub async fn handle_server_settings_button(
                 quota: crate::DEFAULT_QUOTA,
             };
             
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let guild_name = crate::guild_name(ctx, guild_id);
             
             match db.groups.create_group(guild_id, dashboard_msg_id, group_config).await {
                 Ok(db_group) => {
@@ -1808,7 +1657,7 @@ pub async fn handle_server_settings_button(
                 vec![],
             );
             
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let guild_name = crate::guild_name(ctx, guild_id);
             
             // Publish the dashboard to get the actual message ID
             match temp_group.dash_publish(ctx, dashboard_channel, db, guild_id).await {
@@ -1922,7 +1771,7 @@ pub async fn handle_server_settings_button(
                         if dashboard_channel.is_some() && queue_channel.is_some() && queue_vc_channel.is_some() 
                             && red_channel.is_some() && blue_channel.is_some() {
                             // All channels selected - create the group
-                            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                            let guild_name = crate::guild_name(ctx, guild_id);
                             
                             use crate::models::{Group, Channels, TeamChannel};
                             use serenity::all::MessageId;
@@ -2023,7 +1872,7 @@ pub async fn handle_server_settings_button(
                             // by crafting the state as if we just selected the category
                             
                             // Get guild name
-                            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                            let guild_name = crate::guild_name(ctx, guild_id);
                             
                             // Continue with manual channel selection flow (same code as above)
                             use serenity::all::{CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption};
@@ -2154,7 +2003,7 @@ pub async fn handle_server_settings_button(
             let blue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[4], 16)?);
             let dashboard_msg_id = u64::from_str_radix(parts[5], 16)?;
             
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let guild_name = crate::guild_name(ctx, guild_id);
             
             // Find and remove duplicate group
             let existing_groups = db.groups.get_groups_for_guild(guild_id).await?;
@@ -2258,7 +2107,7 @@ pub async fn handle_server_settings_button(
             let red_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[3], 16)?);
             let blue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[4], 16)?);
             
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let guild_name = crate::guild_name(ctx, guild_id);
             
             // Find and remove duplicate group
             let existing_groups = db.groups.get_groups_for_guild(guild_id).await?;
@@ -2391,7 +2240,7 @@ pub async fn handle_server_settings_button(
             // Show group selection dropdown for removal
             use serenity::all::{CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption};
             
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let guild_name = crate::guild_name(ctx, guild_id);
             let groups = db.groups.get_groups_for_guild(guild_id).await?;
             
             if groups.is_empty() {
@@ -2450,7 +2299,7 @@ pub async fn handle_server_settings_button(
             if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
                 if let Some(group_id_str) = values.first() {
                     if let Ok(group_id) = group_id_str.parse::<u8>() {
-                        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                        let guild_name = crate::guild_name(ctx, guild_id);
                         
                         // Get group info and channel list
                         let (group_name, channel_list) = {
@@ -2518,7 +2367,7 @@ pub async fn handle_server_settings_button(
             // Confirm removal with channel deletion
             let group_id_str = button_id.strip_prefix("server_settings_remove_confirm_delete_").unwrap();
             if let Ok(group_id) = group_id_str.parse::<u8>() {
-                let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                let guild_name = crate::guild_name(ctx, guild_id);
                 
                 // Get group info and channels before deletion
                 let (group_name, channels_to_delete) = {
@@ -2610,7 +2459,7 @@ pub async fn handle_server_settings_button(
             // Confirm removal without channel deletion
             let group_id_str = button_id.strip_prefix("server_settings_remove_confirm_keep_").unwrap();
             if let Ok(group_id) = group_id_str.parse::<u8>() {
-                let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                let guild_name = crate::guild_name(ctx, guild_id);
                 
                 // Get group info before deletion
                 let group_name = {
@@ -2668,19 +2517,7 @@ pub async fn handle_server_settings_button(
             }
         }
         "server_settings_remove_cancel" => {
-            // Cancel removal and return to group list
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let groups = db.groups.get_groups_for_guild(guild_id).await?;
-            
-            let display = crate::handlers::settings_menu::GroupListDisplay {
-                guild_name,
-                groups,
-            };
-            
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(display.build_embed()).components(display.build_components())
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            interaction.create_response(&ctx.http, nav_group_list(ctx, db, guild_id).await?).await?;
         }
         "server_settings_group_select" => {
             // Handle group selection from dropdown - show modal with all settings
@@ -2732,25 +2569,13 @@ pub async fn handle_server_settings_button(
             }
         }
         "server_settings_group_back" => {
-            // Go back to group list
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-            let groups = db.groups.get_groups_for_guild(guild_id).await?;
-            
-            let display = crate::handlers::settings_menu::GroupListDisplay {
-                guild_name,
-                groups,
-            };
-
-            let response = CIR::UpdateMessage(
-                CIRM::new().embed(display.build_embed()).components(display.build_components())
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            interaction.create_response(&ctx.http, nav_group_list(ctx, db, guild_id).await?).await?;
         }
         _ if button_id.starts_with("group_settings_link_message_") => {
             // Handle link message button - search for existing dashboard messages for this specific group
             let group_id_str = button_id.strip_prefix("group_settings_link_message_").unwrap();
             if let Ok(group_id) = group_id_str.parse::<u8>() {
-                let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+                let guild_name = crate::guild_name(ctx, guild_id);
                 
                 // Get the group to find its dashboard channel
                 let groups = db.groups.get_groups_for_guild(guild_id).await?;
@@ -2851,7 +2676,7 @@ pub async fn handle_server_settings_button(
             let group_id = parts[0].parse::<u8>()?;
             let dashboard_msg_id = u64::from_str_radix(parts[1], 16)?;
             
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+            let guild_name = crate::guild_name(ctx, guild_id);
             
             // Update the group's dashboard_msg in database
             match db.groups.update_dashboard_msg_by_group_id(guild_id, group_id, dashboard_msg_id).await {
@@ -3046,7 +2871,7 @@ pub async fn handle_server_settings_modal(
         }
 
         // Create a new Discord role for this rank
-        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+        let guild_name = crate::guild_name(ctx, guild_id);
         let role_name = name.to_string();
         
         let role_id = match guild_id.create_role(&ctx.http,
@@ -3075,22 +2900,7 @@ pub async fn handle_server_settings_modal(
         db.ranks.add_rank(guild_id, name, elo, role_id).await?;
         info!("{} added rank '{}' with ELO {} and role {}", interaction.user.name, name, elo, role_id.get());
 
-        // Return to rank configuration menu
-        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-        let rank_roles = get_all_rank_roles(db, guild_id).await?;
-        let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
-        
-        let display = crate::handlers::settings_menu::RankConfigDisplay {
-            guild_name,
-            rank_roles,
-            toggle_states,
-            default_rank_role,
-        };
-
-        let response = CIR::UpdateMessage(
-            CIRM::new().embed(display.build_embed()).components(display.build_components())
-        );
-        interaction.create_response(&ctx.http, response).await?;
+        interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
     } else if modal_id.starts_with("server_settings_rank_modal_link_") {
         // Handle link existing rank modal
         let role_id_str = modal_id.strip_prefix("server_settings_rank_modal_link_").unwrap();
@@ -3153,22 +2963,7 @@ pub async fn handle_server_settings_modal(
         db.ranks.add_rank(guild_id, name, elo, role_id).await?;
         info!("{} linked rank '{}' with ELO {} to role {}", interaction.user.name, name, elo, role_id.get());
 
-        // Return to rank configuration menu
-        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-        let rank_roles = get_all_rank_roles(db, guild_id).await?;
-        let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
-        
-        let display = crate::handlers::settings_menu::RankConfigDisplay {
-            guild_name,
-            rank_roles,
-            toggle_states,
-            default_rank_role,
-        };
-
-        let response = CIR::UpdateMessage(
-            CIRM::new().embed(display.build_embed()).components(display.build_components())
-        );
-        interaction.create_response(&ctx.http, response).await?;
+        interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
     } else if modal_id.starts_with("server_settings_rank_modal_") {
         // Handle rank name/ELO edit modal
         let old_rank_name = modal_id
@@ -3225,22 +3020,7 @@ pub async fn handle_server_settings_modal(
         db.ranks.update_rank_name(guild_id, old_rank_name, new_name).await?;
         db.ranks.update_rank_elo(guild_id, new_name, elo).await?;
 
-        // Return to rank configuration menu
-        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-        let rank_roles = get_all_rank_roles(db, guild_id).await?;
-        let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
-        
-        let display = crate::handlers::settings_menu::RankConfigDisplay {
-            guild_name,
-            rank_roles,
-            toggle_states,
-            default_rank_role,
-        };
-
-        let response = CIR::UpdateMessage(
-            CIRM::new().embed(display.build_embed()).components(display.build_components())
-        );
-        interaction.create_response(&ctx.http, response).await?;
+        interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
     } else if modal_id.starts_with("server_settings_group_modal_") {
         // Handle group settings modal submission
         let group_id: u8 = modal_id
@@ -3320,19 +3100,7 @@ pub async fn handle_server_settings_modal(
             }
         }
 
-        // Return to group list
-        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
-        let groups = db.groups.get_groups_for_guild(guild_id).await?;
-        
-        let display = crate::handlers::settings_menu::GroupListDisplay {
-            guild_name,
-            groups,
-        };
-
-        let response = CIR::UpdateMessage(
-            CIRM::new().embed(display.build_embed()).components(display.build_components())
-        );
-        interaction.create_response(&ctx.http, response).await?;
+        interaction.create_response(&ctx.http, nav_group_list(ctx, db, guild_id).await?).await?;
     } else if modal_id == "server_settings_modal_create_group" {
         // Extract modal fields
         let mut group_name = String::new();
@@ -3380,7 +3148,7 @@ pub async fn handle_server_settings_modal(
         // Defer the response so we have time to create channels
         interaction.create_response(&ctx.http, CIR::Defer(CIRM::new().ephemeral(true))).await?;
 
-        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+        let guild_name = crate::guild_name(ctx, guild_id);
 
         // Create channels
         match crate::handlers::admin::create_group_channels(ctx, guild_id, &category_name, &channel_prefix).await {
@@ -4002,7 +3770,7 @@ pub async fn handle_group_settings_button(
         drop(manager_lock);
     } else if button_id.starts_with("group_settings_link_message_") {
         // Handle link message button - search for existing dashboard messages
-        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+        let guild_name = crate::guild_name(ctx, guild_id);
         
         // Get the group to find its dashboard channel
         let groups = db.groups.get_groups_for_guild(guild_id).await?;
@@ -5126,22 +4894,22 @@ pub async fn handle_server_settings_balance_select(
 
     let method = crate::models::TeamBalanceMethod::from_str(&method_str);
 
-    // Update all groups in-memory
+    // Update all groups in-memory and persist to database
     let mut manager_lock = manager.lock().await;
     {
         let server = manager_lock.get_server(guild_id)?;
         for group in server.groups.iter_mut() {
             group.team_balance_method = method;
+            if let Err(e) = db.groups.update_team_balance_method(guild_id, group.group_id, method).await {
+                warn!("Failed to persist team_balance_method for group {}: {e}", group.group_id);
+            }
         }
     }
     drop(manager_lock);
 
-    // Persist to config table
-    db.config.set_config("team_balance_method", &method_str, guild_id).await?;
-
     // Return to server settings
     let settings = get_server_settings(db, guild_id).await?;
-    let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
+    let guild_name = crate::guild_name(ctx, guild_id);
     let embed = build_server_settings_embed(&settings, &guild_name);
     let buttons = build_server_settings_buttons(&settings, &guild_name);
 
