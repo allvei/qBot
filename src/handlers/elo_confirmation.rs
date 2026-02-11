@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::Database;
-use crate::handlers::settings::{build_player_settings_embed, build_player_settings_buttons, PlayerSettings};
+use crate::handlers::settings::{nav_player_settings, PlayerSettings};
 
 /// Handle confirmation/cancellation of ELO changes that would change rank
 pub async fn handle_elo_change_confirmation(
@@ -45,12 +45,8 @@ pub async fn handle_elo_change_confirmation(
             wins:     guild_elo.wins,
         };
 
-        let embed = build_player_settings_embed(&settings);
-        let buttons = build_player_settings_buttons(target_uid);
-
-        let response = CIR::UpdateMessage(
-            CIRM::new().embed(embed).components(buttons)
-        );
+        let (embed, components) = nav_player_settings(&settings, db, guild_id).await;
+        let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
         interaction.create_response(&ctx.http, response).await?;
         
         info!("Admin cancelled ELO change for user {}", target_uid);
@@ -139,7 +135,7 @@ pub async fn handle_elo_change_confirmation(
         };
 
         let success_embed = CE::new()
-            .title("✅ ELO and Rank Updated")
+            .title("ELO and Rank Updated")
             .description(format!(
                 "Successfully updated **{}'s** profile:\n\n\
                 **ELO:** {} → **{}**\n\
@@ -151,11 +147,10 @@ pub async fn handle_elo_change_confirmation(
             ))
             .color(0x00FF00);
 
-        let embed = build_player_settings_embed(&settings);
-        let buttons = build_player_settings_buttons(target_uid);
+        let (embed, components) = nav_player_settings(&settings, db, guild_id).await;
 
         let response = CIR::UpdateMessage(
-            CIRM::new().embeds(vec![success_embed, embed]).components(buttons)
+            CIRM::new().embeds(vec![success_embed, embed]).components(components)
         );
         interaction.create_response(&ctx.http, response).await?;
         
