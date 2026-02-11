@@ -946,9 +946,10 @@ impl Group {
         Ok(Some(pair))
     }
 
-    /// Remove unused team VC pairs based on the destroy policy.
-    /// `keep_minimum` preserves at least 1 pair even if unused.
-    pub async fn cleanup_team_vcs(&mut self, ctx: &Context) {
+    /// Remove unused team VC pairs.
+    /// When `force` is true, all free pairs are deleted (used by destroy policy triggers).
+    /// When `force` is false, `keep_minimum` is respected (preserving at least one free pair).
+    pub async fn cleanup_team_vcs(&mut self, ctx: &Context, force: bool) {
         // Collect occupied pairs from active sessions across all subgroups
         let occupied: Vec<TeamChannel> = self.all_occupied_teams();
 
@@ -956,18 +957,20 @@ impl Group {
         let (keep, mut removable): (Vec<_>, Vec<_>) = self.channels.teams.iter().cloned()
             .partition(|t| occupied.iter().any(|o| o.red_vc == t.red_vc && o.blu_vc == t.blu_vc));
 
-        // If keep_minimum, preserve one free pair
-        let min_free = if self.team_vc_settings.keep_minimum && keep.is_empty() { 1 } else { 0 };
+        // If keep_minimum and not forced, preserve one free pair
+        let min_free = if !force && self.team_vc_settings.keep_minimum && keep.is_empty() { 1 } else { 0 };
         let to_delete_count = removable.len().saturating_sub(min_free);
         let to_delete: Vec<TeamChannel> = removable.drain(..to_delete_count).collect();
 
         for tc in &to_delete {
             info!("Deleting unused team VCs: RED={} BLU={}", tc.red_vc, tc.blu_vc);
             if let Err(e) = tc.red_vc.delete(&ctx.http).await {
-                warn!("Failed to delete RED VC {}: {}", tc.red_vc, e);
+                let hint = if e.to_string().contains("Missing Access") { " (bot lacks Manage Channels on this channel)" } else { "" };
+                warn!("Failed to delete RED VC {}:{}{}", tc.red_vc, e, hint);
             }
             if let Err(e) = tc.blu_vc.delete(&ctx.http).await {
-                warn!("Failed to delete BLU VC {}: {}", tc.blu_vc, e);
+                let hint = if e.to_string().contains("Missing Access") { " (bot lacks Manage Channels on this channel)" } else { "" };
+                warn!("Failed to delete BLU VC {}:{}{}", tc.blu_vc, e, hint);
             }
         }
 
@@ -992,7 +995,7 @@ impl Group {
             }
         } else if !has_active {
             // No active games - clean up excess VCs (respects keep_minimum internally)
-            self.cleanup_team_vcs(ctx).await;
+            self.cleanup_team_vcs(ctx, false).await;
         }
     }
 
@@ -1016,7 +1019,61 @@ impl Group {
         );
 
         if all_idle_empty && no_active {
-            self.cleanup_team_vcs(ctx).await;
+            self.cleanup_team_vcs(ctx, false).await;
+        }
+    }
+
+    /// Check if a channel is one of this group's team VCs
+    pub fn is_team_vc(&self, channel_id: CI) -> bool {
+        self.channels.teams.iter().any(|t| t.contains_channel(channel_id))
+    }
+
+    /// When a player leaves a team VC, check if both team VCs for any active
+    /// session are now empty. If so, auto-end the game via pull.
+    pub async fn check_team_vc_empty_auto_end(
+        &mut self,
+        ctx: &Context,
+        guild_id: GI,
+        db: &DB,
+        manager: Option<Arc<Mutex<Manager>>>,
+    ) {
+        let guild = match ctx.cache.guild(guild_id) {
+            Some(g) => g.clone(),
+            None => return,
+        };
+
+        // Collect (subgroup_id, session_index) of live sessions whose team VCs are empty
+        let mut to_pull: Vec<u8> = Vec::new();
+
+        for sg in &self.subgroups {
+            for session in &sg.sessions {
+                if !session.is_active() {
+                    continue;
+                }
+                let tc = match &session.team_channels {
+                    Some(tc) => tc,
+                    None => continue,
+                };
+
+                let red_count = guild.voice_states.values()
+                    .filter(|vs| vs.channel_id == Some(tc.red_vc))
+                    .count();
+                let blu_count = guild.voice_states.values()
+                    .filter(|vs| vs.channel_id == Some(tc.blu_vc))
+                    .count();
+
+                if red_count == 0 && blu_count == 0 {
+                    info!("All players left team VCs (RED={} BLU={}) for subgroup {}, auto-ending game",
+                        tc.red_vc, tc.blu_vc, sg.id);
+                    to_pull.push(sg.id);
+                }
+            }
+        }
+
+        for sg_id in to_pull {
+            if let Err(e) = self.pull_sg(sg_id, ctx, guild_id, db, manager.clone()).await {
+                warn!("Failed to auto-end game in subgroup {}: {}", sg_id, e);
+            }
         }
     }
 
@@ -1072,14 +1129,14 @@ impl Group {
         // Clean up team VCs based on destroy policy
         match self.team_vc_settings.destroy_policy {
             TeamVcDestroyPolicy::AfterPull => {
-                self.cleanup_team_vcs(ctx).await;
+                self.cleanup_team_vcs(ctx, true).await;
             },
             TeamVcDestroyPolicy::AfterTimeout => {
                 // Spawn a timer that cleans up team VCs if no new game starts
                 if let Some(mgr) = manager.clone() {
-                    let group_id = self.group_id;
+                    let group_id     = self.group_id;
                     let timeout_secs = self.timeout as u64;
-                    let ctx_clone = ctx.clone();
+                    let ctx_clone    = ctx.clone();
 
                     tokio::spawn(async move {
                         use tokio::time::{sleep, Duration};
@@ -1093,7 +1150,7 @@ impl Group {
                                     sg.sessions.iter().any(|s| s.is_active())
                                 );
                                 if !has_active {
-                                    group.cleanup_team_vcs(&ctx_clone).await;
+                                    group.cleanup_team_vcs(&ctx_clone, true).await;
                                 }
                             }
                         }
