@@ -1,10 +1,11 @@
 use anyhow::{anyhow, Error, Result};
-use std::{collections::HashSet, sync::Arc, time::{Duration, SystemTime}};
-use crate::{DEFAULT_TIMEOUT, QueueToggleType, log_queue_toggle};
+use std::{collections::{HashMap, HashSet}, sync::Arc, time::{Duration, SystemTime}};
+use crate::{QueueToggleType, log_queue_toggle};
 use serenity::{all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
     CreateEmbed as CE, CreateMessage as CM, CreateInteractionResponse as CIR,
     CreateInteractionResponseMessage as CIRM, EditMessage, Message, GuildId as GI,
+    UserId as UI,
 }};
 use tracing::{error, info, warn};
 use tokio::sync::mpsc;
@@ -282,7 +283,7 @@ impl Group {
     /// Uses group name as title. Each subgroup gets its own queue section.
     /// All content for a subgroup is rendered together (header, players, teams)
     /// before moving to the next subgroup.
-    pub async fn build_dashboard_content(&self, db: &crate::Database, guild_id: GI) -> Result<(CE, Vec<CAR>)> {
+    pub async fn build_dashboard_content(&self, db: &crate::Database, guild_id: GI, in_game_players: &HashMap<UI, (GI, String)>) -> Result<(CE, Vec<CAR>)> {
         let timeout_seconds = self.timeout as u64;
         let has_multiple = self.subgroups.len() > 1;
 
@@ -426,14 +427,19 @@ impl Group {
                         let elo_str = format!("‹**{}**› ", player.player.elo);
                         players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
 
-                        if player.in_queue_vc {
+                        if let Some((game_guild_id, sg_name)) = in_game_players.get(&player.player.user_id) {
+                            if *game_guild_id == guild_id {
+                                timers_field.push_str(&format!("In {sg_name} game\n"));
+                            } else {
+                                timers_field.push_str("In-game\n");
+                            }
+                        } else if player.in_queue_vc {
                             timers_field.push_str("In VC\n");
                         } else {
-                            let timeout = player.timeout;
-                            if let Ok(settings) = db.users.get_prefs(player.player.user_id).await {
+                            let timeout = if let Ok(settings) = db.users.get_prefs(player.player.user_id).await {
                                 settings.timeout
                             } else {
-                                DEFAULT_TIMEOUT
+                                player.timeout
                             };
 
                             if timeout > 0 {
@@ -574,7 +580,7 @@ impl Group {
 
     /// Initializes a dashboard based on current group state
     pub async fn dash_init(&mut self, db: &crate::Database, guild_id: GI) -> Result<CM> {
-        let (embed, buttons) = self.build_dashboard_content(db, guild_id).await?;
+        let (embed, buttons) = self.build_dashboard_content(db, guild_id, &HashMap::new()).await?;
         let message = CM::new().embed(embed).components(buttons);
         Ok(message)
     }
@@ -609,6 +615,17 @@ impl Group {
         // Note: This function is deprecated and should not be called directly
         // Use the dashboard queue processor which has access to db and guild_id
         Err(anyhow!("dash_update requires db and guild_id - use dashboard queue"))
+    }
+
+    /// Queue dashboard updates for all groups across all servers (non-blocking, batched)
+    /// Used when game state changes (live/end) affect in-game status on other dashboards
+    pub async fn queue_dash_update_all(&self, ctx: &Context) {
+        let data = ctx.data.read().await;
+        if let Some(queue) = data.get::<DashboardQueueKey>() {
+            queue.lock().await.request_update_all_deferred();
+        } else {
+            warn!("Dashboard queue not initialized in Context");
+        }
     }
 
     /// Queue a dashboard update (non-blocking, batched)
@@ -753,7 +770,7 @@ impl Group {
                 warn!("Failed to queue player: {e}");
             } else {
                 // Log successful queue join via button
-                let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+                let server_name = crate::guild_name(cc.ctx, guild_id);
                 let group_name = cc.ctx.cache.channel(dashboard_channel)
                     .map(|ch| ch.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
@@ -861,7 +878,7 @@ impl Group {
 
             // Log with server and group context
             let guild_id = cc.component.guild_id.unwrap();
-            let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+            let server_name = crate::guild_name(cc.ctx, guild_id);
             let group_name = cc.ctx.cache.channel(dashboard_channel)
                 .map(|ch| ch.name.clone())
                 .unwrap_or_else(|| "Unknown".to_string());
@@ -1001,8 +1018,8 @@ impl Group {
         match self.push_sg(sg_id, cc.ctx, cc.component.guild_id.unwrap()).await {
             Ok(_) => {
                 info!("Players moved to team channels and game is now live");
-                // Update dashboard to reflect Live status
-                self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
+                // Update all dashboards to reflect in-game status for match players
+                self.queue_dash_update_all(cc.ctx).await;
                 Ok(())
             }
             Err(e) => {
@@ -1082,6 +1099,8 @@ impl Group {
         match self.pull_sg(sg_id, cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await {
             Ok(_) => {
                 info!("Match ended, players moved back to queue");
+                // Update all dashboards to clear in-game status for match players
+                self.queue_dash_update_all(cc.ctx).await;
                 Ok(())
             }
             Err(e) => {
@@ -1113,7 +1132,7 @@ impl Group {
         // Get server and group names for logging - store channel ID before any mut borrows
         let guild_id = cc.component.guild_id.unwrap();
         let dashboard_channel = self.channels.dashboard;
-        let server_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+        let server_name = crate::guild_name(cc.ctx, guild_id);
         let group_name = cc.ctx.cache.channel(dashboard_channel)
             .map(|ch| ch.name.clone())
             .unwrap_or_else(|| "Unknown".to_string());
@@ -1352,6 +1371,27 @@ impl DashboardUpdateQueue {
         }
     }
 
+    /// Request dashboard updates for all groups across all servers
+    pub fn request_update_all(&self, manager: &crate::models::Manager) {
+        for srv in &manager.servers {
+            for grp in &srv.groups {
+                self.request_update(srv.guild_id, grp.group_id as u64);
+            }
+        }
+    }
+
+    /// Request dashboard updates for all groups without needing the manager lock.
+    /// Sends a sentinel that the batch processor expands once it acquires the lock.
+    pub fn request_update_all_deferred(&self) {
+        let request = DashboardUpdateRequest {
+            guild_id: GI::new(1),
+            group_id: u64::MAX, // sentinel
+        };
+        if let Err(e) = self.sender.send(request) {
+            warn!("Failed to queue dashboard update-all: {e}");
+        }
+    }
+
     /// Background task that batches and processes dashboard updates
     ///
     /// This uses a HashSet to automatically deduplicate update requests for the same group.
@@ -1372,7 +1412,10 @@ impl DashboardUpdateQueue {
             // Wait for the first update request
             match receiver.recv().await {
                 Some(request) => {
-                    pending_updates.insert(request);
+                    let mut update_all = request.group_id == u64::MAX;
+                    if !update_all {
+                        pending_updates.insert(request);
+                    }
 
                     // Now wait for the batch window, collecting more updates
                     let deadline = tokio::time::Instant::now() + batch_window;
@@ -1380,11 +1423,17 @@ impl DashboardUpdateQueue {
                     loop {
                         match tokio::time::timeout_at(deadline, receiver.recv()).await {
                             Ok(Some(request)) => {
-                                // Got another update, add it to the batch
-                                pending_updates.insert(request);
+                                if request.group_id == u64::MAX {
+                                    update_all = true;
+                                } else {
+                                    pending_updates.insert(request);
+                                }
                             }
                             Ok(None) => {
                                 // Channel closed, process remaining and exit
+                                if update_all {
+                                    Self::expand_update_all(&mut pending_updates, &manager).await;
+                                }
                                 Self::process_batch(&pending_updates, &ctx, manager.clone(), database.clone()).await;
                                 return;
                             }
@@ -1393,6 +1442,11 @@ impl DashboardUpdateQueue {
                                 break;
                             }
                         }
+                    }
+
+                    // Expand update-all sentinel into concrete group requests
+                    if update_all {
+                        Self::expand_update_all(&mut pending_updates, &manager).await;
                     }
 
                     // Process the batched updates
@@ -1405,6 +1459,22 @@ impl DashboardUpdateQueue {
                     // Channel closed, exit
                     return;
                 }
+            }
+        }
+    }
+
+    /// Expand an "update all" sentinel into concrete requests for every group.
+    async fn expand_update_all(
+        pending: &mut HashSet<DashboardUpdateRequest>,
+        manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
+    ) {
+        let mgr = manager.lock().await;
+        for srv in &mgr.servers {
+            for grp in &srv.groups {
+                pending.insert(DashboardUpdateRequest {
+                    guild_id: srv.guild_id,
+                    group_id: grp.group_id as u64,
+                });
             }
         }
     }
@@ -1434,6 +1504,27 @@ impl DashboardUpdateQueue {
                 // update requests were queued - they all get collapsed into this one update
                 let (channel_id, dashboard_channel_id, message_id, embed, buttons, guild_name, _pool_size) = {
                     let mut manager_lock = manager.lock().await;
+
+                    // Collect players in active sessions across all servers
+                    // Maps UserId -> (GuildId, subgroup_name) for "in-game" status display
+                    let mut in_game_players: HashMap<UI, (GI, String)> = HashMap::new();
+                    for srv in &manager_lock.servers {
+                        for grp in &srv.groups {
+                            for sg in &grp.subgroups {
+                                let has_active = sg.sessions.iter().any(|s| s.is_active());
+                                if !has_active { continue; }
+                                for session in &sg.sessions {
+                                    if !session.is_active() { continue; }
+                                    for sp in &session.pool {
+                                        in_game_players.insert(
+                                            sp.player.user_id,
+                                            (srv.guild_id, sg.name.clone()),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     let server = match manager_lock.get_server(guild_id) {
                         Ok(s) => s,
@@ -1471,7 +1562,7 @@ impl DashboardUpdateQueue {
                     let message_id = group.dashboard_msg;
 
                     // Generate dashboard content
-                    let (embed, buttons) = match group.build_dashboard_content(&database, guild_id).await {
+                    let (embed, buttons) = match group.build_dashboard_content(&database, guild_id, &in_game_players).await {
                         Ok(content) => content,
                         Err(e) => {
                             warn!("[{}] Failed to build dashboard content for group {}: {}", guild_name, group_id, e);
