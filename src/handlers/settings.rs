@@ -624,17 +624,19 @@ pub async fn build_leave_alert_embed(
 
 /// Server settings structure for display
 pub struct ServerSettings {
-    pub runner_role: Option<String>,
-    pub admin_role:  Option<String>,
+    pub runner_role:    Option<String>,
+    pub admin_role:     Option<String>,
+    pub toggle_states:  Vec<bool>,
 }
 
 /// Build server settings embed
 pub fn build_server_settings_embed(settings: &ServerSettings, guild_name: &str) -> CE {
     use crate::handlers::settings_menu::{AsSettingsMenu, ServerSettingsDisplay};
     let display = ServerSettingsDisplay {
-        guild_name:  guild_name.to_string(),
-        runner_role: settings.runner_role.clone(),
-        admin_role:  settings.admin_role.clone(),
+        guild_name:     guild_name.to_string(),
+        runner_role:    settings.runner_role.clone(),
+        admin_role:     settings.admin_role.clone(),
+        toggle_states:  settings.toggle_states.clone(),
     };
     display.as_settings_menu().build_embed()
 }
@@ -643,9 +645,10 @@ pub fn build_server_settings_embed(settings: &ServerSettings, guild_name: &str) 
 pub fn build_server_settings_buttons(settings: &ServerSettings, guild_name: &str) -> Vec<CAR> {
     use crate::handlers::settings_menu::{AsSettingsMenu, ServerSettingsDisplay};
     let display = ServerSettingsDisplay {
-        guild_name:  guild_name.to_string(),
-        runner_role: settings.runner_role.clone(),
-        admin_role:  settings.admin_role.clone(),
+        guild_name:     guild_name.to_string(),
+        runner_role:    settings.runner_role.clone(),
+        admin_role:     settings.admin_role.clone(),
+        toggle_states:  settings.toggle_states.clone(),
     };
     display.as_settings_menu().build_components()
 }
@@ -715,6 +718,15 @@ pub async fn handle_server_settings_button(
     info!("{} pressed {}", interaction.user.name, button_id);
 
     match button_id.as_str() {
+        // Generic handler for server-level config toggles (ELO-Rank linked, etc.)
+        _ if crate::handlers::settings_menu::SERVER_CONFIG_TOGGLES.iter().any(|t| t.button_id == button_id) => {
+            let toggle = crate::handlers::settings_menu::SERVER_CONFIG_TOGGLES.iter()
+                .find(|t| t.button_id == button_id).unwrap();
+
+            let current = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
+            db.config.set_bool(guild_id, toggle.column, !current).await?;
+            interaction.create_response(&ctx.http, nav_server_settings(ctx, db, guild_id).await?).await?;
+        }
         // Generic handler for all rank config toggles (dynamic ELO, ELO-Rank linked, etc.)
         _ if crate::handlers::settings_menu::RANK_CONFIG_TOGGLES.iter().any(|t| t.button_id == button_id) => {
             let toggle = crate::handlers::settings_menu::RANK_CONFIG_TOGGLES.iter()
@@ -1260,7 +1272,7 @@ pub async fn handle_server_settings_button(
                                 let response = CIR::Message(
                                     CIRM::new()
                                         .content(format!(
-                                            "❌ No suitable channels found in this category.\n\n\
+                                            "No suitable channels found in this category.\n\n\
                                             Please create the required channels first."
                                         ))
                                         .ephemeral(true)
@@ -1304,20 +1316,20 @@ pub async fn handle_server_settings_button(
                             
                             // Build status message
                             let mut status = String::from("**Channel Linking Progress:**\n\n");
-                            status.push_str(&format!("✅ Dashboard: {}\n", 
-                                if let Some(id) = dashboard_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            status.push_str(&format!("Dashboard: {}\n", 
+                                if let Some(id) = dashboard_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }
                             ));
-                            status.push_str(&format!("✅ Queue Chat: {}\n", 
-                                if let Some(id) = queue_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            status.push_str(&format!("Queue Chat: {}\n", 
+                                if let Some(id) = queue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }
                             ));
-                            status.push_str(&format!("✅ Queue Voice: {}\n", 
-                                if let Some(id) = queue_vc_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            status.push_str(&format!("Queue Voice: {}\n", 
+                                if let Some(id) = queue_vc_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }
                             ));
-                            status.push_str(&format!("✅ Red Team: {}\n", 
-                                if let Some(id) = red_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            status.push_str(&format!("Red Team: {}\n", 
+                                if let Some(id) = red_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }
                             ));
-                            status.push_str(&format!("✅ Blue Team: {}\n", 
-                                if let Some(id) = blue_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            status.push_str(&format!("Blue Team: {}\n", 
+                                if let Some(id) = blue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }
                             ));
                             
                             let embed = CE::new()
@@ -1458,7 +1470,7 @@ pub async fn handle_server_settings_button(
                             }
                         } else if !existing_dashboard_msgs.is_empty() {
                             description.push_str(&format!(
-                                "✅ **Found {} existing dashboard message(s)**\n\n\
+                                "**Found {} existing dashboard message(s)**\n\n\
                                 Found bot messages in <#{}> that appear to be dashboards.\n\
                                 Most recent: <https://discord.com/channels/{}/{}/{}>\n\n\
                                 **Options:**\n\
@@ -1595,7 +1607,7 @@ pub async fn handle_server_settings_button(
                     
                     let response = CIR::UpdateMessage(
                         CIRM::new()
-                            .content(format!("✅ Successfully linked group to existing dashboard!"))
+                            .content(format!("Successfully linked group to existing dashboard!"))
                             .embed(display.build_embed())
                             .components(display.build_components())
                     );
@@ -1695,7 +1707,7 @@ pub async fn handle_server_settings_button(
                                         
                                         let response = CIR::UpdateMessage(
                                             CIRM::new()
-                                                .content(format!("✅ Successfully linked group from category!"))
+                                                .content(format!("Successfully linked group from category!"))
                                                 .embed(display.build_embed())
                                                 .components(display.build_components())
                                         );
@@ -1838,7 +1850,7 @@ pub async fn handle_server_settings_button(
                                             
                                             let response = CIR::UpdateMessage(
                                                 CIRM::new()
-                                                    .content("✅ Successfully linked group from category!")
+                                                    .content("Successfully linked group from category!")
                                                     .embed(display.build_embed())
                                                     .components(display.build_components())
                                             );
@@ -1941,20 +1953,20 @@ pub async fn handle_server_settings_button(
                             .placeholder(format!("Select {}", next_channel_name));
                             
                             let mut status = String::from("**Channel Linking Progress:**\n\n");
-                            status.push_str(&format!("✅ Dashboard: {}\n", 
-                                if let Some(id) = dashboard_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            status.push_str(&format!("Dashboard: {}\n", 
+                                if let Some(id) = dashboard_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }
                             ));
-                            status.push_str(&format!("✅ Queue Chat: {}\n", 
-                                if let Some(id) = queue_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            status.push_str(&format!("Queue Chat: {}\n", 
+                                if let Some(id) = queue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }
                             ));
-                            status.push_str(&format!("✅ Queue Voice: {}\n", 
-                                if let Some(id) = queue_vc_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            status.push_str(&format!("Queue Voice: {}\n", 
+                                if let Some(id) = queue_vc_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }
                             ));
-                            status.push_str(&format!("✅ Red Team: {}\n", 
-                                if let Some(id) = red_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            status.push_str(&format!("Red Team: {}\n", 
+                                if let Some(id) = red_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }
                             ));
-                            status.push_str(&format!("✅ Blue Team: {}\n", 
-                                if let Some(id) = blue_channel { format!("<#{}>", id.get()) } else { "❌ Not selected".to_string() }
+                            status.push_str(&format!("Blue Team: {}\n", 
+                                if let Some(id) = blue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }
                             ));
                             
                             let embed = CE::new()
@@ -2073,7 +2085,7 @@ pub async fn handle_server_settings_button(
                     
                     let response = CIR::UpdateMessage(
                         CIRM::new()
-                            .content(format!("✅ Removed duplicate group and linked to existing dashboard!"))
+                            .content(format!("Removed duplicate group and linked to existing dashboard!"))
                             .embed(display.build_embed())
                             .components(display.build_components())
                     );
@@ -2202,7 +2214,7 @@ pub async fn handle_server_settings_button(
                             
                             let response = CIR::UpdateMessage(
                                 CIRM::new()
-                                    .content(format!("✅ Removed duplicate group and created new dashboard!"))
+                                    .content(format!("Removed duplicate group and created new dashboard!"))
                                     .embed(display.build_embed())
                                     .components(display.build_components())
                             );
@@ -2432,9 +2444,9 @@ pub async fn handle_server_settings_button(
                         };
                         
                         let success_msg = if let Some(name) = group_name {
-                            format!("✅ Successfully removed group: {}\n🗑️ Deleted {} Discord channels", name, deleted_count)
+                            format!("Successfully removed group: {}\n🗑️ Deleted {} Discord channels", name, deleted_count)
                         } else {
-                            format!("✅ Successfully removed group {}\n🗑️ Deleted {} Discord channels", group_id, deleted_count)
+                            format!("Successfully removed group {}\n🗑️ Deleted {} Discord channels", group_id, deleted_count)
                         };
                         
                         let response = CIR::UpdateMessage(
@@ -2493,9 +2505,9 @@ pub async fn handle_server_settings_button(
                         };
                         
                         let success_msg = if let Some(name) = group_name {
-                            format!("✅ Successfully removed group: {}\n📁 Discord channels were kept", name)
+                            format!("Successfully removed group: {}\n📁 Discord channels were kept", name)
                         } else {
-                            format!("✅ Successfully removed group {}\n📁 Discord channels were kept", group_id)
+                            format!("Successfully removed group {}\n📁 Discord channels were kept", group_id)
                         };
                         
                         let response = CIR::UpdateMessage(
@@ -2614,7 +2626,7 @@ pub async fn handle_server_settings_button(
                     
                     if !existing_dashboard_msgs.is_empty() {
                         description.push_str(&format!(
-                            "✅ **Found {} existing dashboard message(s)**\n\n\
+                            "**Found {} existing dashboard message(s)**\n\n\
                             Found bot messages in <#{}> that appear to be dashboards.\n\
                             Most recent: <https://discord.com/channels/{}/{}/{}>\n\n\
                             **Select an option:**\n\
@@ -2702,7 +2714,7 @@ pub async fn handle_server_settings_button(
                         
                         let response = CIR::UpdateMessage(
                             CIRM::new()
-                                .content(format!("✅ Successfully linked dashboard message!"))
+                                .content(format!("Successfully linked dashboard message!"))
                                 .embed(embed)
                                 .components(buttons)
                         );
@@ -2790,14 +2802,21 @@ async fn get_all_rank_roles(db: &Arc<Database>, guild_id: GI) -> Result<Vec<(Str
 
 /// Get server settings from database
 pub async fn get_server_settings(db: &Arc<Database>, guild_id: GI) -> Result<ServerSettings> {
-    // Query actual columns: runner_id and admin_id (not runner_role/admin_role)
+    use crate::handlers::settings_menu::SERVER_CONFIG_TOGGLES;
+
     let config_map = db.config.get_config_map(guild_id).await?;
     let runner_role = config_map.get("runner_id").cloned();
     let admin_role = config_map.get("admin_id").cloned();
 
+    let mut toggle_states = Vec::with_capacity(SERVER_CONFIG_TOGGLES.len());
+    for toggle in SERVER_CONFIG_TOGGLES {
+        toggle_states.push(db.config.get_bool(guild_id, toggle.column, toggle.default).await?);
+    }
+
     Ok(ServerSettings {
         runner_role,
         admin_role,
+        toggle_states,
     })
 }
 
@@ -3354,10 +3373,32 @@ pub async fn handle_player_settings_rank_select(
               if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" });
     }
 
+    // Update Discord roles
+    if let Ok(member) = guild_id.member(&ctx.http, target_uid).await {
+        // Remove old rank role
+        if member.roles.contains(&guild_elo.rank.role_id) {
+            if let Err(e) = member.remove_role(&ctx.http, guild_elo.rank.role_id).await {
+                info!("Failed to remove old rank role {} from user {}: {}", guild_elo.rank.role_id, target_uid, e);
+            } else {
+                info!("Removed rank role {} from user {}", guild_elo.rank.name, target_uid);
+            }
+        }
+        
+        // Add new rank role
+        if !member.roles.contains(&new_rank.role_id) {
+            if let Err(e) = member.add_role(&ctx.http, new_rank.role_id).await {
+                info!("Failed to add new rank role {} to user {}: {}", new_rank.role_id, target_uid, e);
+            } else {
+                info!("Added rank role {} to user {}", new_rank.name, target_uid);
+            }
+        }
+    }
+
     // Update dashboards where this player is queued
     {
         let mut manager_lock = manager.lock().await;
         if let Ok(server) = manager_lock.get_server(guild_id) {
+            let mut found_in_queue = false;
             for group in &server.groups {
                 // Check if player is in any session in this group
                 let player_in_queue = group.subgroups[0].sessions.iter().any(|session| {
@@ -3365,10 +3406,16 @@ pub async fn handle_player_settings_rank_select(
                 });
                 
                 if player_in_queue {
+                    found_in_queue = true;
                     info!("Player {} rank changed, updating dashboard for group {}", target_uid, group.group_id);
                     group.queue_dash_update(ctx, guild_id).await;
                 }
             }
+            if !found_in_queue {
+                info!("Player {} rank changed but not found in any queue, no dashboard update needed", target_uid);
+            }
+        } else {
+            warn!("Failed to get server for guild {} when checking if player {} is queued", guild_id, target_uid);
         }
     }
 
@@ -3389,25 +3436,8 @@ pub async fn handle_player_settings_rank_select(
         wins: updated_guild_elo.wins,
     };
 
-    // Use rank selection dropdown again for the updated menu
-    let display_settings = crate::handlers::settings_menu::PlayerSettingsDisplay {
-        user_id: settings.user_id,
-        username: settings.username.clone(),
-        steam_id: settings.steam_id,
-        elo: settings.elo,
-        rank: settings.rank.clone(),
-        games: settings.games,
-        wins: settings.wins,
-    };
-    
-    let response = match crate::handlers::settings_menu::create_player_settings_with_rank_select(&display_settings, db, guild_id).await {
-        Ok(resp) => resp,
-        Err(_) => {
-            // Fallback to regular menu if rank selection fails
-            crate::models::Ephemeral::send_edit_player(&settings, target_uid)
-        }
-    };
-
+    let (embed, components) = nav_player_settings(&settings, db, guild_id).await;
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
     interaction.create_response(&ctx.http, response).await?;
     Ok(())
 }
@@ -3423,7 +3453,7 @@ pub struct GroupSettings {
     pub quota:          u8,
     pub timeout:        u16,
     pub connect_info:   Option<String>,
-    pub subgroup_count: usize,
+    pub subgroup_names: Vec<String>,
     pub vc_create:      String,
     pub vc_destroy:     String,
     pub vc_keep_min:    bool,
@@ -3437,7 +3467,7 @@ impl GroupSettings {
             quota:          group.quota(),
             timeout:        group.timeout,
             connect_info:   group.connect_info().map(|s| s.to_string()),
-            subgroup_count: group.subgroups.len(),
+            subgroup_names: group.subgroups.iter().map(|sg| sg.name.clone()).collect(),
             vc_create:      group.team_vc_settings.create_policy.to_string(),
             vc_destroy:     group.team_vc_settings.destroy_policy.to_string(),
             vc_keep_min:    group.team_vc_settings.keep_minimum,
@@ -3454,7 +3484,7 @@ pub fn build_group_settings_embed(settings: &GroupSettings) -> CE {
         quota:          settings.quota,
         timeout:        settings.timeout,
         connect_info:   settings.connect_info.clone(),
-        subgroup_count: settings.subgroup_count,
+        subgroup_names: settings.subgroup_names.clone(),
         vc_create:      settings.vc_create.clone(),
         vc_destroy:     settings.vc_destroy.clone(),
         vc_keep_min:    settings.vc_keep_min,
@@ -3471,7 +3501,7 @@ pub fn build_group_settings_buttons(group_id: u8) -> Vec<CAR> {
         quota:          0,
         timeout:        0,
         connect_info:   None,
-        subgroup_count: 0,
+        subgroup_names: Vec::new(),
         vc_create:      String::new(),
         vc_destroy:     String::new(),
         vc_keep_min:    true,
@@ -3630,6 +3660,240 @@ pub async fn handle_group_settings_button(
         return Ok(());
     }
 
+    // Handle elo gate buttons (these parse their own group_id from the value)
+    if button_id.starts_with("group_settings_elo_gate_") {
+        let group_id_str = button_id.strip_prefix("group_settings_elo_gate_").unwrap();
+        if let Ok(group_id) = group_id_str.parse::<u8>() {
+            let ranks = db.ranks.get_ranks(guild_id).await?;
+            if ranks.is_empty() {
+                let embed = CE::new()
+                    .title("No ranks configured")
+                    .description("You need to configure ranks before setting up an ELO gate.\nGo to server settings and set up ranks first.")
+                    .color(RED);
+                let response = CIR::UpdateMessage(
+                    CIRM::new().embed(embed).components(vec![
+                        CAR::Buttons(vec![
+                            CB::new(format!("group_settings_back_{group_id}"))
+                                .label("Back")
+                                .style(BS::Secondary),
+                        ]),
+                    ])
+                );
+                interaction.create_response(&ctx.http, response).await?;
+                return Ok(());
+            }
+
+            let embed = CE::new()
+                .title("ELO Gate - Select minimum rank")
+                .description("Select the **minimum** rank that can view this group's category.\nAll ranks from min to max (inclusive) will have access.")
+                .color(0x5865F2);
+
+            let mut options: Vec<(String, String)> = Vec::new();
+            options.push(("No minimum".to_string(), format!("{}_0", group_id)));
+            for (i, r) in ranks.iter().enumerate() {
+                options.push((format!("{} (ELO {})", r.name, r.elo), format!("{}_{}", group_id, i)));
+            }
+
+            let mut components = Vec::new();
+            if let Some(menu) = crate::handlers::settings_menu::create_selection_menu(
+                "elo_gate_min",
+                "Select minimum rank",
+                options,
+            ) {
+                components.push(menu);
+            }
+            components.push(CAR::Buttons(vec![
+                CB::new(format!("elo_gate_clear_{group_id}"))
+                    .label("Clear ELO gate")
+                    .style(BS::Danger),
+                CB::new(format!("group_settings_back_{group_id}"))
+                    .label("Back")
+                    .style(BS::Secondary),
+            ]));
+
+            let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        return Ok(());
+    }
+
+    if button_id == "elo_gate_min" || button_id.starts_with("elo_gate_min_") {
+        let selected = if button_id == "elo_gate_min" {
+            match &interaction.data.kind {
+                serenity::all::ComponentInteractionDataKind::StringSelect { values } => {
+                    values.first().cloned().unwrap_or_default()
+                }
+                _ => return Err(anyhow::anyhow!("Expected string select")),
+            }
+        } else {
+            button_id.strip_prefix("elo_gate_min_").unwrap().to_string()
+        };
+        let parts: Vec<&str> = selected.splitn(2, '_').collect();
+        if parts.len() == 2 {
+            let group_id: u8 = parts[0].parse().unwrap_or(0);
+            let min_idx: usize = parts[1].parse().unwrap_or(0);
+
+            let ranks = db.ranks.get_ranks(guild_id).await?;
+            let min_rank_name = if min_idx == 0 { "No minimum" } else { ranks.get(min_idx).map(|r| r.name.as_str()).unwrap_or("?") };
+
+            let embed = CE::new()
+                .title("ELO Gate - Select maximum rank")
+                .description(format!(
+                    "Minimum rank: **{}**\n\nNow select the **maximum** rank that can view this group's category.",
+                    min_rank_name
+                ))
+                .color(0x5865F2);
+
+            let mut options: Vec<(String, String)> = ranks.iter().enumerate()
+                .filter(|(i, _)| *i >= min_idx)
+                .map(|(i, r)| (format!("{} (ELO {})", r.name, r.elo), format!("{}_{}_{}", group_id, min_idx, i)))
+                .collect();
+            options.push(("No maximum".to_string(), format!("{}_{}_{}", group_id, min_idx, ranks.len())));
+
+            let mut components = Vec::new();
+            if let Some(menu) = crate::handlers::settings_menu::create_selection_menu(
+                "elo_gate_max",
+                "Select maximum rank",
+                options,
+            ) {
+                components.push(menu);
+            }
+            components.push(CAR::Buttons(vec![
+                CB::new(format!("group_settings_elo_gate_{group_id}"))
+                    .label("Back")
+                    .style(BS::Secondary),
+            ]));
+
+            let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
+            interaction.create_response(&ctx.http, response).await?;
+        }
+        return Ok(());
+    }
+
+    if button_id == "elo_gate_max" || button_id.starts_with("elo_gate_max_") {
+        let selected = if button_id == "elo_gate_max" {
+            match &interaction.data.kind {
+                serenity::all::ComponentInteractionDataKind::StringSelect { values } => {
+                    values.first().cloned().unwrap_or_default()
+                }
+                _ => return Err(anyhow::anyhow!("Expected string select")),
+            }
+        } else {
+            button_id.strip_prefix("elo_gate_max_").unwrap().to_string()
+        };
+        let parts: Vec<&str> = selected.splitn(3, '_').collect();
+        if parts.len() == 3 {
+            let group_id: u8 = parts[0].parse().unwrap_or(0);
+            let min_idx: usize = parts[1].parse().unwrap_or(0);
+            let raw_max: usize = parts[2].parse().unwrap_or(0);
+
+            let ranks = db.ranks.get_ranks(guild_id).await?;
+            // Clamp: sentinel ranks.len() ("No maximum") maps to last valid index
+            let max_idx = raw_max.min(ranks.len().saturating_sub(1));
+            let category_id = {
+                let mut manager_lock = manager.lock().await;
+                let server = manager_lock.get_server(guild_id)?;
+                let group = server.groups.iter()
+                    .find(|g| g.group_id == group_id)
+                    .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?;
+                group.channels.category
+            };
+
+            match apply_elo_gate(ctx, guild_id, category_id, &ranks, min_idx, max_idx).await {
+                Ok(count) => {
+                    let min_name = if min_idx == 0 { "No minimum" } else { ranks.get(min_idx).map(|r| r.name.as_str()).unwrap_or("?") };
+                    let max_name = if max_idx >= ranks.len().saturating_sub(1) { "No maximum" } else { ranks.get(max_idx).map(|r| r.name.as_str()).unwrap_or("?") };
+                    let embed = CE::new()
+                        .title("ELO Gate Applied")
+                        .description(format!(
+                            "Category visibility restricted to ranks **{}** through **{}**.\n{} rank role(s) granted view access.",
+                            min_name, max_name, count
+                        ))
+                        .color(crate::GREEN);
+
+                    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+                        CAR::Buttons(vec![
+                            CB::new(format!("group_settings_back_{group_id}"))
+                                .label("Back to group settings")
+                                .style(BS::Secondary),
+                        ]),
+                    ]));
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+                Err(e) => {
+                    let hint = if e.to_string().contains("Missing Access") {
+                        "\n\nThe bot may lack **Manage Roles** or **Manage Channels** permission on this category. Check the bot's channel-level permissions."
+                    } else { "" };
+                    let embed = CE::new()
+                        .title("ELO Gate Failed")
+                        .description(format!("Failed to apply permissions: {}{}", e, hint))
+                        .color(RED);
+                    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+                        CAR::Buttons(vec![
+                            CB::new(format!("group_settings_elo_gate_{group_id}"))
+                                .label("Retry")
+                                .style(BS::Primary),
+                            CB::new(format!("group_settings_back_{group_id}"))
+                                .label("Back")
+                                .style(BS::Secondary),
+                        ]),
+                    ]));
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    if button_id.starts_with("elo_gate_clear_") {
+        let group_id_str = button_id.strip_prefix("elo_gate_clear_").unwrap();
+        if let Ok(group_id) = group_id_str.parse::<u8>() {
+            let category_id = {
+                let mut manager_lock = manager.lock().await;
+                let server = manager_lock.get_server(guild_id)?;
+                let group = server.groups.iter()
+                    .find(|g| g.group_id == group_id)
+                    .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?;
+                group.channels.category
+            };
+
+            match clear_elo_gate(ctx, guild_id, category_id).await {
+                Ok(_) => {
+                    let embed = CE::new()
+                        .title("ELO Gate Cleared")
+                        .description("Category is now visible to everyone.")
+                        .color(crate::GREEN);
+                    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+                        CAR::Buttons(vec![
+                            CB::new(format!("group_settings_back_{group_id}"))
+                                .label("Back to group settings")
+                                .style(BS::Secondary),
+                        ]),
+                    ]));
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+                Err(e) => {
+                    let embed = CE::new()
+                        .title("Clear ELO Gate Failed")
+                        .description(format!("Failed to clear permissions: {}", e))
+                        .color(RED);
+                    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+                        CAR::Buttons(vec![
+                            CB::new(format!("elo_gate_clear_{group_id}"))
+                                .label("Retry")
+                                .style(BS::Primary),
+                            CB::new(format!("group_settings_back_{group_id}"))
+                                .label("Back")
+                                .style(BS::Secondary),
+                        ]),
+                    ]));
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
+        return Ok(());
+    }
+
     // Extract group_id from button custom_id (format: group_settings_edit_<action>_<group_id>)
     let group_id: u8 = button_id
         .rsplit('_')
@@ -3737,8 +4001,8 @@ pub async fn handle_group_settings_button(
         if let Ok(server) = manager_lock.get_server(guild_id) {
             if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
                 let next = match group.team_vc_settings.destroy_policy {
-                    TeamVcDestroyPolicy::OnLastLeave => TeamVcDestroyPolicy::AfterPull,
-                    TeamVcDestroyPolicy::AfterPull   => TeamVcDestroyPolicy::AfterTimeout,
+                    TeamVcDestroyPolicy::OnLastLeave =>  TeamVcDestroyPolicy::AfterPull,
+                    TeamVcDestroyPolicy::AfterPull   =>  TeamVcDestroyPolicy::AfterTimeout,
                     TeamVcDestroyPolicy::AfterTimeout => TeamVcDestroyPolicy::OnLastLeave,
                 };
                 group.team_vc_settings.destroy_policy = next;
@@ -3809,7 +4073,7 @@ pub async fn handle_group_settings_button(
             
             if !existing_dashboard_msgs.is_empty() {
                 description.push_str(&format!(
-                    "✅ **Found {} existing dashboard message(s)**\n\n\
+                    "**Found {} existing dashboard message(s)**\n\n\
                     Found bot messages in <#{}> that appear to be dashboards.\n\n\
                     **Select a message to link:**",
                     existing_dashboard_msgs.len(),
@@ -3891,7 +4155,7 @@ pub async fn handle_group_settings_button(
                 drop(manager_lock);
                 
                 let embed = CE::new()
-                    .title("✅ Dashboard Message Linked")
+                    .title("Dashboard Message Linked")
                     .description(format!(
                         "Successfully linked existing dashboard message to this group.\n\n\
                         Message ID: `{}`\n\n\
@@ -4014,228 +4278,6 @@ pub async fn handle_group_settings_button(
             );
             interaction.create_response(&ctx.http, response).await?;
         }
-    } else if button_id.starts_with("group_settings_rank_gate_") {
-        // Show rank gate configuration screen
-        let group_id_str = button_id.strip_prefix("group_settings_rank_gate_").unwrap();
-        if let Ok(group_id) = group_id_str.parse::<u8>() {
-            let ranks = db.ranks.get_ranks(guild_id).await?;
-            if ranks.is_empty() {
-                let embed = CE::new()
-                    .title("No ranks configured")
-                    .description("You need to configure ranks before setting up a rank gate.\nGo to server settings and set up ranks first.")
-                    .color(RED);
-                let response = CIR::UpdateMessage(
-                    CIRM::new().embed(embed).components(vec![
-                        CAR::Buttons(vec![
-                            CB::new(format!("group_settings_back_{group_id}"))
-                                .label("Back")
-                                .style(BS::Secondary),
-                        ]),
-                    ])
-                );
-                interaction.create_response(&ctx.http, response).await?;
-                return Ok(());
-            }
-
-            let embed = CE::new()
-                .title("Rank Gate - Select minimum rank")
-                .description("Select the **minimum** rank that can view this group's category.\nAll ranks from min to max (inclusive) will have access.")
-                .color(0x5865F2);
-
-            let options: Vec<(String, String)> = ranks.iter().enumerate()
-                .map(|(i, r)| (format!("{} (ELO {})", r.name, r.elo), format!("{}_{}", group_id, i)))
-                .collect();
-
-            let mut components = Vec::new();
-            if let Some(menu) = crate::handlers::settings_menu::create_selection_menu(
-                "rank_gate_min",
-                "Select minimum rank",
-                options,
-            ) {
-                components.push(menu);
-            }
-            components.push(CAR::Buttons(vec![
-                CB::new(format!("rank_gate_clear_{group_id}"))
-                    .label("Clear rank gate")
-                    .style(BS::Danger),
-                CB::new(format!("group_settings_back_{group_id}"))
-                    .label("Back")
-                    .style(BS::Secondary),
-            ]));
-
-            let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
-            interaction.create_response(&ctx.http, response).await?;
-        }
-    } else if button_id == "rank_gate_min" || button_id.starts_with("rank_gate_min_") {
-        // User selected a min rank
-        // Button variant: rank_gate_min_{group_id}_{rank_index}
-        // Select variant: rank_gate_min with value "{group_id}_{rank_index}"
-        let selected = if button_id == "rank_gate_min" {
-            match &interaction.data.kind {
-                serenity::all::ComponentInteractionDataKind::StringSelect { values } => {
-                    values.first().cloned().unwrap_or_default()
-                }
-                _ => return Err(anyhow::anyhow!("Expected string select")),
-            }
-        } else {
-            button_id.strip_prefix("rank_gate_min_").unwrap().to_string()
-        };
-        let parts: Vec<&str> = selected.splitn(2, '_').collect();
-        if parts.len() == 2 {
-            let group_id: u8 = parts[0].parse().unwrap_or(0);
-            let min_idx: usize = parts[1].parse().unwrap_or(0);
-
-            let ranks = db.ranks.get_ranks(guild_id).await?;
-            let min_rank_name = ranks.get(min_idx).map(|r| r.name.as_str()).unwrap_or("?");
-
-            let embed = CE::new()
-                .title("Rank Gate - Select maximum rank")
-                .description(format!(
-                    "Minimum rank: **{}**\n\nNow select the **maximum** rank that can view this group's category.",
-                    min_rank_name
-                ))
-                .color(0x5865F2);
-
-            // Only show ranks >= min rank index
-            let options: Vec<(String, String)> = ranks.iter().enumerate()
-                .filter(|(i, _)| *i >= min_idx)
-                .map(|(i, r)| (format!("{} (ELO {})", r.name, r.elo), format!("{}_{}_{}", group_id, min_idx, i)))
-                .collect();
-
-            let mut components = Vec::new();
-            if let Some(menu) = crate::handlers::settings_menu::create_selection_menu(
-                "rank_gate_max",
-                "Select maximum rank",
-                options,
-            ) {
-                components.push(menu);
-            }
-            components.push(CAR::Buttons(vec![
-                CB::new(format!("group_settings_rank_gate_{group_id}"))
-                    .label("Back")
-                    .style(BS::Secondary),
-            ]));
-
-            let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
-            interaction.create_response(&ctx.http, response).await?;
-        }
-    } else if button_id == "rank_gate_max" || button_id.starts_with("rank_gate_max_") {
-        // User selected a max rank
-        // Button variant: rank_gate_max_{group_id}_{min_idx}_{max_idx}
-        // Select variant: rank_gate_max with value "{group_id}_{min_idx}_{max_idx}"
-        let selected = if button_id == "rank_gate_max" {
-            match &interaction.data.kind {
-                serenity::all::ComponentInteractionDataKind::StringSelect { values } => {
-                    values.first().cloned().unwrap_or_default()
-                }
-                _ => return Err(anyhow::anyhow!("Expected string select")),
-            }
-        } else {
-            button_id.strip_prefix("rank_gate_max_").unwrap().to_string()
-        };
-        let parts: Vec<&str> = selected.splitn(3, '_').collect();
-        if parts.len() == 3 {
-            let group_id: u8 = parts[0].parse().unwrap_or(0);
-            let min_idx: usize = parts[1].parse().unwrap_or(0);
-            let max_idx: usize = parts[2].parse().unwrap_or(0);
-
-            let ranks = db.ranks.get_ranks(guild_id).await?;
-            let category_id = {
-                let mut manager_lock = manager.lock().await;
-                let server = manager_lock.get_server(guild_id)?;
-                let group = server.groups.iter()
-                    .find(|g| g.group_id == group_id)
-                    .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?;
-                group.channels.category
-            };
-
-            match apply_rank_gate(ctx, guild_id, category_id, &ranks, min_idx, max_idx).await {
-                Ok(count) => {
-                    let min_name = ranks.get(min_idx).map(|r| r.name.as_str()).unwrap_or("?");
-                    let max_name = ranks.get(max_idx).map(|r| r.name.as_str()).unwrap_or("?");
-                    let embed = CE::new()
-                        .title("Rank Gate Applied")
-                        .description(format!(
-                            "Category visibility restricted to ranks **{}** through **{}**.\n{} rank role(s) granted view access.",
-                            min_name, max_name, count
-                        ))
-                        .color(crate::GREEN);
-
-                    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-                        CAR::Buttons(vec![
-                            CB::new(format!("group_settings_back_{group_id}"))
-                                .label("Back to group settings")
-                                .style(BS::Secondary),
-                        ]),
-                    ]));
-                    interaction.create_response(&ctx.http, response).await?;
-                }
-                Err(e) => {
-                    let embed = CE::new()
-                        .title("Rank Gate Failed")
-                        .description(format!("Failed to apply permissions: {}", e))
-                        .color(RED);
-                    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-                        CAR::Buttons(vec![
-                            CB::new(format!("group_settings_rank_gate_{group_id}"))
-                                .label("Retry")
-                                .style(BS::Primary),
-                            CB::new(format!("group_settings_back_{group_id}"))
-                                .label("Back")
-                                .style(BS::Secondary),
-                        ]),
-                    ]));
-                    interaction.create_response(&ctx.http, response).await?;
-                }
-            }
-        }
-    } else if button_id.starts_with("rank_gate_clear_") {
-        // Clear rank gate - remove view channel restrictions from category
-        let group_id_str = button_id.strip_prefix("rank_gate_clear_").unwrap();
-        if let Ok(group_id) = group_id_str.parse::<u8>() {
-            let category_id = {
-                let mut manager_lock = manager.lock().await;
-                let server = manager_lock.get_server(guild_id)?;
-                let group = server.groups.iter()
-                    .find(|g| g.group_id == group_id)
-                    .ok_or_else(|| anyhow::anyhow!("Group {} not found", group_id))?;
-                group.channels.category
-            };
-
-            match clear_rank_gate(ctx, guild_id, category_id).await {
-                Ok(_) => {
-                    let embed = CE::new()
-                        .title("Rank Gate Cleared")
-                        .description("Category is now visible to everyone.")
-                        .color(crate::GREEN);
-                    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-                        CAR::Buttons(vec![
-                            CB::new(format!("group_settings_back_{group_id}"))
-                                .label("Back to group settings")
-                                .style(BS::Secondary),
-                        ]),
-                    ]));
-                    interaction.create_response(&ctx.http, response).await?;
-                }
-                Err(e) => {
-                    let embed = CE::new()
-                        .title("Clear Rank Gate Failed")
-                        .description(format!("Failed to clear permissions: {}", e))
-                        .color(RED);
-                    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-                        CAR::Buttons(vec![
-                            CB::new(format!("rank_gate_clear_{group_id}"))
-                                .label("Retry")
-                                .style(BS::Primary),
-                            CB::new(format!("group_settings_back_{group_id}"))
-                                .label("Back")
-                                .style(BS::Secondary),
-                        ]),
-                    ]));
-                    interaction.create_response(&ctx.http, response).await?;
-                }
-            }
-        }
     } else if button_id.starts_with("group_settings_back_") {
         // Back button - return to group settings screen
         let group_id_str = button_id.strip_prefix("group_settings_back_").unwrap();
@@ -4256,10 +4298,10 @@ pub async fn handle_group_settings_button(
     Ok(())
 }
 
-/// Apply rank gate permissions on a category channel.
+/// Apply ELO gate permissions on a category channel.
 /// Denies VIEW_CHANNEL for @everyone, allows VIEW_CHANNEL for rank roles in [min_idx..=max_idx].
 /// Also ensures the bot can still see the category.
-async fn apply_rank_gate(
+async fn apply_elo_gate(
     ctx: &Context,
     guild_id: GI,
     category_id: serenity::all::ChannelId,
@@ -4277,16 +4319,15 @@ async fn apply_rank_gate(
         .find(|r| r.managed && r.tags.bot_id == Some(bot_user_id))
         .map(|r| r.id);
 
-    // Deny @everyone VIEW_CHANNEL on the category
-    category_id.create_permission(&ctx.http, PermissionOverwrite {
-        allow: Permissions::empty(),
-        deny: Permissions::VIEW_CHANNEL,
-        kind: PermissionOverwriteType::Role(guild_id.everyone_role()),
-    }).await?;
+    // Grant bot permissions FIRST so it doesn't lose access after denying @everyone.
+    // Must include MANAGE_CHANNELS and MANAGE_ROLES so the bot can still edit
+    // dashboard messages, delete team VCs, and modify permissions on channels
+    // under this category after @everyone is denied.
+    let bot_perms = Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES | Permissions::EMBED_LINKS
+        | Permissions::CONNECT | Permissions::MOVE_MEMBERS | Permissions::MANAGE_CHANNELS | Permissions::MANAGE_ROLES;
 
-    // Allow bot user
     category_id.create_permission(&ctx.http, PermissionOverwrite {
-        allow: Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES | Permissions::EMBED_LINKS | Permissions::CONNECT | Permissions::MOVE_MEMBERS,
+        allow: bot_perms,
         deny: Permissions::empty(),
         kind: PermissionOverwriteType::Member(bot_user_id),
     }).await?;
@@ -4294,11 +4335,18 @@ async fn apply_rank_gate(
     // Allow bot integration role if present
     if let Some(role_id) = bot_role {
         category_id.create_permission(&ctx.http, PermissionOverwrite {
-            allow: Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES | Permissions::EMBED_LINKS | Permissions::CONNECT | Permissions::MOVE_MEMBERS,
+            allow: bot_perms,
             deny: Permissions::empty(),
             kind: PermissionOverwriteType::Role(role_id),
         }).await?;
     }
+
+    // Deny @everyone VIEW_CHANNEL on the category
+    category_id.create_permission(&ctx.http, PermissionOverwrite {
+        allow: Permissions::empty(),
+        deny: Permissions::VIEW_CHANNEL,
+        kind: PermissionOverwriteType::Role(guild_id.everyone_role()),
+    }).await?;
 
     // Collect all rank role IDs so we can deny those outside the range
     let mut allowed_count = 0usize;
@@ -4327,9 +4375,9 @@ async fn apply_rank_gate(
     Ok(allowed_count)
 }
 
-/// Clear rank gate permissions from a category channel.
+/// Clear ELO gate permissions from a category channel.
 /// Removes the VIEW_CHANNEL deny from @everyone and removes all rank role overwrites.
-async fn clear_rank_gate(
+async fn clear_elo_gate(
     ctx: &Context,
     guild_id: GI,
     category_id: serenity::all::ChannelId,
@@ -4466,7 +4514,7 @@ pub async fn handle_group_link_msg_modal(
                     drop(manager_lock);
                     
                     let embed = CE::new()
-                        .title("✅ Dashboard Message Linked")
+                        .title("Dashboard Message Linked")
                         .description(format!(
                             "Successfully linked dashboard message to this group.\n\n\
                             Message ID: `{}`\n\
@@ -4499,7 +4547,7 @@ pub async fn handle_group_link_msg_modal(
         Err(e) => {
             warn!("Message {} not found in channel {}: {}", dashboard_msg_id, dashboard_channel, e);
             let embed = CE::new()
-                .title("❌ Message Not Found")
+                .title("Message Not Found")
                 .description(format!(
                     "Could not find message `{}` in <#{}>.\n\n\
                     Please verify:\n\
@@ -4936,34 +4984,29 @@ pub struct PlayerSettings {
     pub wins:     u32,
 }
 
-/// Build player settings embed
-pub fn build_player_settings_embed(settings: &PlayerSettings) -> CE {
-    use crate::handlers::settings_menu::{AsSettingsMenu, PlayerSettingsDisplay};
-    let display = PlayerSettingsDisplay {
-        user_id:  settings.user_id,
-        username: settings.username.clone(),
-        steam_id: settings.steam_id,
-        elo:      settings.elo,
-        rank:     settings.rank.clone(),
-        games:    settings.games,
-        wins:     settings.wins,
-    };
-    display.as_settings_menu().build_embed()
+impl PlayerSettings {
+    pub fn to_display(&self) -> crate::handlers::settings_menu::PlayerSettingsDisplay {
+        crate::handlers::settings_menu::PlayerSettingsDisplay {
+            user_id:  self.user_id,
+            username: self.username.clone(),
+            steam_id: self.steam_id,
+            elo:      self.elo,
+            rank:     self.rank.clone(),
+            games:    self.games,
+            wins:     self.wins,
+        }
+    }
 }
 
-/// Build player settings buttons
-pub fn build_player_settings_buttons(user_id: serenity::all::UserId) -> Vec<CAR> {
-    use crate::handlers::settings_menu::{AsSettingsMenu, PlayerSettingsDisplay};
-    let display = PlayerSettingsDisplay {
-        user_id,
-        username: String::new(),
-        steam_id: None,
-        elo:      0,
-        rank:     String::new(),
-        games:    0,
-        wins:     0,
-    };
-    display.as_settings_menu().build_components()
+/// Build player settings embed and components (with rank dropdown when ranks exist)
+pub async fn nav_player_settings(
+    settings: &PlayerSettings,
+    db: &Arc<Database>,
+    guild_id: GI,
+) -> (CE, Vec<CAR>) {
+    crate::handlers::settings_menu::build_player_settings_menu(
+        &settings.to_display(), db, guild_id,
+    ).await
 }
 
 /// Handle player settings button interactions
@@ -5148,12 +5191,8 @@ pub async fn handle_player_settings_modal(
             wins:     guild_elo.wins,
         };
 
-        let embed = build_player_settings_embed(&settings);
-        let buttons = build_player_settings_buttons(target_uid);
-
-        let response = CIR::UpdateMessage(
-            CIRM::new().embed(embed).components(buttons)
-        );
+        let (embed, components) = nav_player_settings(&settings, db, guild_id).await;
+        let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
         interaction.create_response(&ctx.http, response).await?;
     } else if modal_id.starts_with("player_settings_modal_elo_") {
         let elo_str = interaction.data.components.first()
@@ -5241,6 +5280,7 @@ pub async fn handle_player_settings_modal(
         {
             let mut manager_lock = manager.lock().await;
             if let Ok(server) = manager_lock.get_server(guild_id) {
+                let mut found_in_queue = false;
                 for group in &server.groups {
                     // Check if player is in any session in this group
                     let player_in_queue = group.subgroups[0].sessions.iter().any(|session| {
@@ -5248,10 +5288,16 @@ pub async fn handle_player_settings_modal(
                     });
                     
                     if player_in_queue {
+                        found_in_queue = true;
                         info!("Player {} ELO changed, updating dashboard for group {}", target_uid, group.group_id);
                         group.queue_dash_update(ctx, guild_id).await;
                     }
                 }
+                if !found_in_queue {
+                    info!("Player {} ELO changed but not found in any queue, no dashboard update needed", target_uid);
+                }
+            } else {
+                warn!("Failed to get server for guild {} when checking if player {} is queued", guild_id, target_uid);
             }
         }
 
@@ -5272,12 +5318,8 @@ pub async fn handle_player_settings_modal(
             wins:     guild_elo.wins,
         };
 
-        let embed = build_player_settings_embed(&settings);
-        let buttons = build_player_settings_buttons(target_uid);
-
-        let response = CIR::UpdateMessage(
-            CIRM::new().embed(embed).components(buttons)
-        );
+        let (embed, components) = nav_player_settings(&settings, db, guild_id).await;
+        let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
         interaction.create_response(&ctx.http, response).await?;
     } else if modal_id.starts_with("player_settings_modal_rank_") {
         let rank_str = interaction.data.components.first()
@@ -5311,6 +5353,50 @@ pub async fn handle_player_settings_modal(
                   if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" });
         }
 
+        // Update Discord roles
+        if let Ok(member) = guild_id.member(&ctx.http, target_uid).await {
+            // Remove old rank role
+            if member.roles.contains(&old_rank.role_id) {
+                if let Err(e) = member.remove_role(&ctx.http, old_rank.role_id).await {
+                    info!("Failed to remove old rank role {} from user {}: {}", old_rank.role_id, target_uid, e);
+                } else {
+                    info!("Removed rank role {} from user {}", old_rank.name, target_uid);
+                }
+            }
+            
+            // Add new rank role
+            if !member.roles.contains(&new_rank.role_id) {
+                if let Err(e) = member.add_role(&ctx.http, new_rank.role_id).await {
+                    info!("Failed to add new rank role {} to user {}: {}", new_rank.role_id, target_uid, e);
+                } else {
+                    info!("Added rank role {} to user {}", new_rank.name, target_uid);
+                }
+            }
+        }
+
+        // Update dashboards where this player is queued
+        {
+            let mut manager_lock = manager.lock().await;
+            if let Ok(server) = manager_lock.get_server(guild_id) {
+                let mut found_in_queue = false;
+                for group in &server.groups {
+                    let player_in_queue = group.subgroups[0].sessions.iter().any(|session| {
+                        session.pool.iter().any(|p| p.player.user_id == target_uid)
+                    });
+                    if player_in_queue {
+                        found_in_queue = true;
+                        info!("Player {} rank changed, updating dashboard for group {}", target_uid, group.group_id);
+                        group.queue_dash_update(ctx, guild_id).await;
+                    }
+                }
+                if !found_in_queue {
+                    info!("Player {} rank changed but not found in any queue, no dashboard update needed", target_uid);
+                }
+            } else {
+                warn!("Failed to get server for guild {} when checking if player {} is queued", guild_id, target_uid);
+            }
+        }
+
         // Refresh the settings menu
         let player = db.users.check_user(target_uid, None).await?;
         let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
@@ -5328,12 +5414,8 @@ pub async fn handle_player_settings_modal(
             wins:     guild_elo.wins,
         };
 
-        let embed = build_player_settings_embed(&settings);
-        let buttons = build_player_settings_buttons(target_uid);
-
-        let response = CIR::UpdateMessage(
-            CIRM::new().embed(embed).components(buttons)
-        );
+        let (embed, components) = nav_player_settings(&settings, db, guild_id).await;
+        let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
         interaction.create_response(&ctx.http, response).await?;
     } else if modal_id.starts_with("player_settings_modal_alerts_") {
         // Extract values from modal components
@@ -5384,12 +5466,8 @@ pub async fn handle_player_settings_modal(
             wins:     guild_elo.wins,
         };
 
-        let embed = build_player_settings_embed(&settings);
-        let buttons = build_player_settings_buttons(target_uid);
-
-        let response = CIR::UpdateMessage(
-            CIRM::new().embed(embed).components(buttons)
-        );
+        let (embed, components) = nav_player_settings(&settings, db, guild_id).await;
+        let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
         interaction.create_response(&ctx.http, response).await?;
 
         info!("[Player Settings] Updated alerts for user {}", target_uid);
