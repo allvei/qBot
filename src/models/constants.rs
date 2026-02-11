@@ -2,9 +2,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use serenity::all::VoiceState;
-use sqlx::FromRow;
+use serenity::all::{Context, GuildId, VoiceState};
+
+/// Resolve a guild's display name from cache, with a fallback.
+pub fn guild_name(ctx: &Context, guild_id: GuildId) -> String {
+    ctx.cache.guild(guild_id)
+        .map(|g| g.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string())
+}
 
 pub const DEFAULT_ALERT_COLOR:      u32  = 3447003;
 pub const DEFAULT_ACTIVE_ELO:       bool = false;
@@ -15,13 +20,6 @@ pub const INACTIVITY_TIMEOUT_SECS:  u64  = 600; // 10m
 pub const DEFAULT_TIMEOUT:          u8   = 120; // 2h default user queue expiry
 pub const MAX_TIMEOUT:              u8   = 240; // 4h max user queue expiry
 pub const MIN_TIMEOUT:              u8   = 30;  // 30m min user queue expiry
-
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
-pub struct ConfigFormat {
-    pub key:         String,
-    pub value:       Option<String>,
-    pub description: Option<String>,
-}
 
 /// `FileManager` struct provides cross-platform file operations.
 pub struct FileManager;
@@ -86,15 +84,6 @@ impl VoiceStateUpdate {
                     VoiceStateUpdate::Connected
                 }
             },
-        }
-    }
-
-    pub fn is(&self, voice_state_update: VoiceStateUpdate) -> bool {
-        match self {
-            VoiceStateUpdate::Connected    => voice_state_update == VoiceStateUpdate::Connected,
-            VoiceStateUpdate::Reconnected  => voice_state_update == VoiceStateUpdate::Reconnected,
-            VoiceStateUpdate::Disconnected => voice_state_update == VoiceStateUpdate::Disconnected,
-            VoiceStateUpdate::Moved        => voice_state_update == VoiceStateUpdate::Moved,
         }
     }
 }

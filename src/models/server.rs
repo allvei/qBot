@@ -113,16 +113,7 @@ impl Server {
 
     /// Check if active ELO is enabled for this server
     pub async fn is_active_elo_enabled(&self, db: &DB) -> Result<bool> {
-        match db.config.get_config_item("active_elo_enabled", self.guild_id).await {
-            Ok(Some(value)) => {
-                match value.parse::<bool>() {
-                    Ok(enabled) => Ok(enabled),
-                    Err(_) => Ok(DEFAULT_ACTIVE_ELO),
-                }
-            }
-            Ok(None) => Ok(DEFAULT_ACTIVE_ELO),
-            Err(_) => Ok(DEFAULT_ACTIVE_ELO),
-        }
+        Ok(db.config.get_active_elo(self.guild_id).await.unwrap_or(DEFAULT_ACTIVE_ELO))
     }
 }
 
@@ -1664,6 +1655,14 @@ impl Role {
                     Vec::new()
                 }
             },
+        }
+    }
+
+    /// Save a Discord role ID to the database configuration
+    pub async fn save_id(&self, db: &DB, guild_id: GI, role_id: RI) -> anyhow::Result<()> {
+        match self {
+            Role::Runner => db.config.set_runner_role_id(guild_id, role_id).await,
+            Role::Admin  => db.config.set_admin_role_id(guild_id, role_id).await,
         }
     }
 

@@ -91,10 +91,9 @@ impl EloRepository {
         }
     }
 
-    /// Set or update a player's ELO and rank
-    pub async fn set(&self, user_id: UI, guild_id: GI, elo: u16, rank: Rank) -> Result<()> {
-        // Get the rank ID from the ranks table
-        let rank_id: i64 = sqlx::query_scalar(
+    /// Resolve a Rank to its database primary key (ranks.id)
+    async fn resolve_rank_id(&self, guild_id: GI, rank: &Rank) -> Result<i64> {
+        sqlx::query_scalar(
             "SELECT id FROM ranks WHERE guild_id = ? AND name = ? AND role_id = ?"
         )
         .bind(guild_id.get() as i64)
@@ -102,7 +101,12 @@ impl EloRepository {
         .bind(rank.role_id.get() as i64)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to find rank ID for rank '{}': {}", rank.name, e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to find rank ID for rank '{}': {}", rank.name, e))
+    }
+
+    /// Set or update a player's ELO and rank
+    pub async fn set(&self, user_id: UI, guild_id: GI, elo: u16, rank: Rank) -> Result<()> {
+        let rank_id = self.resolve_rank_id(guild_id, &rank).await?;
 
         sqlx::query(
             "INSERT INTO elo (guild_id, user_id, elo, rank)
@@ -123,16 +127,7 @@ impl EloRepository {
     pub async fn batch_set(&self, guild_id: GI, elo: u16, rank: &Rank, user_ids: &[UI]) -> Result<u32> {
         if user_ids.is_empty() { return Ok(0); }
 
-        // Resolve rank_id once
-        let rank_id: i64 = sqlx::query_scalar(
-            "SELECT id FROM ranks WHERE guild_id = ? AND name = ? AND role_id = ?"
-        )
-        .bind(guild_id.get() as i64)
-        .bind(&rank.name)
-        .bind(rank.role_id.get() as i64)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to find rank ID for rank '{}': {}", rank.name, e))?;
+        let rank_id = self.resolve_rank_id(guild_id, rank).await?;
 
         let mut tx = self.pool.begin().await?;
         let mut success = 0u32;
@@ -191,7 +186,7 @@ impl EloRepository {
         .bind(guild_id.get() as i64)
         .bind(user_id.get()  as i64)
         .bind(new_elo        as i64)
-        .bind(&new_rank.name)
+        .bind(self.resolve_rank_id(guild_id, &new_rank).await?)
         .bind(new_games      as i64)
         .bind(new_wins       as i64)
         .execute(&self.pool)
