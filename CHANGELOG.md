@@ -1,33 +1,52 @@
 __12.02.26__
 ## Users & Admins
 __Added__
-- Auto-end games when all players leave team voice channels.
-- Enhanced team voice channel management with flexible cleanup policies.
-- Comprehensive server settings system with toggle states and modular menus.
-- Text sanitization for alert messages to prevent spam and improve readability.
+- **Subgroups support** - Groups can now contain multiple subgroups, each with their own quota, sessions, and settings.
+- **Dynamic team voice channels** - Automatic creation and cleanup of team voice channels based on configurable policies.
+- **Rank-gated categories** - Restrict channel category visibility by rank with permission overwrites.
+- **Automatic game ending** - Games now end when all players leave team voice channels.
+- **ELO-Rank independent mode** - Option to decouple ELO from ranks for more flexible player management.
+- **Group creation wizard** - Create new groups with custom names, categories, and quotas through an intuitive modal interface.
+- **Complete group removal** - Delete entire groups including all channels and categories with detailed feedback.
+- **Alert rate limiting** - Join/leave alerts are now buffered and rate-limited to prevent spam.
+- **Offline mode indicators** - Dashboard shows when bot is offline and disables interactions during downtime.
 
 __Improved__
-- Settings menu now uses modular components for better maintainability.
-- Better error handling and user feedback across all settings interfaces.
-- Enhanced logging with guild context for better debugging.
-- Improved team voice channel cleanup with force parameter for destroy policies.
+- **Multi-subgroup dashboard** - Dashboard now displays and manages multiple subgroups within a group.
+- **Team voice channel lifecycle** - Configurable policies for when to create/destroy team channels (on join, on hot, on game start, on leave, after pull, after timeout).
+- **Queue timeout refresh** - Re-joining via dashboard button now refreshes your queue timeout.
+- **Better setup flow** - Enhanced 7-step setup process with queue voice channel configuration.
+- **Player ELO validation** - Automatic ELO normalization based on Discord rank ranges.
+- **Cross-group player tracking** - See in-game status across all subgroups on dashboards.
+- **Bulk dashboard updates** - Efficient refresh system for multiple dashboards simultaneously.
 
 __Fixed__
-- Removed UNIQUE constraints from team voice channels to allow flexible channel reuse.
-- Fixed formatting issues in various UI components and logging messages.
-- Resolved compilation errors in edit command logging.
+- **Team voice channel reuse** - Channels can now be reused across multiple games without conflicts.
+- **Rank role matching** - Better handling of duplicate rank names in dropdown menus.
+- **Database stability** - Fixed issues with ELO table being dropped on startup.
+- **Player settings** - Fixed rank determination to check Discord roles before database.
+- **Steam profile links** - Now properly hidden when no Steam ID is configured.
+
+## New Commands
+- **/groupinit** - Automatically creates all necessary channels for a new group.
+- **/grouplink** - Link existing Discord channels to the bot configuration.
+- **/migrate** - Bulk-assign ELO to all members with a specific Discord role.
 
 ## Developers
 __Added__
-- Team VC auto-end event handling in main event loop.
-- Force parameter for team VC cleanup to support different destroy policies.
-- Helper methods for identifying team channels and checking VC emptiness.
+- Subgroup system with per-subgroup session management.
+- ConfigToggle system for declarative configuration options.
+- Alert limiter module for rate-limiting notifications.
+- DM tracker for proper cleanup of direct messages.
+- Bulk update request system for dashboard efficiency.
+- Pre-push Git hook to enforce changelog and version updates.
 
 __Refactored__
-- Complete overhaul of settings system with modular, reusable components.
-- Enhanced database migration system for safer schema changes.
-- Improved error handling and logging throughout the application.
-- Simplified embeds model and removed redundant functionality.
+- Complete settings system redesign with modular components.
+- Database schema updates for subgroups and team VC persistence.
+- Admin command consolidation with data-driven wizard steps.
+- Enhanced error handling throughout the application.
+- Improved voice state handling and rank assignment.
 
 __05.02.26__
 ## Users & Admins

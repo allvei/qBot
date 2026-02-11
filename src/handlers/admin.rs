@@ -157,7 +157,7 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
 /// Creates a category and all necessary group channels
 /// Flow: Create category -> Create dashboard -> Test message send -> Create other channels
 /// If dashboard message send fails, cleanup and abort
-pub async fn create_group_channels(ctx: &Context, guild_id: GI, category_name: &str, channel_prefix: &str) -> Result<(CI, CI, CI, CI)> {
+pub async fn create_group_channels(ctx: &Context, guild_id: GI, category_name: &str, channel_prefix: &str, bot_only_dashboard: bool) -> Result<(CI, CI, CI, CI)> {
     use serenity::all::{CreateChannel, CreateEmbed, CreateMessage, PermissionOverwrite, PermissionOverwriteType, Permissions};
 
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -230,24 +230,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI, category_name: &
     let category_id = category.id;
 
     // Step 2: Create dashboard text channel with proper permissions
-    // Only deny permissions the bot itself has (Discord requires this)
-    let mut everyone_deny = Permissions::SEND_MESSAGES;
-    if let Ok(member) = guild_id.member(&ctx.http, bot_user_id).await {
-        let bot_perms = guild.member_permissions(&member);
-        if bot_perms.contains(Permissions::CREATE_PUBLIC_THREADS) {
-            everyone_deny |= Permissions::CREATE_PUBLIC_THREADS;
-        }
-        if bot_perms.contains(Permissions::CREATE_PRIVATE_THREADS) {
-            everyone_deny |= Permissions::CREATE_PRIVATE_THREADS;
-        }
-    }
     let mut permissions = vec![
-        // Deny @everyone from sending messages (and threads if bot has those perms)
-        PermissionOverwrite {
-            allow: Permissions::empty(),
-            deny: everyone_deny,
-            kind: PermissionOverwriteType::Role(guild_id.everyone_role()),
-        },
         // Allow bot user explicitly
         PermissionOverwrite {
             allow: bot_channel_perms,
@@ -265,6 +248,27 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI, category_name: &
         });
     }
 
+    // If bot-only dashboard is enabled, deny @everyone from sending messages
+    if bot_only_dashboard {
+        // Only deny permissions the bot itself has (Discord requires this)
+        let mut everyone_deny = Permissions::SEND_MESSAGES;
+        if let Ok(member) = guild_id.member(&ctx.http, bot_user_id).await {
+            let bot_perms = guild.member_permissions(&member);
+            if bot_perms.contains(Permissions::CREATE_PUBLIC_THREADS) {
+                everyone_deny |= Permissions::CREATE_PUBLIC_THREADS;
+            }
+            if bot_perms.contains(Permissions::CREATE_PRIVATE_THREADS) {
+                everyone_deny |= Permissions::CREATE_PRIVATE_THREADS;
+            }
+        }
+        
+        permissions.push(PermissionOverwrite {
+            allow: Permissions::empty(),
+            deny: everyone_deny,
+            kind: PermissionOverwriteType::Role(guild_id.everyone_role()),
+        });
+    }
+
     let dashboard_channel = match guild_id.create_channel(&ctx.http,
         CreateChannel::new(format!("{channel_prefix}-dashboard"))
             .kind(ChannelType::Text)
@@ -277,8 +281,13 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI, category_name: &
             // Diagnostic: log bot permissions and attempted overwrites
             if let Ok(member) = guild_id.member(&ctx.http, bot_user_id).await {
                 let bot_perms = guild.member_permissions(&member);
-                error!("[{}] Failed to create dashboard channel: {} | Bot perms: {:?} | Deny overwrites: {:?} | Allow overwrites: SEND_MESSAGES|VIEW_CHANNEL|EMBED_LINKS",
-                    guild_name, e, bot_perms, everyone_deny);
+                let deny_info = if bot_only_dashboard { 
+                    "SEND_MESSAGES (and threads if bot has those perms)" 
+                } else { 
+                    "none" 
+                };
+                error!("[{}] Failed to create dashboard channel: {} | Bot perms: {:?} | Bot-only dashboard: {} | Deny overwrites: {}",
+                    guild_name, e, bot_perms, bot_only_dashboard, deny_info);
             } else {
                 error!("[{}] Failed to create dashboard channel: {}", guild_name, e);
             }
