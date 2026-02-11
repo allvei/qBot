@@ -148,10 +148,10 @@ default_rank INTEGER
 **Examples** (lines 124-142):
 
 ```rust
-add_column!(self, "users", "user_id", "INTEGER", "30");  // Wrong: user_id shouldn't default to 30
-add_column!(self, "users", "steam_id", "INTEGER", "0");  // OK
+add_column!(self, "users", "user_id",                  "INTEGER", "30");  // Wrong: user_id shouldn't default to 30
+add_column!(self, "users", "steam_id",                 "INTEGER", "0");  // OK
 add_column!(self, "users", "pm_queue_alert_threshold", "INTEGER", "3447003");  // Wrong: should be NULL or small number
-add_column!(self, "users", "join_alert_img", "TEXT", "0");  // Wrong: should be NULL, not "0"
+add_column!(self, "users", "join_alert_img",           "TEXT",    "0");  // Wrong: should be NULL, not "0"
 ```
 
 **Impact**:
