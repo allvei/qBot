@@ -6,6 +6,7 @@ use tracing::{info, warn};
 
 use super::Repository;
 use crate::models::{Channels, Group, TeamBalanceMethod, TeamChannel};
+use crate::DEFAULT_TIMEOUT;
 
 /// Configuration for creating or updating a group
 pub struct GroupConfig {
@@ -37,10 +38,9 @@ impl GroupRepository {
         .fetch_one(&self.pool)
         .await?;
 
-        let result = sqlx::query(
+        sqlx::query(
             "INSERT INTO groups (guild_id, group_id, category, dashboard, chat, queue, dashboard_msg, red, blu, quota)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
-             RETURNING id, group_id, name, timeout, guild_id, category, dashboard, chat, queue, dashboard_msg, red, blu, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum"
+             VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?)"
         )
         .bind(guild_id.get()              as i64)
         .bind(next_group_id)
@@ -50,10 +50,40 @@ impl GroupRepository {
         .bind(config.queue_vc_id          as i64)
         .bind(dashboard_msg               as i64)
         .bind(config.quota                as i64)
-        .fetch_one(&self.pool)
+        .execute(&self.pool)
         .await?;
 
-        self.build_group_from_row_async(&result).await
+        // Build the group directly from known values instead of parsing the
+        // RETURNING row. A brand-new group has no subgroups, teams, or other
+        // secondary data in the DB, so build_group_from_row_async would only
+        // add risk of reading stale/wrong data (e.g. group_id defaulting to 0
+        // via try_get fallback, which loads another group's subgroups).
+        let group_id = next_group_id as u8;
+        let category = if config.category_id == 0 {
+            CI::new(config.dashboard_channel_id)
+        } else {
+            CI::new(config.category_id)
+        };
+
+        let group = Group::new(
+            guild_id,
+            group_id,
+            None,
+            config.quota,
+            DEFAULT_TIMEOUT as u16, // default timeout
+            MI::new(dashboard_msg),
+            Channels::new(
+                category,
+                CI::new(config.chat_channel_id),
+                CI::new(config.queue_vc_id),
+                vec![],
+                CI::new(config.dashboard_channel_id),
+            ),
+            Vec::new(),
+        );
+
+        info!("Created group {} with {} subgroup(s)", group_id, group.subgroups.len());
+        Ok(group)
     }
 
     pub async fn update_group(&self, guild_id: GI, config: GroupConfig) -> Result<Group> {
@@ -113,7 +143,7 @@ impl GroupRepository {
         let category  = if category_id == 0 { dashboard } else { CI::new(category_id) };
 
         let guild_id     = GI::new(result.get::<i64, _>("guild_id") as u64);
-        let group_id     = result.try_get::<i64, _>("group_id").unwrap_or(0) as u8;
+        let group_id     = result.get::<i64, _>("group_id") as u8;
         let name         = result.try_get::<Option<String>, _>("name").ok().flatten();
         let connect_info = result.try_get::<Option<String>, _>("connect_info").ok().flatten();
         let team_balance_method_str = result.try_get::<Option<String>, _>("team_balance_method").ok().flatten();
@@ -137,8 +167,8 @@ impl GroupRepository {
             guild_id,
             group_id,
             name,
-            result.try_get::<i64, _>("quota")  .unwrap_or(12)  as u8,
-            result.try_get::<i64, _>("timeout").unwrap_or(120) as u16,
+            result.try_get::<i64, _>("quota")  .unwrap_or(8)  as u8,
+            result.try_get::<i64, _>("timeout").unwrap_or(DEFAULT_TIMEOUT as i64) as u16,
             MI::new(dashboard_msg_id),
             Channels::new(category, chat, queue, teams, dashboard),
             Vec::new(),
@@ -167,11 +197,13 @@ impl GroupRepository {
         // Load subgroups from DB; if present, replace the default subgroup
         match self.get_subgroups(guild_id, group_id).await {
             Ok(sgs) if !sgs.is_empty() => {
+                info!("Loaded {} subgroup(s) from DB for group {}", sgs.len(), group_id);
                 group.subgroups = sgs;
             }
             _ => {
                 // No DB subgroups yet - keep the default created by Group::new
                 // and apply connect_info from the groups table
+                info!("No subgroups in DB for group {}, using default", group_id);
                 group.set_connect_info(connect_info);
             }
         }

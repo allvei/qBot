@@ -446,7 +446,7 @@ impl EventHandler for Handler {
                 }
 
                 // Handle server settings buttons (including link channel flow)
-                if itx.data.custom_id.starts_with("server_settings_") || itx.data.custom_id.starts_with("link_ch_") {
+                if itx.data.custom_id.starts_with("server_settings_") || itx.data.custom_id.starts_with("server_cfg_") || itx.data.custom_id.starts_with("link_ch_") {
                     let result = handlers::handle_server_settings_button(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling server settings interaction: {e}");
@@ -481,8 +481,8 @@ impl EventHandler for Handler {
                     return;
                 }
 
-                // Handle group settings buttons (including link message, subgroup, and rank gate buttons)
-                if itx.data.custom_id.starts_with("group_settings_") || itx.data.custom_id.starts_with("group_link_msg_") || itx.data.custom_id.starts_with("group_sg_") || itx.data.custom_id.starts_with("rank_gate_") {
+                // Handle group settings buttons (including link message, subgroup, and elo gate buttons)
+                if itx.data.custom_id.starts_with("group_settings_") || itx.data.custom_id.starts_with("group_link_msg_") || itx.data.custom_id.starts_with("group_sg_") || itx.data.custom_id.starts_with("elo_gate_") {
                     let result = handlers::handle_group_settings_button(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling group settings interaction: {e}");
@@ -689,61 +689,80 @@ impl EventHandler for Handler {
             Err(_) => user.display_name().to_string(),
         };
 
-        // First manager lock scope - released before line 660
-        {
+        // First manager lock scope
+        let left_team_vc = {
             let mut manager = self.manager.lock().await;
 
             // Determine which channel to use for group lookup based on state
-        // For disconnects/moves, use old channel; for connects, use new channel
-        let lookup_channel = match state {
-            VoiceStateUpdate::Disconnected | VoiceStateUpdate::Moved => {
-                // Extract old channel for these events
-                match &old {
-                    Some(s) => match s.channel_id {
-                        Some(ch) => ch,
-                        None => return, // No old channel to process
-                    },
-                    None => return, // No old state
-                }
-            },
-            VoiceStateUpdate::Connected => {
-                match new.channel_id {
-                    Some(ch) => ch,
-                    None => return, // Can't join nothing
-                }
-            },
-            VoiceStateUpdate::Reconnected => return, // Early return for reconnects
-        };
-
-        let group = match manager.get_group_by_channel(server, lookup_channel) {
-            Ok(g) => g,
-            Err(_) => return, // Channel not configured for pug queue
-        };
-
-        match state {
-            VoiceStateUpdate::Disconnected => {
-                self.handle_player_leave_vc(&ctx, group, server, user_id, &tag).await;
-                group.check_team_vc_cleanup_on_leave(&ctx).await;
-                group.queue_dash_update(&ctx, server).await;
-            },
-            VoiceStateUpdate::Connected => {
-                if group.get_inactives().is_empty() {
-                    if let Err(e) = group.create_session() {
-                        warn!("Failed to create session on VC connect: {e}");
+            // For disconnects/moves, use old channel; for connects, use new channel
+            let lookup_channel = match state {
+                VoiceStateUpdate::Disconnected | VoiceStateUpdate::Moved => {
+                    match &old {
+                        Some(s) => match s.channel_id {
+                            Some(ch) => ch,
+                            None => return,
+                        },
+                        None => return,
                     }
-                }
-            },
-            VoiceStateUpdate::Moved => {
-                if group.channels.queue_vc == lookup_channel {
+                },
+                VoiceStateUpdate::Connected => {
+                    match new.channel_id {
+                        Some(ch) => ch,
+                        None => return,
+                    }
+                },
+                VoiceStateUpdate::Reconnected => return,
+            };
+
+            let group = match manager.get_group_by_channel(server, lookup_channel) {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+
+            match state {
+                VoiceStateUpdate::Disconnected => {
+                    let was_team_vc = group.is_team_vc(lookup_channel);
                     self.handle_player_leave_vc(&ctx, group, server, user_id, &tag).await;
+                    group.check_team_vc_cleanup_on_leave(&ctx).await;
                     group.queue_dash_update(&ctx, server).await;
+                    was_team_vc
+                },
+                VoiceStateUpdate::Connected => {
+                    if group.get_inactives().is_empty() {
+                        if let Err(e) = group.create_session() {
+                            warn!("Failed to create session on VC connect: {e}");
+                        }
+                    }
+                    false
+                },
+                VoiceStateUpdate::Moved => {
+                    let was_team_vc = group.is_team_vc(lookup_channel);
+                    if group.channels.queue_vc == lookup_channel {
+                        self.handle_player_leave_vc(&ctx, group, server, user_id, &tag).await;
+                        group.queue_dash_update(&ctx, server).await;
+                    }
+                    was_team_vc
+                },
+                VoiceStateUpdate::Reconnected => {
+                    return;
                 }
-            },
-            VoiceStateUpdate::Reconnected => {
-                return;
+            }
+        }; // Release first manager lock here
+
+        // If a player left a team VC, check if all team VCs are now empty
+        // and auto-end the game if so. Requires a separate lock scope since
+        // pull needs the manager Arc.
+        if left_team_vc {
+            let mut manager = self.manager.lock().await;
+            if let Ok(group) = manager.get_group_by_channel(server, {
+                match &old {
+                    Some(s) => s.channel_id.unwrap(),
+                    None => return,
+                }
+            }) {
+                group.check_team_vc_empty_auto_end(&ctx, server, &self.db, Some(self.manager.clone())).await;
             }
         }
-        } // Release first manager lock here
 
         // Only process joining logic if player is joining a channel (not disconnecting)
         if new.channel_id.is_none() {
