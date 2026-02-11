@@ -778,7 +778,7 @@ impl AsSettingsMenu for GroupSettingsDisplay {
                 SB::group_edit("edit_timeout", "Confirm expiry", gid),
             ]))
             .row(SR::Buttons(vec![
-                SB::group_edit("edit_connect", "Connect info",      gid),
+                SB::group_edit("edit_connect",   "Connect info",      gid),
                 SB::group_action("subgroups",    "Subgroups",       SBS::Primary, gid),
                 SB::group_action("link_message", "Re-link dashboard", SBS::Success, gid),
             ]))
@@ -881,7 +881,7 @@ pub struct PlayerSettingsDisplay {
     pub username: String,
     pub steam_id: Option<u64>,
     pub elo:      u16,
-    pub rank: String,
+    pub rank:     String,
     pub games:    u32,
     pub wins:     u32,
 }

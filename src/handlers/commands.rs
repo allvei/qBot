@@ -241,7 +241,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
         username,
         steam_id: player.steam_id,
         elo:      guild_elo.elo,
-        rank: guild_elo.rank.name.clone(),
+        rank:     guild_elo.rank.name.clone(),
         games:    guild_elo.games,
         wins:     guild_elo.wins,
     };
@@ -250,6 +250,6 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     let response = CIR::Message(CIRM::new().embed(embed).components(components).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
-    info!("Sent player settings menu for {} to {} (ephemeral)", target_user, cc.intax.user.name);
+    info!("[{}] {} used /edit on {}", guild.name, cc.intax.user.name, target_user);
     Ok(())
 }
