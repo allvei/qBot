@@ -1,3 +1,34 @@
+__12.02.26__
+## Users & Admins
+__Added__
+- Auto-end games when all players leave team voice channels.
+- Enhanced team voice channel management with flexible cleanup policies.
+- Comprehensive server settings system with toggle states and modular menus.
+- Text sanitization for alert messages to prevent spam and improve readability.
+
+__Improved__
+- Settings menu now uses modular components for better maintainability.
+- Better error handling and user feedback across all settings interfaces.
+- Enhanced logging with guild context for better debugging.
+- Improved team voice channel cleanup with force parameter for destroy policies.
+
+__Fixed__
+- Removed UNIQUE constraints from team voice channels to allow flexible channel reuse.
+- Fixed formatting issues in various UI components and logging messages.
+- Resolved compilation errors in edit command logging.
+
+## Developers
+__Added__
+- Team VC auto-end event handling in main event loop.
+- Force parameter for team VC cleanup to support different destroy policies.
+- Helper methods for identifying team channels and checking VC emptiness.
+
+__Refactored__
+- Complete overhaul of settings system with modular, reusable components.
+- Enhanced database migration system for safer schema changes.
+- Improved error handling and logging throughout the application.
+- Simplified embeds model and removed redundant functionality.
+
 __05.02.26__
 ## Users & Admins
 __Added__
