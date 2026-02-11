@@ -163,10 +163,10 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI, category_name: &
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
     let guild_name = crate::guild_name(ctx, guild_id);
 
-    // Get bot's user ID and find bot's integration role "qBot"
+    // Get bot's user ID and find bot's integration role
     let bot_user_id = ctx.cache.current_user().id;
     let bot_role = guild.roles.values()
-        .find(|r| r.name == "qBot" && r.managed)
+        .find(|r| r.managed && r.tags.bot_id == Some(bot_user_id))
         .map(|r| r.id);
 
     // Pre-flight: check bot permissions
@@ -193,10 +193,32 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI, category_name: &
         return Err(anyhow!("Bot is missing permissions: {list}"));
     }
 
-    // Step 1: Create category
+    // Bot permissions to set on the category and channels so the bot retains
+    // access even after ELO gate or other permission overwrites are applied.
+    let bot_channel_perms = Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES
+        | Permissions::EMBED_LINKS | Permissions::CONNECT | Permissions::MOVE_MEMBERS
+        | Permissions::MANAGE_CHANNELS | Permissions::MANAGE_ROLES;
+
+    // Step 1: Create category with bot permission overwrites
+    let mut cat_permissions = vec![
+        PermissionOverwrite {
+            allow: bot_channel_perms,
+            deny: Permissions::empty(),
+            kind: PermissionOverwriteType::Member(bot_user_id),
+        },
+    ];
+    if let Some(role_id) = bot_role {
+        cat_permissions.push(PermissionOverwrite {
+            allow: bot_channel_perms,
+            deny: Permissions::empty(),
+            kind: PermissionOverwriteType::Role(role_id),
+        });
+    }
+
     let category = match guild_id.create_channel(&ctx.http,
         CreateChannel::new(category_name)
             .kind(ChannelType::Category)
+            .permissions(cat_permissions)
     ).await {
         Ok(cat) => cat,
         Err(e) => {
@@ -228,7 +250,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI, category_name: &
         },
         // Allow bot user explicitly
         PermissionOverwrite {
-            allow: Permissions::SEND_MESSAGES | Permissions::VIEW_CHANNEL | Permissions::EMBED_LINKS,
+            allow: bot_channel_perms,
             deny: Permissions::empty(),
             kind: PermissionOverwriteType::Member(bot_user_id),
         }
@@ -237,7 +259,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI, category_name: &
     // Add bot's integration role if found
     if let Some(role_id) = bot_role {
         permissions.push(PermissionOverwrite {
-            allow: Permissions::SEND_MESSAGES | Permissions::VIEW_CHANNEL | Permissions::EMBED_LINKS,
+            allow: bot_channel_perms,
             deny: Permissions::empty(),
             kind: PermissionOverwriteType::Role(role_id),
         });
@@ -1420,7 +1442,7 @@ pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
             • Automatically adjust player ELO based on wins/losses\n\
             • Update player ranks based on new ELO values\n\n\
             *Note: Webhooks and game server integration required for full functionality.*",
-            if is_enabled { "✅ ENABLED" } else { "❌ DISABLED" }
+            if is_enabled { "ENABLED" } else { "DISABLED" }
         ))
         .color(if is_enabled { GREEN } else { RED });
 

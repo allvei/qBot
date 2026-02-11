@@ -204,40 +204,33 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     use crate::handlers::player::get_user_rank_from_discord_roles;
     let discord_rank = get_user_rank_from_discord_roles(&cc.ctx, &cc.db, guild_id, target_user).await;
     
-    // Get guild ELO, using Discord rank if available, otherwise fall back to database
-    let guild_elo = match discord_rank {
-        Some(discord_guild_rank) => {
-            // Convert Discord rank to Rank struct and create GuildElo
-            let rank = crate::models::types::Rank {
-                guild_id,
-                role_id: discord_guild_rank.role_id,
-                name: discord_guild_rank.name.clone(),
-                elo: discord_guild_rank.elo,
-            };
-            Ok::<crate::database::repositories::elo::GuildElo, anyhow::Error>(crate::database::repositories::elo::GuildElo {
-                elo: rank.elo,
-                rank,
-                games: 0,
-                wins: 0,
-            })
+    // Get guild ELO from database (this has the actual ELO, games, wins)
+    let mut guild_elo: crate::database::repositories::elo::GuildElo = match cc.db.elo.get(target_user, guild_id, &cc.db).await {
+        Ok(elo) => elo,
+        Err(e) if e.to_string().contains("Failed to get default rank") => {
+            let error_embed = CE::new()
+                .title("Configuration Error")
+                .description("A default rank has not been set for this server.\n\nPlease configure a default rank in the server settings before editing players.")
+                .color(RED);
+            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
+            cc.intax.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
         }
-        None => {
-            // No Discord rank found, fall back to database
-            match cc.db.elo.get(target_user, guild_id, &cc.db).await {
-                Ok(elo) => Ok(elo),
-                Err(e) if e.to_string().contains("Failed to get default rank") => {
-                    let error_embed = CE::new()
-                        .title("Configuration Error")
-                        .description("A default rank has not been set for this server.\n\nPlease configure a default rank in the server settings before editing players.")
-                        .color(RED);
-                    let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-                    cc.intax.create_response(&cc.ctx.http, response).await?;
-                    return Ok(());
-                }
-                Err(e) => return Err(anyhow::anyhow!("Failed to get player ELO: {}", e)),
-            }
-        }
-    }?;
+        Err(e) => return Err(anyhow::anyhow!("Failed to get player ELO: {}", e)),
+    };
+
+    // If Discord rank differs from database rank, use Discord rank but keep database ELO/games/wins
+    if let Some(discord_guild_rank) = discord_rank {
+        let discord_rank = crate::models::types::Rank {
+            guild_id,
+            role_id: discord_guild_rank.role_id,
+            name: discord_guild_rank.name.clone(),
+            elo: discord_guild_rank.elo,
+        };
+        
+        // Override rank info but keep ELO/games/wins from database
+        guild_elo.rank = discord_rank;
+    }
     
     let username  = cc.ctx.http.get_user(target_user)     .await
         .map(|u| u.name.clone())
@@ -253,24 +246,8 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
         wins:     guild_elo.wins,
     };
 
-    // Use rank selection dropdown if ranks are available
-    let display_settings = crate::handlers::settings_menu::PlayerSettingsDisplay {
-        user_id: settings.user_id,
-        username: settings.username.clone(),
-        steam_id: settings.steam_id,
-        elo: settings.elo,
-        rank: settings.rank.clone(),
-        games: settings.games,
-        wins: settings.wins,
-    };
-    
-    let response = match crate::handlers::settings_menu::create_player_settings_with_rank_select(&display_settings, &cc.db, guild_id).await {
-        Ok(resp) => resp,
-        Err(_) => {
-            // Fallback to regular menu if rank selection fails
-            Ephemeral::send_edit_player(&settings, target_user)
-        }
-    };
+    let (embed, components) = crate::handlers::settings::nav_player_settings(&settings, &cc.db, guild_id).await;
+    let response = CIR::Message(CIRM::new().embed(embed).components(components).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
     info!("Sent player settings menu for {} to {} (ephemeral)", target_user, cc.intax.user.name);
