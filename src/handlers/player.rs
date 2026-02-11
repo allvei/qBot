@@ -91,6 +91,76 @@ pub async fn get_or_assign_player_rank(db: &DB, guild_id: GI, user_id: UI) -> Re
     Ok(assigned_rank)
 }
 
+/// Resolve a player's rank and ELO for queue entry.
+///
+/// Combines Discord role detection, DB rank lookup, ELO normalization, and player
+/// creation into a single function. This is the canonical path for voice-join and
+/// startup recovery flows where a `Context` is available for role inspection.
+///
+/// Returns `(Player, Rank)` ready for queue insertion, or an error.
+pub async fn resolve_player_for_queue(
+    ctx: &Ctx,
+    db: &DB,
+    guild_id: GI,
+    user_id: UI,
+) -> Result<(crate::models::Player, Rank)> {
+    // 1. Detect rank: Discord roles (source of truth) vs DB
+    let role_based_guild_rank = get_user_rank_from_discord_roles(ctx, db, guild_id, user_id).await;
+
+    let discord_rank = if let Some(db_rank) = get_player_rank(db, guild_id, user_id).await {
+        if let Some(guild_rank) = &role_based_guild_rank {
+            let role_rank = Rank::from_name(db, guild_id, &guild_rank.name).await.unwrap_or(db_rank.clone());
+            if role_rank != db_rank {
+                info!("Rank mismatch for {}: Discord='{}' DB='{}', using Discord",
+                      user_id, guild_rank.name, db_rank.name);
+            }
+            role_rank
+        } else {
+            db_rank
+        }
+    } else if let Some(guild_rank) = &role_based_guild_rank {
+        Rank::from_name(db, guild_id, &guild_rank.name).await.unwrap_or_else(|_| Rank {
+            guild_id,
+            role_id: guild_rank.role_id,
+            name: guild_rank.name.clone(),
+            elo: guild_rank.elo,
+        })
+    } else {
+        get_or_assign_player_rank(db, guild_id, user_id).await?
+    };
+
+    // 2. Get or create player
+    let mut player = match db.get_user(user_id, ctx).await {
+        Ok(p) => p,
+        Err(_) => db.new_user(user_id, ctx).await?,
+    };
+
+    // 3. Normalize ELO based on elo_ranks_linked setting
+    let elo_ranks_linked = db.config.get_elo_ranks_linked(guild_id).await.unwrap_or(true);
+
+    if elo_ranks_linked {
+        let (elo, changed) = db.elo.validate_and_normalize_elo(user_id, guild_id, &discord_rank, db).await?;
+        player.elo = elo;
+        if changed {
+            info!("ELO normalized for {}: {} (rank '{}')", user_id, elo, discord_rank.name);
+        }
+    } else {
+        // Independent: use existing ELO as-is, or default to rank base
+        let existing_elo = db.elo.get_if_exists(user_id, guild_id).await.ok().flatten();
+        if let Some(guild_elo) = existing_elo {
+            player.elo = guild_elo.elo;
+        } else {
+            player.elo = discord_rank.elo;
+            if let Err(e) = db.elo.set(user_id, guild_id, player.elo, discord_rank.clone()).await {
+                warn!("Failed to initialize guild ELO: {}", e);
+            }
+        }
+    }
+
+    player.rank = Some(discord_rank.clone());
+    Ok((player, discord_rank))
+}
+
 /// Validate that runner and admin roles are configured
 pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec<String>> {
     let mut missing_roles = Vec::new();
@@ -106,8 +176,6 @@ pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<V
 
     // Check runner and admin roles
     for role in [Role::Runner, Role::Admin] {
-        let role_key = role.config_key();
-
         // Check if role is configured
         let configured_role_id = role.id(db, guild_id).await;
 
@@ -128,11 +196,10 @@ pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<V
                 info!("Found existing role '{}', saving to config", found.name);
 
                 // Save this role ID to the database config
-                let role_id_str = found.id.get().to_string();
-                if let Err(e) = db.config.set_config(role_key, &role_id_str, guild_id).await {
+                if let Err(e) = role.save_id(db, guild_id, found.id).await {
                     warn!("Failed to save found role {} to config: {}", role.name(), e);
                 } else {
-                    info!("Saved {} role ID to config: {}", role.name(), role_id_str);
+                    info!("Saved {} role ID to config: {}", role.name(), found.id.get());
                 }
             } else {
                 // Role doesn't exist by ID or name
@@ -232,7 +299,7 @@ pub async fn check_component_role(cc: &CC<'_>, role: &Role) -> Result<bool> {
             // User has the role if they have ANY of the configured roles
             return Ok(role_ids.iter().any(|role_id| member.roles.contains(role_id)));
         } else {
-            let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+            let guild_name = crate::guild_name(cc.ctx, guild_id);
             info!("[{}] Role {} not configured", guild_name, role.name());
         }
     }
