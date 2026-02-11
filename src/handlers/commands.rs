@@ -250,6 +250,6 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     let response = CIR::Message(CIRM::new().embed(embed).components(components).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
-    info!("[{}] {} used /edit on {}", guild.name, cc.intax.user.name, target_user);
+    info!("[{:?}] {} used /edit on {}", cc.intax.guild_id, cc.intax.user.name, target_user);
     Ok(())
 }
