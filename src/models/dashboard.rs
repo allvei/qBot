@@ -334,20 +334,22 @@ impl Group {
                     }
                 }
                 embed = embed.field(
-                    format!("{sg_label} - Current Match"),
-                    match_info,
+                    format!("{sg_label} - Started {}", 
+                        match_info.lines()
+                            .find(|line| line.contains("Session started"))
+                            .and_then(|line| line.split_whitespace().last())
+                            .unwrap_or("recently")
+                    ),
+                    match_info.lines()
+                        .find(|line| line.starts_with("In progress") || line.starts_with("Moving players"))
+                        .unwrap_or(&match_info)
+                        .to_string(),
                     false,
                 );
 
                 // Team fields for active sessions
                 for session in &actives {
                     if session.pool.len() >= quota {
-                        if let Some(started_at) = session.started_at {
-                            if let Ok(timestamp) = started_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
-                                embed = embed.field("Session started", format!("<t:{}:R>", timestamp.as_secs()), false);
-                            }
-                        }
-
                         let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
                         embed = embed.field("🔴 RED", format_team_field(&team_red, db, guild_id).await, true);
                         embed = embed.field("🔵 BLU", format_team_field(&team_blu, db, guild_id).await, true);
@@ -743,13 +745,24 @@ impl Group {
                 Err(_) => cc.db.new_user(user_id, cc.ctx).await?,
             };
 
-            // Validate and normalize ELO based on Discord rank (source of truth)
-            let (validated_elo, was_normalized) = match cc.db.elo.validate_and_normalize_elo(user_id, guild_id, &discord_rank, &cc.db).await {
-                Ok(result) => result,
-                Err(e) => {
-                    warn!("Failed to validate ELO for user {}: {}", user_id, e);
-                    (discord_rank.elo, false)
+            // Check if ELO and ranks are linked before normalizing
+            let elo_ranks_linked = cc.db.config.get_elo_ranks_linked(guild_id).await.unwrap_or(true);
+            
+            let (validated_elo, was_normalized) = if elo_ranks_linked {
+                // Linked: validate and normalize ELO based on Discord rank
+                match cc.db.elo.validate_and_normalize_elo(user_id, guild_id, &discord_rank, &cc.db).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        warn!("Failed to validate ELO for user {}: {}", user_id, e);
+                        (discord_rank.elo, false)
+                    }
                 }
+            } else {
+                // Independent: keep existing ELO, don't normalize
+                let existing_elo = cc.db.elo.get_if_exists(user_id, guild_id).await.ok().flatten()
+                    .map(|elo| elo.elo)
+                    .unwrap_or(discord_rank.elo);
+                (existing_elo, false)
             };
             
             if was_normalized {
@@ -1611,7 +1624,10 @@ impl DashboardUpdateQueue {
                                 }
                             }
                         } else {
-                            warn!("[{}] Failed to update dashboard in #{}: {}", guild_name, channel_name, e);
+                            let hint = if e.to_string().contains("Missing Access") {
+                                " (check that the bot has View Channel and Send Messages permissions on this channel)"
+                            } else { "" };
+                            warn!("[{}] Failed to update dashboard in #{}:{}{}", guild_name, channel_name, e, hint);
                         }
                     }
                 }
