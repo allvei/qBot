@@ -79,6 +79,16 @@ impl SB {
         self.disabled = disabled;
         self
     }
+
+    /// Create an edit button scoped to a group: `group_settings_{action}_{group_id}`
+    pub fn group_edit(action: &str, label: impl Into<String>, group_id: u8) -> Self {
+        Self::edit(format!("group_settings_{action}_{group_id}"), label)
+    }
+
+    /// Create an action button scoped to a group: `group_settings_{action}_{group_id}`
+    pub fn group_action(action: &str, label: impl Into<String>, style: SBS, group_id: u8) -> Self {
+        Self::action(format!("group_settings_{action}_{group_id}"), label, style)
+    }
 }
 
 type SBS = SettingsButtonStyle;
@@ -291,11 +301,24 @@ impl AsSettingsMenu for crate::database::repositories::UserSettings {
 // ServerSettings implementation
 // ============================================================================
 
+/// All boolean toggles shown on the main server settings page.
+/// To add a new toggle: add a DB column, migration, and an entry here.
+pub const SERVER_CONFIG_TOGGLES: &[ConfigToggle] = &[
+    ConfigToggle {
+        column:    "elo_ranks_linked",
+        button_id: "server_cfg_elo_ranks_linked",
+        label_on:  "ELO-Rank linked",
+        label_off: "ELO-Rank independent",
+        default:   true,
+    },
+];
+
 /// Server settings with guild name for display
 pub struct ServerSettingsDisplay {
-    pub guild_name:  String,
-    pub runner_role: Option<String>,
-    pub admin_role:  Option<String>,
+    pub guild_name:     String,
+    pub runner_role:    Option<String>,
+    pub admin_role:     Option<String>,
+    pub toggle_states:  Vec<bool>,
 }
 
 impl AsSettingsMenu for ServerSettingsDisplay {
@@ -315,7 +338,19 @@ impl AsSettingsMenu for ServerSettingsDisplay {
             .and_then(|s| s.parse::<u64>().ok())
             .map(RoleId::new);
 
-        SettingsMenu::new(format!("{} - Server settings", self.guild_name))
+        // Build toggle buttons from SERVER_CONFIG_TOGGLES
+        let toggle_buttons: Vec<SB> = SERVER_CONFIG_TOGGLES.iter()
+            .zip(self.toggle_states.iter())
+            .map(|(toggle, &state)| {
+                if state {
+                    SB::action(toggle.button_id, toggle.label_on, SBS::Success)
+                } else {
+                    SB::action(toggle.button_id, toggle.label_off, SBS::Danger)
+                }
+            })
+            .collect();
+
+        let mut menu = SettingsMenu::new(format!("{} - Server settings", self.guild_name))
             .color(0x5865F2)
             .row(SR::Buttons(vec![
                 SB::action("server_settings_roles",  "Roles", SBS::Secondary),
@@ -323,14 +358,19 @@ impl AsSettingsMenu for ServerSettingsDisplay {
                 SB::action("server_settings_groups", "Groups", SBS::Secondary),
             ]))
             .row(SR::StringSelect {
-                id: "server_settings_balance".to_string(),
+                id:          "server_settings_balance".to_string(),
                 placeholder: "Team balance method...".to_string(),
-                options: vec![
+                options:     vec![
                     ("Custom distribution algorithm".to_string(), "bch".to_string()),
                     ("Average distribution".to_string(),          "average".to_string()),
                 ],
-            })
-            .footer("Select a category to manage:")
+            });
+
+        if !toggle_buttons.is_empty() {
+            menu = menu.row(SR::Buttons(toggle_buttons));
+        }
+
+        menu.footer("Select a category to manage:")
     }
 }
 
@@ -697,7 +737,7 @@ pub struct GroupSettingsDisplay {
     pub quota:          u8,
     pub timeout:        u16,
     pub connect_info:   Option<String>,
-    pub subgroup_count: usize,
+    pub subgroup_names: Vec<String>,
     pub vc_create:      String,
     pub vc_destroy:     String,
     pub vc_keep_min:    bool,
@@ -720,29 +760,36 @@ impl AsSettingsMenu for GroupSettingsDisplay {
             .field(SF::new("Quota", format!("{} players", self.quota)))
             .field(SF::new("Confirm expiry", format!("{} seconds", self.timeout)))
             .field(SF::new("Connect info", connect_display).inline(false))
-            .field(SF::new("Subgroups", format!("{}", self.subgroup_count)))
+            .field(SF::new("Subgroups", if self.subgroup_names.is_empty() {
+                "None".to_string()
+            } else {
+                self.subgroup_names.iter()
+                    .map(|n| format!("- {n}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }).inline(false))
             .field(SF::new("Team VC create", &self.vc_create))
             .field(SF::new("Team VC destroy", &self.vc_destroy))
             .field(SF::new("Keep minimum VCs", if self.vc_keep_min { "Yes" } else { "No" }))
             .color(0x5865F2)
             .row(SR::Buttons(vec![
-                SB::edit(format!("group_settings_edit_name_{gid}"),      "Name"),
-                SB::edit(format!("group_settings_edit_quota_{gid}"),     "Quota"),
-                SB::edit(format!("group_settings_edit_timeout_{gid}"),   "Confirm expiry"),
+                SB::group_edit("edit_name",    "Name",           gid),
+                SB::group_edit("edit_quota",   "Quota",          gid),
+                SB::group_edit("edit_timeout", "Confirm expiry", gid),
             ]))
             .row(SR::Buttons(vec![
-                SB::edit(format!("group_settings_edit_connect_{gid}"),   "Connect info"),
-                SB::action(format!("group_settings_subgroups_{gid}"),    "Subgroups", SBS::Primary),
-                SB::action(format!("group_settings_link_message_{gid}"), "Re-link dashboard", SBS::Success),
+                SB::group_edit("edit_connect", "Connect info",      gid),
+                SB::group_action("subgroups",    "Subgroups",       SBS::Primary, gid),
+                SB::group_action("link_message", "Re-link dashboard", SBS::Success, gid),
             ]))
             .row(SR::Buttons(vec![
-                SB::edit(format!("group_settings_edit_vc_create_{gid}"),  "VC create"),
-                SB::edit(format!("group_settings_edit_vc_destroy_{gid}"), "VC destroy"),
-                SB::edit(format!("group_settings_edit_vc_keepmin_{gid}"), "Keep min VCs"),
+                SB::group_edit("edit_vc_create",  "VC create",   gid),
+                SB::group_edit("edit_vc_destroy", "VC destroy",  gid),
+                SB::group_edit("edit_vc_keepmin", "Keep min VCs", gid),
             ]))
             .row(SR::Buttons(vec![
-                SB::action(format!("group_settings_rank_gate_{gid}"), "Rank gate", SBS::Primary),
-                SB::action(format!("group_settings_back_{gid}"), "Back", SBS::Secondary),
+                SB::group_action("elo_gate", "ELO gate", SBS::Primary, gid),
+                SB::action("server_settings_groups", "Back", SBS::Secondary),
             ]))
     }
 }
@@ -871,43 +918,29 @@ impl AsSettingsMenu for PlayerSettingsDisplay {
     }
 }
 
-/// Create rank selection dropdown for player settings
-pub async fn create_player_settings_with_rank_select(
+/// Build the player settings embed and components, including rank dropdown if ranks exist.
+pub async fn build_player_settings_menu(
     settings: &PlayerSettingsDisplay,
     db: &crate::Database,
-    guild_id: serenity::all::GuildId
-) -> anyhow::Result<serenity::all::CreateInteractionResponse> {
+    guild_id: serenity::all::GuildId,
+) -> (CE, Vec<CAR>) {
     use crate::database::repositories::rank::GuildRank;
-    use serenity::all::CreateInteractionResponse as CIR;
-    use serenity::all::CreateInteractionResponseMessage as CIRM;
-    
+
     let uid = settings.user_id.get();
     let steam_display = settings.steam_id
         .filter(|&id| id != 0)
         .map(|id| format!("https://steamcommunity.com/profiles/{}", id))
         .unwrap_or_else(|| "Not set".to_string());
-    
+
     let winrate = if settings.games > 0 {
         format!("{:.1}%", (settings.wins as f64 / settings.games as f64) * 100.0)
     } else {
         "0%".to_string()
     };
 
-    // Get all ranks for the guild
-    let ranks = match db.ranks.get_ranks(guild_id).await {
-        Ok(r) => r,
-        Err(_) => {
-            // If no ranks configured, return regular menu
-            let menu = settings.as_settings_menu();
-            return Ok(CIR::Message(CIRM::new()
-                .embed(menu.build_embed())
-                .components(menu.build_components())
-                .ephemeral(true)));
-        }
-    };
+    let ranks = db.ranks.get_ranks(guild_id).await.unwrap_or_default();
 
-    // Create rank selection dropdown
-    let menu = SettingsMenu::new(format!("{} - Player Settings", settings.username))
+    let mut menu = SettingsMenu::new(format!("{} - Player Settings", settings.username))
         .field(SF::new("Steam ID", steam_display))
         .field(SF::new("ELO", format!("{}", settings.elo)))
         .field(SF::new("Rank", &settings.rank))
@@ -918,33 +951,32 @@ pub async fn create_player_settings_with_rank_select(
         .row(SR::Buttons(vec![
             SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit Steam ID"),
             SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO"),
-        ]))
-        .row({
-            // Detect duplicate rank names
-            let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-            for rank in ranks.iter().take(25) {
-                *name_counts.entry(&rank.name).or_insert(0) += 1;
-            }
-
-            SR::StringSelect {
-                id: format!("player_settings_rank_select_{uid}"),
-                placeholder: "Select a rank".to_string(),
-                options: ranks.iter().take(25).map(|rank: &GuildRank| {
-                    let label = if name_counts.get(rank.name.as_str()).copied().unwrap_or(0) > 1 {
-                        format!("{} (ELO: {}, ID {})", rank.name, rank.elo, rank.role_id.get())
-                    } else {
-                        format!("{} (ELO: {})", rank.name, rank.elo)
-                    };
-                    (label, rank.role_id.get().to_string())
-                }).collect(),
-            }
-        })
-        .row(SR::Buttons(vec![
-            SB::edit(format!("player_settings_edit_alerts_{uid}"), "Edit alerts"),
         ]));
 
-    Ok(CIR::Message(CIRM::new()
-        .embed(menu.build_embed())
-        .components(menu.build_components())
-        .ephemeral(true)))
+    if !ranks.is_empty() {
+        // Detect duplicate rank names
+        let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for rank in ranks.iter().take(25) {
+            *name_counts.entry(&rank.name).or_insert(0) += 1;
+        }
+
+        menu = menu.row(SR::StringSelect {
+            id: format!("player_settings_rank_select_{uid}"),
+            placeholder: "Edit rank...".to_string(),
+            options: ranks.iter().take(25).map(|rank: &GuildRank| {
+                let label = if name_counts.get(rank.name.as_str()).copied().unwrap_or(0) > 1 {
+                    format!("{} (ELO: {}, ID {})", rank.name, rank.elo, rank.role_id.get())
+                } else {
+                    format!("{} (ELO: {})", rank.name, rank.elo)
+                };
+                (label, rank.role_id.get().to_string())
+            }).collect(),
+        });
+    }
+
+    menu = menu.row(SR::Buttons(vec![
+        SB::edit(format!("player_settings_edit_alerts_{uid}"), "Edit alerts"),
+    ]));
+
+    (menu.build_embed(), menu.build_components())
 }
