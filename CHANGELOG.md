@@ -1,9 +1,5 @@
 # v0.6.0
 __ 12.02.26__
-## Users & Admins
-__Added__
-- **Queue removal command** - New `/remove` command to clear all players or remove specific players from queue.
-
 ## New Commands
 - **/remove** - Remove all players from queue, or remove a specific player when used with a user mention.
 
