@@ -4,10 +4,10 @@ use tokio::sync::Mutex;
 
 use anyhow::{anyhow, Result};
 use serenity::all::{
-    ChannelId as CI, ChannelType, ComponentInteraction as CX, ComponentInteractionDataKind as CXD,
+    ChannelId as CI, ChannelType, CommandDataOption, ComponentInteraction as CX, ComponentInteractionDataKind as CXD,
     Context, CreateActionRow as CAR, CreateEmbed as CE, CreateInteractionResponse as CIR,
     CreateInteractionResponseMessage as CIRM, CreateMessage, CreateSelectMenu as CSM,
-    CreateSelectMenuKind as CSMK, CreateSelectMenuOption as CSMO, GuildId as GI, PartialGuild as PG, RoleId as RI, UserId as UI,
+    CreateSelectMenuKind as CSMK, CreateSelectMenuOption as CSMO, GuildId as GI, PartialGuild as PG, RoleId as RI, UserId as UI, User,
 };
 use tracing::{error, info, warn};
 
@@ -1623,8 +1623,8 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     Ok(())
 }
 
-/// `/clear` - Clear all players from the queue
-pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
+/// `/remove` - Remove all players from the queue, or a specific player
+pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Option<&CommandDataOption>) -> Result<()> {
     if !check_run(cc).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
@@ -1643,25 +1643,102 @@ pub async fn cmd_clear_queue(cc: &CC<'_>, server: &mut Server) -> Result<()> {
         }
     };
 
-    // Get the idle session and clear it
-    let player_count = match group.get_queue().await {
-        Ok(session) => {
-            let count = session.pool.len();
-            session.pool.clear();
-            count
-        },
-        Err(_) => 0
-    };
+    // Check if the command is being used in the queue chat channel
+    if cc.intax.channel_id != group.channels.queue_chat {
+        let queue_chat_mention = format!("<#{}>", group.channels.queue_chat.get());
+        let error_embed = CE::new()
+            .title("Wrong channel")
+            .description(format!(
+                "This command can only be used in the queue chat channel. Please use it in {}.",
+                queue_chat_mention
+            ))
+            .field("Reason", "The queue system needs to detect which queue you're managing based on the channel you're in.", false)
+            .color(ORANGE);
 
-    // Update the dashboard
-    group.queue_dash_update(cc.ctx, guild_id).await;
+        cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
+        return Ok(());
+    }
 
-    let success_embed = CE::new()
-        .title("Queue cleared")
-        .description(format!("Removed {player_count} player(s) from the queue."))
-        .color(GREEN);
+    // Handle specific user removal vs clear all
+    if let Some(user_opt) = user_option {
+        // Remove specific user
+        if let Some(user_id) = user_opt.value.as_user_id() {
+            let user: Result<User, serenity::Error> = cc.ctx.http.get_user(user_id).await;
+            
+            match user {
+                Ok(target_user) => {
+                    // Get the idle session and remove the specific user
+                    let removed = match group.get_queue().await {
+                        Ok(session) => {
+                            let initial_len = session.pool.len();
+                            session.pool.retain(|p| p.player.user_id != user_id.get());
+                            let removed_count = initial_len - session.pool.len();
+                            
+                            if removed_count > 0 {
+                                Some((removed_count, target_user.name.clone()))
+                            } else {
+                                None
+                            }
+                        },
+                        Err(_) => None
+                    };
 
-    cc.intax.create_response(&cc.ctx.http, Ephemeral::send(success_embed)).await?;
+                    // Update the dashboard
+                    group.queue_dash_update(cc.ctx, guild_id).await;
+
+                    match removed {
+                        Some((_count, name)) => {
+                            let success_embed = CE::new()
+                                .title("Player removed")
+                                .description(format!("Removed **{}** from the queue.", name))
+                                .color(GREEN);
+                            cc.intax.create_response(&cc.ctx.http, Ephemeral::send(success_embed)).await?;
+                        },
+                        None => {
+                            let error_embed = CE::new()
+                                .title("Player not in queue")
+                                .description(format!("**{}** is not currently in the queue.", target_user.name))
+                                .color(ORANGE);
+                            cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
+                        }
+                    }
+                },
+                Err(_) => {
+                    let error_embed = CE::new()
+                        .title("Failed to get user")
+                        .description("Could not find the specified Discord user.")
+                        .color(RED);
+                    cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
+                }
+            }
+        } else {
+            let error_embed = CE::new()
+                .title("Invalid user")
+                .description("Could not parse the user from the command.")
+                .color(RED);
+            cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
+        }
+    } else {
+        // Clear all players from queue (original behavior)
+        let player_count = match group.get_queue().await {
+            Ok(session) => {
+                let count = session.pool.len();
+                session.pool.clear();
+                count
+            },
+            Err(_) => 0
+        };
+
+        // Update the dashboard
+        group.queue_dash_update(cc.ctx, guild_id).await;
+
+        let success_embed = CE::new()
+            .title("Queue cleared")
+            .description(format!("Removed {player_count} player(s) from the queue."))
+            .color(GREEN);
+
+        cc.intax.create_response(&cc.ctx.http, Ephemeral::send(success_embed)).await?;
+    }
 
     Ok(())
 }

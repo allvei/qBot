@@ -140,7 +140,8 @@ impl EventHandler for Handler {
             cmd("fatkid",        "Move a player to the end of the queue")
                 .op_user("user", "User to fatkid", true),
 
-            cmd("clear",         "Clear all players from the queue"),
+            cmd("remove",        "Remove all players from the queue, or a specific player")
+                .op_user("user", "User to remove (optional)", false),
             cmd("elo",           "View ELO and rank information for a player")
                 .op_user("user", "The Discord user (mention or ID, optional)", false),
             cmd("prefs",         "Open your preferences"),
@@ -223,7 +224,7 @@ impl EventHandler for Handler {
                 let cdo = &cd.options;
 
                 let info = || {
-                    let guild_name = itx.guild_id.and_then(|gid| ctx.cache.guild(gid).map(|g| g.name.clone()));
+                    let guild_name = pf_pug_bot::guild_name(&ctx, itx.guild_id.unwrap());
                     info!("[{}] {} used /{}", guild_name, tag, itx.data.name);
                 };
 
@@ -281,9 +282,9 @@ impl EventHandler for Handler {
                                 }
                                 Ok(())
                             }
-                            "clear" => {
+                            "remove" => {
                                 info();
-                                admin::cmd_clear_queue(&cmd_ctx, server).await
+                                admin::cmd_remove_queue(&cmd_ctx, server, cdo.first()).await
                             }
                             "elo" => {
                                 info();
