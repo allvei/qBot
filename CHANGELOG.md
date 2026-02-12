@@ -21,15 +21,12 @@ __Improved__
 - **Cross-group player tracking** - See in-game status across all subgroups on dashboards.
 
 __Fixed__
-- **Team voice channel reuse** - Channels can now be reused across multiple games without conflicts.
 - **Rank role matching** - Better handling of duplicate rank names in dropdown menus.
-- **Database stability** - Fixed issues with ELO table being dropped on startup.
+- **ELO wipe** - Fixed player ELO data being wiped on startup.
 - **Player settings** - Fixed rank determination to check Discord roles before database.
-- **Steam profile links** - Now properly hidden when no Steam ID is configured.
+- **Steam profile links** - Now hidden when no Steam ID is configured.
 
 ## New Commands
-- **/groupinit** - Automatically creates all necessary channels for a new group.
-- **/grouplink** - Link existing Discord channels to the bot configuration.
 - **/migrate** - Bulk-assign ELO to all members with a specific Discord role.
 
 ## Developers
