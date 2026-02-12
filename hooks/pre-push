@@ -4,6 +4,7 @@
 # This hook prevents pushing if:
 # 1. CHANGELOG.md hasn't been modified in commits being pushed
 # 2. Cargo.toml version hasn't been bumped in commits being pushed
+# 3. CHANGELOG.md contains technical jargon
 
 # Colors for output
 RED='\033[0;31m'
@@ -68,6 +69,22 @@ do
         should_block=1
     else
         echo -e "${GREEN}✓ CHANGELOG.md has been updated${NC}"
+        
+        # Check for jargon if changelog was modified
+        echo ""
+        echo -e "${YELLOW}Checking changelog for technical jargon...${NC}"
+        if [ -f "scripts/validate-changelog.sh" ]; then
+            if ! bash scripts/validate-changelog.sh; then
+                echo -e "${RED}✗ CHANGELOG.md contains technical jargon${NC}"
+                echo "  Please rewrite changelog entries using user-friendly language"
+                echo "  Use the changelog workflow for guidance: /.windsurf/workflows/changelog.md"
+                should_block=1
+            else
+                echo -e "${GREEN}✓ CHANGELOG.md is user-friendly${NC}"
+            fi
+        else
+            echo -e "${YELLOW}⚠ Changelog validation script not found, skipping jargon check${NC}"
+        fi
     fi
 
     # Check version bump
@@ -99,10 +116,11 @@ do
         echo -e "${RED}Push rejected!${NC}"
         echo ""
         echo "To fix this:"
-        echo "  1. Update CHANGELOG.md with your changes"
+        echo "  1. Update CHANGELOG.md with your changes using user-friendly language"
         echo "  2. Bump the version in Cargo.toml (current: $current_version)"
-        echo "  3. Commit the changes: git add CHANGELOG.md Cargo.toml && git commit -m 'chore: bump version and update changelog'"
-        echo "  4. Try pushing again"
+        echo "  3. Run 'bash scripts/validate-changelog.sh' to check your changelog"
+        echo "  4. Commit the changes: git add CHANGELOG.md Cargo.toml && git commit -m 'chore: bump version and update changelog'"
+        echo "  5. Try pushing again"
         echo ""
         echo "To bypass this check (not recommended): git push --no-verify"
         echo ""
