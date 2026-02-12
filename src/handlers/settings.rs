@@ -12,6 +12,22 @@ use crate::colours::RED;
 
 use crate::Database;
 
+/// Helper function for sending error responses in component interactions
+async fn send_component_error_response(interaction: &ComponentInteraction, ctx: &Context, message: &str) {
+    let response = CIR::Message(CIRM::new().content(message).ephemeral(true));
+    if let Err(e) = interaction.create_response(&ctx.http, response).await {
+        error!("Failed to send error response: {e}");
+    }
+}
+
+/// Helper function for sending error responses in modal interactions
+async fn send_modal_error_response(interaction: &ModalInteraction, ctx: &Context, message: &str) {
+    let response = CIR::Message(CIRM::new().content(message).ephemeral(true));
+    if let Err(e) = interaction.create_response(&ctx.http, response).await {
+        error!("Failed to send error response: {e}");
+    }
+}
+
 /// Messages to replace description spam with
 const SPAM_REPLACEMENT_MESSAGES: &[&str] = &[
     "If this is shart city, then I am the mayor",
@@ -1564,10 +1580,7 @@ pub async fn handle_server_settings_button(
             let parts: Vec<&str> = state_str.split('_').collect();
             
             if parts.len() != 6 {
-                let response = CIR::Message(
-                    CIRM::new().content("Invalid state data").ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_component_error_response(interaction, ctx, "Invalid state data").await;
                 return Ok(());
             }
             
@@ -1622,10 +1635,7 @@ pub async fn handle_server_settings_button(
                 },
                 Err(e) => {
                     warn!("[{}] Failed to save linked group: {}", guild_name, e);
-                    let response = CIR::Message(
-                        CIRM::new().content(format!("Failed to save group: {e}")).ephemeral(true)
-                    );
-                    interaction.create_response(&ctx.http, response).await?;
+                    send_component_error_response(interaction, ctx, &format!("Failed to save group: {e}")).await;
                 }
             }
         }
@@ -1635,10 +1645,7 @@ pub async fn handle_server_settings_button(
             let parts: Vec<&str> = state_str.split('_').collect();
             
             if parts.len() < 5 {
-                let response = CIR::Message(
-                    CIRM::new().content("Invalid state data").ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_component_error_response(interaction, ctx, "Invalid state data").await;
                 return Ok(());
             }
             
@@ -1725,19 +1732,13 @@ pub async fn handle_server_settings_button(
                                         let _ = dashboard_channel.delete_message(&ctx.http, dashboard_msg_id).await;
                                         
                                         warn!("[{}] Failed to save linked group to database: {}", guild_name, e);
-                                        let response = CIR::Message(
-                                            CIRM::new().content(format!("Failed to save group: {e}")).ephemeral(true)
-                                        );
-                                        interaction.create_response(&ctx.http, response).await?;
+                                        send_component_error_response(interaction, ctx, &format!("Failed to save group: {e}")).await;
                                     }
                                 }
                             },
                             Err(e) => {
                                 warn!("[{}] Failed to create dashboard for linked group: {}", guild_name, e);
-                                let response = CIR::Message(
-                                    CIRM::new().content(format!("Failed to create dashboard: {e}")).ephemeral(true)
-                                );
-                                interaction.create_response(&ctx.http, response).await?;
+                                send_component_error_response(interaction, ctx, &format!("Failed to create dashboard: {e}")).await;
                             }
                         }
         }
@@ -1753,10 +1754,7 @@ pub async fn handle_server_settings_button(
                         let parts: Vec<&str> = state_str.split('_').collect();
                         
                         if parts.len() != 7 {
-                            let response = CIR::Message(
-                                CIRM::new().content("Invalid state. Please start over.").ephemeral(true)
-                            );
-                            interaction.create_response(&ctx.http, response).await?;
+                            send_component_error_response(interaction, ctx, "Invalid state. Please start over.").await;
                             return Ok(());
                         }
                         
@@ -1866,19 +1864,13 @@ pub async fn handle_server_settings_button(
                                         Err(e) => {
                                             let _ = dashboard_channel.unwrap().delete_message(&ctx.http, dashboard_msg_id).await;
                                             warn!("[{}] Failed to save linked group to database: {}", guild_name, e);
-                                            let response = CIR::Message(
-                                                CIRM::new().content(format!("Failed to save group: {e}")).ephemeral(true)
-                                            );
-                                            interaction.create_response(&ctx.http, response).await?;
+                                            send_component_error_response(interaction, ctx, &format!("Failed to save group: {e}")).await;
                                         }
                                     }
                                 },
                                 Err(e) => {
                                     warn!("[{}] Failed to create dashboard for linked group: {}", guild_name, e);
-                                    let response = CIR::Message(
-                                        CIRM::new().content(format!("Failed to create dashboard: {e}")).ephemeral(true)
-                                    );
-                                    interaction.create_response(&ctx.http, response).await?;
+                                    send_component_error_response(interaction, ctx, &format!("Failed to create dashboard: {e}")).await;
                                 }
                             }
                         } else {
@@ -2008,10 +2000,7 @@ pub async fn handle_server_settings_button(
             let parts: Vec<&str> = state_str.split('_').collect();
             
             if parts.len() != 6 {
-                let response = CIR::Message(
-                    CIRM::new().content("Invalid state data").ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_component_error_response(interaction, ctx, "Invalid state data").await;
                 return Ok(());
             }
             
@@ -2039,10 +2028,7 @@ pub async fn handle_server_settings_button(
                 // Delete duplicate from database
                 if let Err(e) = db.groups.delete_group(guild_id, dup_group_id).await {
                     warn!("[{}] Failed to delete duplicate group {}: {}", guild_name, dup_group_id, e);
-                    let response = CIR::Message(
-                        CIRM::new().content(format!("Failed to remove duplicate group: {e}")).ephemeral(true)
-                    );
-                    interaction.create_response(&ctx.http, response).await?;
+                    send_component_error_response(interaction, ctx, &format!("Failed to remove duplicate group: {e}")).await;
                     return Ok(());
                 }
                 
@@ -2100,10 +2086,7 @@ pub async fn handle_server_settings_button(
                 },
                 Err(e) => {
                     warn!("[{}] Failed to save linked group: {}", guild_name, e);
-                    let response = CIR::Message(
-                        CIRM::new().content(format!("Failed to save group: {e}")).ephemeral(true)
-                    );
-                    interaction.create_response(&ctx.http, response).await?;
+                    send_component_error_response(interaction, ctx, &format!("Failed to save group: {e}")).await;
                 }
             }
         }
@@ -2113,10 +2096,7 @@ pub async fn handle_server_settings_button(
             let parts: Vec<&str> = state_str.split('_').collect();
             
             if parts.len() < 5 {
-                let response = CIR::Message(
-                    CIRM::new().content("Invalid state data").ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_component_error_response(interaction, ctx, "Invalid state data").await;
                 return Ok(());
             }
             
@@ -2143,10 +2123,7 @@ pub async fn handle_server_settings_button(
                 // Delete duplicate from database
                 if let Err(e) = db.groups.delete_group(guild_id, dup_group_id).await {
                     warn!("[{}] Failed to delete duplicate group {}: {}", guild_name, dup_group_id, e);
-                    let response = CIR::Message(
-                        CIRM::new().content(format!("Failed to remove duplicate group: {e}")).ephemeral(true)
-                    );
-                    interaction.create_response(&ctx.http, response).await?;
+                    send_component_error_response(interaction, ctx, &format!("Failed to remove duplicate group: {e}")).await;
                     return Ok(());
                 }
                 
@@ -2230,19 +2207,13 @@ pub async fn handle_server_settings_button(
                         Err(e) => {
                             let _ = dashboard_channel.delete_message(&ctx.http, dashboard_msg_id).await;
                             warn!("[{}] Failed to save group: {}", guild_name, e);
-                            let response = CIR::Message(
-                                CIRM::new().content(format!("Failed to save group: {e}")).ephemeral(true)
-                            );
-                            interaction.create_response(&ctx.http, response).await?;
+                            send_component_error_response(interaction, ctx, &format!("Failed to save group: {e}")).await;
                         }
                     }
                 },
                 Err(e) => {
                     warn!("[{}] Failed to create dashboard: {}", guild_name, e);
-                    let response = CIR::Message(
-                        CIRM::new().content(format!("Failed to create dashboard: {e}")).ephemeral(true)
-                    );
-                    interaction.create_response(&ctx.http, response).await?;
+                    send_component_error_response(interaction, ctx, &format!("Failed to create dashboard: {e}")).await;
                 }
             }
         }
@@ -2466,10 +2437,7 @@ pub async fn handle_server_settings_button(
                     },
                     Err(e) => {
                         warn!("[{}] Failed to delete group {}: {}", guild_name, group_id, e);
-                        let response = CIR::Message(
-                            CIRM::new().content(format!("Failed to remove group: {e}")).ephemeral(true)
-                        );
-                        interaction.create_response(&ctx.http, response).await?;
+                        send_component_error_response(interaction, ctx, &format!("Failed to remove group: {e}")).await;
                     }
                 }
             }
@@ -2527,10 +2495,7 @@ pub async fn handle_server_settings_button(
                     },
                     Err(e) => {
                         warn!("[{}] Failed to delete group {}: {}", guild_name, group_id, e);
-                        let response = CIR::Message(
-                            CIRM::new().content(format!("Failed to remove group: {e}")).ephemeral(true)
-                        );
-                        interaction.create_response(&ctx.http, response).await?;
+                        send_component_error_response(interaction, ctx, &format!("Failed to remove group: {e}")).await;
                     }
                 }
             }
@@ -2685,10 +2650,7 @@ pub async fn handle_server_settings_button(
             let parts: Vec<&str> = state_str.split('_').collect();
             
             if parts.len() != 2 {
-                let response = CIR::Message(
-                    CIRM::new().content("Invalid state data").ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_component_error_response(interaction, ctx, "Invalid state data").await;
                 return Ok(());
             }
             
@@ -2730,10 +2692,7 @@ pub async fn handle_server_settings_button(
                 },
                 Err(e) => {
                     warn!("[{}] Failed to update dashboard message for group {}: {}", guild_name, group_id, e);
-                    let response = CIR::Message(
-                        CIRM::new().content(format!("Failed to link message: {e}")).ephemeral(true)
-                    );
-                    interaction.create_response(&ctx.http, response).await?;
+                    send_component_error_response(interaction, ctx, &format!("Failed to link message: {e}")).await;
                 }
             }
         }
@@ -2869,30 +2828,21 @@ pub async fn handle_server_settings_modal(
 
         let name = name_value.trim();
         if name.is_empty() {
-            let response = CIR::Message(
-                CIRM::new().content("Rank name cannot be empty.").ephemeral(true)
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            send_modal_error_response(interaction, ctx, "Rank name cannot be empty.").await;
             return Ok(());
         }
 
         let elo: u16 = match elo_value.trim().parse() {
             Ok(e) => e,
             _ => {
-                let response = CIR::Message(
-                    CIRM::new().content("Invalid ELO. Must be a valid number.").ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_modal_error_response(interaction, ctx, "Invalid ELO. Must be a valid number.").await;
                 return Ok(());
             }
         };
 
         // Check if rank name already exists
         if let Ok(Some(_)) = db.ranks.get_rank_by_name(guild_id, name).await {
-            let response = CIR::Message(
-                CIRM::new().content("A rank with this name already exists. Please choose a different name.").ephemeral(true)
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            send_modal_error_response(interaction, ctx, "A rank with this name already exists. Please choose a different name.").await;
             return Ok(());
         }
 
@@ -2914,10 +2864,7 @@ pub async fn handle_server_settings_modal(
             },
             Err(e) => {
                 warn!("[{}] Failed to create role for rank {}: {}", guild_name, name, e);
-                let response = CIR::Message(
-                    CIRM::new().content("Failed to create Discord role. Please check bot permissions.").ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_modal_error_response(interaction, ctx, "Failed to create Discord role. Please check bot permissions.").await;
                 return Ok(());
             }
         };
@@ -2933,10 +2880,7 @@ pub async fn handle_server_settings_modal(
         let role_id = match role_id_str.parse::<u64>() {
             Ok(id) => serenity::all::RoleId::new(id),
             Err(_) => {
-                let response = CIR::Message(
-                    CIRM::new().content("Invalid role ID.").ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_modal_error_response(interaction, ctx, "Invalid role ID.").await;
                 return Ok(());
             }
         };
@@ -2958,30 +2902,21 @@ pub async fn handle_server_settings_modal(
 
         let name = name_value.trim();
         if name.is_empty() {
-            let response = CIR::Message(
-                CIRM::new().content("Rank name cannot be empty.").ephemeral(true)
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            send_modal_error_response(interaction, ctx, "Rank name cannot be empty.").await;
             return Ok(());
         }
 
         let elo: u16 = match elo_value.trim().parse() {
             Ok(e) => e,
             _ => {
-                let response = CIR::Message(
-                    CIRM::new().content("Invalid ELO. Must be a valid number.").ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_modal_error_response(interaction, ctx, "Invalid ELO. Must be a valid number.").await;
                 return Ok(());
             }
         };
 
         // Check if rank name already exists
         if let Ok(Some(_)) = db.ranks.get_rank_by_name(guild_id, name).await {
-            let response = CIR::Message(
-                CIRM::new().content("A rank with this name already exists. Please choose a different name.").ephemeral(true)
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            send_modal_error_response(interaction, ctx, "A rank with this name already exists. Please choose a different name.").await;
             return Ok(());
         }
 
@@ -3013,20 +2948,14 @@ pub async fn handle_server_settings_modal(
 
         let new_name = name_value.trim();
         if new_name.is_empty() {
-            let response = CIR::Message(
-                CIRM::new().content("Rank name cannot be empty.").ephemeral(true)
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            send_modal_error_response(interaction, ctx, "Rank name cannot be empty.").await;
             return Ok(());
         }
 
         let elo: u16 = match elo_value.trim().parse() {
             Ok(e) => e,
             _ => {
-                let response = CIR::Message(
-                    CIRM::new().content("Invalid ELO. Must be a valid number.").ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_modal_error_response(interaction, ctx, "Invalid ELO. Must be a valid number.").await;
                 return Ok(());
             }
         };
@@ -3034,10 +2963,7 @@ pub async fn handle_server_settings_modal(
         // Check if new rank name already exists (and it's not the same rank being renamed)
         if new_name != old_rank_name {
             if let Ok(Some(_)) = db.ranks.get_rank_by_name(guild_id, new_name).await {
-                let response = CIR::Message(
-                    CIRM::new().content("A rank with this name already exists. Please choose a different name.").ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_modal_error_response(interaction, ctx, "A rank with this name already exists. Please choose a different name.").await;
                 return Ok(());
             }
         }
@@ -3078,12 +3004,7 @@ pub async fn handle_server_settings_modal(
         let quota: u8 = match quota_value.trim().parse() {
             Ok(q) if (2..=100).contains(&q) => q,
             _ => {
-                let response = CIR::Message(
-                    CIRM::new()
-                        .content("Invalid quota. Must be between 2 and 100.")
-                        .ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_modal_error_response(interaction, ctx, "Invalid quota. Must be between 2 and 100.").await;
                 return Ok(());
             }
         };
@@ -3092,12 +3013,7 @@ pub async fn handle_server_settings_modal(
         let timeout: u16 = match timeout_value.trim().parse() {
             Ok(t) if t > 0 => t,
             _ => {
-                let response = CIR::Message(
-                    CIRM::new()
-                        .content("Invalid timeout. Must be a positive number.")
-                        .ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_modal_error_response(interaction, ctx, "Invalid timeout. Must be a positive number.").await;
                 return Ok(());
             }
         };
@@ -3156,28 +3072,19 @@ pub async fn handle_server_settings_modal(
         let bot_only_dashboard = bot_only_dashboard_str.trim().to_lowercase();
 
         if group_name.is_empty() || channel_prefix.is_empty() || category_name.is_empty() {
-            let response = CIR::Message(
-                CIRM::new().content("Group name, channel prefix, and category name cannot be empty.").ephemeral(true)
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            send_modal_error_response(interaction, ctx, "Group name, channel prefix, and category name cannot be empty.").await;
             return Ok(());
         }
 
         if !["yes", "no"].contains(&bot_only_dashboard.as_str()) {
-            let response = CIR::Message(
-                CIRM::new().content("Bot-only dashboard must be 'yes' or 'no'.").ephemeral(true)
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            send_modal_error_response(interaction, ctx, "Bot-only dashboard must be 'yes' or 'no'.").await;
             return Ok(());
         }
 
         let quota: u8 = match quota_str.trim().parse() {
             Ok(q) if (2..=100).contains(&q) => q,
             _ => {
-                let response = CIR::Message(
-                    CIRM::new().content("Invalid quota. Must be between 2 and 100.").ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_modal_error_response(interaction, ctx, "Invalid quota. Must be between 2 and 100.").await;
                 return Ok(());
             }
         };
@@ -3605,10 +3512,7 @@ pub async fn handle_group_settings_button(
             }
             Err(e) => {
                 drop(manager_lock);
-                let response = CIR::Message(
-                    CIRM::new().content(format!("Failed to remove subgroup: {}", e)).ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_component_error_response(interaction, ctx, &format!("Failed to remove subgroup: {}", e)).await;
             }
         }
         return Ok(());
@@ -4270,10 +4174,7 @@ pub async fn handle_group_settings_button(
             .collect();
 
         if removable.is_empty() {
-            let response = CIR::Message(
-                CIRM::new().content("No removable subgroups (the default subgroup cannot be removed).").ephemeral(true)
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            send_component_error_response(interaction, ctx, "No removable subgroups (the default subgroup cannot be removed).").await;
         } else {
             use crate::handlers::settings_menu::create_selection_menu;
             let mut components = Vec::new();
@@ -4671,12 +4572,7 @@ pub async fn handle_group_settings_modal(
         let quota: u8 = match quota_str.trim().parse() {
             Ok(q) if (2..=100).contains(&q) => q,
             _ => {
-                let response = CIR::Message(
-                    CIRM::new()
-                        .content("Invalid quota. Must be between 2 and 100.")
-                        .ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_modal_error_response(interaction, ctx, "Invalid quota. Must be between 2 and 100.").await;
                 return Ok(());
             }
         };
@@ -4723,12 +4619,7 @@ pub async fn handle_group_settings_modal(
         let timeout: u16 = match timeout_str.trim().parse() {
             Ok(t) if t > 0 => t,
             _ => {
-                let response = CIR::Message(
-                    CIRM::new()
-                        .content("Invalid timeout. Must be a positive number.")
-                        .ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_modal_error_response(interaction, ctx, "Invalid timeout. Must be a positive number.").await;
                 return Ok(());
             }
         };
@@ -4826,20 +4717,14 @@ async fn handle_subgroup_modal(
 
     let name = name_str.trim().to_string();
     if name.is_empty() {
-        let response = CIR::Message(
-            CIRM::new().content("Subgroup name cannot be empty.").ephemeral(true)
-        );
-        interaction.create_response(&ctx.http, response).await?;
+        send_modal_error_response(interaction, ctx, "Subgroup name cannot be empty.").await;
         return Ok(());
     }
 
     let quota: u8 = match quota_str.trim().parse() {
         Ok(q) if q >= 2 => q,
         _ => {
-            let response = CIR::Message(
-                CIRM::new().content("Invalid quota. Must be a number >= 2.").ephemeral(true)
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            send_modal_error_response(interaction, ctx, "Invalid quota. Must be a number >= 2.").await;
             return Ok(());
         }
     };
@@ -4865,10 +4750,7 @@ async fn handle_subgroup_modal(
             sg.name = name;
             sg.quota = quota;
         } else {
-            let response = CIR::Message(
-                CIRM::new().content(format!("Subgroup {} not found.", sg_id)).ephemeral(true)
-            );
-            interaction.create_response(&ctx.http, response).await?;
+            send_modal_error_response(interaction, ctx, &format!("Subgroup {} not found.", sg_id)).await;
             return Ok(());
         }
 
@@ -4926,10 +4808,7 @@ async fn handle_subgroup_modal(
                 interaction.create_response(&ctx.http, response).await?;
             }
             Err(e) => {
-                let response = CIR::Message(
-                    CIRM::new().content(format!("Failed to add subgroup: {}", e)).ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_modal_error_response(interaction, ctx, &format!("Failed to add subgroup: {}", e)).await;
             }
         }
     }
@@ -5176,15 +5055,10 @@ pub async fn handle_player_settings_modal(
         let steam_id: Option<u64> = if steam_str.trim().is_empty() {
             None
         } else {
-            match steam_str.trim().parse() {
+            match steam_str.trim().parse::<u64>() {
                 Ok(id) => Some(id),
                 Err(_) => {
-                    let response = CIR::Message(
-                        CIRM::new()
-                            .content("Invalid Steam ID. Must be a 64-bit number.")
-                            .ephemeral(true)
-                    );
-                    interaction.create_response(&ctx.http, response).await?;
+                    send_modal_error_response(interaction, ctx, "Invalid Steam ID. Must be a 64-bit number.").await;
                     return Ok(());
                 }
             }
@@ -5227,12 +5101,7 @@ pub async fn handle_player_settings_modal(
         let elo: u16 = match elo_str.trim().parse() {
             Ok(e) => e,
             _ => {
-                let response = CIR::Message(
-                    CIRM::new()
-                        .content("Invalid ELO. Must be a valid number.")
-                        .ephemeral(true)
-                );
-                interaction.create_response(&ctx.http, response).await?;
+                send_modal_error_response(interaction, ctx, "Invalid ELO. Must be a valid number.").await;
                 return Ok(());
             }
         };

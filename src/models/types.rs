@@ -42,6 +42,12 @@ impl CommandContext<'_> {
         Ok(())
     }
 
+    pub async fn reply_ephemeral(&self, message: &str) -> Result<(), anyhow::Error> {
+        let response = CIR::Message(CIRM::new().content(message).ephemeral(true));
+        self.intax.create_response(&self.ctx.http, response).await?;
+        Ok(())
+    }
+
     pub async fn reply_embed(&self, embed: serenity::all::CreateEmbed) -> Result<(), anyhow::Error> {
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
         self.intax.create_response(&self.ctx.http, response).await?;
@@ -70,6 +76,12 @@ impl CommandContext<'_> {
 impl ComponentContext<'_> {
     pub async fn reply(&self, message: &str) -> Result<(), anyhow::Error> {
         let response = CIR::Message(CIRM::new().content(message).ephemeral(true));
+        self.component.create_response(&self.ctx.http, response).await?;
+        Ok(())
+    }
+
+    pub async fn reply_embed(&self, embed: serenity::all::CreateEmbed) -> Result<(), anyhow::Error> {
+        let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
         self.component.create_response(&self.ctx.http, response).await?;
         Ok(())
     }

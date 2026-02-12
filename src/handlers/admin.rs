@@ -89,17 +89,11 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
         "runner" => true,
         "admin" => false,
         "" => {
-            let response = CIR::Message(CIRM::new()
-                .content("Please specify role type: `runner` or `admin`")
-                .ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
+            cc.reply_ephemeral("Please specify role type: `runner` or `admin`").await?;
             return Ok(());
         }
         _ => {
-            let response = CIR::Message(CIRM::new()
-                .content("Invalid role type. Use `runner` or `admin`")
-                .ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
+            cc.reply_ephemeral("Invalid role type. Use `runner` or `admin`").await?;
             return Ok(());
         }
     };

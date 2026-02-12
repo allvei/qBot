@@ -1,7 +1,7 @@
 // Combined game handlers
 use anyhow::{anyhow, Result};
 use rand::seq::SliceRandom;
-use serenity::all::{Context as Ctx, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, GuildId as GI, Member, UserId as UI};
+use serenity::all::{Context as Ctx, GuildId as GI, Member, UserId as UI};
 
 use tracing::{debug, info, warn, error};
 
@@ -213,8 +213,7 @@ pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<V
 
 async fn deny_command(cc: &CmC<'_>, role: &Role) -> Result<()> {
     info!("[{}] User {} does not have {} role", cc.guild_name(), cc.intax.user.name, role.name());
-    let response = CIR::Message(CIRM::new().content(format!("This command is reserved for {}s", role.name().to_lowercase())).ephemeral(true));
-    cc.intax.create_response(&cc.ctx.http, response).await?;
+    cc.reply_ephemeral(&format!("This command is reserved for {}s", role.name().to_lowercase())).await?;
     Ok(())
 }
 

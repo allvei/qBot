@@ -36,6 +36,19 @@ pub trait CmdOp:
     fn op_role(  self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self;
 }
 
+async fn send_error_response(itx: &serenity::all::CommandInteraction, ctx: &Context, message: &str) -> Result<()> {
+    let response = CIR::Message(CIRM::new().content(message).ephemeral(true));
+    itx.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
+async fn send_component_error_response(itx: &serenity::all::ComponentInteraction, ctx: &Context, message: &str) {
+    let response = CIR::Message(CIRM::new().content(message).ephemeral(true));
+    if let Err(e) = itx.create_response(&ctx.http, response).await {
+        error!("Failed to send error response: {e}");
+    }
+}
+
 impl CmdOp for CC {
     /// Adds an integer option to the command
     fn op_int(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self {
@@ -253,8 +266,7 @@ impl EventHandler for Handler {
                             Ok(s) => s,
                             Err(e) => {
                                 error!("Server not found: {e}");
-                                let response = CIR::Message(CIRM::new().content("Server not configured. Please use `/config` to create roles and groups.").ephemeral(true));
-                                let _ = itx.create_response(&ctx.http, response).await;
+                                let _ = send_error_response(&itx, &ctx, "Server not configured. Please use `/config` to create roles and groups.").await;
                                 return;
                             }
                         };
@@ -294,21 +306,17 @@ impl EventHandler for Handler {
                                         if let Ok(user) = user {
                                             admin::cmd_get_player_elo(&cmd_ctx, Some(user)).await
                                         } else {
-                                            let response = CIR::Message(CIRM::new().content("Failed to get user").ephemeral(true));
-                                            itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                                            send_error_response(&itx, &ctx, "Failed to get user").await
                                         }
                                     } else {
-                                        let response = CIR::Message(CIRM::new().content("Invalid user specified").ephemeral(true));
-                                        itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                                        send_error_response(&itx, &ctx, "Invalid user specified").await
                                     }
                                 } else {
-                                    let response = CIR::Message(CIRM::new().content("No user specified").ephemeral(true));
-                                    itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                                    send_error_response(&itx, &ctx, "No user specified").await
                                 }
                             }
                             _ => {
-                                let response = CIR::Message(CIRM::new().content("Unknown command").ephemeral(true));
-                                itx.create_response(&ctx.http, response).await.map_err(|e| e.into())
+                                send_error_response(&itx, &ctx, "Unknown command").await
                             }
                         }
                     }
@@ -316,13 +324,7 @@ impl EventHandler for Handler {
 
                 if let Err(e) = result {
                     error!("Error handling command '{}': {}", itx.data.name, e);
-
-                    // Try to respond with an error message if we haven't responded yet
-                    let error_response = CIR::Message(CIRM::new().content("An error occurred while processing your command").ephemeral(true));
-
-                    if let Err(response_err) = itx.create_response(&ctx.http, error_response).await {
-                        error!("Failed to send error response: {response_err}");
-                    }
+                    let _ = send_error_response(&itx, &ctx, "An error occurred while processing your command").await;
                 }
             },
             Interaction::Component(itx) => {
@@ -365,14 +367,7 @@ impl EventHandler for Handler {
                     };
 
                     if !is_admin {
-                        let error_response = serenity::all::CreateInteractionResponse::Message(
-                            serenity::all::CreateInteractionResponseMessage::new()
-                                .content("Only administrators can confirm bot permissions.")
-                                .ephemeral(true)
-                        );
-                        if let Err(e) = itx.create_response(&ctx.http, error_response).await {
-                            error!("Failed to send error response: {e}");
-                        }
+                        send_component_error_response(&itx, &ctx, "Only administrators can confirm bot permissions.").await;
                         return;
                     }
 
@@ -390,14 +385,7 @@ impl EventHandler for Handler {
 
                     if !has_perms {
                         // Still missing permissions
-                        let error_response = serenity::all::CreateInteractionResponse::Message(
-                            serenity::all::CreateInteractionResponseMessage::new()
-                                .content(format!("Still missing permissions: {missing_perms}"))
-                                .ephemeral(true)
-                        );
-                        if let Err(e) = itx.create_response(&ctx.http, error_response).await {
-                            error!("Failed to send error response: {e}");
-                        }
+                        send_component_error_response(&itx, &ctx, &format!("Still missing permissions: {missing_perms}")).await;
                     } else {
                         // Permissions granted! Delete the warning message and create dashboard
                         if let Err(e) = itx.message.delete(&ctx.http).await {
@@ -559,39 +547,18 @@ impl EventHandler for Handler {
                                         manager.get_group_by_channel(guild_id, channel_id).unwrap()
                                     } else {
                                         error!("[{}] Could not get server from manager", guild_name);
-                                        let error_response = CIR::Message(
-                                            CIRM::new()
-                                                .content("Dashboard state was lost. Please run `/setup` to reconfigure.")
-                                                .ephemeral(true)
-                                        );
-                                        if let Err(e) = itx.create_response(&ctx.http, error_response).await {
-                                            error!("Failed to send error response: {e}");
-                                        }
+                                        send_component_error_response(&itx, &ctx, "Dashboard state was lost. Please run `/setup` to reconfigure.").await;
                                         return;
                                     }
                                 } else {
                                     error!("[{}] No group found in database for #{}", guild_name, channel_name);
-                                    let error_response = CIR::Message(
-                                        CIRM::new()
-                                            .content("Dashboard configuration not found. Please run `/config` to configure this server.")
-                                            .ephemeral(true)
-                                    );
-                                    if let Err(e) = itx.create_response(&ctx.http, error_response).await {
-                                        error!("Failed to send error response: {e}");
-                                    }
+                                    send_component_error_response(&itx, &ctx, "Dashboard configuration not found. Please run `/config` to configure this server.").await;
                                     return;
                                 }
                             },
                             Err(e) => {
                                 error!("Failed to load groups from database: {e}");
-                                let error_response = CIR::Message(
-                                    CIRM::new()
-                                        .content("Failed to access database. Please contact an administrator.")
-                                        .ephemeral(true)
-                                );
-                                if let Err(e) = itx.create_response(&ctx.http, error_response).await {
-                                    error!("Failed to send error response: {e}");
-                                }
+                                send_component_error_response(&itx, &ctx, "Failed to access database. Please contact an administrator.").await;
                                 return;
                             }
                         }
@@ -612,13 +579,7 @@ impl EventHandler for Handler {
 
                 if let Err(e) = result {
                     error!("Error handling button '{}': {}", itx.data.custom_id, e);
-
-                    // Try to respond with an error message if we haven't responded yet
-                    let error_response = CIR::Message(CIRM::new().content("An error occurred while processing your button click").ephemeral(true));
-
-                    if let Err(response_err) = itx.create_response(&ctx.http, error_response).await {
-                        error!("Failed to send error response: {response_err}");
-                    }
+                    send_component_error_response(&itx, &ctx, "An error occurred while processing your button click").await;
                 }
             },
             Interaction::Modal(itx) => {

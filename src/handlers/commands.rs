@@ -98,7 +98,7 @@ pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
                 .title("Migration Failed")
                 .description(format!("No rank configured for ELO {}. Set up ranks first.", elo))
                 .color(RED);
-            cc.intax.create_response(&cc.ctx.http, CIR::Message(CIRM::new().embed(embed).ephemeral(true))).await?;
+            cc.reply_embed(embed).await?;
             return Ok(());
         }
     };
@@ -212,8 +212,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
                 .title("Configuration Error")
                 .description("A default rank has not been set for this server.\n\nPlease configure a default rank in the server settings before editing players.")
                 .color(RED);
-            let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
-            cc.intax.create_response(&cc.ctx.http, response).await?;
+            cc.reply_embed(error_embed).await?;
             return Ok(());
         }
         Err(e) => return Err(anyhow::anyhow!("Failed to get player ELO: {}", e)),
