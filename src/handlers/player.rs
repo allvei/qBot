@@ -5,7 +5,7 @@ use serenity::all::{Context as Ctx, GuildId as GI, Member, UserId as UI};
 
 use tracing::{debug, info, warn, error};
 
-use crate::{ComponentContext as CC, Database as DB};
+use crate::{ComponentContext as CC, Database as DB, guild_name};
 use crate::models::{
     CommandContext as CmC, SessionPlayer as SP, Rank, Role, Server, SessionStatus as SS, Team,
 };
@@ -142,7 +142,8 @@ pub async fn resolve_player_for_queue(
         let (elo, changed) = db.elo.validate_and_normalize_elo(user_id, guild_id, &discord_rank, db).await?;
         player.elo = elo;
         if changed {
-            info!("ELO normalized for {}: {} (rank '{}')", user_id, elo, discord_rank.name);
+            let user_tag = crate::log::get_user_tag(ctx, user_id, db).await;
+            info!("ELO normalized for {}: {} (rank '{}')", user_tag, elo, discord_rank.name);
         }
     } else {
         // Independent: use existing ELO as-is, or default to rank base
@@ -212,7 +213,8 @@ pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<V
 }
 
 async fn deny_command(cc: &CmC<'_>, role: &Role) -> Result<()> {
-    info!("[{}] User {} does not have {} role", cc.guild_name(), cc.intax.user.name, role.name());
+    let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
+    info!("[{}] User {} does not have {} role", cc.guild_name(), user_tag, role.name());
     cc.reply_ephemeral(&format!("This command is reserved for {}s", role.name().to_lowercase())).await?;
     Ok(())
 }
@@ -226,7 +228,8 @@ pub async fn check_role(cc: &CmC<'_>, role: &Role) -> Result<bool> {
         let member = match get_member_cached(cc.ctx, guild_id, cc.intax.user.id).await {
             Some(m) => m,
             None => {
-                warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), cc.intax.user.name);
+                let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
+                warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), user_tag);
                 return Ok(false);
             }
         };
@@ -276,19 +279,25 @@ pub async fn check_component_role(cc: &CC<'_>, role: &Role) -> Result<bool> {
         let member = match get_member_cached(cc.ctx, guild_id, cc.component.user.id).await {
             Some(m) => m,
             None => {
-                warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), cc.component.user.name);
+                let user_tag = crate::log::get_user_tag(&cc.ctx, cc.component.user.id, &cc.db).await;
+                warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), user_tag);
                 return Ok(false);
             }
         };
 
         // For Admin role: Check Discord permissions first (Administrator or Manage Server)
         if matches!(role, Role::Admin) {
-            if let Some(guild_ref) = guild_id.to_guild_cached(&cc.ctx.cache) {
-                let perms = guild_ref.member_permissions(&member);
-                if perms.contains(Permissions::ADMINISTRATOR) || perms.contains(Permissions::MANAGE_GUILD) {
-                    info!("User {} has Discord admin/manage permissions", cc.component.user.name);
-                    return Ok(true);
-                }
+            let has_discord_perms = guild_id.to_guild_cached(&cc.ctx.cache)
+                .map(|guild_ref| {
+                    let perms = guild_ref.member_permissions(&member);
+                    perms.contains(Permissions::ADMINISTRATOR) || perms.contains(Permissions::MANAGE_GUILD)
+                })
+                .unwrap_or(false);
+
+            if has_discord_perms {
+                let user_tag = crate::log::get_user_tag(&cc.ctx, cc.component.user.id, &cc.db).await;
+                info!("User {} has Discord admin/manage permissions", user_tag);
+                return Ok(true);
             }
         }
 
@@ -298,7 +307,7 @@ pub async fn check_component_role(cc: &CC<'_>, role: &Role) -> Result<bool> {
             // User has the role if they have ANY of the configured roles
             return Ok(role_ids.iter().any(|role_id| member.roles.contains(role_id)));
         } else {
-            let guild_name = crate::guild_name(cc.ctx, guild_id);
+            let guild_name = guild_name(cc.ctx, guild_id);
             info!("[{}] Role {} not configured", guild_name, role.name());
         }
     }
@@ -333,17 +342,20 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
 
         let group = guild.get_group(channel)?;
 
-        // Find and remove player from any game
-        for game in &mut group.subgroups[0].sessions {
-            if game.status == SS::Idle {
-                let initial_len = game.pool.len();
-                game.pool.retain(|p| p.player.user_id != user);
-                if game.pool.len() < initial_len {
-                    found = true;
-                    queue_count = game.pool.len();
-                    break;
+        // Find and remove player from any game across all subgroups
+        for sg in &mut group.subgroups {
+            for game in &mut sg.sessions {
+                if game.status == SS::Idle {
+                    let initial_len = game.pool.len();
+                    game.pool.retain(|p| p.player.user_id != user);
+                    if game.pool.len() < initial_len {
+                        found = true;
+                        queue_count = game.pool.len();
+                        break;
+                    }
                 }
             }
+            if found { break; }
         }
 
         if found {
@@ -464,11 +476,13 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         let queue = group.get_queue().await?;
         queue.add_player(player);
 
-        if group.is_quota() {
+        let current_queue = queue.pool.len();
+        let quota_reached = current_queue >= group.quota() as usize;
+        
+        if quota_reached {
             group.hot(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await?;
         }
 
-        let current_queue = group.get_queue().await.map(|s| s.pool.len()).unwrap_or(0);
         cc.reply(&format!("Joined the queue! ({current_queue}/{} players)", group.quota())).await?;
         group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
     }
@@ -518,12 +532,27 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     let group = guild.get_group(cc.intax.channel_id)?;
     let quota = group.quota() as usize;
 
-    if group.subgroups[0].sessions.is_empty() {
-        cc.reply("No active games.").await?;
-        return Ok(());
+    // Find the first subgroup with an active game
+    let mut target_game = None;
+    let mut target_sg_name = String::new();
+    
+    for sg in &group.subgroups {
+        if let Some(game) = sg.sessions.last() {
+            if game.pool.len() >= quota {
+                target_game = Some(game);
+                target_sg_name = sg.name.clone();
+                break;
+            }
+        }
     }
-
-    let game = group.subgroups[0].sessions.last().ok_or_else(|| anyhow!("No active game"))?;
+    
+    let game = match target_game {
+        Some(g) => g,
+        None => {
+            cc.reply("No active games with enough players found.").await?;
+            return Ok(());
+        }
+    };
 
     if game.pool.len() < quota {
         cc.reply(&format!("Not enough players in game. Need {} more.", quota - game.pool.len())).await?;
@@ -543,12 +572,22 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     }
 
     // Update pool with new team assignments
-    let last_session = updated_group.subgroups[0].sessions.last_mut()
-        .ok_or_else(|| anyhow!("No session available for team assignment"))?;
-    last_session.pool.clear();
-    last_session.pool.extend(red_team.into_iter());
-    last_session.pool.extend(blu_team.into_iter());
-    last_session.status = SS::Hot;
+    // Find the same subgroup and session we found earlier
+    for sg in &mut updated_group.subgroups {
+        if sg.name == target_sg_name {
+            if let Some(last_session) = sg.sessions.last_mut() {
+                last_session.pool.clear();
+                last_session.pool.extend(red_team.into_iter().chain(blu_team.into_iter()));
+            }
+            break;
+        }
+    }
+
+    // Find the session again for the rest of the logic
+    let last_session = updated_group.subgroups.iter_mut()
+        .find(|sg| sg.name == target_sg_name)
+        .and_then(|sg| sg.sessions.last_mut())
+        .ok_or_else(|| anyhow!("No session available after update"))?;
 
     let red_team_names: Vec<String> = last_session.pool.iter()
         .filter(|sp| sp.team == Some(Team::Red))
