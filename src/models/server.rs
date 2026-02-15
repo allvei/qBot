@@ -8,7 +8,7 @@ use std::time::SystemTime;
 
 use tokio::sync::Mutex;
 use anyhow::{anyhow, Error, Result};
-use crate::{Database as DB, GREEN, Manager, Rank, models::constants::{DEFAULT_ACTIVE_ELO, MAX_TIMEOUT, MIN_TIMEOUT}, guild_name, log_prefix_guild_group_subgroup};
+use crate::{Database as DB, GREEN, Manager, Rank, models::constants::{DEFAULT_ACTIVE_ELO, MAX_TIMEOUT, MIN_TIMEOUT}, guild_name, log_prefix_subgroup};
 use serde::{Deserialize, Serialize};
 use serenity::{all::{
     ChannelId as CI, Context, CreateEmbed,
@@ -711,7 +711,7 @@ impl Group {
                     .collect();
 
                 let guild_name = guild_name(ctx, guild_id);
-                let full_prefix = log_prefix_guild_group_subgroup(
+                let full_prefix = log_prefix_subgroup(
                     &guild_name, 
                     self.name.as_deref().unwrap_or("unknown"), 
                     &sg.name
@@ -1688,7 +1688,7 @@ impl Group {
         if !player_mentions.is_empty() {
             let guild_name = guild_name(ctx, guild_id);
             let sg_name = &self.subgroups[0].name;
-            let full_prefix = log_prefix_guild_group_subgroup(
+            let full_prefix = log_prefix_subgroup(
                 &guild_name, 
                 self.name.as_deref().unwrap_or("unknown"), 
                 sg_name

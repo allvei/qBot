@@ -4,7 +4,7 @@ use std::sync::Arc;
 use time::macros::format_description;
 use tracing_subscriber::fmt::time::UtcTime;
 use anyhow::Result;
-use pf_pug_bot::{RED, commands, log_prefix_guild_group};
+use pf_pug_bot::{RED, commands, log_prefix_group};
 use serenity::all::{
     Client, GatewayIntents, EventHandler, Ready, Guild,Interaction,
     VoiceState, Command, Context, CommandOptionType as COT,
@@ -843,7 +843,7 @@ impl EventHandler for Handler {
                                 // User has disabled VC auto-queue, log that they joined VC but didn't join queue
                                 let guild_name = pf_pug_bot::guild_name(&ctx, server);
                                 let group_name = group.name.as_deref().unwrap_or("Unknown");
-                                info!("{} {} joined queue VC but did not join the queue (auto-queue disabled)", log_prefix_guild_group(&guild_name, &group_name), tag);
+                                info!("{} {} joined queue VC but did not join the queue (auto-queue disabled)", log_prefix_group(&guild_name, &group_name), tag);
                                 return;
                             }
 
@@ -855,7 +855,7 @@ impl EventHandler for Handler {
                                     let guild_name = pf_pug_bot::guild_name(&ctx, server);
                                     let group_name = group.name.as_deref().unwrap_or("Unknown");
                                     error!("{} {} joined VC but could not be added to queue (failed to create session)", 
-                                          log_prefix_guild_group(&guild_name, &group_name), tag);
+                                          log_prefix_group(&guild_name, &group_name), tag);
                                     return;
                                 }
                             }
@@ -890,7 +890,7 @@ impl EventHandler for Handler {
                                     // Check if queue was already full when this player joined
                                     if pool_len > group.quota() as usize {
                                         warn!("{} {} joined VC and was added to queue, but queue exceeded quota ({} > {})", 
-                                              log_prefix_guild_group(&guild_name, &group_name), tag, pool_len, group.quota());
+                                              log_prefix_group(&guild_name, &group_name), tag, pool_len, group.quota());
                                     }
                                     
                                     log_queue_toggle(&guild_name, &group_name, &tag, QueueToggleType::VJ, Some((pool_len, group.quota() as usize)), sg_name, Some(pool_len));

@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Error, Result};
 use std::{collections::{HashMap, HashSet}, sync::Arc, time::{Duration, SystemTime}};
-use crate::{QueueToggleType, log_queue_toggle, guild_name, log_prefix_guild_group};
+use crate::{QueueToggleType, log_queue_toggle, guild_name, log_prefix_group};
 use serenity::{all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
     CreateEmbed as CE, CreateMessage as CM, CreateInteractionResponse as CIR,
@@ -1249,19 +1249,19 @@ impl Group {
                 self.dash_leave_queue(cc, sg_id).await
             },
             "change_expiry"     => {
-                info!("{} {} requested expiry time change", log_prefix_guild_group(&server_name, &group_name), username);
+                info!("{} {} requested expiry time change", log_prefix_group(&server_name, &group_name), username);
                 self.dash_change_expiry(cc, sg_id).await
             },
             "set_expiry"        => {
-                info!("{} {} changed expiry time", log_prefix_guild_group(&server_name, &group_name), username);
+                info!("{} {} changed expiry time", log_prefix_group(&server_name, &group_name), username);
                 self.dash_set_expiry(cc, parts.get(1).copied()).await
             },
             "show_settings"     => {
-                info!("{} {} requested settings", log_prefix_guild_group(&server_name, &group_name), username);
+                info!("{} {} requested settings", log_prefix_group(&server_name, &group_name), username);
                 self.dash_show_settings(cc).await
             },
             "shuffle_teams"     => {
-                info!("{} {} used Shuffle", log_prefix_guild_group(&server_name, &group_name), username);
+                info!("{} {} used Shuffle", log_prefix_group(&server_name, &group_name), username);
                 self.dash_shuffle(cc, sg_id).await
             },
             "start_match"       => {
@@ -1270,15 +1270,15 @@ impl Group {
                     .map(|sg| sg.sessions.iter().any(|s| s.is_active()))
                     .unwrap_or(false);
                 if is_live {
-                    info!("{} {} used End", log_prefix_guild_group(&server_name, &group_name), username);
+                    info!("{} {} used End", log_prefix_group(&server_name, &group_name), username);
                     self.dash_end(cc, sg_id).await
                 } else {
-                    info!("{} {} used Start", log_prefix_guild_group(&server_name, &group_name), username);
+                    info!("{} {} used Start", log_prefix_group(&server_name, &group_name), username);
                     self.dash_start(cc, sg_id).await
                 }
             },
             "end_match"         => {
-                info!("{} {} used End", log_prefix_guild_group(&server_name, &group_name), username);
+                info!("{} {} used End", log_prefix_group(&server_name, &group_name), username);
                 self.dash_end(cc, sg_id).await
             },
             _ => {
