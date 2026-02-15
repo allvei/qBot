@@ -80,14 +80,14 @@ impl SB {
         self
     }
 
-    /// Create an edit button scoped to a group: `group_settings_{action}_{group_id}`
-    pub fn group_edit(action: &str, label: impl Into<String>, group_id: u8) -> Self {
-        Self::edit(format!("group_settings_{action}_{group_id}"), label)
+    /// Create an edit button scoped to a category: `category_settings_{action}_{category_id}`
+    pub fn category_edit(action: &str, label: impl Into<String>, category_id: u8) -> Self {
+        Self::edit(format!("category_settings_{action}_{category_id}"), label)
     }
 
-    /// Create an action button scoped to a group: `group_settings_{action}_{group_id}`
-    pub fn group_action(action: &str, label: impl Into<String>, style: SBS, group_id: u8) -> Self {
-        Self::action(format!("group_settings_{action}_{group_id}"), label, style)
+    /// Create an action button scoped to a category: `category_settings_{action}_{category_id}`
+    pub fn category_action(action: &str, label: impl Into<String>, style: SBS, category_id: u8) -> Self {
+        Self::action(format!("category_settings_{action}_{category_id}"), label, style)
     }
 }
 
@@ -357,11 +357,11 @@ impl AsSettingsMenu for ServerSettingsDisplay {
 
         let menu = SettingsMenu::new(format!("{} - Server settings", self.guild_name))
             .color(0x5865F2)
-            .description("**Configuration Overview:**\n\n**Server-wide settings**\n• Roles (runner/admin permissions)\n• Team balance method\n• ELO & Rank linking\n\n**Rank management**\n• Add, remove & link ranks\n• Set default rank\n\n**Group management**\n• Queue channels & voice channels\n• Team channels & game settings")
+            .description("**Configuration Overview:**\n\n**Server-wide settings**\n• Roles (runner/admin permissions)\n• Team balance method\n• ELO & Rank linking\n\n**Rank management**\n• Add, remove & link ranks\n• Set default rank\n\n**Category management**\n• Queue channels & voice channels\n• Team channels & game settings")
             .row(SR::Buttons(vec![
                 SB::action("server_settings_roles",  "Server", SBS::Secondary),
                 SB::action("server_settings_ranks",  "Ranks", SBS::Secondary),
-                SB::action("server_settings_groups", "Groups", SBS::Secondary),
+                SB::action("server_settings_categories", "Categories", SBS::Secondary),
             ]))
             .footer("Select a category to manage:");
 
@@ -492,21 +492,21 @@ impl RankConfigDisplay {
         let description = if self.rank_roles.is_empty() {
             "No ranks configured yet. Click 'Add Rank' to create your first rank.".to_string()
         } else {
-            // Group ranks by ELO
+            // Category ranks by ELO
             use std::collections::HashMap;
-            let mut elo_groups: HashMap<u16, Vec<(String, RoleId)>> = HashMap::new();
+            let mut elo_categories: HashMap<u16, Vec<(String, RoleId)>> = HashMap::new();
             
             for (rank_name, elo, role_id) in &self.rank_roles {
-                elo_groups.entry(*elo).or_insert_with(Vec::new).push((rank_name.clone(), *role_id));
+                elo_categories.entry(*elo).or_insert_with(Vec::new).push((rank_name.clone(), *role_id));
             }
             
             // Sort ELO values
-            let mut sorted_elos: Vec<u16> = elo_groups.keys().cloned().collect();
+            let mut sorted_elos: Vec<u16> = elo_categories.keys().cloned().collect();
             sorted_elos.sort();
             
             let mut desc = String::new();
             for elo in sorted_elos {
-                if let Some(ranks) = elo_groups.get(&elo) {
+                if let Some(ranks) = elo_categories.get(&elo) {
                     let role_displays: Vec<String> = ranks.iter()
                         .map(|(_, role_id)| format!("<@&{}>", role_id.get()))
                         .collect();
@@ -669,77 +669,77 @@ impl RankRoleConfigDisplay {
 }
 
 // ============================================================================
-// GroupList implementation
+// CategoryList implementation
 // ============================================================================
 
-/// Group list display for server settings sub-menu
-pub struct GroupListDisplay {
+/// Category list display for server settings sub-menu
+pub struct CategoryListDisplay {
     pub guild_name: String,
-    pub groups:     Vec<crate::models::Group>,
+    pub categories:     Vec<crate::models::Category>,
 }
 
-impl GroupListDisplay {
+impl CategoryListDisplay {
     pub fn build_embed(&self) -> CE {
         let mut description = String::new();
-        description.push_str("**Active groups:**\n");
+        description.push_str("**Active categories:**\n");
 
-        if !self.groups.is_empty() {
-            for group in &self.groups {
-                let name = group.display_name();
-                let _quota = group.quota();
-                let _sessions = group.subgroups[0].sessions.len();
+        if !self.categories.is_empty() {
+            for category in &self.categories {
+                let name = category.display_name();
+                let _quota = category.quota();
+                let _sessions = category.formats[0].sessions.len();
                 description.push_str(&format!("- {}\n", name));
             }
         }
 
         CE::new()
-            .title(format!("{} - Manage Groups", self.guild_name))
+            .title(format!("{} - Manage Categories", self.guild_name))
             .description(description)
             .color(0x5865F2)
-            .footer(CreateEmbedFooter::new("Select a group below to edit"))
+            .footer(CreateEmbedFooter::new("Select a category below to edit"))
     }
 
     pub fn build_components(&self) -> Vec<CAR> {
         let mut components = Vec::new();
 
-        // Add group selector using intelligent selection menu
-        if !self.groups.is_empty() {
-            // Use queue channel ID to ensure uniqueness even if group_id is duplicated
-            let options: Vec<(String, String)> = self.groups.iter()
+        // Add category selector using intelligent selection menu
+        if !self.categories.is_empty() {
+            // Use queue channel ID to ensure uniqueness even if category_id is duplicated
+            let options: Vec<(String, String)> = self.categories.iter()
                 .map(|g| {
                     let label = g.display_name();
-                    // Use format "groupid_queueid" to ensure uniqueness (each group has unique queue channel)
-                    let value = format!("{}_{}", g.group_id, g.channels.queue_vc.get());
+                    // Use format "categoryid_queueid" to ensure uniqueness (each category has unique queue channel)
+                    let value = format!("{}_{}", g.category_id, g.channels.queue_vc.get());
                     (label, value)
                 })
                 .collect();
 
             if let Some(selection_menu) = create_selection_menu(
-                "server_settings_group_select",
-                "Select group to configure",
+                "server_settings_category_select",
+                "Select category to configure",
                 options,
             ) {
                 components.push(selection_menu);
             }
         }
 
-        // Add create group, remove group, and back buttons
+        // Add create category, remove category, and back buttons
         let mut buttons = vec![
-            CB::new("server_settings_create_group")
-                .label("Create a group")
+            CB::new("server_settings_create_category")
+                .label("Create a category")
                 .style(BS::Primary),
         ];
         
-        // Only show remove button if there are groups to remove
-        if !self.groups.is_empty() {
+        // Only show remove button if there are categories to remove
+        if !self.categories.is_empty() {
             buttons.push(
-                CB::new("server_settings_remove_group")
-                    .label("Remove a group")
+                CB::new("server_settings_remove_category")
+                    .label("Remove a category")
                     .style(BS::Danger)
             );
         }
         
-        buttons.push(Eph::back("server_settings_groups_back"));
+        buttons.push(Eph::back("server_settings_categories_back"));
         components.push(CAR::Buttons(buttons));
 
         components
@@ -747,43 +747,43 @@ impl GroupListDisplay {
 }
 
 // ============================================================================
-// GroupSettings implementation
+// CategorySettings implementation
 // ============================================================================
 
-/// Group settings for display
-pub struct GroupSettingsDisplay {
-    pub group_id:       u8,
+/// Category settings for display
+pub struct CategorySettingsDisplay {
+    pub category_id:       u8,
     pub name:           Option<String>,
     pub quota:          u8,
     pub timeout:        u16,
     pub connect_info:   Option<String>,
-    pub subgroup_names: Vec<String>,
+    pub format_names: Vec<String>,
     pub vc_create:      String,
     pub vc_destroy:     String,
     pub vc_keep_min:    bool,
 }
 
-impl AsSettingsMenu for GroupSettingsDisplay {
+impl AsSettingsMenu for CategorySettingsDisplay {
     fn as_settings_menu(&self) -> SettingsMenu {
         let name_display = self.name.as_ref()
             .cloned()
-            .unwrap_or_else(|| format!("Group {}", self.group_id));
+            .unwrap_or_else(|| format!("Category {}", self.category_id));
         let connect_display = self.connect_info.as_ref()
             .filter(|s| !s.trim().is_empty())
             .map(|s| format!("`{s}`"))
             .unwrap_or_else(|| "-".to_string());
 
-        let gid = self.group_id;
+        let gid = self.category_id;
 
         SettingsMenu::new(format!("{name_display} Settings"))
             .field(SF::new("Name", name_display.clone()))
             .field(SF::new("Quota", format!("{} players", self.quota)))
             .field(SF::new("Confirm expiry", format!("{} seconds", self.timeout)))
             .field(SF::new("Connect info", connect_display).inline(false))
-            .field(SF::new("Subgroups", if self.subgroup_names.is_empty() {
+            .field(SF::new("Formats", if self.format_names.is_empty() {
                 "None".to_string()
             } else {
-                self.subgroup_names.iter()
+                self.format_names.iter()
                     .map(|n| format!("- {n}"))
                     .collect::<Vec<_>>()
                     .join("\n")
@@ -793,94 +793,94 @@ impl AsSettingsMenu for GroupSettingsDisplay {
             .field(SF::new("Keep minimum VCs", if self.vc_keep_min { "Yes" } else { "No" }))
             .color(0x5865F2)
             .row(SR::Buttons(vec![
-                SB::group_edit("edit_name",    "Name",           gid),
-                SB::group_edit("edit_quota",   "Quota",          gid),
-                SB::group_edit("edit_timeout", "Confirm expiry", gid),
+                SB::category_edit("edit_name",    "Name",           gid),
+                SB::category_edit("edit_quota",   "Quota",          gid),
+                SB::category_edit("edit_timeout", "Confirm expiry", gid),
             ]))
             .row(SR::Buttons(vec![
-                SB::group_edit("edit_connect",   "Connect info",      gid),
-                SB::group_action("subgroups",    "Subgroups",       SBS::Primary, gid),
-                SB::group_action("link_message", "Re-link dashboard", SBS::Success, gid),
+                SB::category_edit("edit_connect",   "Connect info",      gid),
+                SB::category_action("formats",    "Formats",       SBS::Primary, gid),
+                SB::category_action("link_message", "Re-link dashboard", SBS::Success, gid),
             ]))
             .row(SR::Buttons(vec![
-                SB::group_edit("edit_vc_create",  "VC create",   gid),
-                SB::group_edit("edit_vc_destroy", "VC destroy",  gid),
-                SB::group_edit("edit_vc_keepmin", "Keep min VCs", gid),
+                SB::category_edit("edit_vc_create",  "VC create",   gid),
+                SB::category_edit("edit_vc_destroy", "VC destroy",  gid),
+                SB::category_edit("edit_vc_keepmin", "Keep min VCs", gid),
             ]))
             .row(SR::Buttons(vec![
-                SB::group_action("elo_gate", "ELO gate", SBS::Primary, gid),
-                SB::action("server_settings_groups", "Back", SBS::Secondary),
+                SB::category_action("elo_gate", "ELO gate", SBS::Primary, gid),
+                SB::action("server_settings_categories", "Back", SBS::Secondary),
             ]))
     }
 }
 
 // ============================================================================
-// SubgroupList implementation
+// FormatList implementation
 // ============================================================================
 
-/// Subgroup list display for group settings sub-menu
-pub struct SubgroupListDisplay {
-    pub group_id:   u8,
-    pub group_name: String,
-    pub subgroups:  Vec<(u8, String, u8)>, // (id, name, quota)
+/// Format list display for category settings sub-menu
+pub struct FormatListDisplay {
+    pub category_id:   u8,
+    pub category_name: String,
+    pub formats:  Vec<(u8, String, u8)>, // (id, name, quota)
 }
 
-impl SubgroupListDisplay {
+impl FormatListDisplay {
     pub fn build_embed(&self) -> CE {
         let mut description = String::new();
 
-        for (id, name, quota) in &self.subgroups {
+        for (id, name, quota) in &self.formats {
             description.push_str(&format!("- **{}** (quota: {}, id: {})\n", name, quota, id));
         }
 
         if description.is_empty() {
-            description.push_str("*No subgroups configured.*\n");
+            description.push_str("*No formats configured.*\n");
         }
 
         CE::new()
-            .title(format!("{} - Subgroups", self.group_name))
+            .title(format!("{} - Formats", self.category_name))
             .description(description)
             .color(0x5865F2)
-            .footer(CreateEmbedFooter::new("Manage subgroups for this group"))
+            .footer(CreateEmbedFooter::new("Manage formats for this category"))
     }
 
     pub fn build_components(&self) -> Vec<CAR> {
-        let gid = self.group_id;
-        let can_add = self.subgroups.len() < 3;
+        let gid = self.category_id;
+        let can_add = self.formats.len() < 3;
 
         let mut buttons = Vec::new();
 
         if can_add {
             buttons.push(
-                CB::new(format!("group_sg_add_{gid}"))
-                    .label("Add subgroup")
+                CB::new(format!("category_sg_add_{gid}"))
+                    .label("Add format")
                     .style(BS::Primary)
             );
         }
 
-        if self.subgroups.len() > 1 {
+        if self.formats.len() > 1 {
             buttons.push(
-                CB::new(format!("group_sg_remove_{gid}"))
-                    .label("Remove subgroup")
+                CB::new(format!("category_sg_remove_{gid}"))
+                    .label("Remove format")
                     .style(BS::Danger)
             );
         }
 
-        buttons.push(Eph::back(format!("group_sg_back_{gid}")));
+        buttons.push(Eph::back(format!("category_sg_back_{gid}")));
 
         let mut components = vec![CAR::Buttons(buttons)];
 
-        // Add select menu for editing if there are subgroups
-        if !self.subgroups.is_empty() {
-            let options: Vec<(String, String)> = self.subgroups.iter()
+        // Add select menu for editing if there are formats
+        if !self.formats.is_empty() {
+            let options: Vec<(String, String)> = self.formats.iter()
                 .map(|(id, name, quota)| {
                     (format!("{} (quota: {})", name, quota), format!("{}_{}", gid, id))
                 })
                 .collect();
 
             if let Some(menu) = create_selection_menu(
-                "group_sg_edit",
-                "Select subgroup to edit",
+                "category_sg_edit",
+                "Select format to edit",
                 options,
             ) {
                 components.push(menu);
