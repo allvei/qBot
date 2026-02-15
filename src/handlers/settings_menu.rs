@@ -270,18 +270,19 @@ pub trait AsSettingsMenu {
 
 impl AsSettingsMenu for crate::database::repositories::UserSettings {
     fn as_settings_menu(&self) -> SettingsMenu {
-        let minutes = self.timeout;
-        let timeout_desc = format!(
-            "**Timeout length:** {} minute{}",
-            minutes,
-            if minutes == 1 { "" } else { "s" }
-        );
+        // Format timeout: hours for full hours, minutes for partial
+        let timeout_text = if self.timeout >= 60 && self.timeout % 60 == 0 {
+            let hours = self.timeout / 60;
+            format!("{}h", hours)
+        } else {
+            format!("{}m", self.timeout)
+        };
 
         SettingsMenu::new("qBot preferences")
-            .description(format!("{}", timeout_desc))
+            .description("Configure your queue preferences")
             .color(self.join_alert_color as u32)
             .row(SR::Buttons(vec![
-                SB::edit("settings_timeout", "Set timeout length"),
+                SB::edit("settings_timeout", &format!("Timeout: {}", timeout_text)),
             ]))
             .row(SR::Buttons(vec![
                 SB::toggle("settings_toggle_dm", "DM alerts", self.pm_hot_alert),
@@ -311,14 +312,30 @@ pub const SERVER_CONFIG_TOGGLES: &[ConfigToggle] = &[
         label_off: "ELO-Rank independent",
         default:   true,
     },
+    ConfigToggle {
+        column:    "active_elo",
+        button_id: "server_settings_dynamic_elo",
+        label_on:  "Dynamic ELO enabled",
+        label_off: "Dynamic ELO disabled",
+        default:   false,
+    },
+    ConfigToggle {
+        column:    "post_game_auto_leave",
+        button_id: "server_cfg_post_game_auto_leave",
+        label_on:  "Post-game auto-remove enabled",
+        label_off: "Post-game auto-remove disabled",
+        default:   true,
+    },
 ];
 
 /// Server settings with guild name for display
 pub struct ServerSettingsDisplay {
-    pub guild_name:     String,
-    pub runner_role:    Option<String>,
-    pub admin_role:     Option<String>,
-    pub toggle_states:  Vec<bool>,
+    pub guild_name:        String,
+    pub runner_role:       Option<String>,
+    pub admin_role:        Option<String>,
+    pub toggle_states:     Vec<bool>,
+    pub balance_method:    String,
+    pub post_game_timeout: u16,
 }
 
 impl AsSettingsMenu for ServerSettingsDisplay {
@@ -338,65 +355,37 @@ impl AsSettingsMenu for ServerSettingsDisplay {
             .and_then(|s| s.parse::<u64>().ok())
             .map(RoleId::new);
 
-        // Build toggle buttons from SERVER_CONFIG_TOGGLES
-        let toggle_buttons: Vec<SB> = SERVER_CONFIG_TOGGLES.iter()
-            .zip(self.toggle_states.iter())
-            .map(|(toggle, &state)| {
-                if state {
-                    SB::action(toggle.button_id, toggle.label_on, SBS::Success)
-                } else {
-                    SB::action(toggle.button_id, toggle.label_off, SBS::Danger)
-                }
-            })
-            .collect();
-
-        let mut menu = SettingsMenu::new(format!("{} - Server settings", self.guild_name))
+        let menu = SettingsMenu::new(format!("{} - Server settings", self.guild_name))
             .color(0x5865F2)
+            .description("**Configuration Overview:**\n\n**Server-wide settings**\n• Roles (runner/admin permissions)\n• Team balance method\n• ELO & Rank linking\n\n**Rank management**\n• Add, remove & link ranks\n• Set default rank\n\n**Group management**\n• Queue channels & voice channels\n• Team channels & game settings")
             .row(SR::Buttons(vec![
-                SB::action("server_settings_roles",  "Roles", SBS::Secondary),
+                SB::action("server_settings_roles",  "Server", SBS::Secondary),
                 SB::action("server_settings_ranks",  "Ranks", SBS::Secondary),
                 SB::action("server_settings_groups", "Groups", SBS::Secondary),
             ]))
-            .row(SR::StringSelect {
-                id:          "server_settings_balance".to_string(),
-                placeholder: "Team balance method...".to_string(),
-                options:     vec![
-                    ("Custom distribution algorithm".to_string(), "bch".to_string()),
-                    ("Average distribution".to_string(),          "average".to_string()),
-                ],
-            });
+            .footer("Select a category to manage:");
 
-        if !toggle_buttons.is_empty() {
-            menu = menu.row(SR::Buttons(toggle_buttons));
-        }
-
-        menu.footer("Select a category to manage:")
+        menu
     }
 }
 
-/// Role configuration display for server settings sub-menu (runner/admin roles)
-pub struct RoleConfigDisplay {
-    pub guild_name:  String,
-    pub runner_role: Option<String>,
-    pub admin_role:  Option<String>,
+/// Server configuration display for server settings sub-menu (roles, balance, ELO)
+pub struct ServerConfigDisplay {
+    pub guild_name:          String,
+    pub runner_role:         Option<String>,
+    pub admin_role:          Option<String>,
+    pub toggle_states:       Vec<bool>,
+    pub balance_method:      String,
+    pub post_game_timeout:   u16,
 }
 
-impl RoleConfigDisplay {
+impl ServerConfigDisplay {
     pub fn build_embed(&self) -> CE {
-        let runner_display = self.runner_role.as_ref()
-            .map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
-            .unwrap_or_else(|| "*Not configured*".to_string());
-        
-        let admin_display = self.admin_role.as_ref()
-            .map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", "))
-            .unwrap_or_else(|| "*Not configured*".to_string());
-
         CE::new()
-            .title(format!("{} - Manage Roles", self.guild_name))
-            .field("Runner role", runner_display, true)
-            .field("Admin role", admin_display, true)
+            .title(format!("{} - Server Settings", self.guild_name))
+            .field("Post-game confirm time", format!("{} seconds", self.post_game_timeout), true)
             .color(0x5865F2)
-            .footer(CreateEmbedFooter::new("Select roles below or use Create Roles to auto-generate"))
+            .footer(CreateEmbedFooter::new("Configure server-wide settings below"))
     }
 
     pub fn build_components(&self) -> Vec<CAR> {
@@ -407,7 +396,7 @@ impl RoleConfigDisplay {
             .and_then(|s| s.parse::<u64>().ok())
             .map(RoleId::new);
 
-        vec![
+        let mut components = vec![
             CAR::SelectMenu(
                 CSM::new("server_settings_runner_role", CSMK::Role { default_roles: runner_default.map(|r| vec![r]) })
                     .placeholder("Select runner role")
@@ -416,13 +405,51 @@ impl RoleConfigDisplay {
                 CSM::new("server_settings_admin_role", CSMK::Role { default_roles: admin_default.map(|r| vec![r]) })
                     .placeholder("Select admin role")
             ),
-            CAR::Buttons(vec![
-                CB::new("server_settings_create_roles")
-                    .label("Create roles")
-                    .style(BS::Primary),
-                Eph::back("server_settings_roles_back"),
-            ]),
-        ]
+        ];
+
+        // Add team balance method
+        components.push(CAR::SelectMenu(
+            CSM::new("server_settings_balance", CSMK::String { 
+                options: vec![
+                    CSMO::new("Custom distribution algorithm", "bch"),
+                    CSMO::new("Average distribution", "average"),
+                ]
+            })
+            .placeholder("Team balance method...")
+        ));
+
+        // Add ELO toggles
+        let toggle_buttons: Vec<CB> = SERVER_CONFIG_TOGGLES.iter()
+            .zip(self.toggle_states.iter())
+            .map(|(toggle, &state)| {
+                if state {
+                    CB::new(toggle.button_id)
+                        .label(toggle.label_on)
+                        .style(BS::Success)
+                } else {
+                    CB::new(toggle.button_id)
+                        .label(toggle.label_off)
+                        .style(BS::Danger)
+                }
+            })
+            .collect();
+
+        if !toggle_buttons.is_empty() {
+            components.push(CAR::Buttons(toggle_buttons));
+        }
+
+        // Add action buttons
+        components.push(CAR::Buttons(vec![
+            CB::new("server_settings_edit_post_game_timeout")
+                .label("Edit post-game timeout")
+                .style(BS::Secondary),
+            CB::new("server_settings_create_roles")
+                .label("Create roles")
+                .style(BS::Primary),
+            Eph::back("server_settings_roles_back"),
+        ]));
+
+        components
     }
 }
 
@@ -447,20 +474,8 @@ pub struct ConfigToggle {
 /// All boolean toggles shown in the Rank configuration menu.
 /// To add a new toggle: add a DB column, migration, and an entry here.
 pub const RANK_CONFIG_TOGGLES: &[ConfigToggle] = &[
-    ConfigToggle {
-        column:    "active_elo",
-        button_id: "server_settings_dynamic_elo",
-        label_on:  "Dynamic ELO enabled",
-        label_off: "Dynamic ELO disabled",
-        default:   false,
-    },
-    ConfigToggle {
-        column:    "elo_ranks_linked",
-        button_id: "server_settings_elo_ranks_linked",
-        label_on:  "ELO-Rank linked",
-        label_off: "ELO-Rank independent",
-        default:   true,
-    },
+    // Note: ELO-Rank linking moved to Server menu
+    // Note: Dynamic ELO moved to Server menu
 ];
 
 /// Rank configuration display for server settings sub-menu
@@ -528,7 +543,12 @@ impl RankConfigDisplay {
             })
             .collect();
 
-        let mut components = vec![CAR::Buttons(toggle_buttons)];
+        let mut components = Vec::new();
+        
+        // Only add toggle buttons row if there are toggle buttons
+        if !toggle_buttons.is_empty() {
+            components.push(CAR::Buttons(toggle_buttons));
+        }
 
         // Only add rank selection menus if there are valid ranks
         if !self.rank_roles.is_empty() {

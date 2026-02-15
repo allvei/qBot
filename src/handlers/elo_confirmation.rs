@@ -49,7 +49,8 @@ pub async fn handle_elo_change_confirmation(
         let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
         interaction.create_response(&ctx.http, response).await?;
         
-        info!("Admin cancelled ELO change for user {}", target_uid);
+        let user_tag = crate::log::get_user_tag(&ctx, target_uid, &db).await;
+        info!("Admin cancelled ELO change for user {}", user_tag);
         return Ok(());
     }
 
@@ -83,7 +84,8 @@ pub async fn handle_elo_change_confirmation(
                 if let Err(e) = member.remove_role(&ctx.http, old_rank.role_id).await {
                     info!("Failed to remove old rank role {} from user {}: {}", old_rank.role_id, target_uid, e);
                 } else {
-                    info!("Removed rank role {} from user {}", old_rank.name, target_uid);
+                    let user_tag = crate::log::get_user_tag(&ctx, target_uid, &db).await;
+                    info!("Removed rank role {} from user {}", old_rank.name, user_tag);
                 }
             }
             
@@ -92,7 +94,8 @@ pub async fn handle_elo_change_confirmation(
                 if let Err(e) = member.add_role(&ctx.http, new_rank.role_id).await {
                     info!("Failed to add new rank role {} to user {}: {}", new_rank.role_id, target_uid, e);
                 } else {
-                    info!("Added rank role {} to user {}", new_rank.name, target_uid);
+                    let user_tag = crate::log::get_user_tag(&ctx, target_uid, &db).await;
+                    info!("Added rank role {} to user {}", new_rank.name, user_tag);
                 }
             }
         }

@@ -11,6 +11,7 @@ use tracing::warn;
 
 use crate::RED;
 use crate::database::Database;
+use crate::guild_name;
 use crate::models::{
     Manager as GameManager, Role,
 };
@@ -36,76 +37,153 @@ pub struct ComponentContext<'a> {
 }
 
 impl CommandContext<'_> {
+    /// Create a standard message response
+    pub async fn create_response(&self, response: CIR) -> Result<(), anyhow::Error> {
+        self.intax.create_response(&self.ctx.http, response).await?;
+        Ok(())
+    }
+
+    /// Reply with a standard message
     pub async fn reply(&self, message: &str) -> Result<(), anyhow::Error> {
         let response = CIR::Message(CIRM::new().content(message));
-        self.intax.create_response(&self.ctx.http, response).await?;
-        Ok(())
+        self.create_response(response).await
     }
 
+    /// Reply with an ephemeral message
     pub async fn reply_ephemeral(&self, message: &str) -> Result<(), anyhow::Error> {
         let response = CIR::Message(CIRM::new().content(message).ephemeral(true));
-        self.intax.create_response(&self.ctx.http, response).await?;
-        Ok(())
+        self.create_response(response).await
     }
 
+    /// Reply with an embed
     pub async fn reply_embed(&self, embed: serenity::all::CreateEmbed) -> Result<(), anyhow::Error> {
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
-        self.intax.create_response(&self.ctx.http, response).await?;
-        Ok(())
+        self.create_response(response).await
     }
 
+    /// Reply with an error embed
     pub async fn reply_error(&self, title: &str, description: &str) -> Result<(), anyhow::Error> {
-        let embed = serenity::all::CreateEmbed::new()
-            .title(title)
-            .description(description)
-            .color(RED);
+        let embed = self.create_error_embed(title, description);
         self.reply_embed(embed).await
     }
 
+    /// Create a standardized error embed
+    pub fn create_error_embed(&self, title: &str, description: &str) -> serenity::all::CreateEmbed {
+        serenity::all::CreateEmbed::new()
+            .title(title)
+            .description(description)
+            .color(RED)
+    }
+
+    /// Get guild ID with error handling
     pub fn guild_id(&self) -> Result<serenity::all::GuildId, anyhow::Error> {
         self.intax.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))
     }
 
+    /// Get guild name with fallback
     pub fn guild_name(&self) -> String {
         self.intax.guild_id
-            .map(|gid| crate::guild_name(self.ctx, gid))
+            .map(|gid| guild_name(self.ctx, gid))
             .unwrap_or_else(|| "Unknown".to_string())
+    }
+
+    /// Check if user has specific permissions
+    pub async fn check_permissions(&self, permission_type: PermissionType) -> Result<bool, anyhow::Error> {
+        let guild_id = self.guild_id()?;
+        let member = self.ctx.http.get_member(guild_id, self.intax.user.id).await?;
+        
+        match permission_type {
+            PermissionType::Admin => {
+                // Check if user has administrator permissions
+                Ok(member.permissions(self.ctx.cache.clone()).map(|p| p.administrator()).unwrap_or(false))
+            },
+            PermissionType::Moderator => {
+                // Check specific role or permissions
+                // This would need to be implemented based on your bot's role system
+                Ok(false)
+            },
+        }
     }
 }
 
+#[derive(Debug)]
+pub enum PermissionType {
+    Admin,
+    Moderator,
+}
+
 impl ComponentContext<'_> {
+    /// Create a standard component response
+    pub async fn create_response(&self, response: CIR) -> Result<(), anyhow::Error> {
+        self.component.create_response(&self.ctx.http, response).await?;
+        Ok(())
+    }
+
+    /// Reply with an ephemeral message
     pub async fn reply(&self, message: &str) -> Result<(), anyhow::Error> {
         let response = CIR::Message(CIRM::new().content(message).ephemeral(true));
-        self.component.create_response(&self.ctx.http, response).await?;
-        Ok(())
+        self.create_response(response).await
     }
 
+    /// Reply with an embed
     pub async fn reply_embed(&self, embed: serenity::all::CreateEmbed) -> Result<(), anyhow::Error> {
         let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
-        self.component.create_response(&self.ctx.http, response).await?;
-        Ok(())
+        self.create_response(response).await
     }
 
+    /// Reply with an error embed
+    pub async fn reply_error(&self, title: &str, description: &str) -> Result<(), anyhow::Error> {
+        let embed = self.create_error_embed(title, description);
+        self.reply_embed(embed).await
+    }
+
+    /// Create a standardized error embed
+    pub fn create_error_embed(&self, title: &str, description: &str) -> serenity::all::CreateEmbed {
+        serenity::all::CreateEmbed::new()
+            .title(title)
+            .description(description)
+            .color(RED)
+    }
+
+    /// Acknowledge the component interaction
     pub async fn acknowledge(&self) -> Result<(), anyhow::Error> {
-        let response = CIR::Acknowledge;
-        self.component.create_response(&self.ctx.http, response).await?;
-        Ok(())
+        self.create_response(CIR::Acknowledge).await
     }
 
-    pub async fn defer_update(&self) -> Result<(), anyhow::Error> {
-        let response = CIR::UpdateMessage(CIRM::new());
-        self.component.create_response(&self.ctx.http, response).await?;
-        Ok(())
-    }
-
+    /// Get guild ID with error handling
     pub fn guild_id(&self) -> Result<serenity::all::GuildId, anyhow::Error> {
         self.component.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))
     }
 
+    /// Get guild name with fallback
     pub fn guild_name(&self) -> String {
         self.component.guild_id
-            .map(|gid| crate::guild_name(self.ctx, gid))
+            .map(|gid| guild_name(self.ctx, gid))
             .unwrap_or_else(|| "Unknown".to_string())
+    }
+
+    /// Check if user has specific permissions
+    pub async fn check_permissions(&self, permission_type: PermissionType) -> Result<bool, anyhow::Error> {
+        let guild_id = self.guild_id()?;
+        let member = self.ctx.http.get_member(guild_id, self.component.user.id).await?;
+        
+        match permission_type {
+            PermissionType::Admin => {
+                // Check if user has administrator permissions
+                Ok(member.permissions(self.ctx.cache.clone()).map(|p| p.administrator()).unwrap_or(false))
+            },
+            PermissionType::Moderator => {
+                // Check specific role or permissions
+                // This would need to be implemented based on your bot's role system
+                Ok(false)
+            },
+        }
+    }
+
+    /// Defer the component update
+    pub async fn defer_update(&self) -> Result<(), anyhow::Error> {
+        let response = CIR::UpdateMessage(CIRM::new());
+        self.create_response(response).await
     }
 }
 

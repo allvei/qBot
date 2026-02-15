@@ -49,7 +49,8 @@ pub async fn cmd_prefs(cc: &CC<'_>) -> Result<()> {
     // Send ephemeral message in the current channel
     cc.intax.create_response(&cc.ctx.http, Ephemeral::send_prefs(&prefs)).await?;
 
-    info!("Sent settings menu to user {} (ephemeral)", cc.intax.user.name);
+    let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
+    info!("Sent settings menu to user {} (ephemeral)", user_tag);
     Ok(())
 }
 
@@ -69,7 +70,8 @@ pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
     // Send ephemeral message in the current channel
     cc.intax.create_response(&cc.ctx.http, Ephemeral::send_config(&settings, &guild_name)).await?;
 
-    info!("Sent server settings menu to {} (ephemeral)", cc.intax.user.name);
+    let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
+    info!("Sent server settings menu to {} (ephemeral)", user_tag);
     Ok(())
 }
 
@@ -249,6 +251,8 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     let response = CIR::Message(CIRM::new().embed(embed).components(components).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
-    info!("[{:?}] {} used /edit on {}", cc.intax.guild_id, cc.intax.user.name, target_user);
+    let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
+    let target_tag = crate::log::get_user_tag(&cc.ctx, target_user, &cc.db).await;
+    info!("[{:?}] {} used /edit on {}", cc.intax.guild_id, user_tag, target_tag);
     Ok(())
 }

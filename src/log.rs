@@ -38,10 +38,7 @@ pub fn log_queue_toggle(guild_name: &str, group_name: &str, tag: &str, queue_typ
     let sg_part = sg_name.map(|n| format!(" {n} queue")).unwrap_or_default();
     let pos_part = position.map(|p| format!("#{}", p)).unwrap_or_default();
 
-    let prefix = match sg_name {
-        Some(sg) => log_prefix_guild_group_subgroup(guild_name, group_name, sg),
-        None => log_prefix_guild_group(guild_name, group_name),
-    };
+    let prefix = log_prefix_guild_group(guild_name, group_name);
     
     match pool_size {
         Some((current, quota)) => info!("{} {} {} {}{} ({}) [{}/{}]", prefix, pos_part, tag, action, sg_part, source, current, quota),

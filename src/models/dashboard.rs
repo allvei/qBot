@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Error, Result};
 use std::{collections::{HashMap, HashSet}, sync::Arc, time::{Duration, SystemTime}};
-use crate::{QueueToggleType, log_queue_toggle};
+use crate::{QueueToggleType, log_queue_toggle, guild_name, log_prefix_guild_group};
 use serenity::{all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
     CreateEmbed as CE, CreateMessage as CM, CreateInteractionResponse as CIR,
@@ -11,6 +11,95 @@ use tracing::{error, info, warn};
 use tokio::sync::mpsc;
 
 use crate::models::{ComponentContext as CC, DashboardQueueKey, Group, SessionStatus};
+
+// Helper methods to reduce code duplication
+
+/// Format team display for embed fields
+async fn format_team_display(
+    embed: serenity::all::CreateEmbed,
+    pool: &[crate::models::SessionPlayer],
+    label: &str,
+) -> serenity::all::CreateEmbed {
+    if pool.is_empty() {
+        return embed;
+    }
+    
+    let formatted_players: Vec<_> = pool.iter()
+        .map(|p| format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id))
+        .collect();
+    
+    embed.field(format!("{} ({})", label, pool.len()), formatted_players.join("\n"), false)
+}
+
+/// Add waiting players field to embed
+fn add_waiting_field(embed: serenity::all::CreateEmbed, sg_label: &str, current: usize, quota: usize, message: &str) -> serenity::all::CreateEmbed {
+    embed.field(
+        format!("{sg_label} - Idle ({current}/{quota})"),
+        message,
+        false,
+    )
+}
+
+/// Create a button interaction response with proper error handling
+async fn create_button_response(
+    ctx: &Context,
+    interaction: &serenity::all::ComponentInteraction,
+    response_type: ButtonResponseType,
+    content: &str,
+) -> Result<()> {
+    let response = match response_type {
+        ButtonResponseType::Acknowledge => CIR::Acknowledge,
+        ButtonResponseType::Message => CIR::Message(CIRM::new().content(content).ephemeral(true)),
+        ButtonResponseType::Update => CIR::UpdateMessage(CIRM::new().content(content)),
+    };
+    
+    interaction.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
+#[derive(Debug)]
+enum ButtonResponseType {
+    Acknowledge,
+    Message,
+    Update,
+}
+
+/// Helper struct to hold team data for display
+struct TeamDisplay {
+    red: Vec<crate::models::SessionPlayer>,
+    blu: Vec<crate::models::SessionPlayer>,
+}
+
+impl TeamDisplay {
+    /// Create new team display from sorted teams
+    fn new(red: Vec<crate::models::SessionPlayer>, blu: Vec<crate::models::SessionPlayer>) -> Self {
+        Self { red, blu }
+    }
+    
+    /// Build team field headers with average ELO
+    fn build_headers(&self) -> (String, String) {
+        let red_header = format!("🔴 RED ‹**{}**›", get_avg_elo(&self.red));
+        let blu_header = format!("🔵 BLU ‹**{}**›", get_avg_elo(&self.blu));
+        (red_header, blu_header)
+    }
+    
+    /// Add both team fields to an embed in a single call
+    async fn add_to_embed(self, embed: CE, db: &crate::Database, guild_id: GI) -> CE {
+        let (red_header, blu_header) = self.build_headers();
+        embed
+            .field(red_header, format_team_field(&self.red, db, guild_id).await, true)
+            .field(blu_header, format_team_field(&self.blu, db, guild_id).await, true)
+    }
+}
+
+/// Helper function to calculate average ELO for a team
+fn get_avg_elo(team: &[crate::models::SessionPlayer]) -> u16 {
+    if team.is_empty() { 
+        0 
+    } else {
+        (team.iter().map(|p| p.player.elo as u32).sum::<u32>() / team.len() as u32) as u16
+    }
+}
 
 /// Helper function to format team players as a string for embed fields
 async fn format_team_field(team: &[crate::models::SessionPlayer], _db: &crate::Database, _guild_id: GI) -> String {
@@ -285,6 +374,7 @@ impl Group {
     /// before moving to the next subgroup.
     pub async fn build_dashboard_content(&self, db: &crate::Database, guild_id: GI, in_game_players: &HashMap<UI, (GI, String)>) -> Result<(CE, Vec<CAR>)> {
         let timeout_seconds = self.timeout as u64;
+        let post_game_timeout = db.config.get_post_game_timeout(guild_id).await.unwrap_or(120) as u64;
         let has_multiple = self.subgroups.len() > 1;
 
         let mut embed = CE::new().title(self.display_name());
@@ -300,6 +390,22 @@ impl Group {
 
             // --- Active games (Hot/Push/Live/Pull) ---
             if !actives.is_empty() {
+                // Get timestamp from first active session
+                let started_time = actives.first()
+                    .and_then(|session| session.started_at)
+                    .and_then(|started_at| started_at.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
+                    .map(|timestamp| format!("<t:{}:R>", timestamp.as_secs()))
+                    .unwrap_or_else(|| "recently".to_string());
+
+                // Determine status for field title
+                let status_text = match actives.first().unwrap().status {
+                    SessionStatus::Hot => "Ready to start",
+                    SessionStatus::Push => "Moving players to team channels...",
+                    SessionStatus::Live => &format!("Started {}", started_time),
+                    SessionStatus::Pull => "Moving players back to queue...",
+                    _ => ""
+                };
+
                 let mut match_info = String::new();
                 for session in &actives {
                     if session.is_hot() {
@@ -309,41 +415,36 @@ impl Group {
                             .collect();
 
                         if !players_never_joined.is_empty() {
-                            if let Some(ready_at) = session.ready_at {
-                                if let Ok(d) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
-                                    let deadline = d.as_secs() + timeout_seconds;
+                            // Use match_ended_at if available (post-game scenario), otherwise ready_at
+                            let base_time = session.match_ended_at.or(session.ready_at);
+                            if let Some(base_time) = base_time {
+                                // Use appropriate timeout based on scenario
+                                let deadline_timeout = if session.match_ended_at.is_some() {
+                                    post_game_timeout
+                                } else {
+                                    timeout_seconds
+                                };
+                                
+                                if let Ok(d) = base_time.duration_since(SystemTime::UNIX_EPOCH) {
+                                    let deadline = d.as_secs() + deadline_timeout;
                                     match_info.push_str(&format!("Join deadline: <t:{deadline}:R>\n"));
                                     match_info.push_str("Missing players will be removed.\n\n");
                                 }
                             }
                             match_info.push_str("**Missing players:**\n");
-                            for player in players_never_joined {
+                            for player in &players_never_joined {
                                 match_info.push_str(&format!("  • ‹**{}**› <@{}>\n", player.player.elo, player.player.user_id));
                             }
                         } else {
                             match_info.push_str("All players ready");
                         }
-                    } else {
-                        let status_text = match session.status {
-                            SessionStatus::Push => "Moving players to team channels...",
-                            SessionStatus::Live => "In progress",
-                            SessionStatus::Pull => "Moving players back to queue...",
-                            _ => ""
-                        };
-                        match_info.push_str(status_text);
                     }
+                    // Note: Push/Live/Pull status is now in the field title, no need to add here
                 }
+
                 embed = embed.field(
-                    format!("{sg_label} - Started {}", 
-                        match_info.lines()
-                            .find(|line| line.contains("Session started"))
-                            .and_then(|line| line.split_whitespace().last())
-                            .unwrap_or("recently")
-                    ),
-                    match_info.lines()
-                        .find(|line| line.starts_with("In progress") || line.starts_with("Moving players"))
-                        .unwrap_or(&match_info)
-                        .to_string(),
+                    format!("{sg_label} - {}", status_text),
+                    match_info,
                     false,
                 );
 
@@ -351,18 +452,15 @@ impl Group {
                 for session in &actives {
                     if session.pool.len() >= quota {
                         let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
-                        embed = embed.field("🔴 RED", format_team_field(&team_red, db, guild_id).await, true);
-                        embed = embed.field("🔵 BLU", format_team_field(&team_blu, db, guild_id).await, true);
+                        embed = TeamDisplay::new(team_red, team_blu)
+                            .add_to_embed(embed, db, guild_id).await;
                     }
                 }
 
                 // Show overflow players for idle session (when there's an active game)
                 if let Some(next_session) = inactives.first() {
                     if !next_session.pool.is_empty() {
-                        let fatkid: Vec<_> = next_session.pool.iter()
-                            .map(|p| format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id))
-                            .collect();
-                        embed = embed.field(format!("Waiting for next game ({})", next_session.pool.len()), fatkid.join("\n"), false);
+                        embed = format_team_display(embed, &next_session.pool, "Waiting for next game").await;
                     }
                 }
             }
@@ -379,9 +477,18 @@ impl Group {
                         .collect();
 
                     if !players_never_joined.is_empty() {
-                        if let Some(ready_at) = current_session.ready_at {
-                            if let Ok(d) = ready_at.duration_since(SystemTime::UNIX_EPOCH) {
-                                let deadline = d.as_secs() + timeout_seconds;
+                        // Use match_ended_at if available (post-game scenario), otherwise ready_at
+                        let base_time = current_session.match_ended_at.or(current_session.ready_at);
+                        if let Some(base_time) = base_time {
+                            // Use appropriate timeout based on scenario
+                            let deadline_timeout = if current_session.match_ended_at.is_some() {
+                                post_game_timeout
+                            } else {
+                                timeout_seconds
+                            };
+                            
+                            if let Ok(d) = base_time.duration_since(SystemTime::UNIX_EPOCH) {
+                                let deadline = d.as_secs() + deadline_timeout;
                                 hot_info.push_str(&format!("Join deadline: <t:{deadline}:R>\n"));
                                 hot_info.push_str("Missing players will be removed.\n\n");
                             }
@@ -392,7 +499,7 @@ impl Group {
                         }
                     }
                     embed = embed.field(
-                        format!("{sg_label} ({queue_players}/{quota})"),
+                        format!("{sg_label} - Ready to start ({queue_players}/{quota})"),
                         hot_info,
                         false,
                     );
@@ -400,8 +507,8 @@ impl Group {
                     // Team fields
                     if queue_players >= quota {
                         let (team_red, team_blu) = get_sorted_teams(&current_session.pool, quota);
-                        embed = embed.field("🔴 RED", format_team_field(&team_red, db, guild_id).await, true);
-                        embed = embed.field("🔵 BLU", format_team_field(&team_blu, db, guild_id).await, true);
+                        embed = TeamDisplay::new(team_red, team_blu)
+                            .add_to_embed(embed, db, guild_id).await;
 
                         // Overflow players
                         if queue_players > quota {
@@ -414,11 +521,7 @@ impl Group {
                     }
                 } else if queue_players == 0 {
                     // Empty queue
-                    embed = embed.field(
-                        format!("{sg_label} (0/{quota})"),
-                        "*Join to get started!*",
-                        false,
-                    );
+                    embed = add_waiting_field(embed, &sg_label, 0, quota, "*Join to get started!*");
                 } else {
                     // Idle with players - show player list and timers
                     // Queue header as a field so it stays grouped with player fields
@@ -436,7 +539,7 @@ impl Group {
                                 timers_field.push_str("In-game\n");
                             }
                         } else if player.in_queue_vc {
-                            timers_field.push_str("In VC\n");
+                            timers_field.push_str("VC\n");
                         } else {
                             let timeout = if let Ok(settings) = db.users.get_prefs(player.player.user_id).await {
                                 settings.timeout
@@ -459,7 +562,7 @@ impl Group {
 
                     // Use subgroup name in the field title
                     embed = embed.field(
-                        format!("{sg_label} ({queue_players}/{quota})"),
+                        format!("{sg_label} - Idle ({queue_players}/{quota})"),
                         players_field,
                         true,
                     );
@@ -467,11 +570,7 @@ impl Group {
                 }
             } else {
                 // No sessions at all
-                embed = embed.field(
-                    format!("{sg_label} (0/{quota})"),
-                    "*Empty, join to get started!*",
-                    false,
-                );
+                embed = add_waiting_field(embed, &sg_label, 0, quota, "*Empty, join to get started!*");
             }
 
             // Separator between subgroups
@@ -657,7 +756,7 @@ impl Group {
         };
 
         // Store channel IDs before any borrows
-        let dashboard_channel = self.channels.dashboard;
+        let _dashboard_channel = self.channels.dashboard;
 
         // If player is already in this subgroup, refresh their timeout and return
         if self.is_user_in_sg(sg_id, user_id) {
@@ -778,21 +877,26 @@ impl Group {
             // Save rank for announcement (player will be moved)
             let player_rank = discord_rank.clone();
 
-            //
+            // Log the queue join attempt BEFORE adding to queue to fix race condition
+            let server_name = guild_name(cc.ctx, guild_id);
+            let group_name = self.name.as_deref().unwrap_or("Unknown").to_string();
+            let username = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
+            
+            // Get current pool length BEFORE adding player
+            let (pool_len_before, sg_quota) = self.subgroup(sg_id)
+                .map(|sg| (sg.sessions.iter().map(|s| s.pool.len()).sum::<usize>(), sg.quota as usize))
+                .unwrap_or((0, 0));
+            let sg_name = self.subgroup(sg_id).map(|sg| sg.name.as_str());
+            
+            // Clone sg_name to avoid borrowing issues
+            let sg_name_owned = sg_name.map(|s| s.to_string());
+            
+            // Log BEFORE queue operation to fix race condition with quota notifications
+            log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ, Some((pool_len_before, sg_quota)), sg_name, Some(pool_len_before + 1));
+
             if let Err(e) = self.queue_player_sg(sg_id, player, discord_rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
                 warn!("Failed to queue player: {e}");
             } else {
-                // Log successful queue join via button
-                let server_name = crate::guild_name(cc.ctx, guild_id);
-                let group_name = cc.ctx.cache.channel(dashboard_channel)
-                    .map(|ch| ch.name.clone())
-                    .unwrap_or_else(|| "Unknown".to_string());
-                let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
-                let (pool_len, sg_quota) = self.subgroup(sg_id)
-                    .map(|sg| (sg.sessions.iter().map(|s| s.pool.len()).sum::<usize>(), sg.quota as usize))
-                    .unwrap_or((0, 0));
-                let sg_name = self.subgroup(sg_id).map(|sg| sg.name.as_str());
-                log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ, Some((pool_len, sg_quota)), sg_name);
 
                 // Send join announcement (delayed + buffered)
                 {
@@ -807,7 +911,7 @@ impl Group {
                         self.group_id,
                         sg_id,
                         AlertType::Join,
-                        sg_name.map(|s| s.to_string()),
+                        sg_name_owned,
                         player_rank.name.clone(),
                     );
                 }
@@ -832,9 +936,10 @@ impl Group {
         let quota = self.subgroup(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
 
         // Store fields before any borrows
-        let dashboard_channel = self.channels.dashboard;
+        let _dashboard_channel = self.channels.dashboard;
         let queue_chat = self.channels.queue_chat;
         let group_id = self.group_id;
+        let group_name = self.name.as_deref().unwrap_or("Unknown").to_string();
 
         // Get session index and subgroup name before mutable borrow
         let sg_name_owned = self.subgroup(sg_id).map(|sg| sg.name.clone());
@@ -885,17 +990,18 @@ impl Group {
             cc.defer_update().await?;
 
             let was_hot = session.is_hot();
-            let username = cc.ctx.cache.user(user_id).map(|u| u.name.clone()).unwrap_or_else(|| user_id.to_string());
+            let username = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
+            
+            // Capture position before removal for logging
+            let position_before_removal = session.pool.iter().position(|p| p.player.user_id == user_id).map(|p| p + 1);
+            
             session.remove_player(user_id);
             let pool_len = session.pool.len();
 
             // Log with server and group context
             let guild_id = cc.component.guild_id.unwrap();
-            let server_name = crate::guild_name(cc.ctx, guild_id);
-            let group_name = cc.ctx.cache.channel(dashboard_channel)
-                .map(|ch| ch.name.clone())
-                .unwrap_or_else(|| "Unknown".to_string());
-            log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BL, Some((pool_len, quota)), sg_name_owned.as_deref());
+            let server_name = guild_name(cc.ctx, guild_id);
+            log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BL, Some((pool_len, quota)), sg_name_owned.as_deref(), position_before_removal);
 
             // Send leave announcement (delayed + buffered)
             {
@@ -1064,6 +1170,7 @@ impl Group {
             .map(|d| d.as_secs());
         let quota = self.subgroup(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
         let (team_red, team_blu) = get_sorted_teams(&active_session.pool, quota);
+        let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
         // Build match summary embed
         let mut embed = CE::new()
@@ -1077,36 +1184,19 @@ impl Group {
             embed = embed.field("Time", format!("{}m {}s", mins, remaining_secs), true);
         }
 
-        // Format teams with players and ELO
-        let format_team = |team: &[crate::models::SessionPlayer]| -> String {
-            if team.is_empty() {
-                return "*No players*".to_string();
-            }
-            team.iter()
-                .map(|p| format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-
-        let red_avg_elo: u16 = if team_red.is_empty() { 0 } else {
-            (team_red.iter().map(|p| p.player.elo as u32).sum::<u32>() / team_red.len() as u32) as u16
-        };
-        let blu_avg_elo: u16 = if team_blu.is_empty() { 0 } else {
-            (team_blu.iter().map(|p| p.player.elo as u32).sum::<u32>() / team_blu.len() as u32) as u16
-        };
-
-        embed = embed
-            .field(format!("🔴 RED ‹**{}**›", red_avg_elo), format_team(&team_red), true)
-            .field(format!("🔵 BLU ‹**{}**›", blu_avg_elo), format_team(&team_blu), true);
+        embed = TeamDisplay::new(team_red, team_blu)
+            .add_to_embed(embed, &cc.db, guild_id).await;
 
         // Defer update now that we're going to end the match
         cc.defer_update().await?;
 
-        let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
-
-        // Post match summary to queue chat
-        let queue_chat = self.channels.queue_chat;
-        let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
+        // Post match summary to queue chat only if match was 5+ minutes
+        if let Some(secs) = match_time {
+            if secs >= 300 { // 5 minutes = 300 seconds
+                let queue_chat = self.channels.queue_chat;
+                let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
+            }
+        }
 
         // Move players back to queue channel (Hot/Live → Pull → Idle)
         match self.pull_sg(sg_id, cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await {
@@ -1144,11 +1234,9 @@ impl Group {
 
         // Get server and group names for logging - store channel ID before any mut borrows
         let guild_id = cc.component.guild_id.unwrap();
-        let dashboard_channel = self.channels.dashboard;
-        let server_name = crate::guild_name(cc.ctx, guild_id);
-        let group_name = cc.ctx.cache.channel(dashboard_channel)
-            .map(|ch| ch.name.clone())
-            .unwrap_or_else(|| "Unknown".to_string());
+        let _dashboard_channel = self.channels.dashboard;
+        let server_name = guild_name(cc.ctx, guild_id);
+        let group_name = self.name.as_deref().unwrap_or("Unknown").to_string();
         let username = cc.ctx.cache.user(cc.component.user.id).map(|u| u.name.clone()).unwrap_or_else(|| cc.component.user.id.to_string());
 
         let sg_id = Self::parse_sg_id(&parts);
@@ -1161,19 +1249,19 @@ impl Group {
                 self.dash_leave_queue(cc, sg_id).await
             },
             "change_expiry"     => {
-                info!("[{}][{}] {} requested expiry time change", server_name, group_name, username);
+                info!("{} {} requested expiry time change", log_prefix_guild_group(&server_name, &group_name), username);
                 self.dash_change_expiry(cc, sg_id).await
             },
             "set_expiry"        => {
-                info!("[{}][{}] {} changed expiry time", server_name, group_name, username);
+                info!("{} {} changed expiry time", log_prefix_guild_group(&server_name, &group_name), username);
                 self.dash_set_expiry(cc, parts.get(1).copied()).await
             },
             "show_settings"     => {
-                info!("[{}][{}] {} requested settings", server_name, group_name, username);
+                info!("{} {} requested settings", log_prefix_guild_group(&server_name, &group_name), username);
                 self.dash_show_settings(cc).await
             },
             "shuffle_teams"     => {
-                info!("[{}][{}] {} used Shuffle", server_name, group_name, username);
+                info!("{} {} used Shuffle", log_prefix_guild_group(&server_name, &group_name), username);
                 self.dash_shuffle(cc, sg_id).await
             },
             "start_match"       => {
@@ -1182,15 +1270,15 @@ impl Group {
                     .map(|sg| sg.sessions.iter().any(|s| s.is_active()))
                     .unwrap_or(false);
                 if is_live {
-                    info!("[{}][{}] {} used End", server_name, group_name, username);
+                    info!("{} {} used End", log_prefix_guild_group(&server_name, &group_name), username);
                     self.dash_end(cc, sg_id).await
                 } else {
-                    info!("[{}][{}] {} used Start", server_name, group_name, username);
+                    info!("{} {} used Start", log_prefix_guild_group(&server_name, &group_name), username);
                     self.dash_start(cc, sg_id).await
                 }
             },
             "end_match"         => {
-                info!("[{}][{}] {} used End", server_name, group_name, username);
+                info!("{} {} used End", log_prefix_guild_group(&server_name, &group_name), username);
                 self.dash_end(cc, sg_id).await
             },
             _ => {

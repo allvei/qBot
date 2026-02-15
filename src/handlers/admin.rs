@@ -13,7 +13,7 @@ use tracing::{error, info, warn};
 
 use crate::models::embeds::Ephemeral;
 use crate::player::{check_adm, check_run};
-use crate::{CYAN, DEFAULT_QUOTA, Database, GREEN, Manager, ORANGE, RED};
+use crate::{CYAN, DEFAULT_QUOTA, Database, GREEN, Manager, ORANGE, RED, guild_name};
 use crate::database::repositories::Repository;
 use crate::handlers::player::validate_system_roles;
 use crate::models::{CommandContext as CC, Server, SETUP_STATE};
@@ -155,7 +155,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI, category_name: &
     use serenity::all::{CreateChannel, CreateEmbed, CreateMessage, PermissionOverwrite, PermissionOverwriteType, Permissions};
 
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
-    let guild_name = crate::guild_name(ctx, guild_id);
+    let guild_name = guild_name(ctx, guild_id);
 
     // Get bot's user ID and find bot's integration role
     let bot_user_id = ctx.cache.current_user().id;
@@ -576,8 +576,8 @@ impl ConfigField {
             Self::QueueVc   => config.queue_vc_channel  = Some(value),
             Self::Red       => config.red_channel       = Some(value),
             Self::Blue      => config.blue_channel      = Some(value),
-            Self::Runner    => config.runner_role        = Some(value),
-            Self::Admin     => config.admin_role         = Some(value),
+            Self::Runner    => config.runner_role       = Some(value),
+            Self::Admin     => config.admin_role        = Some(value),
         }
     }
 
@@ -1073,7 +1073,7 @@ async fn save_and_create_group(
     }
 
     // Initialize default ranks
-    let guild_name = crate::guild_name(ctx, guild_id);
+    let guild_name = guild_name(ctx, guild_id);
     info!("[{}] Initializing default ranks", guild_name);
     if let Err(e) = db.ranks.init_default_ranks(guild_id).await {
         warn!("[{}] Failed to initialize default ranks: {}", guild_name, e);
@@ -1104,7 +1104,7 @@ async fn save_and_create_group(
 
 /// Helper function to finalize group setup by loading it into manager and immediately updating dashboard
 async fn finalize_group_setup(ctx: &Context, db: &Arc<Database>, manager: &Arc<Mutex<Manager>>, guild_id: GI, dashboard_msg_id: u64) -> Result<()> {
-    let guild_name = crate::guild_name(ctx, guild_id);
+    let guild_name = guild_name(ctx, guild_id);
 
     // Load the group from database
     match db.groups.get_groups_for_guild(guild_id).await {
@@ -1151,7 +1151,7 @@ async fn finalize_group_setup(ctx: &Context, db: &Arc<Database>, manager: &Arc<M
 async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channel_id: u64, db: &std::sync::Arc<crate::Database>, manager: &Arc<Mutex<crate::models::Manager>>) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
-    let guild_name = crate::guild_name(ctx, guild_id);
+    let guild_name = guild_name(ctx, guild_id);
 
     SETUP_STATE.update_setup(user_id, guild_id, |config| {
         config.blue_channel = Some(channel_id);
@@ -1346,8 +1346,9 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
         }
     };
 
+    let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
     info!("DEBUG: User {} - Guild ELO: {}, Rank: {}, Games: {}, Wins: {}", 
-          user_id, guild_elo.elo, guild_elo.rank.name, guild_elo.games, guild_elo.wins);
+          user_tag, guild_elo.elo, guild_elo.rank.name, guild_elo.games, guild_elo.wins);
 
     // Get user info - if no user provided, we can't continue
     let user_info = user.ok_or_else(|| {
@@ -1463,7 +1464,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
         if !check_run(cc).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-    let guild_name = crate::guild_name(cc.ctx, guild_id);
+    let guild_name = guild_name(cc.ctx, guild_id);
 
     info!("[{}] Getting group from channel {}", guild_name, cc.intax.channel_id);
     // Get the group from the current channel
@@ -1481,12 +1482,14 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
         }
     };
 
-    info!("[{}] Finding session for user {}", guild_name, user_id);
+    let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+    info!("[{}] Finding session for user {}", guild_name, user_tag);
     // Find the session containing the player
     let session = match group.get_user_session(user_id).await {
         Ok(s) => s,
         Err(e) => {
-            warn!("[{}] User {} not found in any session: {}", guild_name, user_id, e);
+            let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+            warn!("[{}] User {} not found in any session: {}", guild_name, user_tag, e);
             let error_embed = CE::new()
                 .title("Player not found")
                 .description(format!("<@{user_id}> is not in any queue."))
@@ -1501,7 +1504,8 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     let player_idx = match session.pool.iter().position(|p| p.player.user_id == user_id) {
         Some(idx) => idx,
         None => {
-            error!("[{}] Player {} not found in pool despite being in session", guild_name, user_id);
+            let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+            error!("[{}] Player {} not found in pool despite being in session", guild_name, user_tag);
             let error_embed = CE::new()
                 .title("Player not found")
                 .description(format!("<@{user_id}> is not in the queue pool."))
@@ -1544,7 +1548,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     if !check_run(cc).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
-    let guild_name = crate::guild_name(cc.ctx, guild_id);
+    let guild_name = guild_name(cc.ctx, guild_id);
 
     info!("[{}] Getting group from channel {}", guild_name, cc.intax.channel_id);
     // Get the group from the current channel
@@ -1562,12 +1566,14 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
         }
     };
 
-    info!("[{}] Finding session for user {}", guild_name, user_id);
+    let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+    info!("[{}] Finding session for user {}", guild_name, user_tag);
     // Find the session containing the player
     let session = match group.get_user_session(user_id).await {
         Ok(s) => s,
         Err(e) => {
-            warn!("[{}] User {} not found in any session: {}", guild_name, user_id, e);
+            let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+            warn!("[{}] User {} not found in any session: {}", guild_name, user_tag, e);
             let error_embed = CE::new()
                 .title("Player not found")
                 .description(format!("<@{user_id}> is not in any queue."))
@@ -1582,7 +1588,8 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     let player_idx = match session.pool.iter().position(|p| p.player.user_id == user_id) {
         Some(idx) => idx,
         None => {
-            error!("[{}] Player {} not found in pool despite being in session", guild_name, user_id);
+            let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+            error!("[{}] Player {} not found in pool despite being in session", guild_name, user_tag);
             let error_embed = CE::new()
                 .title("Player not found")
                 .description(format!("<@{user_id}> is not in the queue pool."))
@@ -1618,12 +1625,14 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
 }
 
 /// `/remove` - Remove all players from the queue, or a specific player
+/// Works in any group channel (queue chat, dashboard, team VCs, etc.)
+/// Handles all subgroups, not just the first one
 pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Option<&CommandDataOption>) -> Result<()> {
     if !check_run(cc).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
 
-    // Get the group from the current channel
+    // Get the group from the current channel (works in any group channel)
     let group = match server.get_group(cc.intax.channel_id) {
         Ok(g) => g,
         Err(e) => {
@@ -1637,64 +1646,90 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
         }
     };
 
-    // Check if the command is being used in the queue chat channel
-    if cc.intax.channel_id != group.channels.queue_chat {
-        let queue_chat_mention = format!("<#{}>", group.channels.queue_chat.get());
-        let error_embed = CE::new()
-            .title("Wrong channel")
-            .description(format!(
-                "This command can only be used in the queue chat channel. Please use it in {}.",
-                queue_chat_mention
-            ))
-            .field("Reason", "The queue system needs to detect which queue you're managing based on the channel you're in.", false)
-            .color(ORANGE);
-
-        cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
-        return Ok(());
-    }
+    // Determine which subgroup(s) to target
+    let target_subgroups = if let Some(user_opt) = user_option {
+        // For specific user removal, search all subgroups for that user
+        if let Some(user_id) = user_opt.value.as_user_id() {
+            let mut target_sg_ids = Vec::new();
+            for (sg_idx, sg) in group.subgroups.iter().enumerate() {
+                // Check if user is in any session of this subgroup
+                for session in &sg.sessions {
+                    if session.pool.iter().any(|p| p.player.user_id == user_id.get()) {
+                        target_sg_ids.push(sg_idx);
+                        break;
+                    }
+                }
+            }
+            
+            if target_sg_ids.is_empty() {
+                // User not found in any subgroup, default to first subgroup
+                vec![0]
+            } else {
+                target_sg_ids
+            }
+        } else {
+            vec![0] // Default to first subgroup if user parsing fails
+        }
+    } else {
+        // For clearing queue, target all subgroups
+        (0..group.subgroups.len()).collect()
+    };
 
     // Handle specific user removal vs clear all
     if let Some(user_opt) = user_option {
-        // Remove specific user
+        // Remove specific user from relevant subgroups
         if let Some(user_id) = user_opt.value.as_user_id() {
             let user: Result<User, serenity::Error> = cc.ctx.http.get_user(user_id).await;
             
             match user {
                 Ok(target_user) => {
-                    // Get the idle session and remove the specific user
-                    let removed = match group.get_queue().await {
-                        Ok(session) => {
-                            let initial_len = session.pool.len();
-                            session.pool.retain(|p| p.player.user_id != user_id.get());
-                            let removed_count = initial_len - session.pool.len();
-                            
-                            if removed_count > 0 {
-                                Some((removed_count, target_user.name.clone()))
-                            } else {
-                                None
+                    let mut total_removed = 0;
+                    let mut removed_from_subgroups = Vec::new();
+                    
+                    // Remove from each targeted subgroup
+                    for &sg_idx in &target_subgroups {
+                        if let Some(sg) = group.subgroups.get_mut(sg_idx) {
+                            for session in &mut sg.sessions {
+                                if !session.is_active() {
+                                    let initial_len = session.pool.len();
+                                    session.pool.retain(|p| p.player.user_id != user_id.get());
+                                    let removed_count = initial_len - session.pool.len();
+                                    if removed_count > 0 {
+                                        total_removed += removed_count;
+                                        removed_from_subgroups.push((sg_idx, sg.name.clone()));
+                                    }
+                                }
                             }
-                        },
-                        Err(_) => None
-                    };
+                        }
+                    }
 
                     // Update the dashboard
                     group.queue_dash_update(cc.ctx, guild_id).await;
 
-                    match removed {
-                        Some((_count, name)) => {
-                            let success_embed = CE::new()
-                                .title("Player removed")
-                                .description(format!("Removed **{}** from the queue.", name))
-                                .color(GREEN);
-                            cc.intax.create_response(&cc.ctx.http, Ephemeral::send(success_embed)).await?;
-                        },
-                        None => {
-                            let error_embed = CE::new()
-                                .title("Player not in queue")
-                                .description(format!("**{}** is not currently in the queue.", target_user.name))
-                                .color(ORANGE);
-                            cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
-                        }
+                    if total_removed > 0 {
+                        let sg_names: Vec<String> = removed_from_subgroups.iter()
+                            .map(|(_, name)| format!("**{}**", name))
+                            .collect();
+                        
+                        let success_embed = CE::new()
+                            .title("Player removed")
+                            .description(format!(
+                                "Removed **{}** from the queue{}.", 
+                                target_user.name,
+                                if removed_from_subgroups.len() > 1 {
+                                    format!(" from subgroups: {}", sg_names.join(", "))
+                                } else {
+                                    String::new()
+                                }
+                            ))
+                            .color(GREEN);
+                        cc.intax.create_response(&cc.ctx.http, Ephemeral::send(success_embed)).await?;
+                    } else {
+                        let error_embed = CE::new()
+                            .title("Player not in queue")
+                            .description(format!("**{}** is not currently in the queue.", target_user.name))
+                            .color(ORANGE);
+                        cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
                     }
                 },
                 Err(_) => {
@@ -1713,22 +1748,39 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
             cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
         }
     } else {
-        // Clear all players from queue (original behavior)
-        let player_count = match group.get_queue().await {
-            Ok(session) => {
-                let count = session.pool.len();
-                session.pool.clear();
-                count
-            },
-            Err(_) => 0
-        };
+        // Clear all players from all subgroups
+        let mut total_players = 0;
+        let mut cleared_subgroups = Vec::new();
+        
+        for (sg_idx, sg) in group.subgroups.iter_mut().enumerate() {
+            for session in &mut sg.sessions {
+                if !session.is_active() {
+                    let count = session.pool.len();
+                    if count > 0 {
+                        total_players += count;
+                        session.pool.clear();
+                        cleared_subgroups.push((sg_idx, sg.name.clone()));
+                    }
+                }
+            }
+        }
 
         // Update the dashboard
         group.queue_dash_update(cc.ctx, guild_id).await;
 
         let success_embed = CE::new()
             .title("Queue cleared")
-            .description(format!("Removed {player_count} player(s) from the queue."))
+            .description(format!(
+                "Removed {total_players} player(s) from the queue{}.", 
+                if cleared_subgroups.len() > 1 {
+                    let sg_names: Vec<String> = cleared_subgroups.iter()
+                        .map(|(_, name)| format!("**{}**", name))
+                        .collect();
+                    format!(" from subgroups: {}", sg_names.join(", "))
+                } else {
+                    String::new()
+                }
+            ))
             .color(GREEN);
 
         cc.intax.create_response(&cc.ctx.http, Ephemeral::send(success_embed)).await?;

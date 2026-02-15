@@ -19,6 +19,8 @@ pub struct Session {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at:    Option<SystemTime>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_ended_at: Option<SystemTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub team_channels: Option<TeamChannel>,
 }
 
@@ -56,6 +58,7 @@ impl Session {
             pool,
             ready_at:      None,
             started_at:    None,
+            match_ended_at: None,
             team_channels: None,
         }
     }
@@ -80,6 +83,7 @@ impl Session {
         self.status        = SessionStatus::Idle;
         self.ready_at      = None;
         self.started_at    = None;
+        self.match_ended_at = None;
         self.team_channels = None;
         // Clear team assignments and VC join tracking when going back to idle
         for player in &mut self.pool {
@@ -117,6 +121,7 @@ impl Session {
             pool:          Vec::new(),
             ready_at:      None,
             started_at:    None,
+            match_ended_at: None,
             team_channels: None,
         }
     }
@@ -127,8 +132,11 @@ impl Session {
             return false;
         }
 
-        if let Some(ready_at) = self.ready_at {
-            if let Ok(elapsed) = SystemTime::now().duration_since(ready_at) {
+        // Use match_ended_at if available (post-game scenario), otherwise ready_at
+        let base_time = self.match_ended_at.or(self.ready_at);
+        
+        if let Some(base_time) = base_time {
+            if let Ok(elapsed) = SystemTime::now().duration_since(base_time) {
                 return elapsed.as_secs() >= timeout_seconds;
             }
         }
@@ -141,8 +149,11 @@ impl Session {
             return 0;
         }
 
-        if let Some(ready_at) = self.ready_at {
-            if let Ok(elapsed) = SystemTime::now().duration_since(ready_at) {
+        // Use match_ended_at if available (post-game scenario), otherwise ready_at
+        let base_time = self.match_ended_at.or(self.ready_at);
+        
+        if let Some(base_time) = base_time {
+            if let Ok(elapsed) = SystemTime::now().duration_since(base_time) {
                 let elapsed_secs = elapsed.as_secs();
                 if elapsed_secs < timeout_seconds {
                     return timeout_seconds - elapsed_secs;

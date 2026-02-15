@@ -237,4 +237,31 @@ impl ConfigRepository {
     pub async fn set_elo_ranks_linked(&self, guild_id: GI, linked: bool) -> Result<()> {
         self.set_bool(guild_id, "elo_ranks_linked", linked).await
     }
+
+    /// Get post_game_timeout setting (in seconds)
+    pub async fn get_post_game_timeout(&self, guild_id: GI) -> Result<u16> {
+        let query = "SELECT post_game_timeout FROM config WHERE guild_id = ?";
+        let row = sqlx::query(query)
+            .bind(guild_id.get() as i64)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|row| {
+            row.try_get::<Option<i64>, _>("post_game_timeout")
+                .ok()
+                .flatten()
+                .map(|val| val as u16)
+        }).unwrap_or(120)) // Default 2 minutes (120 seconds)
+    }
+
+    /// Set post_game_timeout setting (in seconds)
+    pub async fn set_post_game_timeout(&self, guild_id: GI, timeout_seconds: u16) -> Result<()> {
+        let query = "INSERT INTO config (guild_id, post_game_timeout) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET post_game_timeout = excluded.post_game_timeout";
+        sqlx::query(query)
+            .bind(guild_id.get() as i64)
+            .bind(timeout_seconds as i64)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }

@@ -4,11 +4,11 @@ use std::sync::Arc;
 use time::macros::format_description;
 use tracing_subscriber::fmt::time::UtcTime;
 use anyhow::Result;
-use pf_pug_bot::{RED, commands};
+use pf_pug_bot::{RED, commands, log_prefix_guild_group};
 use serenity::all::{
     Client, GatewayIntents, EventHandler, Ready, Guild,Interaction,
-    VoiceState, Command, Context, User, CommandOptionType as COT,
-    CreateEmbed, EditMessage
+    VoiceState, Command, Context, CommandOptionType as COT,
+    CreateEmbed, EditMessage, CommandInteraction, CommandDataOption
 };
 use serenity::prelude::TypeMapKey;
 use serenity::async_trait;
@@ -17,7 +17,7 @@ use serenity::builder::{
     CreateInteractionResponseMessage as CIRM,
 };
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use pf_pug_bot::database::migrations::DatabaseMigrations;
 use pf_pug_bot::database::repositories::GroupRepository;
@@ -45,7 +45,15 @@ async fn send_error_response(itx: &serenity::all::CommandInteraction, ctx: &Cont
 async fn send_component_error_response(itx: &serenity::all::ComponentInteraction, ctx: &Context, message: &str) {
     let response = CIR::Message(CIRM::new().content(message).ephemeral(true));
     if let Err(e) = itx.create_response(&ctx.http, response).await {
-        error!("Failed to send error response: {e}");
+        // Check if this is an "Unknown interaction" error, which means the interaction was already handled
+        if e.to_string().contains("Unknown interaction") {
+            debug!("Could not send error response - interaction already handled: {} | User: {} | Message: {}", 
+                e, itx.user.id, itx.message.id);
+        } else {
+            error!("Failed to send error response: {e} | User: {} | Guild: {} | Message: {} | Interaction type: {}", 
+                itx.user.id, itx.guild_id.unwrap_or_default(), itx.message.id, 
+                std::any::type_name_of_val(itx));
+        }
     }
 }
 
@@ -67,6 +75,64 @@ impl CmdOp for CC {
 
     fn op_role(self,name: impl Into<String,>,desc: impl Into<String,>,req: bool,) -> Self {
         self.add_option(CCO::new(COT::Role, name, desc).required(req))
+    }
+}
+
+// Helper methods to reduce code duplication
+
+/// Extract user ID from command options with error handling
+async fn extract_user_option(cdo: &[CommandDataOption], command_name: &str) -> Option<serenity::all::UserId> {
+    if let Some(user_option) = cdo.first() {
+        if let Some(user_id) = user_option.value.as_user_id() {
+            Some(user_id)
+        } else {
+            error!("Failed to parse user ID from {} command", command_name);
+            None
+        }
+    } else {
+        error!("No user option provided for {} command", command_name);
+        None
+    }
+}
+
+/// Get server with error handling - returns a mutable reference to the server
+async fn get_server_with_error<'a>(
+    manager: &'a mut tokio::sync::MutexGuard<'_, Manager>,
+    guild_id: serenity::all::GuildId,
+    itx: &CommandInteraction,
+    ctx: &Context,
+) -> Result<&'a mut pf_pug_bot::models::Server> {
+    match manager.get_server(guild_id) {
+        Ok(s) => Ok(s),
+        Err(e) => {
+            error!("Server not found: {e}");
+            let _ = send_error_response(itx, ctx, "Server not configured. Please use `/config` to create roles and groups.").await;
+            Err(anyhow::anyhow!("Server not found"))
+        }
+    }
+}
+
+/// Log command usage with proper context
+async fn log_command_usage(
+    ctx: &Context,
+    itx: &CommandInteraction,
+    tag: &str,
+    command_name: &str,
+) {
+    let guild_name = pf_pug_bot::guild_name(ctx, itx.guild_id.unwrap());
+    info!("[{}] {} used /{}", guild_name, tag, command_name);
+}
+
+/// Check if interaction is still valid for response
+fn is_interaction_valid(interaction: &serenity::all::Interaction) -> bool {
+    match interaction {
+        serenity::all::Interaction::Component(itx) => {
+            itx.id.get() != 0 && itx.message.id.get() != 0
+        },
+        serenity::all::Interaction::Command(itx) => {
+            itx.id.get() != 0
+        },
+        _ => true,
     }
 }
 
@@ -223,10 +289,7 @@ impl EventHandler for Handler {
     async fn interaction_create(&self,ctx: Context,pl: Interaction,) {
         match pl {
             Interaction::Command(itx) => {
-                let tag = match self.db.get_user(itx.user.id, &ctx).await {
-                    Ok(player) => player.tag,
-                    Err(_) => itx.user.name.clone(),
-                };
+                let tag = pf_pug_bot::log::get_user_tag(&ctx, itx.user.id, &self.db).await;
                 let cmd_ctx     = CommandContext {
                     ctx:     &ctx,
                     intax:   &itx,
@@ -262,57 +325,50 @@ impl EventHandler for Handler {
                     _ => {
                         // All other commands need a server
                         let mut manager = self.manager.lock().await;
-                        let server = match manager.get_server(itx.guild_id.unwrap()) {
+                        let server = match get_server_with_error(&mut manager, itx.guild_id.unwrap(), &itx, &ctx).await {
                             Ok(s) => s,
-                            Err(e) => {
-                                error!("Server not found: {e}");
-                                let _ = send_error_response(&itx, &ctx, "Server not configured. Please use `/config` to create roles and groups.").await;
-                                return;
-                            }
+                            Err(_) => return, // Error already handled by helper
                         };
 
                         match cd.name.as_str() {
                             "buffer" => {
-                                info();
-                                if let Some(user_option) = cdo.first() {
-                                    if let Some(user_id) = user_option.value.as_user_id() {
-                                        admin::cmd_buffer(&cmd_ctx, server, user_id).await.expect("Failed to buffer player")
-                                    } else {
-                                        error!("Failed to parse user ID from buffer command");
-                                    }
+                                log_command_usage(&ctx, &itx, &tag, "buffer").await;
+                                if let Some(user_id) = extract_user_option(cdo, "buffer").await {
+                                    admin::cmd_buffer(&cmd_ctx, server, user_id).await
+                                } else {
+                                    Ok(())
                                 }
-                                Ok(())
                             }
                             "fatkid" => {
-                                info();
-                                if let Some(user_option) = cdo.first() {
-                                    if let Some(user_id) = user_option.value.as_user_id() {
-                                        admin::cmd_fatkid(&cmd_ctx, server, user_id).await.expect("Failed to fatkid player")
-                                    } else {
-                                        error!("Failed to parse user ID from fatkid command");
-                                    }
+                                log_command_usage(&ctx, &itx, &tag, "fatkid").await;
+                                if let Some(user_id) = extract_user_option(cdo, "fatkid").await {
+                                    admin::cmd_fatkid(&cmd_ctx, server, user_id).await
+                                } else {
+                                    Ok(())
                                 }
-                                Ok(())
                             }
                             "remove" => {
-                                info();
+                                log_command_usage(&ctx, &itx, &tag, "remove").await;
                                 admin::cmd_remove_queue(&cmd_ctx, server, cdo.first()).await
                             }
                             "elo" => {
-                                info();
+                                log_command_usage(&ctx, &itx, &tag, "elo").await;
                                 if let Some(user_option) = cdo.first() {
                                     if let Some(user_id) = user_option.value.as_user_id() {
-                                        let user: Result<User, serenity::Error> = ctx.http.get_user(user_id).await;
-                                        if let Ok(user) = user {
-                                            admin::cmd_get_player_elo(&cmd_ctx, Some(user)).await
-                                        } else {
-                                            send_error_response(&itx, &ctx, "Failed to get user").await
+                                        match ctx.http.get_user(user_id).await {
+                                            Ok(user) => admin::cmd_get_player_elo(&cmd_ctx, Some(user)).await,
+                                            Err(_) => {
+                                                let _ = send_error_response(&itx, &ctx, "Failed to get user").await;
+                                                Ok(())
+                                            }
                                         }
                                     } else {
-                                        send_error_response(&itx, &ctx, "Invalid user specified").await
+                                        let _ = send_error_response(&itx, &ctx, "Invalid user specified").await;
+                                        Ok(())
                                     }
                                 } else {
-                                    send_error_response(&itx, &ctx, "No user specified").await
+                                    let _ = send_error_response(&itx, &ctx, "No user specified").await;
+                                    Ok(())
                                 }
                             }
                             _ => {
@@ -327,7 +383,7 @@ impl EventHandler for Handler {
                     let _ = send_error_response(&itx, &ctx, "An error occurred while processing your command").await;
                 }
             },
-            Interaction::Component(itx) => {
+            Interaction::Component(ref itx) => {
                 let button_type = ButtonType::parse(&itx.data.custom_id);
 
                 if matches!(button_type, ButtonType::ConfirmPermissions) {
@@ -575,11 +631,24 @@ impl EventHandler for Handler {
                 let _button_id = &itx.data.custom_id;
                 let _user_id = itx.user.id;
 
+                debug!("Handling button interaction: '{}' | User: {} | Message: {} | Token: {:?}", 
+                    itx.data.custom_id, itx.user.id, itx.message.id, 
+                    itx.token);
+
                 let result = group.dash_handle_button_interaction(&comp_ctx).await;
 
                 if let Err(e) = result {
-                    error!("Error handling button '{}': {}", itx.data.custom_id, e);
-                    send_component_error_response(&itx, &ctx, "An error occurred while processing your button click").await;
+                    error!("Error handling button '{}': {} | User: {} | Guild: {} | Message: {} | Token: {:?}", 
+                        itx.data.custom_id, e, itx.user.id, itx.guild_id.unwrap_or_default(), 
+                        itx.message.id, itx.token);
+                    if is_interaction_valid(&pl) {
+                        send_component_error_response(&itx, &ctx, "An error occurred while processing your button click").await;
+                    } else {
+                        error!("Interaction no longer valid for button '{}'", itx.data.custom_id);
+                    }
+                } else {
+                    debug!("Successfully handled button '{}': User: {} | Message: {}", 
+                        itx.data.custom_id, itx.user.id, itx.message.id);
                 }
             },
             Interaction::Modal(itx) => {
@@ -771,7 +840,10 @@ impl EventHandler for Handler {
                             // Player not in session yet - check if they want auto-queue
                             let user_prefs = self.db.users.get_prefs(user_id).await.unwrap_or_default();
                             if !user_prefs.vc_auto_join {
-                                // User has disabled VC auto-queue, don't add them
+                                // User has disabled VC auto-queue, log that they joined VC but didn't join queue
+                                let guild_name = pf_pug_bot::guild_name(&ctx, server);
+                                let group_name = group.name.as_deref().unwrap_or("Unknown");
+                                info!("{} {} joined queue VC but did not join the queue (auto-queue disabled)", log_prefix_guild_group(&guild_name, &group_name), tag);
                                 return;
                             }
 
@@ -780,6 +852,10 @@ impl EventHandler for Handler {
                                 warn!("No idle sessions present when player {} joined VC, creating one", tag);
                                 if let Err(e) = group.create_session() {
                                     error!("Failed to create session for player {}: {}", tag, e);
+                                    let guild_name = pf_pug_bot::guild_name(&ctx, server);
+                                    let group_name = group.name.as_deref().unwrap_or("Unknown");
+                                    error!("{} {} joined VC but could not be added to queue (failed to create session)", 
+                                          log_prefix_guild_group(&guild_name, &group_name), tag);
                                     return;
                                 }
                             }
@@ -807,19 +883,27 @@ impl EventHandler for Handler {
                                     error!("Failed to add player to queue: {e}");
                                 } else {
                                     let guild_name = pf_pug_bot::guild_name(&ctx, server);
-                                    let group_name = ctx.cache.channel(group.channels.dashboard)
-                                        .map(|ch| ch.name.clone())
-                                        .unwrap_or_else(|| "Unknown".to_string());
+                                    let group_name = group.name.as_deref().unwrap_or("Unknown");
                                     let pool_len: usize = group.subgroups[0].sessions.iter().map(|s| s.pool.len()).sum();
                                     let sg_name = group.subgroups.first().map(|sg| sg.name.as_str());
-                                    log_queue_toggle(&guild_name, &group_name, &tag, QueueToggleType::VJ, Some((pool_len, group.quota() as usize)), sg_name);
+                                    
+                                    // Check if queue was already full when this player joined
+                                    if pool_len > group.quota() as usize {
+                                        warn!("{} {} joined VC and was added to queue, but queue exceeded quota ({} > {})", 
+                                              log_prefix_guild_group(&guild_name, &group_name), tag, pool_len, group.quota());
+                                    }
+                                    
+                                    log_queue_toggle(&guild_name, &group_name, &tag, QueueToggleType::VJ, Some((pool_len, group.quota() as usize)), sg_name, Some(pool_len));
                                 }
 
                                 group.queue_dash_update(&ctx, server).await;
                             }
                         }
 
-                        if group.check_hot_timeout(&ctx, server).await {
+                        // Get post-game timeout from database
+                        let post_game_timeout = self.db.config.get_post_game_timeout(server).await.ok();
+                        
+                        if group.check_hot_timeout(&ctx, server, post_game_timeout).await {
                             info!("Hot session timeout detected, updating dashboard");
                             group.queue_dash_update(&ctx, server).await;
                         }
@@ -845,49 +929,67 @@ impl Handler {
         tag: &str,
     ) {
         let guild_name = pf_pug_bot::guild_name(&ctx, guild_id);
-        let group_name = ctx.cache.channel(group.channels.dashboard)
-            .map(|ch| ch.name.clone())
-            .unwrap_or_else(|| "Unknown".to_string());
-        let pool_len: usize = group.subgroups[0].sessions.iter().map(|s| s.pool.len()).sum();
-        let sg_name = group.subgroups.first().map(|sg| sg.name.as_str());
-        log_queue_toggle(&guild_name, &group_name, tag, VL, Some((pool_len, group.quota() as usize)), sg_name);
+        let group_name = group.name.as_deref().unwrap_or("Unknown").to_string();
+        let sg_name = group.get_user_sg_name(user_id);
 
         let quota = group.quota() as usize;
 
         let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
-            if !sesh.is_active() {
-                let was_hot = sesh.is_hot();
+            if sesh.is_active() {
+                // Player is in an active session (Push/Live) - bot is moving them, not a voluntary leave
+                return;
+            }
 
-                let should_remove_player = if let Ok(settings) = self.db.users.get_prefs(user_id).await {
-                    if settings.vc_auto_leave {
-                        true
+            let was_hot = sesh.is_hot();
+
+            let should_remove_player = {
+                // Check if this is a post-game scenario (session was recently active)
+                let is_post_game = sesh.ready_at.is_none() && !sesh.is_hot();
+                
+                if is_post_game {
+                    // Post-game behavior: check server-wide post_game_auto_leave setting
+                    self.db.config.get_bool(guild_id, "post_game_auto_leave", true).await.unwrap_or(true)
+                } else if sesh.is_hot() {
+                    // Hot game behavior: check user's vc_auto_leave preference
+                    if let Ok(settings) = self.db.users.get_prefs(user_id).await {
+                        settings.vc_auto_leave
                     } else {
-                        if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
-                            player.joined_at = std::time::SystemTime::now();
-                            player.in_queue_vc = false;
-                        }
                         false
                     }
                 } else {
-                    true
-                };
-
-                if should_remove_player {
-                    sesh.remove_player(user_id);
-                }
-
-                if was_hot && sesh.pool.len() >= quota {
-                    true
-                } else if was_hot && sesh.pool.len() < quota {
-                    sesh.idle();
-                    false
-                } else {
+                    // Regular idle session: don't auto-remove
                     false
                 }
+            };
+
+            if !should_remove_player {
+                if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+                    player.joined_at = std::time::SystemTime::now();
+                    player.in_queue_vc = false;
+                }
+            }
+
+            // Capture position before removal for logging
+            let position_before_removal = sesh.pool.iter().position(|p| p.player.user_id == user_id).map(|p| p + 1);
+            
+            if should_remove_player {
+                sesh.remove_player(user_id);
+            }
+
+            // Log after removal so pool count is accurate, but use position before removal
+            log_queue_toggle(&guild_name, &group_name, tag, VL, Some((sesh.pool.len(), quota)), sg_name.as_deref(), position_before_removal);
+
+            if was_hot && sesh.pool.len() >= quota {
+                true
+            } else if was_hot && sesh.pool.len() < quota {
+                sesh.idle();
+                false
             } else {
                 false
             }
         } else {
+            // Player not found in any session
+            log_queue_toggle(&guild_name, &group_name, tag, VL, None, sg_name.as_deref(), None);
             false
         };
 
@@ -951,7 +1053,7 @@ impl Handler {
         // Iterate through all groups and check their queue voice channels
         for group in &mut server.groups {
             let queue_vc_id = group.channels.queue_vc;
-            let dashboard_channel = group.channels.dashboard;
+            let _dashboard_channel = group.channels.dashboard;
 
             // Check if there's an idle session available
             let has_idle_session = !group.get_sessions_by_status(&SessionStatus::Idle).is_empty();
@@ -983,12 +1085,10 @@ impl Handler {
 
             // Add all players to the session WITHOUT quota check
             let sg_name_owned = group.subgroups.first().map(|sg| sg.name.clone());
+            let group_name = group.name.as_deref().unwrap_or("Unknown").to_string();
             if let Ok(session) = group.get_queue().await {
                 // Get server and group names for logging
                 let guild_name = guild.name.clone();
-                let group_name = ctx.cache.channel(dashboard_channel)
-                    .map(|ch| ch.name.clone())
-                    .unwrap_or_else(|| "Unknown".to_string());
 
                 use pf_pug_bot::handlers::player::resolve_player_for_queue;
 
@@ -1003,7 +1103,8 @@ impl Handler {
                         }
                     };
 
-                    log_queue_toggle(&guild_name, &group_name, &player.tag.clone(), QueueToggleType::VJ, None, sg_name_owned.as_deref());
+                    let position = session.pool.len() + 1;
+                    log_queue_toggle(&guild_name, &group_name, &player.tag.clone(), QueueToggleType::VJ, None, sg_name_owned.as_deref(), Some(position));
                     session.add_player(player);
                 }
             }

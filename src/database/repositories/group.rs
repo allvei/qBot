@@ -197,7 +197,6 @@ impl GroupRepository {
         // Load subgroups from DB; if present, replace the default subgroup
         match self.get_subgroups(guild_id, group_id).await {
             Ok(sgs) if !sgs.is_empty() => {
-                info!("Loaded {} subgroup(s) from DB for group {}", sgs.len(), group_id);
                 group.subgroups = sgs;
             }
             _ => {

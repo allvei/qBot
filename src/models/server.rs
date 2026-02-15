@@ -8,14 +8,14 @@ use std::time::SystemTime;
 
 use tokio::sync::Mutex;
 use anyhow::{anyhow, Error, Result};
-use crate::{Database as DB, GREEN, Manager, Rank, models::constants::{DEFAULT_ACTIVE_ELO, MAX_TIMEOUT, MIN_TIMEOUT}};
+use crate::{Database as DB, GREEN, Manager, Rank, models::constants::{DEFAULT_ACTIVE_ELO, MAX_TIMEOUT, MIN_TIMEOUT}, guild_name, log_prefix_guild_group_subgroup};
 use serde::{Deserialize, Serialize};
 use serenity::{all::{
     ChannelId as CI, Context, CreateEmbed,
     CreateMessage as CM, GuildId as GI, MessageId as MI, RoleId as RI,
     UserId as UI,
 }, };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::models::{
     Player, SessionPlayer, Session, SessionStatus, TeamChannel,
@@ -297,6 +297,8 @@ pub struct Group {
     pub dm_alert_enabled:    bool,
     pub dm_alert_threshold:  u8,
     pub dm_alert_users:      Vec<UI>,
+    /// Track recently freed team channels to avoid immediate recreation
+    pub recently_freed_teams: Vec<TeamChannel>,
 }
 
 impl Group {
@@ -329,6 +331,7 @@ impl Group {
             dm_alert_enabled: false,
             dm_alert_threshold: 0,
             dm_alert_users: Vec::new(),
+            recently_freed_teams: Vec::new(),
         }
     }
 
@@ -563,6 +566,13 @@ impl Group {
             .ok_or_else(|| anyhow!("User not found in subgroup {}", sg_id))
     }
 
+    /// Get the subgroup name for the subgroup containing this user
+    pub fn get_user_sg_name(&self, user_id: UI) -> Option<String> {
+        self.subgroups.iter()
+            .find(|sg| sg.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.user_id == user_id)))
+            .map(|sg| sg.name.clone())
+    }
+
     /// Check if user is in any session across all subgroups
     pub fn is_user_in_any_session(&self, user_id: UI) -> bool {
         self.subgroups.iter().any(|sg|
@@ -628,6 +638,13 @@ impl Group {
             let group_id = self.group_id;
             let timeout = self.timeout;
             let ctx_clone = ctx.clone();
+            
+            // Get post-game timeout before spawning task
+            let post_game_timeout = if let Some(database) = db {
+                database.config.get_post_game_timeout(guild_id).await.ok()
+            } else {
+                None
+            };
 
             tokio::spawn(async move {
                 use tokio::time::{sleep, Duration};
@@ -639,7 +656,7 @@ impl Group {
                 let mut manager_lock = mgr.lock().await;
                 if let Ok(server) = manager_lock.get_server(guild_id) {
                     if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
-                        if group.check_hot_timeout(&ctx_clone, guild_id).await {
+                        if group.check_hot_timeout(&ctx_clone, guild_id, post_game_timeout).await {
                             info!("Deadline timer fired: removed timed-out players from group {}", group_id);
                             group.queue_dash_update(&ctx_clone, guild_id).await;
                         }
@@ -653,9 +670,8 @@ impl Group {
 
     /// Check hot sessions for timeout and handle accordingly
     /// Returns true if any changes were made that require dashboard update
-    pub async fn check_hot_timeout(&mut self, ctx: &Context, guild_id: GI) -> bool {
+    pub async fn check_hot_timeout(&mut self, ctx: &Context, guild_id: GI, post_game_timeout: Option<u16>) -> bool {
         let mut changes_made = false;
-        let timeout_seconds = self.timeout as u64;
 
         // Check hot sessions across all subgroups
         for sg in &mut self.subgroups {
@@ -664,6 +680,13 @@ impl Group {
             // Find hot sessions that have timed out
             let hot_sessions: Vec<usize> = sg.sessions.iter().enumerate()
                 .filter_map(|(idx, s)| {
+                    // Use post-game timeout if this is a post-game scenario and post_game_timeout is provided
+                    let timeout_seconds = if s.match_ended_at.is_some() {
+                        post_game_timeout.map(|t| t as u64).unwrap_or(self.timeout as u64)
+                    } else {
+                        self.timeout as u64
+                    };
+                    
                     if s.is_hot_timeout(timeout_seconds) {
                         Some(idx)
                     } else {
@@ -678,22 +701,35 @@ impl Group {
                 // Get players who are not in VC (timed out)
                 let timed_out_players: Vec<_> = session.pool.iter().take(quota)
                     .filter(|p| !p.in_queue_vc)
-                    .map(|p| p.player.user_id)
                     .collect();
 
                 if timed_out_players.is_empty() {continue;}
 
-                info!("Removing {} timed-out players from hot session in subgroup {}", timed_out_players.len(), sg.id);
+                // Create list of player names for logging
+                let player_names: Vec<String> = timed_out_players.iter()
+                    .map(|p| p.player.tag.clone())
+                    .collect();
+
+                let guild_name = guild_name(ctx, guild_id);
+                let full_prefix = log_prefix_guild_group_subgroup(
+                    &guild_name, 
+                    self.name.as_deref().unwrap_or("unknown"), 
+                    &sg.name
+                );
+                
+                info!("{} Removing {} timed-out players: {}", 
+                    full_prefix, timed_out_players.len(), player_names.join(", "));
 
                 // Remove timed out players - retain() preserves order of remaining elements
-                session.pool.retain(|p| !timed_out_players.contains(&p.player.user_id));
+                let timed_out_ids: Vec<_> = timed_out_players.iter().map(|p| p.player.user_id).collect();
+                session.pool.retain(|p| !timed_out_ids.contains(&p.player.user_id));
 
                 // Check if we still have enough players after removals
                 if session.pool.len() >= quota {
-                    info!("Regenerating teams after timeout with {} players", session.pool.len());
+                    info!("{} Regenerating teams after timeout with {} players", full_prefix, session.pool.len());
                     changes_made = true;
                 } else {
-                    info!("Not enough players after timeout, reverting to idle");
+                    info!("{} Not enough players after timeout, reverting to idle", full_prefix);
                     session.idle();
                     changes_made = true;
                 }
@@ -865,17 +901,24 @@ impl Group {
             }
         }
 
+        // Clear recently freed teams since we're now using team channels
+        self.recently_freed_teams.clear();
+        
         self.queue_dash_update(ctx, guild_id).await;
         Ok(())
     }
 
     /// Collect all team channel pairs occupied by active sessions across all subgroups
     pub fn all_occupied_teams(&self) -> Vec<TeamChannel> {
-        self.subgroups.iter()
+        let mut occupied: Vec<TeamChannel> = self.subgroups.iter()
             .flat_map(|sg| sg.sessions.iter())
             .filter(|s| s.is_active())
             .filter_map(|s| s.team_channels.clone())
-            .collect()
+            .collect();
+        
+        // Also include recently freed teams to prevent immediate recreation
+        occupied.extend(self.recently_freed_teams.clone());
+        occupied
     }
 
     /// Ensure at least one free team VC pair exists under the category.
@@ -965,11 +1008,11 @@ impl Group {
         for tc in &to_delete {
             info!("Deleting unused team VCs: RED={} BLU={}", tc.red_vc, tc.blu_vc);
             if let Err(e) = tc.red_vc.delete(&ctx.http).await {
-                let hint = if e.to_string().contains("Missing Access") { " (bot lacks Manage Channels on this channel)" } else { "" };
+                let hint = if e.to_string().contains("Missing Access") { "(Missing *Manage Channels* permissions)" } else { "" };
                 warn!("Failed to delete RED VC {}:{}{}", tc.red_vc, e, hint);
             }
             if let Err(e) = tc.blu_vc.delete(&ctx.http).await {
-                let hint = if e.to_string().contains("Missing Access") { " (bot lacks Manage Channels on this channel)" } else { "" };
+                let hint = if e.to_string().contains("Missing Access") { "(Missing *Manage Channels* permissions)" } else { "" };
                 warn!("Failed to delete BLU VC {}:{}{}", tc.blu_vc, e, hint);
             }
         }
@@ -1111,25 +1154,68 @@ impl Group {
         let mut successfully_moved = std::collections::HashSet::new();
         for player in &players_to_requeue {
             let tag = &player.tag;
-            if let Err(e) = self.move_user(guild_id, player.user_id, queue_vc, ctx).await {
-                warn!("Failed to move user {} back to queue (likely not in voice): {}", tag, e);
+            
+            // Check if player is already in the queue VC
+            let already_in_queue = if let Some(guild) = ctx.cache.guild(guild_id) {
+                guild.voice_states.get(&player.user_id)
+                    .map(|vs| vs.channel_id == Some(queue_vc))
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            
+            if already_in_queue {
+                // Player is already in queue VC, consider them successfully moved
+                successfully_moved.insert(player.user_id);
+                debug!("Player {} already in queue VC, marking as successfully moved", tag);
+            } else if let Err(e) = self.move_user(guild_id, player.user_id, queue_vc, ctx).await {
+                warn!("Failed to move {} back to queue: {}", tag, e);
             } else {
                 successfully_moved.insert(player.user_id);
             }
         }
 
-        // Clear team_channels from the pulled session so cleanup sees them as free
-        {
-            let sg = self.subgroup_mut(sg_id).unwrap();
-            if let Some(game) = sg.sessions.get_mut(active_session_idx) {
-                game.team_channels = None;
+        // Check if quota will be met after re-queuing players to avoid unnecessary VC deletion/recreation
+        let quota_will_be_met = {
+            let mut projected_count = 0;
+            if let Some(idle_idx) = self.subgroup_mut(sg_id).unwrap().sessions.iter().position(|s| s.status == SessionStatus::Idle) {
+                // Count existing players in idle session
+                projected_count += self.subgroups[sg_id as usize].sessions[idle_idx].pool.len();
             }
+            // Add players who will be re-queued (those successfully moved)
+            projected_count += successfully_moved.len();
+            projected_count >= self.quota() as usize
+        };
+
+        // Handle team channels based on whether we'll cleanup or not
+        let skip_cleanup = quota_will_be_met && self.team_vc_settings.destroy_policy == TeamVcDestroyPolicy::AfterPull;
+        
+        if skip_cleanup {
+            // Add team channels to recently_freed_teams to prevent immediate recreation
+            let sg = self.subgroup_mut(sg_id).unwrap();
+            let team_channels = sg.sessions[active_session_idx].team_channels.clone();
+            // Clear from pulled session first
+            sg.sessions[active_session_idx].team_channels = None;
+            // Then add to recently freed teams
+            if let Some(team_channels) = team_channels {
+                self.recently_freed_teams.push(team_channels);
+                debug!("Added team channels to recently_freed_teams for immediate reuse");
+            }
+        } else {
+            // Clear team_channels from the pulled session so cleanup sees them as free
+            let sg = self.subgroup_mut(sg_id).unwrap();
+            sg.sessions[active_session_idx].team_channels = None;
         }
 
-        // Clean up team VCs based on destroy policy
+        // Clean up team VCs based on destroy policy, but avoid cleanup if quota will be met and policy is AfterPull
         match self.team_vc_settings.destroy_policy {
             TeamVcDestroyPolicy::AfterPull => {
-                self.cleanup_team_vcs(ctx, true).await;
+                // Only clean up if quota won't be immediately met again (to avoid delete/recreate cycle)
+                if !quota_will_be_met {
+                    self.cleanup_team_vcs(ctx, true).await;
+                } else {
+                    debug!("Skipping team VC cleanup - quota will be met again, avoiding unnecessary delete/recreate");
+                }
             },
             TeamVcDestroyPolicy::AfterTimeout => {
                 // Spawn a timer that cleans up team VCs if no new game starts
@@ -1172,6 +1258,9 @@ impl Group {
             }
         };
         let idle_session = &mut sg.sessions[idle_session_idx];
+        
+        // Set match_ended_at to track when the match ended for confirm timer base
+        idle_session.match_ended_at = Some(std::time::SystemTime::now());
 
         // Only re-add players who were successfully moved (i.e., were still in voice)
         for player in players_to_requeue {
@@ -1568,12 +1657,11 @@ impl Group {
     }
 
     /// Notifies the queue chat that quota has been met
-    /// Only pings players who are NOT in the voice channel yet
+    /// Pings ALL players in the first 'quota' players, not just those missing from VC
     /// Only pings the first 'quota' players, not extras queued for next match
     /// Also sends DMs to players who have pm_hot_alert=true
     pub async fn notify(&mut self, ctx: &Context, guild_id: GI, db: Option<&DB>) {
         // Validate VC status before sending notifications to prevent desync
-        // This ensures we only ping players who are actually not in VC
         self.validate_vc_status(ctx, guild_id).await;
 
         let queue_chat = self.channels.queue_chat;
@@ -1581,21 +1669,32 @@ impl Group {
         let mut players_to_dm = Vec::new();
         let quota = self.subgroups[0].quota as usize;
 
-        if let Some(game) = self.subgroups[0].sessions.last() {
-            // Only mention players who are NOT in the voice channel
-            // AND only the first 'quota' players (not extras queued for next match)
-            for player in game.pool.iter().take(quota) {
-                if !player.in_queue_vc {
-                    player_mentions.push(format!("<@{}>", player.player.user_id));
-                    players_to_dm.push(player.player.user_id);
-                }
+        // Get the HOT session specifically, not the last session
+        // This ensures we notify the correct players when quota is met
+        if let Some(hot_session) = self.subgroups[0].sessions.iter()
+            .find(|s| s.status == SessionStatus::Hot) {
+            // Ping ALL players in the first 'quota' positions (not extras queued for next match)
+            // This ensures everyone in the match gets notified, not just those missing from VC
+            for player in hot_session.pool.iter().take(quota) {
+                player_mentions.push(format!("<@{}>", player.player.user_id));
+                players_to_dm.push(player.player.user_id);
             }
+        } else {
+            warn!("No hot session found when trying to notify players");
+            return;
         }
 
-        // Only send notification if there are players to ping
-        if player_mentions.is_empty() {
-            info!("Quota met but all players already in VC - skipping notification");
-            return;
+        // Only log notification if there are actually players to notify
+        if !player_mentions.is_empty() {
+            let guild_name = guild_name(ctx, guild_id);
+            let sg_name = &self.subgroups[0].name;
+            let full_prefix = log_prefix_guild_group_subgroup(
+                &guild_name, 
+                self.name.as_deref().unwrap_or("unknown"), 
+                sg_name
+            );
+            
+            info!("{} Quota met - notifying all {} players in match", full_prefix, player_mentions.len());
         }
 
         // Use embed for header and raw pings in message content to properly ping users

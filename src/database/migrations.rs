@@ -73,6 +73,7 @@ impl DatabaseMigrations {
                     active_elo        INTEGER,
                     default_rank      INTEGER,
                     elo_ranks_linked  INTEGER DEFAULT 1,
+                    post_game_auto_leave INTEGER DEFAULT 1,
                     PRIMARY KEY(guild_id)
                 )"
             )
@@ -84,8 +85,10 @@ impl DatabaseMigrations {
         Ok(())
     }
     async fn verify_config(&self) -> Result<()> {
-        let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank", "elo_ranks_linked"];
+        let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank", "elo_ranks_linked", "post_game_auto_leave", "post_game_timeout"];
         add_column!(self, "config", "elo_ranks_linked", "INTEGER", "1");
+        add_column!(self, "config", "post_game_auto_leave", "INTEGER", "1");
+        add_column!(self, "config", "post_game_timeout", "INTEGER", "120");
         self.verify_columns("config", &required_columns).await?;
         Ok(())
     }
@@ -107,6 +110,7 @@ impl DatabaseMigrations {
                     join_alert_footer        TEXT    DEFAULT NULL,
                     join_alert_footer_img    TEXT    DEFAULT NULL,
                     vc_auto_leave            INTEGER DEFAULT 0,
+                    post_game_auto_leave    INTEGER DEFAULT 1,
                     leave_alert_title        TEXT    DEFAULT NULL,
                     leave_alert              TEXT    DEFAULT NULL,
                     leave_alert_color        INTEGER DEFAULT 3447003,
@@ -143,6 +147,7 @@ impl DatabaseMigrations {
                 add_column!(self, "users", "join_alert_footer",        "TEXT",    "NULL");
                 add_column!(self, "users", "join_alert_footer_img",    "TEXT",    "NULL");
                 add_column!(self, "users", "vc_auto_leave",            "INTEGER", "0");
+                add_column!(self, "users", "post_game_auto_leave",    "INTEGER", "1");
                 add_column!(self, "users", "leave_alert_title",        "TEXT",    "NULL");
                 add_column!(self, "users", "leave_alert",              "TEXT",    "NULL");
                 add_column!(self, "users", "leave_alert_color",        "INTEGER", "3447003");
@@ -189,6 +194,7 @@ impl DatabaseMigrations {
                         join_alert_footer        TEXT    DEFAULT NULL,
                         join_alert_footer_img    TEXT    DEFAULT NULL,
                         vc_auto_leave            INTEGER DEFAULT 0,
+                        post_game_auto_leave    INTEGER DEFAULT 1,
                         leave_alert_title        TEXT    DEFAULT NULL,
                         leave_alert              TEXT    DEFAULT NULL,
                         leave_alert_color        INTEGER DEFAULT 3447003,

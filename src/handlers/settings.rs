@@ -11,6 +11,56 @@ use tracing::{debug, error, info, warn};
 use crate::colours::RED;
 
 use crate::Database;
+use crate::guild_name;
+
+// Helper methods to reduce code duplication
+
+/// Update settings and rebuild embed/buttons for response
+async fn update_settings_and_respond<F, Fut>(
+    interaction: &ComponentInteraction,
+    ctx: &Context,
+    db: &Database,
+    user_id: serenity::all::UserId,
+    update_fn: F,
+) -> Result<()>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    // Apply the settings update
+    update_fn().await?;
+    
+    // Get updated settings and rebuild UI
+    let settings = db.users.get_prefs(user_id).await?;
+    let embed = build_settings_embed(&settings);
+    let buttons = build_settings_buttons(&settings);
+    
+    let response = CIR::UpdateMessage(
+        CIRM::new().embed(embed).components(buttons)
+    );
+    interaction.create_response(&ctx.http, response).await?;
+    Ok(())
+}
+
+/// Create a standard update response with embed and components
+fn create_update_response(embed: CE, components: Vec<CreateActionRow>) -> CIR {
+    CIR::UpdateMessage(CIRM::new().embed(embed).components(components))
+}
+
+/// Track DM activity for cleanup
+async fn track_dm_activity(ctx: &Context, user_id: serenity::all::UserId) {
+    if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
+        dm_tracker.update_activity(user_id).await;
+    }
+}
+
+/// Create a standard settings embed with title and description
+fn create_settings_embed(title: &str, description: &str, color: u32) -> CE {
+    CE::new()
+        .title(title)
+        .description(description)
+        .color(color)
+}
 
 /// Helper function for sending error responses in component interactions
 async fn send_component_error_response(interaction: &ComponentInteraction, ctx: &Context, message: &str) {
@@ -78,14 +128,11 @@ pub async fn handle_settings_button(
 ) -> Result<()> {
     let user_id   = interaction.user.id;
     let button_id = &interaction.data.custom_id;
-    let username  = &interaction.user.name;
-
-    debug!("{} pressed {}", username, button_id);
+    let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+    debug!("{} pressed {}", user_tag, button_id);
 
     // Update activity timestamp for DM cleanup tracking
-    if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
-        dm_tracker.update_activity(user_id).await;
-    }
+    track_dm_activity(ctx, user_id).await;
 
     match button_id.as_str() {
         "settings_toggle_dm" => {
@@ -640,9 +687,11 @@ pub async fn build_leave_alert_embed(
 
 /// Server settings structure for display
 pub struct ServerSettings {
-    pub runner_role:    Option<String>,
-    pub admin_role:     Option<String>,
-    pub toggle_states:  Vec<bool>,
+    pub runner_role:        Option<String>,
+    pub admin_role:         Option<String>,
+    pub toggle_states:      Vec<bool>,
+    pub balance_method:     String,
+    pub post_game_timeout:  u16,
 }
 
 /// Build server settings embed
@@ -653,6 +702,8 @@ pub fn build_server_settings_embed(settings: &ServerSettings, guild_name: &str) 
         runner_role:    settings.runner_role.clone(),
         admin_role:     settings.admin_role.clone(),
         toggle_states:  settings.toggle_states.clone(),
+        balance_method: settings.balance_method.clone(),
+        post_game_timeout: settings.post_game_timeout,
     };
     display.as_settings_menu().build_embed()
 }
@@ -665,6 +716,8 @@ pub fn build_server_settings_buttons(settings: &ServerSettings, guild_name: &str
         runner_role:    settings.runner_role.clone(),
         admin_role:     settings.admin_role.clone(),
         toggle_states:  settings.toggle_states.clone(),
+        balance_method: settings.balance_method.clone(),
+        post_game_timeout: settings.post_game_timeout,
     };
     display.as_settings_menu().build_components()
 }
@@ -672,20 +725,23 @@ pub fn build_server_settings_buttons(settings: &ServerSettings, guild_name: &str
 /// Build a CIR navigating back to the main server settings page
 async fn nav_server_settings(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
     let settings = get_server_settings(db, guild_id).await?;
-    let guild_name = crate::guild_name(ctx, guild_id);
+    let guild_name = guild_name(ctx, guild_id);
     let embed = build_server_settings_embed(&settings, &guild_name);
     let buttons = build_server_settings_buttons(&settings, &guild_name);
     Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
 }
 
-/// Build a CIR navigating back to the role configuration page
+/// Build a CIR navigating back to the server configuration page
 async fn nav_role_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
-    let guild_name = crate::guild_name(ctx, guild_id);
+    let guild_name = guild_name(ctx, guild_id);
     let settings = get_server_settings(db, guild_id).await?;
-    let display = crate::handlers::settings_menu::RoleConfigDisplay {
+    let display = crate::handlers::settings_menu::ServerConfigDisplay {
         guild_name,
         runner_role: settings.runner_role,
         admin_role: settings.admin_role,
+        toggle_states: settings.toggle_states,
+        balance_method: settings.balance_method,
+        post_game_timeout: settings.post_game_timeout,
     };
     Ok(CIR::UpdateMessage(
         CIRM::new().embed(display.build_embed()).components(display.build_components())
@@ -694,7 +750,7 @@ async fn nav_role_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Res
 
 /// Build a CIR navigating back to the rank configuration page
 async fn nav_rank_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
-    let guild_name = crate::guild_name(ctx, guild_id);
+    let guild_name = guild_name(ctx, guild_id);
     let rank_roles = get_all_rank_roles(db, guild_id).await?;
     let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
     let display = crate::handlers::settings_menu::RankConfigDisplay {
@@ -710,7 +766,7 @@ async fn nav_rank_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Res
 
 /// Build a CIR navigating back to the group list page
 async fn nav_group_list(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
-    let guild_name = crate::guild_name(ctx, guild_id);
+    let guild_name = guild_name(ctx, guild_id);
     let groups = db.groups.get_groups_for_guild(guild_id).await?;
     let display = crate::handlers::settings_menu::GroupListDisplay {
         guild_name,
@@ -731,7 +787,8 @@ pub async fn handle_server_settings_button(
     let guild_id = interaction.guild_id.expect("Guild ID not found");
     let button_id = &interaction.data.custom_id;
 
-    info!("{} pressed {}", interaction.user.name, button_id);
+    let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+    info!("{} pressed {}", user_tag, button_id);
 
     match button_id.as_str() {
         // Generic handler for server-level config toggles (ELO-Rank linked, etc.)
@@ -784,7 +841,7 @@ pub async fn handle_server_settings_button(
             // Handle rank selection from dropdown (value is role ID)
             if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
                 if let Some(role_id_str) = values.first() {
-                    let guild_name = crate::guild_name(ctx, guild_id);
+                    let guild_name = guild_name(ctx, guild_id);
                     
                     if let Ok(role_id) = role_id_str.parse::<u64>() {
                         let rid = serenity::all::RoleId::new(role_id);
@@ -943,7 +1000,8 @@ pub async fn handle_server_settings_button(
         _ if button_id.starts_with("server_settings_rank_delete_") => {
             let rank_name = button_id.strip_prefix("server_settings_rank_delete_").unwrap();
             db.ranks.delete_rank(guild_id, rank_name).await?;
-            info!("{} deleted rank {}", interaction.user.name, rank_name);
+            let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+            info!("{} deleted rank {}", user_tag, rank_name);
             interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
         }
         _ if button_id.starts_with("server_settings_rank_role_") => {
@@ -961,10 +1019,11 @@ pub async fn handle_server_settings_button(
             db.ranks.update_rank_role(guild_id, rank_name, selected_role_id).await?;
             
             let role_display = format!("<@&{}>", selected_role_id.get());
-            info!("{} linked rank {} to role {}", interaction.user.name, rank_name, role_display);
+            let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+            info!("{} linked rank {} to role {}", user_tag, rank_name, role_display);
 
             // Refresh the rank config display
-            let guild_name = crate::guild_name(ctx, guild_id);
+            let guild_name = guild_name(ctx, guild_id);
             if let Ok(Some(guild_rank)) = db.ranks.get_rank_by_name(guild_id, rank_name).await {
                 let display = crate::handlers::settings_menu::RankRoleConfigDisplay {
                     guild_name,
@@ -1001,12 +1060,31 @@ pub async fn handle_server_settings_button(
         "server_settings_groups_back" => {
             interaction.create_response(&ctx.http, nav_server_settings(ctx, db, guild_id).await?).await?;
         }
+        "server_settings_edit_post_game_timeout" => {
+            // Show modal to edit post-game timeout
+            use serenity::all::{CreateInteractionResponse, CreateModal, CreateInputText, InputTextStyle, CreateActionRow};
+            
+            let current_timeout = db.config.get_post_game_timeout(guild_id).await.unwrap_or(120);
+            
+            let modal = CreateModal::new("server_settings_post_game_timeout_modal", "Edit Post-Game Timeout")
+                .components(vec![
+                    CreateActionRow::InputText(
+                        CreateInputText::new(InputTextStyle::Short, "Post-game timeout (seconds)", "post_game_timeout_input")
+                            .placeholder("Enter timeout in seconds (30-300)")
+                            .min_length(1)
+                            .max_length(3)
+                            .value(current_timeout.to_string())
+                    )
+                ]);
+            
+            interaction.create_response(&ctx.http, CreateInteractionResponse::Modal(modal)).await?;
+        }
         "server_settings_create_roles" => {
             // Create runner, admin, and rank roles
             use serenity::all::Permissions;
             use serenity::builder::EditRole;
 
-            let guild_name = crate::guild_name(ctx, guild_id);
+            let guild_name = guild_name(ctx, guild_id);
 
             // Create Runner role if not configured
             let runner_role = db.config.get_runner_role_id(guild_id).await?;
@@ -1108,7 +1186,7 @@ pub async fn handle_server_settings_button(
             // Show category selection dropdown to link existing group
             use serenity::all::{ChannelType, CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption};
             
-            let guild_name = crate::guild_name(ctx, guild_id);
+            let guild_name = guild_name(ctx, guild_id);
             
             // Get all categories in the guild - extract data before any awaits
             let mut categories: Vec<(serenity::all::ChannelId, String)> = {
@@ -1186,7 +1264,7 @@ pub async fn handle_server_settings_button(
                 if let Some(category_id_str) = values.first() {
                     if let Ok(category_id_u64) = category_id_str.parse::<u64>() {
                         let category_id = serenity::all::ChannelId::new(category_id_u64);
-                        let guild_name = crate::guild_name(ctx, guild_id);
+                        let guild_name = guild_name(ctx, guild_id);
                         
                         // Find channels in this category - extract data before any awaits
                         let (dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel) = {
@@ -1603,7 +1681,7 @@ pub async fn handle_server_settings_button(
                 quota: crate::DEFAULT_QUOTA,
             };
             
-            let guild_name = crate::guild_name(ctx, guild_id);
+            let guild_name = guild_name(ctx, guild_id);
             
             match db.groups.create_group(guild_id, dashboard_msg_id, group_config).await {
                 Ok(db_group) => {
@@ -1683,7 +1761,7 @@ pub async fn handle_server_settings_button(
                 vec![],
             );
             
-            let guild_name = crate::guild_name(ctx, guild_id);
+            let guild_name = guild_name(ctx, guild_id);
             
             // Publish the dashboard to get the actual message ID
             match temp_group.dash_publish(ctx, dashboard_channel, db, guild_id).await {
@@ -1788,7 +1866,7 @@ pub async fn handle_server_settings_button(
                         if dashboard_channel.is_some() && queue_channel.is_some() && queue_vc_channel.is_some() 
                             && red_channel.is_some() && blue_channel.is_some() {
                             // All channels selected - create the group
-                            let guild_name = crate::guild_name(ctx, guild_id);
+                            let guild_name = guild_name(ctx, guild_id);
                             
                             use crate::models::{Group, Channels, TeamChannel};
                             use serenity::all::MessageId;
@@ -1883,7 +1961,7 @@ pub async fn handle_server_settings_button(
                             // by crafting the state as if we just selected the category
                             
                             // Get guild name
-                            let guild_name = crate::guild_name(ctx, guild_id);
+                            let guild_name = guild_name(ctx, guild_id);
                             
                             // Continue with manual channel selection flow (same code as above)
                             use serenity::all::{CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption};
@@ -2011,7 +2089,7 @@ pub async fn handle_server_settings_button(
             let blue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[4], 16)?);
             let dashboard_msg_id = u64::from_str_radix(parts[5], 16)?;
             
-            let guild_name = crate::guild_name(ctx, guild_id);
+            let guild_name = guild_name(ctx, guild_id);
             
             // Find and remove duplicate group
             let existing_groups = db.groups.get_groups_for_guild(guild_id).await?;
@@ -2106,7 +2184,7 @@ pub async fn handle_server_settings_button(
             let red_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[3], 16)?);
             let blue_channel = serenity::all::ChannelId::new(u64::from_str_radix(parts[4], 16)?);
             
-            let guild_name = crate::guild_name(ctx, guild_id);
+            let guild_name = guild_name(ctx, guild_id);
             
             // Find and remove duplicate group
             let existing_groups = db.groups.get_groups_for_guild(guild_id).await?;
@@ -2230,7 +2308,7 @@ pub async fn handle_server_settings_button(
             // Show group selection dropdown for removal
             use serenity::all::{CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption};
             
-            let guild_name = crate::guild_name(ctx, guild_id);
+            let guild_name = guild_name(ctx, guild_id);
             let groups = db.groups.get_groups_for_guild(guild_id).await?;
             
             if groups.is_empty() {
@@ -2289,7 +2367,7 @@ pub async fn handle_server_settings_button(
             if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &interaction.data.kind {
                 if let Some(group_id_str) = values.first() {
                     if let Ok(group_id) = group_id_str.parse::<u8>() {
-                        let guild_name = crate::guild_name(ctx, guild_id);
+                        let guild_name = guild_name(ctx, guild_id);
                         
                         // Get group info and channel list
                         let (group_name, channel_list) = {
@@ -2357,7 +2435,7 @@ pub async fn handle_server_settings_button(
             // Confirm removal with channel deletion
             let group_id_str = button_id.strip_prefix("server_settings_remove_confirm_delete_").unwrap();
             if let Ok(group_id) = group_id_str.parse::<u8>() {
-                let guild_name = crate::guild_name(ctx, guild_id);
+                let guild_name = guild_name(ctx, guild_id);
                 
                 // Get group info and channels before deletion
                 let (group_name, channels_to_delete) = {
@@ -2446,7 +2524,7 @@ pub async fn handle_server_settings_button(
             // Confirm removal without channel deletion
             let group_id_str = button_id.strip_prefix("server_settings_remove_confirm_keep_").unwrap();
             if let Ok(group_id) = group_id_str.parse::<u8>() {
-                let guild_name = crate::guild_name(ctx, guild_id);
+                let guild_name = guild_name(ctx, guild_id);
                 
                 // Get group info before deletion
                 let group_name = {
@@ -2559,7 +2637,7 @@ pub async fn handle_server_settings_button(
             // Handle link message button - search for existing dashboard messages for this specific group
             let group_id_str = button_id.strip_prefix("group_settings_link_message_").unwrap();
             if let Ok(group_id) = group_id_str.parse::<u8>() {
-                let guild_name = crate::guild_name(ctx, guild_id);
+                let guild_name = guild_name(ctx, guild_id);
                 
                 // Get the group to find its dashboard channel
                 let groups = db.groups.get_groups_for_guild(guild_id).await?;
@@ -2657,7 +2735,7 @@ pub async fn handle_server_settings_button(
             let group_id = parts[0].parse::<u8>()?;
             let dashboard_msg_id = u64::from_str_radix(parts[1], 16)?;
             
-            let guild_name = crate::guild_name(ctx, guild_id);
+            let guild_name = guild_name(ctx, guild_id);
             
             // Update the group's dashboard_msg in database
             match db.groups.update_dashboard_msg_by_group_id(guild_id, group_id, dashboard_msg_id).await {
@@ -2773,16 +2851,21 @@ pub async fn get_server_settings(db: &Arc<Database>, guild_id: GI) -> Result<Ser
     let config_map = db.config.get_config_map(guild_id).await?;
     let runner_role = config_map.get("runner_id").cloned();
     let admin_role = config_map.get("admin_id").cloned();
+    let balance_method = config_map.get("balance_method").cloned().unwrap_or_else(|| "bch".to_string());
 
     let mut toggle_states = Vec::with_capacity(SERVER_CONFIG_TOGGLES.len());
     for toggle in SERVER_CONFIG_TOGGLES {
         toggle_states.push(db.config.get_bool(guild_id, toggle.column, toggle.default).await?);
     }
 
+    let post_game_timeout = db.config.get_post_game_timeout(guild_id).await.unwrap_or(120);
+
     Ok(ServerSettings {
         runner_role,
         admin_role,
         toggle_states,
+        balance_method,
+        post_game_timeout,
     })
 }
 
@@ -2807,7 +2890,8 @@ pub async fn handle_server_settings_modal(
     let guild_id = interaction.guild_id.expect("Guild ID not found");
     let modal_id = &interaction.data.custom_id;
 
-    info!("{} submitted modal {}", interaction.user.name, modal_id);
+    let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+    info!("{} submitted modal {}", user_tag, modal_id);
 
     if modal_id == "server_settings_rank_modal_add" {
         // Handle add new rank modal
@@ -2847,7 +2931,7 @@ pub async fn handle_server_settings_modal(
         }
 
         // Create a new Discord role for this rank
-        let guild_name = crate::guild_name(ctx, guild_id);
+        let guild_name = guild_name(ctx, guild_id);
         let role_name = name.to_string();
         
         let role_id = match guild_id.create_role(&ctx.http,
@@ -2871,7 +2955,8 @@ pub async fn handle_server_settings_modal(
 
         // Add rank to DB with the created role ID
         db.ranks.add_rank(guild_id, name, elo, role_id).await?;
-        info!("{} added rank '{}' with ELO {} and role {}", interaction.user.name, name, elo, role_id.get());
+        let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+        info!("{} added rank '{}' with ELO {} and role {}", user_tag, name, elo, role_id.get());
 
         interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
     } else if modal_id.starts_with("server_settings_rank_modal_link_") {
@@ -2922,7 +3007,8 @@ pub async fn handle_server_settings_modal(
 
         // Add rank to DB with the selected role ID
         db.ranks.add_rank(guild_id, name, elo, role_id).await?;
-        info!("{} linked rank '{}' with ELO {} to role {}", interaction.user.name, name, elo, role_id.get());
+        let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+        info!("{} linked rank '{}' with ELO {} to role {}", user_tag, name, elo, role_id.get());
 
         interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
     } else if modal_id.starts_with("server_settings_rank_modal_") {
@@ -3092,7 +3178,7 @@ pub async fn handle_server_settings_modal(
         // Defer the response so we have time to create channels
         interaction.create_response(&ctx.http, CIR::Defer(CIRM::new().ephemeral(true))).await?;
 
-        let guild_name = crate::guild_name(ctx, guild_id);
+        let guild_name = guild_name(ctx, guild_id);
 
         // Create channels
         match crate::handlers::admin::create_group_channels(ctx, guild_id, &category_name, &channel_prefix, bot_only_dashboard.as_str() == "yes").await {
@@ -3198,6 +3284,35 @@ pub async fn handle_server_settings_modal(
                 interaction.create_followup(&ctx.http, followup).await?;
             }
         }
+    } else if modal_id == "server_settings_post_game_timeout_modal" {
+        // Handle post-game timeout modal
+        let mut timeout_value = String::new();
+
+        for row in &interaction.data.components {
+            for component in &row.components {
+                if let serenity::all::ActionRowComponent::InputText(input) = component {
+                    if input.custom_id == "post_game_timeout_input" {
+                        timeout_value = input.value.clone().unwrap_or_default();
+                    }
+                }
+            }
+        }
+
+        // Parse and validate timeout
+        let timeout: u16 = match timeout_value.trim().parse() {
+            Ok(t) if (30..=300).contains(&t) => t,
+            _ => {
+                send_modal_error_response(interaction, ctx, "Invalid timeout. Must be between 30 and 300 seconds.").await;
+                return Ok(());
+            }
+        };
+
+        // Update database
+        db.config.set_post_game_timeout(guild_id, timeout).await?;
+        let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+        info!("{} set post-game timeout to {} seconds", user_tag, timeout);
+
+        interaction.create_response(&ctx.http, nav_role_config(ctx, db, guild_id).await?).await?;
     } else {
         warn!("Unknown server settings modal: {}", modal_id);
     }
@@ -3460,7 +3575,8 @@ pub async fn handle_group_settings_button(
     let guild_id  = interaction.guild_id.expect("Guild ID not found");
     let button_id = &interaction.data.custom_id;
 
-    info!("[Group Settings] {} pressed {}", interaction.user.name, button_id);
+    let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+    info!("[Group Settings] {} pressed {}", user_tag, button_id);
 
     // Handle subgroup remove confirmation (button: group_sg_confirm_remove_{gid}_{sgid}, select: group_sg_confirm_remove with value gid_sgid)
     if button_id == "group_sg_confirm_remove" || button_id.starts_with("group_sg_confirm_remove_") {
@@ -3956,7 +4072,7 @@ pub async fn handle_group_settings_button(
         drop(manager_lock);
     } else if button_id.starts_with("group_settings_link_message_") {
         // Handle link message button - search for existing dashboard messages
-        let guild_name = crate::guild_name(ctx, guild_id);
+        let guild_name = guild_name(ctx, guild_id);
         
         // Get the group to find its dashboard channel
         let groups = db.groups.get_groups_for_guild(guild_id).await?;
@@ -4332,7 +4448,8 @@ pub async fn handle_group_settings_select(
 ) -> Result<()> {
     let guild_id = interaction.guild_id.expect("Guild ID not found");
 
-    info!("[Group Settings] {} selected group", interaction.user.name);
+    let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, _db).await;
+    info!("[Group Settings] {} selected group", user_tag);
 
     // Extract selected group_id from the interaction
     let group_id: u8 = match &interaction.data.kind {
@@ -4498,7 +4615,8 @@ pub async fn handle_group_settings_modal(
     let guild_id = interaction.guild_id.expect("Guild ID not found");
     let modal_id = &interaction.data.custom_id;
 
-    info!("[Group Settings] {} submitted modal {}", interaction.user.name, modal_id);
+    let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+    info!("[Group Settings] {} submitted modal {}", user_tag, modal_id);
 
     // Handle subgroup modals first (format: group_sg_modal_{action}_{group_id}_{sg_id})
     // These have two trailing IDs so they must be handled before the generic rsplit extraction.
@@ -4825,7 +4943,8 @@ pub async fn handle_server_settings_balance_select(
 ) -> Result<()> {
     let guild_id = interaction.guild_id.expect("Guild ID not found");
 
-    info!("[Server Settings] {} selected team balance method", interaction.user.name);
+    let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+    info!("[Server Settings] {} selected team balance method", user_tag);
 
     // Extract selected value
     let method_str = match &interaction.data.kind {
@@ -4854,7 +4973,7 @@ pub async fn handle_server_settings_balance_select(
 
     // Return to server settings
     let settings = get_server_settings(db, guild_id).await?;
-    let guild_name = crate::guild_name(ctx, guild_id);
+    let guild_name = guild_name(ctx, guild_id);
     let embed = build_server_settings_embed(&settings, &guild_name);
     let buttons = build_server_settings_buttons(&settings, &guild_name);
 
@@ -4914,7 +5033,8 @@ pub async fn handle_player_settings_button(
 ) -> Result<()> {
     let button_id = &interaction.data.custom_id;
     
-    info!("[Player Settings] {} pressed {}", interaction.user.name, button_id);
+    let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+    info!("[Player Settings] {} pressed {}", user_tag, button_id);
 
     // Extract user_id from button custom_id (format: player_settings_edit_<action>_<user_id>)
     let target_user_id: u64 = button_id
@@ -5029,7 +5149,8 @@ pub async fn handle_player_settings_modal(
     let guild_id = interaction.guild_id.expect("Guild ID not found");
     let modal_id = &interaction.data.custom_id;
 
-    info!("[Player Settings] {} submitted modal {}", interaction.user.name, modal_id);
+    let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+    info!("[Player Settings] {} submitted modal {}", user_tag, modal_id);
 
     // Extract user_id from modal custom_id (format: player_settings_modal_<action>_<user_id>)
     let target_user_id: u64 = modal_id
