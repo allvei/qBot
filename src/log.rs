@@ -28,7 +28,7 @@ pub async fn get_user_tag(ctx: &Context, user_id: UserId, db: &crate::Database) 
 }
 
 pub fn log_queue_toggle(guild_name: &str, group_name: &str, tag: &str, queue_type: QueueToggleType, pool_size: Option<(usize, usize)>, sg_name: Option<&str>, position: Option<usize>) {
-    let (_action, source) = match queue_type {
+    let (action, source) = match queue_type {
         QueueToggleType::BJ => ("joined", "button"),
         QueueToggleType::BL => ("left",   "button"),
         QueueToggleType::VJ => ("joined", "vc"),
@@ -40,8 +40,8 @@ pub fn log_queue_toggle(guild_name: &str, group_name: &str, tag: &str, queue_typ
     let prefix = log_prefix_subgroup(guild_name, group_name, sg_name.unwrap_or(""));
     
     match pool_size {
-        Some((current, quota)) => info!("{} {} {} ({}) [{}/{}]", prefix, pos_part, tag, source, current, quota),
-        None                   => info!("{} {} {} ({})",         prefix, pos_part, tag, source),
+        Some((current, quota)) => info!("{} {} {} {} ({}) [{}/{}]", prefix, pos_part, tag, action, source, current, quota),
+        None                   => info!("{} {} {} {} ({})",         prefix, pos_part, tag, action, source),
     }
 }
 
