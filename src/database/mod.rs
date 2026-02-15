@@ -7,16 +7,16 @@ use serenity::all::{Context as Ctx, UserId as UI, GuildId as GI};
 use sqlx::SqlitePool;
 use tracing::info;
 
-use crate::models::{FileManager, Group, Player, Server};
+use crate::models::{FileManager, Category, Player, Server};
 use migrations::DatabaseMigrations;
-use repositories::{ConfigRepository, EloRepository, GroupRepository, RankRepository, UserRepository};
+use repositories::{ConfigRepository, EloRepository, CategoryRepository, RankRepository, UserRepository};
 
 /// Main database interface that orchestrates all repositories
 #[derive(Clone)]
 pub struct Database {
     pub pool:   SqlitePool,
     pub users:  UserRepository,
-    pub groups: GroupRepository,
+    pub categories: CategoryRepository,
     pub config: ConfigRepository,
     pub elo:    EloRepository,
     pub ranks:  RankRepository,
@@ -51,12 +51,12 @@ impl Database {
 
         // Initialize repositories
         let users  = UserRepository  ::new(pool.clone());
-        let groups = GroupRepository ::new(pool.clone());
+        let categories = CategoryRepository ::new(pool.clone());
         let config = ConfigRepository::new(pool.clone());
         let elos   = EloRepository   ::new(pool.clone());
         let ranks  = RankRepository  ::new(pool.clone());
 
-        Ok(Database { pool, users, groups, config, elo: elos, ranks })
+        Ok(Database { pool, users, categories, config, elo: elos, ranks })
     }
 
     /// Get the underlying connection pool for advanced operations
@@ -86,31 +86,32 @@ impl Database {
         self.users.update_steam_id(user_id, steam_id).await
     }
 
-    /// Creates a new group
+    /// Creates a new category
     #[allow(clippy::too_many_arguments)]
-    pub async fn new_group(
+    pub async fn new_category(
         &self,
         guild_id:      GI,
+        guild_name:    &str,
         category:      u64,
         dashboard:     u64,
         chat:          u64,
         queue:         u64,
         dashboard_msg: u64,
         quota:         u8,
-    ) -> Result<Group> {
-        let config = repositories::group::GroupConfig {
+    ) -> Result<Category> {
+        let config = repositories::category::CategoryConfig {
             category_id:          category,
             dashboard_channel_id: dashboard,
             chat_channel_id:      chat,
             queue_vc_id:          queue,
             quota,
         };
-        self.groups.create_group(guild_id, dashboard_msg, config).await
+        self.categories.create_category(guild_id, guild_name, dashboard_msg, config).await
     }
 
-    /// Updates a group
+    /// Updates a category
     #[allow(clippy::too_many_arguments)]
-    pub async fn set_group(
+    pub async fn set_category(
         &self,
         guild_id:      GI,
         category:      u64,
@@ -118,15 +119,15 @@ impl Database {
         dashboard:     u64,
         chat:          u64,
         quota:         u8,
-    ) -> Result<Group> {
-        let config = repositories::group::GroupConfig {
+    ) -> Result<Category> {
+        let config = repositories::category::CategoryConfig {
             category_id:          category,
             dashboard_channel_id: dashboard,
             chat_channel_id:      chat,
             queue_vc_id:          queue_id,
             quota,
         };
-        self.groups.update_group(guild_id, config).await
+        self.categories.update_category(guild_id, config).await
     }
 
     /// Sets a configuration value

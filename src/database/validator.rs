@@ -4,13 +4,13 @@ use tracing::{error, info, warn};
 use serenity::all::GuildId as GI;
 
 use super::migrations::DatabaseMigrations;
-use super::repositories::GroupRepository;
+use super::repositories::CategoryRepository;
 
 /// Database validation and repair utility
 pub struct DatabaseValidator {
     pool:       SqlitePool,
     migrations: DatabaseMigrations,
-    group_repo: GroupRepository,
+    category_repo: CategoryRepository,
 }
 
 impl DatabaseValidator {
@@ -18,7 +18,7 @@ impl DatabaseValidator {
         Self {
             pool:       pool.clone(),
             migrations: DatabaseMigrations::new(pool),
-            group_repo: GroupRepository::new(pool.clone()),
+            category_repo: CategoryRepository::new(pool.clone()),
         }
     }
 
@@ -63,14 +63,14 @@ impl DatabaseValidator {
 
     /// Check for orphaned records
     async fn check_orphaned_records(&self, report: &mut ValidationReport) -> Result<()> {
-        // Check for config entries without corresponding groups
+        // Check for config entries without corresponding categories
         let orphaned_configs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM config c
-                                                        WHERE NOT EXISTS (SELECT 1 FROM groups g WHERE g.guild_id = c.guild)")
+                                                        WHERE NOT EXISTS (SELECT 1 FROM categories g WHERE g.guild_id = c.guild)")
         .fetch_one(&self.pool)
         .await?;
 
         if orphaned_configs > 0 {
-            report.warnings.push(format!("{orphaned_configs} config entries have no corresponding groups"));
+            report.warnings.push(format!("{orphaned_configs} config entries have no corresponding categories"));
             warn!("Found {} orphaned config entries", orphaned_configs);
         }
 
@@ -79,14 +79,14 @@ impl DatabaseValidator {
 
     /// Check for invalid Discord IDs (placeholder values)
     async fn check_invalid_user_ids(&self, report: &mut ValidationReport) -> Result<()> {
-        let placeholder_groups: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM groups
+        let placeholder_categories: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM categories
                                                           WHERE dashboard = 1 OR chat = 1 OR queue = 1 OR red = 1 OR blu = 1")
         .fetch_one(&self.pool)
         .await?;
 
-        if placeholder_groups > 0 {
-            report.warnings.push(format!("{placeholder_groups} groups have placeholder Discord IDs"));
-            warn!("Found {} groups with placeholder Discord IDs", placeholder_groups);
+        if placeholder_categories > 0 {
+            report.warnings.push(format!("{placeholder_categories} categories have placeholder Discord IDs"));
+            warn!("Found {} categories with placeholder Discord IDs", placeholder_categories);
         }
 
         Ok(())
@@ -111,20 +111,20 @@ impl DatabaseValidator {
     async fn validate_configurations(&self, report: &mut ValidationReport) -> Result<()> {
         info!("Validating configurations");
 
-        // Get all guilds from groups table
-        let guild_ids: Vec<i64> = sqlx::query_scalar("SELECT DISTINCT guild_id FROM groups")
+        // Get all guilds from categories table
+        let guild_ids: Vec<i64> = sqlx::query_scalar("SELECT DISTINCT guild_id FROM categories")
             .fetch_all(&self.pool)
             .await?;
 
         for guild_id in guild_ids {
-            // Check if guild has at least one properly configured group
-            match self.group_repo.get_groups_for_guild(GI::new(guild_id as u64)).await {
-                Ok(groups) => {
-                    if groups.is_empty() {
-                        report.warnings.push(format!("Guild {guild_id} has no groups configured"));
+            // Check if guild has at least one properly configured category
+            match self.category_repo.get_categories_for_guild(GI::new(guild_id as u64)).await {
+                Ok(categories) => {
+                    if categories.is_empty() {
+                        report.warnings.push(format!("Guild {guild_id} has no categories configured"));
                     } else {
-                        report.guild_groups.insert(guild_id as u64, groups.len());
-                        info!("Guild {guild_id} has {} group(s) configured", groups.len());
+                        report.guild_categories.insert(guild_id as u64, categories.len());
+                        info!("Guild {guild_id} has {} category(s) configured", categories.len());
                     }
                 },
                 Err(e) => {
@@ -152,7 +152,7 @@ impl DatabaseValidator {
         let placeholder_count = self.count_placeholder_ids().await?;
         if placeholder_count > 0 {
             report.manual_actions.push(format!(
-                "Found {placeholder_count} groups with placeholder Discord IDs. These require manual configuration.",
+                "Found {placeholder_count} categories with placeholder Discord IDs. These require manual configuration.",
             ));
         }
 
@@ -162,25 +162,25 @@ impl DatabaseValidator {
 
     /// Remove duplicate users
     async fn remove_duplicate_users(&self) -> Result<i64> {
-        let result = sqlx::query("DELETE FROM users WHERE user_id NOT IN (SELECT MIN(user_id) FROM users GROUP BY user_id )")
+        let result = sqlx::query("DELETE FROM users WHERE user_id NOT IN (SELECT MIN(user_id) FROM users CATEGORY BY user_id )")
         .execute(&self.pool)
         .await?;
 
         Ok(result.rows_affected() as i64)
     }
 
-    /// Count groups with placeholder IDs
+    /// Count categories with placeholder IDs
     async fn count_placeholder_ids(&self) -> Result<i64> {
-        let count = sqlx::query_scalar("SELECT COUNT(*) FROM groups WHERE dashboard = 1 OR chat = 1 OR queue = 1 OR red = 1 OR blu = 1")
+        let count = sqlx::query_scalar("SELECT COUNT(*) FROM categories WHERE dashboard = 1 OR chat = 1 OR queue = 1 OR red = 1 OR blu = 1")
         .fetch_one(&self.pool)
         .await?;
 
         Ok(count)
     }
 
-    /// Create a default group for a guild
-    pub async fn create_default_group(&self, guild_id: GI) -> Result<()> {
-        self.migrations.init_first_group(guild_id).await
+    /// Create a default category for a guild
+    pub async fn create_default_category(&self, guild_id: GI) -> Result<()> {
+        self.migrations.init_first_category(guild_id).await
     }
 }
 
@@ -190,7 +190,7 @@ pub struct ValidationReport {
     pub schema_valid: bool,
     pub errors:       Vec<String>,
     pub warnings:     Vec<String>,
-    pub guild_groups: std::collections::HashMap<u64, usize>,
+    pub guild_categories: std::collections::HashMap<u64, usize>,
 }
 
 impl ValidationReport {
@@ -199,7 +199,7 @@ impl ValidationReport {
             schema_valid: false,
             errors:       Vec::new(),
             warnings:     Vec::new(),
-            guild_groups: std::collections::HashMap::new(),
+            guild_categories: std::collections::HashMap::new(),
         }
     }
 
@@ -212,7 +212,7 @@ impl ValidationReport {
         info!("Schema valid: {}",       self.schema_valid);
         info!("Errors: {}",             self.errors.len());
         info!("Warnings: {}",           self.warnings.len());
-        info!("Guilds with groups: {}", self.guild_groups.len());
+        info!("Guilds with categories: {}", self.guild_categories.len());
 
         if !self.errors.is_empty() {
             error!("Errors found:");
@@ -229,8 +229,8 @@ impl ValidationReport {
         }
 
         info!("Guild configurations:");
-        for (guild_id, group_count) in &self.guild_groups {
-            info!("  Guild {}: {} group(s)", guild_id, group_count);
+        for (guild_id, category_count) in &self.guild_categories {
+            info!("  Guild {}: {} category(s)", guild_id, category_count);
         }
     }
 }

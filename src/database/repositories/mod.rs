@@ -1,11 +1,11 @@
 pub mod user;
-pub mod group;
+pub mod category;
 pub mod config;
 pub mod elo;
 pub mod rank;
 
 pub use user::{UserRepository, UserSettings, is_valid_user_text};
-pub use group::GroupRepository;
+pub use category::CategoryRepository;
 pub use config::ConfigRepository;
 pub use elo::{EloRepository, GuildElo};
 pub use rank::{RankRepository, GuildRank};
