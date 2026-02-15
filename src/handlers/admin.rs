@@ -42,7 +42,7 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String,>,) -> Re
         let config_text = format!("**Current Configuration:**\n\
                                      guild: `{}`\n\
                                      roles: `{}`\n\
-                                     groups: `{}`",
+                                     categories: `{}`",
         config.guild_id, config.roles.runner, config.roles.admin
         );
         let embed = CE::new().title("Bot configuration").description(config_text);
@@ -148,10 +148,10 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
     Ok(())
 }
 
-/// Creates a category and all necessary group channels
+/// Creates a category and all necessary category channels
 /// Flow: Create category -> Create dashboard -> Test message send -> Create other channels
 /// If dashboard message send fails, cleanup and abort
-pub async fn create_group_channels(ctx: &Context, guild_id: GI, category_name: &str, channel_prefix: &str, bot_only_dashboard: bool) -> Result<(CI, CI, CI, CI)> {
+pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name: &str, channel_prefix: &str, bot_only_dashboard: bool) -> Result<(CI, CI, CI, CI)> {
     use serenity::all::{CreateChannel, CreateEmbed, CreateMessage, PermissionOverwrite, PermissionOverwriteType, Permissions};
 
     let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -348,7 +348,7 @@ pub async fn create_group_channels(ctx: &Context, guild_id: GI, category_name: &
         }
     };
 
-    info!("[{}] Successfully created all group channels (team VCs are dynamic)", guild_name);
+    info!("[{}] Successfully created all category channels (team VCs are dynamic)", guild_name);
 
     Ok((
         category_id,
@@ -368,10 +368,10 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
 
     let channel = cc.intax.channel_id;
     let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("This command must be used in a server"))?;
-    let group = guild.get_group(channel)?;
+    let category = guild.get_category(channel)?;
 
     // Create and send dashboard
-    group.dash_publish(cc.ctx, channel, &cc.db, guild_id).await?;
+    category.dash_publish(cc.ctx, channel, &cc.db, guild_id).await?;
 
     cc.reply("Dashboard created/updated successfully!").await?;
 
@@ -548,7 +548,7 @@ pub async fn handle_setup_interaction(ctx: &Context, interaction: &CX, db: &Arc<
     match button_type {
         ButtonType::SetupAdmin     => handle_admin_selection(        ctx, interaction, channel_or_role_id, db, manager).await?,
         ButtonType::InitAdmin      => handle_init_admin_selection(   ctx, interaction, channel_or_role_id, db, manager).await?,
-        ButtonType::GroupLinkBlue  => handle_grouplink_blue_selection(ctx, interaction, channel_or_role_id, db, manager).await?,
+        ButtonType::CategoryLinkBlue  => handle_categorylink_blue_selection(ctx, interaction, channel_or_role_id, db, manager).await?,
         _ => {}
     }
 
@@ -757,36 +757,36 @@ fn get_wizard_step(button_id: &str) -> Option<(WizardStep, &'static str)> {
             next_source: OptionSource::Roles,
             placeholder: "Select admin role...",
         }, "Step 2/2: Admin Role")),
-        // GroupLink flow steps
-        "grouplink_dashboard" => Some((WizardStep {
+        // CategoryLink flow steps
+        "categorylink_dashboard" => Some((WizardStep {
             field: ConfigField::Dashboard,
             title: "Dashboard channel selected",
             next_label: "Select the text channel for queue commands:",
-            next_id: "grouplink_queue",
+            next_id: "categorylink_queue",
             next_source: OptionSource::TextChannels,
             placeholder: "Select queue text channel...",
         }, "Step 2/5: Queue Text Channel")),
-        "grouplink_queue" => Some((WizardStep {
+        "categorylink_queue" => Some((WizardStep {
             field: ConfigField::Queue,
             title: "Queue text channel selected",
             next_label: "Select the voice channel where players wait:",
-            next_id: "grouplink_queuevc",
+            next_id: "categorylink_queuevc",
             next_source: OptionSource::VoiceChannels,
             placeholder: "Select queue voice channel...",
         }, "Step 3/5: Queue Voice Channel")),
-        "grouplink_queuevc" => Some((WizardStep {
+        "categorylink_queuevc" => Some((WizardStep {
             field: ConfigField::QueueVc,
             title: "Queue voice channel selected",
             next_label: "Select the Red team voice channel:",
-            next_id: "grouplink_red",
+            next_id: "categorylink_red",
             next_source: OptionSource::VoiceChannels,
             placeholder: "Select red team channel...",
         }, "Step 4/5: Red Team Voice Channel")),
-        "grouplink_red" => Some((WizardStep {
+        "categorylink_red" => Some((WizardStep {
             field: ConfigField::Red,
             title: "Red team channel selected",
             next_label: "Select the Blue team voice channel:",
-            next_id: "grouplink_blue",
+            next_id: "categorylink_blue",
             next_source: OptionSource::VoiceChannels,
             placeholder: "Select blue team channel...",
         }, "Step 5/5: Blue Team Voice Channel")),
@@ -853,7 +853,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
 
     let dashboard_msg_id = dashboard_message.id.get();
 
-    match save_and_create_group(ctx, db, manager, guild_id, dashboard_channel, queue_channel, queue_vc_channel, runner_role, admin_role, dashboard_msg_id).await {
+    match save_and_create_category(ctx, db, manager, guild_id, dashboard_channel, queue_channel, queue_vc_channel, runner_role, admin_role, dashboard_msg_id).await {
         Ok(_) => {
             SETUP_STATE.complete_setup(user_id, guild_id);
 
@@ -891,7 +891,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
     Ok(())
 }
 
-/// Handles admin role selection and completes init_group setup
+/// Handles admin role selection and completes init_category setup
 async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, db: &std::sync::Arc<crate::Database>, manager: &Arc<Mutex<crate::models::Manager>>) -> Result<()> {
     let guild_id = match interaction.guild_id {
         Some(id) => id,
@@ -936,14 +936,14 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
     let runner_role       = config.runner_role      .unwrap();
     let admin_role        = role_id;
 
-    match save_and_create_group(ctx, db, manager, guild_id, dashboard_channel, queue_channel, queue_vc_channel, runner_role, admin_role, dashboard_msg_id).await {
+    match save_and_create_category(ctx, db, manager, guild_id, dashboard_channel, queue_channel, queue_vc_channel, runner_role, admin_role, dashboard_msg_id).await {
         Ok(_) => {
             SETUP_STATE.complete_setup(user_id, guild_id);
 
             let success_embed = CE::new()
-                .title("Group setup complete!")
+                .title("Category setup complete!")
                 .description(format!(
-                    "Group configuration has been saved successfully!\n\n\
+                    "Category configuration has been saved successfully!\n\n\
                     **Configuration Summary:**\n\
                     - Dashboard: <#{dashboard_channel}>\n\
                     - Queue Text: <#{queue_channel}>\n\
@@ -959,7 +959,7 @@ async fn handle_init_admin_selection(ctx: &Context, interaction: &CX, role_id: u
         Err(e) => {
             let error_embed = CE::new()
                 .title("Setup failed")
-                .description(format!("Failed to create group configuration: {e}"))
+                .description(format!("Failed to create category configuration: {e}"))
                 .color(RED);
 
             interaction.create_response(&ctx.http, Ephemeral::update(error_embed)).await?;
@@ -1050,9 +1050,9 @@ pub async fn handle_create_rank_roles(ctx: &Context, db: &crate::Database, inter
     Ok(())
 }
 
-/// Saves role configs, initializes ranks, creates the group in DB, and finalizes it in the manager.
+/// Saves role configs, initializes ranks, creates the category in DB, and finalizes it in the manager.
 /// Returns Ok(guild_name) on success, or an error string on failure.
-async fn save_and_create_group(
+async fn save_and_create_category(
     ctx: &Context,
     db: &Arc<Database>,
     manager: &Arc<Mutex<Manager>>,
@@ -1085,33 +1085,33 @@ async fn save_and_create_group(
         .map(|id| id.get())
         .unwrap_or(0);
 
-    // Create group in database
-    let group_config = crate::database::repositories::group::GroupConfig {
+    // Create category in database
+    let category_config = crate::database::repositories::category::CategoryConfig {
         category_id: category,
         dashboard_channel_id: dashboard_channel,
         chat_channel_id: queue_channel,
         queue_vc_id: queue_vc_channel,
         quota: DEFAULT_QUOTA,
     };
-    db.groups.create_group(guild_id, dashboard_msg_id, group_config).await?;
-    info!("[{}] Group configuration saved to database", guild_name);
+    db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await?;
+    info!("[{}] Category configuration saved to database", guild_name);
 
     // Load into manager and update dashboard
-    finalize_group_setup(ctx, db, manager, guild_id, dashboard_msg_id).await?;
+    finalize_category_setup(ctx, db, manager, guild_id, dashboard_msg_id).await?;
 
     Ok(guild_name)
 }
 
-/// Helper function to finalize group setup by loading it into manager and immediately updating dashboard
-async fn finalize_group_setup(ctx: &Context, db: &Arc<Database>, manager: &Arc<Mutex<Manager>>, guild_id: GI, dashboard_msg_id: u64) -> Result<()> {
+/// Helper function to finalize category setup by loading it into manager and immediately updating dashboard
+async fn finalize_category_setup(ctx: &Context, db: &Arc<Database>, manager: &Arc<Mutex<Manager>>, guild_id: GI, dashboard_msg_id: u64) -> Result<()> {
     let guild_name = guild_name(ctx, guild_id);
 
-    // Load the group from database
-    match db.groups.get_groups_for_guild(guild_id).await {
-        Ok(groups) if !groups.is_empty() => {
-            let new_group = groups.into_iter()
+    // Load the category from database
+    match db.categories.get_categories_for_guild(guild_id).await {
+        Ok(categories) if !categories.is_empty() => {
+            let new_category = categories.into_iter()
                 .find(|g| g.dashboard_msg.get() == dashboard_msg_id)
-                .ok_or_else(|| anyhow!("Could not find newly created group"))?;
+                .ok_or_else(|| anyhow!("Could not find newly created category"))?;
 
             use crate::models::Server;
             let mut mgr = manager.lock().await;
@@ -1123,32 +1123,32 @@ async fn finalize_group_setup(ctx: &Context, db: &Arc<Database>, manager: &Arc<M
             }
 
             let server = mgr.get_server(guild_id)?;
-            server.add_group(new_group)?;
+            server.add_category(new_category)?;
 
-            // Get the newly added group and immediately update its dashboard
-            let group = server.groups.last_mut()
-                .ok_or_else(|| anyhow!("Failed to get newly added group"))?;
+            // Get the newly added category and immediately update its dashboard
+            let category = server.categories.last_mut()
+                .ok_or_else(|| anyhow!("Failed to get newly added category"))?;
 
             // Use dash_update for immediate synchronous update instead of queued async update
-            if let Err(e) = group.dash_update(ctx).await {
+            if let Err(e) = category.dash_update(ctx).await {
                 warn!("[{}] Failed to update dashboard: {}", guild_name, e);
             } else {
-                info!("[{}] Group added to manager and dashboard updated successfully", guild_name);
+                info!("[{}] Category added to manager and dashboard updated successfully", guild_name);
             }
 
             Ok(())
         },
         Ok(_) => {
-            Err(anyhow!("[{}] No groups found after creation", guild_name))
+            Err(anyhow!("[{}] No categories found after creation", guild_name))
         },
         Err(e) => {
-            Err(anyhow!("[{}] Failed to load groups from database: {}", guild_name, e))
+            Err(anyhow!("[{}] Failed to load categories from database: {}", guild_name, e))
         }
     }
 }
 
-/// Handles grouplink blue team channel selection - Step 5 (final step, creates the group)
-async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channel_id: u64, db: &std::sync::Arc<crate::Database>, manager: &Arc<Mutex<crate::models::Manager>>) -> Result<()> {
+/// Handles categorylink blue team channel selection - Step 5 (final step, creates the category)
+async fn handle_categorylink_blue_selection(ctx: &Context, interaction: &CX, channel_id: u64, db: &std::sync::Arc<crate::Database>, manager: &Arc<Mutex<crate::models::Manager>>) -> Result<()> {
     let user_id = interaction.user.id;
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
     let guild_name = guild_name(ctx, guild_id);
@@ -1167,44 +1167,44 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
     let red_channel = CI::new(config.red_channel.ok_or_else(|| anyhow!("Red channel not set"))?);
     let blue_channel = CI::new(config.blue_channel.ok_or_else(|| anyhow!("Blue channel not set"))?);
 
-    // Send "creating group" message
+    // Send "creating category" message
     let loading_embed = CE::new()
-        .title("Creating group")
-        .description("Linking channels and creating PUG group...\n\nCleaning up any old configurations...")
+        .title("Creating category")
+        .description("Linking channels and creating PUG category...\n\nCleaning up any old configurations...")
         .color(ORANGE);
 
     let response = CIR::UpdateMessage(CIRM::new().embed(loading_embed).components(vec![]));
     interaction.create_response(&ctx.http, response).await?;
 
-    // Check and clean up old groups that use these channels
+    // Check and clean up old categories that use these channels
     let mut mgr = manager.lock().await;
     let server_opt = mgr.servers.iter_mut().find(|s| s.guild_id == guild_id);
 
     if let Some(server) = server_opt {
-        let mut groups_to_remove = Vec::new();
+        let mut categories_to_remove = Vec::new();
 
-        for (idx, group) in server.groups.iter().enumerate() {
-            if group.channels.dashboard == dashboard_channel ||
-               group.channels.queue_chat == queue_channel ||
-               group.channels.queue_vc == queue_vc_channel ||
-               group.channels.teams.iter().any(|t| t.red_vc == red_channel || t.blu_vc == blue_channel) {
-                groups_to_remove.push((idx, group.group_id));
+        for (idx, category) in server.categories.iter().enumerate() {
+            if category.channels.dashboard == dashboard_channel ||
+               category.channels.queue_chat == queue_channel ||
+               category.channels.queue_vc == queue_vc_channel ||
+               category.channels.teams.iter().any(|t| t.red_vc == red_channel || t.blu_vc == blue_channel) {
+                categories_to_remove.push((idx, category.category_id));
             }
         }
 
         // Remove old configurations from database and memory
-        for (idx, group_id) in groups_to_remove.iter().rev() {
-            info!("[{}] Removing old group {} configuration", guild_name, group_id);
-            if let Err(e) = db.groups.delete(*group_id).await {
-                warn!("[{}] Failed to delete old group {}: {}", guild_name, group_id, e);
+        for (idx, category_id) in categories_to_remove.iter().rev() {
+            info!("[{}] Removing old category {} configuration", guild_name, category_id);
+            if let Err(e) = db.categories.delete(*category_id).await {
+                warn!("[{}] Failed to delete old category {}: {}", guild_name, category_id, e);
             }
-            server.groups.remove(*idx);
+            server.categories.remove(*idx);
         }
     }
     drop(mgr);
 
-    // Create temporary group and publish dashboard
-    use crate::models::{Group, Channels, TeamChannel};
+    // Create temporary category and publish dashboard
+    use crate::models::{Category, Channels, TeamChannel};
     use serenity::all::MessageId;
 
     // Derive category from dashboard channel's parent
@@ -1212,8 +1212,9 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
         .and_then(|ch| ch.parent_id)
         .unwrap_or(CI::new(1));
 
-    let mut temp_group = Group::new(
+    let mut temp_category = Category::new(
         guild_id,
+        None,
         0,
         None,
         crate::DEFAULT_QUOTA,
@@ -1233,31 +1234,32 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
     );
 
     // Publish dashboard to get message ID
-    match temp_group.dash_publish(ctx, dashboard_channel, db, guild_id).await {
+    match temp_category.dash_publish(ctx, dashboard_channel, db, guild_id).await {
         Ok(_) => {
-            let dashboard_msg_id = temp_group.dashboard_msg.get();
+            let dashboard_msg_id = temp_category.dashboard_msg.get();
 
             // Save to database
-            let group_config = crate::database::repositories::group::GroupConfig {
+            let category_config = crate::database::repositories::category::CategoryConfig {
                 category_id:          category_id.get(),
                 dashboard_channel_id: dashboard_channel.get(),
                 chat_channel_id:      queue_channel    .get(),
                 queue_vc_id:          queue_vc_channel .get(),
                 quota:                crate::DEFAULT_QUOTA,
             };
-            match db.groups.create_group(
+            match db.categories.create_category(
                 guild_id,
+                &guild_name,
                 dashboard_msg_id,
-                group_config,
+                category_config,
             ).await {
-                Ok(db_group) => {
-                    info!("[{}] Group {} created via grouplink", guild_name, db_group.group_id);
+                Ok(db_category) => {
+                    info!("[{}] Category {} created via categorylink", guild_name, db_category.category_id);
 
                     // Add to manager
                     let mut mgr = manager.lock().await;
                     if let Ok(server) = mgr.get_server(guild_id) {
-                        if let Err(e) = server.add_group(db_group.clone()) {
-                            error!("[{}] Failed to add group: {}", guild_name, e);
+                        if let Err(e) = server.add_category(db_category.clone()) {
+                            error!("[{}] Failed to add category: {}", guild_name, e);
                         }
                     }
                     drop(mgr);
@@ -1266,7 +1268,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
                     SETUP_STATE.complete_setup(user_id, guild_id);
 
                     let success_embed = CE::new()
-                        .title("Group created!")
+                        .title("Category created!")
                         .description(format!(
                             "Successfully linked existing channels!\n\n\
                             **Configuration:**\n\
@@ -1293,7 +1295,7 @@ async fn handle_grouplink_blue_selection(ctx: &Context, interaction: &CX, channe
                     let _ = dashboard_channel.delete_message(&ctx.http, dashboard_msg_id).await;
 
                     let error_embed = CE::new()
-                        .title("Failed to save group")
+                        .title("Failed to save category")
                         .description(format!("Error saving to database: {e}"))
                         .color(RED);
 
@@ -1466,15 +1468,15 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     let guild_name = guild_name(cc.ctx, guild_id);
 
-    info!("[{}] Getting group from channel {}", guild_name, cc.intax.channel_id);
-    // Get the group from the current channel
-    let group = match server.get_group(cc.intax.channel_id) {
+    info!("[{}] Getting category from channel {}", guild_name, cc.intax.channel_id);
+    // Get the category from the current channel
+    let category = match server.get_category(cc.intax.channel_id) {
         Ok(g) => g,
         Err(e) => {
-            warn!("[{}] No group found in channel {}: {}", guild_name, cc.intax.channel_id, e);
+            warn!("[{}] No category found in channel {}: {}", guild_name, cc.intax.channel_id, e);
             let error_embed = CE::new()
-                .title("Group not found")
-                .description(format!("No queue group found in this channel: {e}"))
+                .title("Category not found")
+                .description(format!("No queue category found in this channel: {e}"))
                 .color(RED);
 
             cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
@@ -1485,7 +1487,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
     info!("[{}] Finding session for user {}", guild_name, user_tag);
     // Find the session containing the player
-    let session = match group.get_user_session(user_id).await {
+    let session = match category.get_user_session(user_id).await {
         Ok(s) => s,
         Err(e) => {
             let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
@@ -1526,10 +1528,10 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
 
     // If session is hot, regenerate teams with new order
     if is_hot {
-        group.generate_teams(cc.ctx, guild_id, Some(&cc.db)).await;
+        category.generate_teams(cc.ctx, guild_id, Some(&cc.db)).await;
     }
 
-    group.queue_dash_update(cc.ctx, guild_id).await;
+    category.queue_dash_update(cc.ctx, guild_id).await;
 
     let success_embed = CE::new()
         .title("Player buffered")
@@ -1550,15 +1552,15 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
     let guild_name = guild_name(cc.ctx, guild_id);
 
-    info!("[{}] Getting group from channel {}", guild_name, cc.intax.channel_id);
-    // Get the group from the current channel
-    let group = match server.get_group(cc.intax.channel_id) {
+    info!("[{}] Getting category from channel {}", guild_name, cc.intax.channel_id);
+    // Get the category from the current channel
+    let category = match server.get_category(cc.intax.channel_id) {
         Ok(g) => g,
         Err(e) => {
-            warn!("[{}] No group found in channel {}: {}", guild_name, cc.intax.channel_id, e);
+            warn!("[{}] No category found in channel {}: {}", guild_name, cc.intax.channel_id, e);
             let error_embed = CE::new()
-                .title("Group not found")
-                .description(format!("No queue group found in this channel: {e}"))
+                .title("Category not found")
+                .description(format!("No queue category found in this channel: {e}"))
                 .color(RED);
 
             cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
@@ -1569,7 +1571,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
     info!("[{}] Finding session for user {}", guild_name, user_tag);
     // Find the session containing the player
-    let session = match group.get_user_session(user_id).await {
+    let session = match category.get_user_session(user_id).await {
         Ok(s) => s,
         Err(e) => {
             let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
@@ -1610,10 +1612,10 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
 
     // If session is hot, regenerate teams with new order
     if is_hot {
-        group.generate_teams(cc.ctx, guild_id, Some(&cc.db)).await;
+        category.generate_teams(cc.ctx, guild_id, Some(&cc.db)).await;
     }
 
-    group.queue_dash_update(cc.ctx, guild_id).await;
+    category.queue_dash_update(cc.ctx, guild_id).await;
 
     let success_embed = CE::new()
         .title("Player fatkidded")
@@ -1625,20 +1627,20 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
 }
 
 /// `/remove` - Remove all players from the queue, or a specific player
-/// Works in any group channel (queue chat, dashboard, team VCs, etc.)
-/// Handles all subgroups, not just the first one
+/// Works in any category channel (queue chat, dashboard, team VCs, etc.)
+/// Handles all formats, not just the first one
 pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Option<&CommandDataOption>) -> Result<()> {
     if !check_run(cc).await? { return Ok(()); }
 
     let guild_id = cc.intax.guild_id.expect("Guild ID not found");
 
-    // Get the group from the current channel (works in any group channel)
-    let group = match server.get_group(cc.intax.channel_id) {
+    // Get the category from the current channel (works in any category channel)
+    let category = match server.get_category(cc.intax.channel_id) {
         Ok(g) => g,
         Err(e) => {
             let error_embed = CE::new()
-                .title("Group not found")
-                .description(format!("No queue group found in this channel: {e}"))
+                .title("Category not found")
+                .description(format!("No queue category found in this channel: {e}"))
                 .color(RED);
 
             cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
@@ -1646,13 +1648,13 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
         }
     };
 
-    // Determine which subgroup(s) to target
-    let target_subgroups = if let Some(user_opt) = user_option {
-        // For specific user removal, search all subgroups for that user
+    // Determine which format(s) to target
+    let target_formats = if let Some(user_opt) = user_option {
+        // For specific user removal, search all formats for that user
         if let Some(user_id) = user_opt.value.as_user_id() {
             let mut target_sg_ids = Vec::new();
-            for (sg_idx, sg) in group.subgroups.iter().enumerate() {
-                // Check if user is in any session of this subgroup
+            for (sg_idx, sg) in category.formats.iter().enumerate() {
+                // Check if user is in any session of this format
                 for session in &sg.sessions {
                     if session.pool.iter().any(|p| p.player.user_id == user_id.get()) {
                         target_sg_ids.push(sg_idx);
@@ -1662,33 +1664,33 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
             }
             
             if target_sg_ids.is_empty() {
-                // User not found in any subgroup, default to first subgroup
+                // User not found in any format, default to first format
                 vec![0]
             } else {
                 target_sg_ids
             }
         } else {
-            vec![0] // Default to first subgroup if user parsing fails
+            vec![0] // Default to first format if user parsing fails
         }
     } else {
-        // For clearing queue, target all subgroups
-        (0..group.subgroups.len()).collect()
+        // For clearing queue, target all formats
+        (0..category.formats.len()).collect()
     };
 
     // Handle specific user removal vs clear all
     if let Some(user_opt) = user_option {
-        // Remove specific user from relevant subgroups
+        // Remove specific user from relevant formats
         if let Some(user_id) = user_opt.value.as_user_id() {
             let user: Result<User, serenity::Error> = cc.ctx.http.get_user(user_id).await;
             
             match user {
                 Ok(target_user) => {
                     let mut total_removed = 0;
-                    let mut removed_from_subgroups = Vec::new();
+                    let mut removed_from_formats = Vec::new();
                     
-                    // Remove from each targeted subgroup
-                    for &sg_idx in &target_subgroups {
-                        if let Some(sg) = group.subgroups.get_mut(sg_idx) {
+                    // Remove from each targeted format
+                    for &sg_idx in &target_formats {
+                        if let Some(sg) = category.formats.get_mut(sg_idx) {
                             for session in &mut sg.sessions {
                                 if !session.is_active() {
                                     let initial_len = session.pool.len();
@@ -1696,7 +1698,7 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
                                     let removed_count = initial_len - session.pool.len();
                                     if removed_count > 0 {
                                         total_removed += removed_count;
-                                        removed_from_subgroups.push((sg_idx, sg.name.clone()));
+                                        removed_from_formats.push((sg_idx, sg.name.clone()));
                                     }
                                 }
                             }
@@ -1704,10 +1706,10 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
                     }
 
                     // Update the dashboard
-                    group.queue_dash_update(cc.ctx, guild_id).await;
+                    category.queue_dash_update(cc.ctx, guild_id).await;
 
                     if total_removed > 0 {
-                        let sg_names: Vec<String> = removed_from_subgroups.iter()
+                        let sg_names: Vec<String> = removed_from_formats.iter()
                             .map(|(_, name)| format!("**{}**", name))
                             .collect();
                         
@@ -1716,8 +1718,8 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
                             .description(format!(
                                 "Removed **{}** from the queue{}.", 
                                 target_user.name,
-                                if removed_from_subgroups.len() > 1 {
-                                    format!(" from subgroups: {}", sg_names.join(", "))
+                                if removed_from_formats.len() > 1 {
+                                    format!(" from formats: {}", sg_names.join(", "))
                                 } else {
                                     String::new()
                                 }
@@ -1748,35 +1750,35 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
             cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
         }
     } else {
-        // Clear all players from all subgroups
+        // Clear all players from all formats
         let mut total_players = 0;
-        let mut cleared_subgroups = Vec::new();
+        let mut cleared_formats = Vec::new();
         
-        for (sg_idx, sg) in group.subgroups.iter_mut().enumerate() {
+        for (sg_idx, sg) in category.formats.iter_mut().enumerate() {
             for session in &mut sg.sessions {
                 if !session.is_active() {
                     let count = session.pool.len();
                     if count > 0 {
                         total_players += count;
                         session.pool.clear();
-                        cleared_subgroups.push((sg_idx, sg.name.clone()));
+                        cleared_formats.push((sg_idx, sg.name.clone()));
                     }
                 }
             }
         }
 
         // Update the dashboard
-        group.queue_dash_update(cc.ctx, guild_id).await;
+        category.queue_dash_update(cc.ctx, guild_id).await;
 
         let success_embed = CE::new()
             .title("Queue cleared")
             .description(format!(
                 "Removed {total_players} player(s) from the queue{}.", 
-                if cleared_subgroups.len() > 1 {
-                    let sg_names: Vec<String> = cleared_subgroups.iter()
+                if cleared_formats.len() > 1 {
+                    let sg_names: Vec<String> = cleared_formats.iter()
                         .map(|(_, name)| format!("**{}**", name))
                         .collect();
-                    format!(" from subgroups: {}", sg_names.join(", "))
+                    format!(" from formats: {}", sg_names.join(", "))
                 } else {
                     String::new()
                 }

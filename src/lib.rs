@@ -10,4 +10,4 @@ pub use handlers::{admin, player, commands};
 pub use log::*;
 pub use models::*;
 pub use models::constants::guild_name;
-pub use log::{log_prefix_group, log_prefix_subgroup};
+pub use log::{log_prefix_category, log_prefix_format};

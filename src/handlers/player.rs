@@ -340,10 +340,10 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         let mut found = false;
         let mut queue_count = 0;
 
-        let group = guild.get_group(channel)?;
+        let category = guild.get_category(channel)?;
 
-        // Find and remove player from any game across all subgroups
-        for sg in &mut group.subgroups {
+        // Find and remove player from any game across all formats
+        for sg in &mut category.formats {
             for game in &mut sg.sessions {
                 if game.status == SS::Idle {
                     let initial_len = game.pool.len();
@@ -359,10 +359,10 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
         }
 
         if found {
-            cc.reply(&format!("Left the queue! ({queue_count}/{} players)", group.quota())).await?;
+            cc.reply(&format!("Left the queue! ({queue_count}/{} players)", category.quota())).await?;
         }
 
-        group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
+        category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
 
         return Ok(());
     }
@@ -450,10 +450,10 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     // Set discord tag from interaction user data (already available, no API call needed)
     player.tag = cc.intax.user.tag();
 
-    let group = guild.get_group(channel)?;
+    let category = guild.get_category(channel)?;
 
     // Check if we have an idle session
-    let idle_sessions = group.get_sessions_by_status(&SS::Idle);
+    let idle_sessions = category.get_sessions_by_status(&SS::Idle);
     if idle_sessions.is_empty() {
         cc.reply("No queue available. A match is currently in progress.").await?;
         return Ok(());
@@ -462,29 +462,29 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     }
 
     // Check if player is already in game
-    if group.get_user_session(user).await.is_ok() {
+    if category.get_user_session(user).await.is_ok() {
         // Already in queue - refresh timeout
-        if let Ok(session) = group.get_user_session(user).await {
+        if let Ok(session) = category.get_user_session(user).await {
             if let Some(sp) = session.pool.iter_mut().find(|p| p.player.user_id == user) {
                 sp.joined_at = std::time::SystemTime::now();
             }
         }
-        let current_queue = group.get_queue().await.map(|s| s.pool.len()).unwrap_or(0);
-        cc.reply(&format!("Refreshed your timeout! ({current_queue}/{} players)", group.quota())).await?;
-        group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
+        let current_queue = category.get_queue().await.map(|s| s.pool.len()).unwrap_or(0);
+        cc.reply(&format!("Refreshed your timeout! ({current_queue}/{} players)", category.quota())).await?;
+        category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
     } else {
-        let queue = group.get_queue().await?;
+        let queue = category.get_queue().await?;
         queue.add_player(player);
 
         let current_queue = queue.pool.len();
-        let quota_reached = current_queue >= group.quota() as usize;
+        let quota_reached = current_queue >= category.quota() as usize;
         
         if quota_reached {
-            group.hot(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await?;
+            category.hot(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await?;
         }
 
-        cc.reply(&format!("Joined the queue! ({current_queue}/{} players)", group.quota())).await?;
-        group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
+        cc.reply(&format!("Joined the queue! ({current_queue}/{} players)", category.quota())).await?;
+        category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
     }
 
     Ok(())
@@ -495,12 +495,12 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     let channel = cc.intax.channel_id;
 
     let (queue_count, queue_list, quota) = {
-        let group = guild.get_group(channel)?;
+        let category = guild.get_category(channel)?;
 
-        let idle_games = group.get_sessions_by_status(&SS::Idle);
+        let idle_games = category.get_sessions_by_status(&SS::Idle);
 
         if idle_games.is_empty() {
-            (0, "No active queue found.".to_string(), group.quota())
+            (0, "No active queue found.".to_string(), category.quota())
         } else {
             let game = &idle_games[0];
             let count = game.pool.len();
@@ -511,7 +511,7 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
             } else {
                 "Queue is empty".to_string()
             };
-            (count, list, group.quota())
+            (count, list, category.quota())
         }
     }; // Manager lock is dropped here
 
@@ -528,15 +528,15 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
 pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
         if !check_run(cc).await? { return Ok(()); }
 
-    // Get active group with game
-    let group = guild.get_group(cc.intax.channel_id)?;
-    let quota = group.quota() as usize;
+    // Get active category with game
+    let category = guild.get_category(cc.intax.channel_id)?;
+    let quota = category.quota() as usize;
 
-    // Find the first subgroup with an active game
+    // Find the first format with an active game
     let mut target_game = None;
     let mut target_sg_name = String::new();
     
-    for sg in &group.subgroups {
+    for sg in &category.formats {
         if let Some(game) = sg.sessions.last() {
             if game.pool.len() >= quota {
                 target_game = Some(game);
@@ -561,7 +561,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 
     // Collect players and split into teams (synchronous shuffle so no !Send types live across await)
     let (mut red_team, mut blu_team) = split_into_teams(&game.pool);
-    let mut updated_group = group.clone();
+    let mut updated_category = category.clone();
 
     // Assign teams using GamePlayer's team method
     for sp in &mut red_team {
@@ -572,8 +572,8 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     }
 
     // Update pool with new team assignments
-    // Find the same subgroup and session we found earlier
-    for sg in &mut updated_group.subgroups {
+    // Find the same format and session we found earlier
+    for sg in &mut updated_category.formats {
         if sg.name == target_sg_name {
             if let Some(last_session) = sg.sessions.last_mut() {
                 last_session.pool.clear();
@@ -584,7 +584,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     }
 
     // Find the session again for the rest of the logic
-    let last_session = updated_group.subgroups.iter_mut()
+    let last_session = updated_category.formats.iter_mut()
         .find(|sg| sg.name == target_sg_name)
         .and_then(|sg| sg.sessions.last_mut())
         .ok_or_else(|| anyhow!("No session available after update"))?;
@@ -605,7 +605,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     );
 
     // Update dashboard
-    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
+    category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
 
     cc.reply(&embed_content).await?;
     Ok(())
@@ -615,15 +615,15 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
         if !check_run(cc).await? { return Ok(()); }
 
-    // Get the group for the current channel
+    // Get the category for the current channel
     let channel_id = cc.intax.channel_id;
-    let group = guild.get_group(channel_id)?;
+    let category = guild.get_category(channel_id)?;
 
     // Check hot game count first
-    let hot_game_count = group.subgroups[0].sessions.iter().filter(|g| g.status == SS::Hot).count();
+    let hot_game_count = category.formats[0].sessions.iter().filter(|g| g.status == SS::Hot).count();
     match hot_game_count {
         0 => {
-            cc.reply("No hot games found in this group.").await?;
+            cc.reply("No hot games found in this category.").await?;
             return Ok(());
         },
         1 => {
@@ -635,14 +635,14 @@ pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
     }
 
     // Now get mutable access to the hot game
-    let hot_game = group.subgroups[0].sessions.iter_mut()
+    let hot_game = category.formats[0].sessions.iter_mut()
         .find(|g| g.status == SS::Hot)
         .ok_or_else(|| anyhow!("Hot game not found after verification"))?;
 
     hot_game.push();
 
     // Update dashboard
-    group.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
+    category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
 
     cc.reply("Game accepted! Players moved to team channels.").await?;
 
@@ -652,21 +652,21 @@ pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 pub async fn end(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
         if !check_run(cc).await? { return Ok(()); }
 
-    // Get the group for the current channel
+    // Get the category for the current channel
     let channel_id = cc.intax.channel_id;
-    let group = guild.get_group(channel_id)?;
+    let category = guild.get_category(channel_id)?;
 
     // Check if there's an active game to end
-    let has_active = group.subgroups[0].sessions.iter().any(|s| s.status == SS::Hot || s.status == SS::Live);
+    let has_active = category.formats[0].sessions.iter().any(|s| s.status == SS::Hot || s.status == SS::Live);
 
     if !has_active {
         cc.reply("No active game found to end.").await?;
         return Ok(());
     }
 
-    // Use Group::pull() to properly move players back and handle re-queueing
+    // Use Category::pull() to properly move players back and handle re-queueing
     if let Some(guild_id) = cc.intax.guild_id {
-        group.pull(cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await?;
+        category.pull(cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await?;
         cc.reply("Game has been ended. Players moved back to queue.").await?;
     } else {
         cc.reply("This command can only be used in a server.").await?;

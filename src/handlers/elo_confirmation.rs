@@ -107,14 +107,14 @@ pub async fn handle_elo_change_confirmation(
         {
             let mut manager_lock = manager.lock().await;
             if let Ok(server) = manager_lock.get_server(guild_id) {
-                for group in &server.groups {
-                    let player_in_queue = group.subgroups[0].sessions.iter().any(|session| {
+                for category in &server.categories {
+                    let player_in_queue = category.formats[0].sessions.iter().any(|session| {
                         session.pool.iter().any(|p| p.player.user_id == target_uid)
                     });
                     
                     if player_in_queue {
-                        info!("Player {} ELO changed, updating dashboard for group {}", target_uid, group.group_id);
-                        group.queue_dash_update(ctx, guild_id).await;
+                        info!("Player {} ELO changed, updating dashboard for category {}", target_uid, category.category_id);
+                        category.queue_dash_update(ctx, guild_id).await;
                     }
                 }
             }

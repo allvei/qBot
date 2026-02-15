@@ -1,14 +1,14 @@
 //! # Manager Module
 //!
 //! This module defines the Manager struct and its related functionality.
-//! The Manager is responsible for managing multiple servers and their groups/games.
+//! The Manager is responsible for managing multiple servers and their categories/games.
 
 use anyhow::{anyhow, Result};
 use serenity::all::{Cache, ChannelId as CI, GuildId as GI};
 
-use crate::models::{Group, Roles, Server, SessionStatus};
+use crate::models::{Category, Roles, Server, SessionStatus};
 
-/// Manages multiple servers and their associated groups/games
+/// Manages multiple servers and their associated categories/games
 #[derive(Default, Clone)]
 pub struct Manager {
     /// Collection of servers managed by this instance
@@ -54,41 +54,41 @@ impl Manager {
         }
     }
 
-    pub fn get_group_by_channel(&mut self, guild_id: GI, channel_id: CI) -> Result<&mut Group> {
+    pub fn get_category_by_channel(&mut self, guild_id: GI, channel_id: CI) -> Result<&mut Category> {
         let server = self.get_server(guild_id)?;
-        let group = server.groups.iter_mut().find(|g| g.contains_channel(channel_id));
-        if let Some(group) = group {
-            Ok(group)
+        let category = server.categories.iter_mut().find(|g| g.contains_channel(channel_id));
+        if let Some(category) = category {
+            Ok(category)
         } else {
-            Err(anyhow!("No queue group configured for this channel. Please run /setup first."))
+            Err(anyhow!("No queue category configured for this channel. Please run /setup first."))
         }
     }
 
-    pub fn get_group_by_id(&mut self, guild_id: GI, group_id: u8) -> Result<&mut Group> {
+    pub fn get_category_by_id(&mut self, guild_id: GI, category_id: u8) -> Result<&mut Category> {
         let server = self.get_server(guild_id)?;
-        let group = server.groups.iter_mut().find(|g| g.group_id == group_id);
-        if let Some(group) = group {
-            Ok(group)
+        let category = server.categories.iter_mut().find(|g| g.category_id == category_id);
+        if let Some(category) = category {
+            Ok(category)
         } else {
-            Err(anyhow!("Group {} not found for guild ID: {}", group_id, guild_id.get()))
+            Err(anyhow!("Category {} not found for guild ID: {}", category_id, guild_id.get()))
         }
     }
 
-    /// Update group state in the manager
+    /// Update category state in the manager
     ///
     /// ### Arguments
-    /// * `channel_id` - The channel ID of the group
-    /// * `updated_group` - The updated group state
-    pub fn update_group(&mut self, server: &mut Server, channel_id: CI, updated_group: Group) {
-        if let Some(group) = server.groups.iter_mut().find(|g| g.contains_channel(channel_id)) {
-            *group = updated_group;
+    /// * `channel_id` - The channel ID of the category
+    /// * `updated_category` - The updated category state
+    pub fn update_category(&mut self, server: &mut Server, channel_id: CI, updated_category: Category) {
+        if let Some(category) = server.categories.iter_mut().find(|g| g.contains_channel(channel_id)) {
+            *category = updated_category;
         }
     }
 
     pub fn cleanup_empty_games(&mut self) {
         for server in &mut self.servers {
-            for group in &mut server.groups {
-                group.subgroups[0].sessions.retain(|game| {
+            for category in &mut server.categories {
+                category.formats[0].sessions.retain(|game| {
                     !(game.status == SessionStatus::Idle && game.pool.is_empty())
                 });
             }

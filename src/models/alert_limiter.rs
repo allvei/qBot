@@ -24,11 +24,11 @@ struct AlertIntent {
     rank_name: String,
 }
 
-/// Key for grouping alerts: (group_id, user_id)
-/// Alerts across subgroups for the same user in the same group get combined.
+/// Key for categorying alerts: (category_id, user_id)
+/// Alerts across formats for the same user in the same category get combined.
 type BufferKey = (u8, u64);
 
-type RateLimitKey = (u8, u8, u64); // (group_id, sg_id, user_id)
+type RateLimitKey = (u8, u8, u64); // (category_id, sg_id, user_id)
 
 struct PendingAlert {
     intents: Vec<AlertIntent>,
@@ -45,7 +45,7 @@ static PENDING: LazyLock<Mutex<HashMap<BufferKey, PendingAlert>>> =
 static RATE_LIMITER: LazyLock<Mutex<HashMap<RateLimitKey, VecDeque<Instant>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Schedule a join/leave alert intent. Multiple intents for the same user+group
+/// Schedule a join/leave alert intent. Multiple intents for the same user+category
 /// within the buffer window get combined or cancelled before sending.
 pub fn schedule_alert(
     ctx: Context,
@@ -53,13 +53,13 @@ pub fn schedule_alert(
     guild_id: GuildId,
     user_id: UserId,
     db: std::sync::Arc<crate::Database>,
-    group_id: u8,
+    category_id: u8,
     sg_id: u8,
     alert_type: AlertType,
     sg_name: Option<String>,
     rank_name: String,
 ) {
-    let buffer_key = (group_id, user_id.get());
+    let buffer_key = (category_id, user_id.get());
 
     tokio::spawn(async move {
         let first_intent = {
@@ -108,7 +108,7 @@ pub fn schedule_alert(
 
         let Some(alert) = alert else { return };
 
-        // Resolve intents: cancel opposing join/leave pairs per subgroup
+        // Resolve intents: cancel opposing join/leave pairs per format
         let mut net: HashMap<Option<String>, i8> = HashMap::new(); // sg_name -> net (+1 join, -1 leave)
         let mut rank_name = String::new();
         for intent in &alert.intents {
@@ -136,13 +136,13 @@ pub fn schedule_alert(
 
         // If nothing remains, the player toggled and net effect is zero
         if join_names.is_empty() && leave_names.is_empty() {
-            debug!("Alert cancelled for user {} in group {} (join/leave cancelled out)", alert.user_id, group_id);
+            debug!("Alert cancelled for user {} in category {} (join/leave cancelled out)", alert.user_id, category_id);
             return;
         }
 
         // Rate limit check (use first sg or 0)
         let rate_sg = sg_id;
-        let rate_key = (group_id, rate_sg, alert.user_id.get());
+        let rate_key = (category_id, rate_sg, alert.user_id.get());
         {
             let mut limiter = RATE_LIMITER.lock().await;
             let timestamps = limiter.entry(rate_key).or_insert_with(VecDeque::new);
@@ -151,7 +151,7 @@ pub fn schedule_alert(
                 timestamps.pop_front();
             }
             if timestamps.len() >= MAX_ALERTS_PER_WINDOW {
-                debug!("Rate limited alert for user {} in group {}", alert.user_id, group_id);
+                debug!("Rate limited alert for user {} in category {}", alert.user_id, category_id);
                 return;
             }
             timestamps.push_back(Instant::now());
@@ -192,7 +192,7 @@ pub fn schedule_alert(
     });
 }
 
-/// Combine subgroup names: ["4v4", "3v3"] -> "4v4 & 3v3"
+/// Combine format names: ["4v4", "3v3"] -> "4v4 & 3v3"
 fn combine_sg_names(names: &[Option<String>]) -> Option<String> {
     let concrete: Vec<&str> = names.iter()
         .filter_map(|n| n.as_deref())

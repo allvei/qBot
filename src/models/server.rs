@@ -1,14 +1,14 @@
 //! # Server Module
 //!
 //! This module defines the Server struct and its related functionality.
-//! A Server represents a Discord guild with associated groups and games.
+//! A Server represents a Discord guild with associated categories and games.
 
 use std::{sync::Arc, time::Duration};
 use std::time::SystemTime;
 
 use tokio::sync::Mutex;
 use anyhow::{anyhow, Error, Result};
-use crate::{Database as DB, GREEN, Manager, Rank, models::constants::{DEFAULT_ACTIVE_ELO, MAX_TIMEOUT, MIN_TIMEOUT}, guild_name, log_prefix_subgroup};
+use crate::{Database as DB, GREEN, Manager, Rank, models::constants::{DEFAULT_ACTIVE_ELO, MAX_TIMEOUT, MIN_TIMEOUT}, guild_name, log_prefix_format};
 use serde::{Deserialize, Serialize};
 use serenity::{all::{
     ChannelId as CI, Context, CreateEmbed,
@@ -69,7 +69,7 @@ pub struct Server {
     pub guild_id:   GI,
     pub guild_name: String,
     pub roles:      Roles,
-    pub groups:     Vec<Group>,
+    pub categories:     Vec<Category>,
 }
 
 impl Server {
@@ -78,15 +78,15 @@ impl Server {
             guild_id,
             guild_name,
             roles,
-            groups: Vec::new(),
+            categories: Vec::new(),
         }
     }
 
-    pub fn add_group(&mut self, group: Group) -> Result<()> {
-        self.groups.push(group);
-        if let Some(group) = self.groups.last_mut() {
-            // Create an idle session for every subgroup
-            for sg in &mut group.subgroups {
+    pub fn add_category(&mut self, category: Category) -> Result<()> {
+        self.categories.push(category);
+        if let Some(category) = self.categories.last_mut() {
+            // Create an idle session for every format
+            for sg in &mut category.formats {
                 if sg.sessions.is_empty() {
                     sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
                 }
@@ -100,14 +100,14 @@ impl Server {
             guild_id,
             guild_name,
             roles: Roles::empty(),
-            groups: Vec::new(),
+            categories: Vec::new(),
         }
     }
 
-    pub fn get_group(&mut self, channel_id: CI) -> Result<&mut Group> {
-        match self.groups.iter_mut().find(|group| group.contains_channel(channel_id)) {
-            Some(group) => Ok(group),
-            None => Err(anyhow!("Group not found")),
+    pub fn get_category(&mut self, channel_id: CI) -> Result<&mut Category> {
+        match self.categories.iter_mut().find(|category| category.contains_channel(channel_id)) {
+            Some(category) => Ok(category),
+            None => Err(anyhow!("Category not found")),
         }
     }
 
@@ -256,9 +256,9 @@ impl Default for TeamVcSettings {
     }
 }
 
-// Subgroup
+// Format
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Subgroup {
+pub struct Format {
     pub id:           u8,
     pub name:         String,
     pub quota:        u8,
@@ -266,7 +266,7 @@ pub struct Subgroup {
     pub connect_info: Option<String>,
 }
 
-impl Subgroup {
+impl Format {
     pub fn new(id: u8, name: String, quota: u8) -> Self {
         Self {
             id,
@@ -282,16 +282,17 @@ impl Subgroup {
     }
 }
 
-// Group
+// Category
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Group {
+pub struct Category {
     pub guild_id:            GI,
-    pub group_id:            u8,
+    pub guild_name:          Option<String>,
+    pub category_id:            u8,
     pub name:                Option<String>,
     pub timeout:             u16,
     pub dashboard_msg:       MI,
     pub channels:            Channels,
-    pub subgroups:           Vec<Subgroup>,
+    pub formats:           Vec<Format>,
     pub team_balance_method: TeamBalanceMethod,
     pub team_vc_settings:    TeamVcSettings,
     pub dm_alert_enabled:    bool,
@@ -301,10 +302,11 @@ pub struct Group {
     pub recently_freed_teams: Vec<TeamChannel>,
 }
 
-impl Group {
+impl Category {
     pub fn new(
         guild_id:      GI,
-        group_id:      u8,
+        guild_name:    Option<String>,
+        category_id:      u8,
         name:          Option<String>,
         quota:         u8,
         timeout:       u16,
@@ -314,18 +316,19 @@ impl Group {
     ) -> Self {
         let default_name = name.clone()
             .filter(|n| !n.trim().is_empty())
-            .unwrap_or_else(|| format!("Group {}", group_id));
-        let mut sg = Subgroup::new(0, default_name, quota);
+            .unwrap_or_else(|| format!("Category {}", category_id));
+        let mut sg = Format::new(0, default_name, quota);
         sg.sessions = games;
 
         Self {
             guild_id,
-            group_id,
+            guild_name,
+            category_id,
             name,
             timeout,
             dashboard_msg,
             channels,
-            subgroups: vec![sg],
+            formats: vec![sg],
             team_balance_method: TeamBalanceMethod::default(),
             team_vc_settings: TeamVcSettings::default(),
             dm_alert_enabled: false,
@@ -335,83 +338,83 @@ impl Group {
         }
     }
 
-    /// Get subgroup by index, defaulting to subgroup 0
-    pub fn subgroup(&self, idx: u8) -> Option<&Subgroup> {
-        self.subgroups.iter().find(|sg| sg.id == idx)
+    /// Get format by index, defaulting to format 0
+    pub fn format(&self, idx: u8) -> Option<&Format> {
+        self.formats.iter().find(|sg| sg.id == idx)
     }
 
-    /// Get mutable subgroup by index, defaulting to subgroup 0
-    pub fn subgroup_mut(&mut self, idx: u8) -> Option<&mut Subgroup> {
-        self.subgroups.iter_mut().find(|sg| sg.id == idx)
+    /// Get mutable format by index, defaulting to format 0
+    pub fn format_mut(&mut self, idx: u8) -> Option<&mut Format> {
+        self.formats.iter_mut().find(|sg| sg.id == idx)
     }
 
-    // --- Backward-compatible accessors delegating to subgroup 0 ---
+    // --- Backward-compatible accessors delegating to format 0 ---
 
-    /// Sessions of the default subgroup (subgroup 0)
+    /// Sessions of the default format (format 0)
     pub fn sessions(&self) -> &Vec<Session> {
-        &self.subgroups[0].sessions
+        &self.formats[0].sessions
     }
 
-    /// Mutable sessions of the default subgroup (subgroup 0)
+    /// Mutable sessions of the default format (format 0)
     pub fn sessions_mut(&mut self) -> &mut Vec<Session> {
-        &mut self.subgroups[0].sessions
+        &mut self.formats[0].sessions
     }
 
-    /// Quota of the default subgroup (subgroup 0)
+    /// Quota of the default format (format 0)
     pub fn quota(&self) -> u8 {
-        self.subgroups[0].quota
+        self.formats[0].quota
     }
 
-    /// Connect info of the default subgroup (subgroup 0)
+    /// Connect info of the default format (format 0)
     pub fn connect_info(&self) -> Option<&str> {
-        self.subgroups[0].connect_info.as_deref()
+        self.formats[0].connect_info.as_deref()
     }
 
-    /// Set connect info on the default subgroup (subgroup 0)
+    /// Set connect info on the default format (format 0)
     pub fn set_connect_info(&mut self, info: Option<String>) {
-        self.subgroups[0].connect_info = info;
+        self.formats[0].connect_info = info;
     }
 
-    /// Set quota on the default subgroup (subgroup 0)
+    /// Set quota on the default format (format 0)
     pub fn set_quota(&mut self, quota: u8) {
-        self.subgroups[0].quota = quota;
+        self.formats[0].quota = quota;
     }
 
-    /// Add a new subgroup. Returns error if max (3) reached.
-    /// Automatically creates an idle session for the new subgroup.
-    pub fn add_subgroup(&mut self, name: String, quota: u8) -> Result<&Subgroup> {
-        if self.subgroups.len() >= 3 {
-            return Err(anyhow!("Maximum of 3 subgroups per group"));
+    /// Add a new format. Returns error if max (3) reached.
+    /// Automatically creates an idle session for the new format.
+    pub fn add_format(&mut self, name: String, quota: u8) -> Result<&Format> {
+        if self.formats.len() >= 3 {
+            return Err(anyhow!("Maximum of 3 formats per category"));
         }
-        let id = self.next_subgroup_id();
-        let mut sg = Subgroup::new(id, name, quota);
+        let id = self.next_format_id();
+        let mut sg = Format::new(id, name, quota);
         sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
-        self.subgroups.push(sg);
-        Ok(self.subgroups.last().unwrap())
+        self.formats.push(sg);
+        Ok(self.formats.last().unwrap())
     }
 
-    /// Remove a subgroup by ID. Cannot remove subgroup 0 (default).
-    pub fn remove_subgroup(&mut self, id: u8) -> Result<()> {
+    /// Remove a format by ID. Cannot remove format 0 (default).
+    pub fn remove_format(&mut self, id: u8) -> Result<()> {
         if id == 0 {
-            return Err(anyhow!("Cannot remove the default subgroup"));
+            return Err(anyhow!("Cannot remove the default format"));
         }
-        let idx = self.subgroups.iter().position(|sg| sg.id == id)
-            .ok_or_else(|| anyhow!("Subgroup {} not found", id))?;
-        self.subgroups.remove(idx);
+        let idx = self.formats.iter().position(|sg| sg.id == id)
+            .ok_or_else(|| anyhow!("Format {} not found", id))?;
+        self.formats.remove(idx);
         Ok(())
     }
 
-    /// Get the next available subgroup ID
-    fn next_subgroup_id(&self) -> u8 {
-        (0..=255).find(|id| !self.subgroups.iter().any(|sg| sg.id == *id))
+    /// Get the next available format ID
+    fn next_format_id(&self) -> u8 {
+        (0..=255).find(|id| !self.formats.iter().any(|sg| sg.id == *id))
             .unwrap_or(0)
     }
 
-    /// Get display name for the group (name or "Group {id}")
+    /// Get display name for the category (name or "Category {id}")
     pub fn display_name(&self) -> String {
         self.name.clone()
             .filter(|n| !n.trim().is_empty())
-            .unwrap_or_else(|| format!("Group {}", self.group_id))
+            .unwrap_or_else(|| format!("Category {}", self.category_id))
     }
 
     pub fn create_session(&mut self) -> Result<&mut Session> {
@@ -419,14 +422,14 @@ impl Group {
     }
 
     pub fn create_session_sg(&mut self, sg_id: u8) -> Result<&mut Session> {
-        let sg = self.subgroup_mut(sg_id)
-            .ok_or_else(|| anyhow!("Subgroup {} not found", sg_id))?;
+        let sg = self.format_mut(sg_id)
+            .ok_or_else(|| anyhow!("Format {} not found", sg_id))?;
         let has_inactive = sg.sessions.iter().any(|s| !s.is_active());
         if has_inactive {
             return Err(anyhow!("Cannot create new session: inactive session already exists"));
         }
         sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
-        let sg = self.subgroup_mut(sg_id).unwrap();
+        let sg = self.format_mut(sg_id).unwrap();
         sg.sessions.last_mut().ok_or_else(|| anyhow!("Failed to create session"))
     }
 
@@ -435,7 +438,7 @@ impl Group {
     }
 
     pub fn end_game_sg(&mut self, sg_id: u8) -> bool {
-        if let Some(sg) = self.subgroup_mut(sg_id) {
+        if let Some(sg) = self.format_mut(sg_id) {
             if let Some(pos) = sg.sessions.iter().position(|s| s.status == SessionStatus::Idle) {
                 sg.sessions.remove(pos);
                 return true;
@@ -449,21 +452,21 @@ impl Group {
     }
 
     pub async fn get_queue_sg(&mut self, sg_id: u8) -> Result<&mut Session, Error> {
-        let sg = self.subgroup_mut(sg_id)
-            .ok_or_else(|| anyhow!("Subgroup {} not found", sg_id))?;
+        let sg = self.format_mut(sg_id)
+            .ok_or_else(|| anyhow!("Format {} not found", sg_id))?;
         sg.sessions.iter_mut()
             .find(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)
-            .ok_or(anyhow!("No joinable session found in subgroup {}", sg_id))
+            .ok_or(anyhow!("No joinable session found in format {}", sg_id))
     }
 
     pub fn get_inactives(&self) -> Vec<&Session> {
-        self.subgroups[0].sessions.iter()
+        self.formats[0].sessions.iter()
             .filter(|s| !s.is_active())
             .collect()
     }
 
     pub fn get_actives(&self) -> Vec<&Session> {
-        self.subgroups[0].sessions.iter()
+        self.formats[0].sessions.iter()
             .filter(|s| s.is_active())
             .collect()
     }
@@ -526,30 +529,30 @@ impl Group {
     }
 
     pub fn get_sessions_by_status(&self, status: &SessionStatus) -> Vec<&Session> {
-        self.subgroups[0].sessions.iter()
+        self.formats[0].sessions.iter()
             .filter(|s| s.status == *status)
             .collect()
     }
 
     pub fn get_sessions_by_status_sg(&self, sg_id: u8, status: &SessionStatus) -> Vec<&Session> {
-        self.subgroup(sg_id)
+        self.format(sg_id)
             .map(|sg| sg.sessions.iter().filter(|s| s.status == *status).collect())
             .unwrap_or_default()
     }
 
     /// Get session index (position in Vec) for logging purposes
     pub fn get_session_index(&self, session: &Session) -> Option<usize> {
-        self.subgroups[0].sessions.iter().position(|s| std::ptr::eq(s, session))
+        self.formats[0].sessions.iter().position(|s| std::ptr::eq(s, session))
     }
 
     pub fn get_games_by_status_mut(&mut self, status: &SessionStatus) -> Vec<&mut Session> {
-        self.subgroups[0].sessions.iter_mut()
+        self.formats[0].sessions.iter_mut()
             .filter(|s| s.status == *status)
             .collect()
     }
 
     pub async fn get_user_session(&mut self, user_id: UI) -> Result<&mut Session> {
-        for sg in &mut self.subgroups {
+        for sg in &mut self.formats {
             if let Some(game) = sg.sessions.iter_mut().find(|s| s.pool.iter().any(|p| p.player.user_id == user_id)) {
                 return Ok(game);
             }
@@ -557,38 +560,38 @@ impl Group {
         Err(anyhow!("User not found in any game"))
     }
 
-    /// Check if user is in a session within a specific subgroup
+    /// Check if user is in a session within a specific format
     pub fn get_user_session_sg(&mut self, sg_id: u8, user_id: UI) -> Result<&mut Session> {
-        let sg = self.subgroup_mut(sg_id)
-            .ok_or_else(|| anyhow!("Subgroup {} not found", sg_id))?;
+        let sg = self.format_mut(sg_id)
+            .ok_or_else(|| anyhow!("Format {} not found", sg_id))?;
         sg.sessions.iter_mut()
             .find(|s| s.pool.iter().any(|p| p.player.user_id == user_id))
-            .ok_or_else(|| anyhow!("User not found in subgroup {}", sg_id))
+            .ok_or_else(|| anyhow!("User not found in format {}", sg_id))
     }
 
-    /// Get the subgroup name for the subgroup containing this user
+    /// Get the format name for the format containing this user
     pub fn get_user_sg_name(&self, user_id: UI) -> Option<String> {
-        self.subgroups.iter()
+        self.formats.iter()
             .find(|sg| sg.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.user_id == user_id)))
             .map(|sg| sg.name.clone())
     }
 
-    /// Check if user is in any session across all subgroups
+    /// Check if user is in any session across all formats
     pub fn is_user_in_any_session(&self, user_id: UI) -> bool {
-        self.subgroups.iter().any(|sg|
+        self.formats.iter().any(|sg|
             sg.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.user_id == user_id))
         )
     }
 
-    /// Check if user is in a specific subgroup's sessions
+    /// Check if user is in a specific format's sessions
     pub fn is_user_in_sg(&self, sg_id: u8, user_id: UI) -> bool {
-        self.subgroup(sg_id)
+        self.format(sg_id)
             .map(|sg| sg.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.user_id == user_id)))
             .unwrap_or(false)
     }
 
     pub fn get_player(&mut self, user_id: UI) -> Result<&mut SessionPlayer> {
-        for sg in &mut self.subgroups {
+        for sg in &mut self.formats {
             for session in &mut sg.sessions {
                 if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                     return Ok(player);
@@ -635,7 +638,7 @@ impl Group {
 
         // Spawn a targeted deadline timer for this hot session
         if let (Some(guild_id), Some(mgr)) = (guild_id, manager) {
-            let group_id = self.group_id;
+            let category_id = self.category_id;
             let timeout = self.timeout;
             let ctx_clone = ctx.clone();
             
@@ -649,16 +652,16 @@ impl Group {
             tokio::spawn(async move {
                 use tokio::time::{sleep, Duration};
 
-                // Wait for the deadline (use group's configured timeout)
+                // Wait for the deadline (use category's configured timeout)
                 sleep(Duration::from_secs(timeout as u64)).await;
 
                 // Check if players have joined, remove those who haven't
                 let mut manager_lock = mgr.lock().await;
                 if let Ok(server) = manager_lock.get_server(guild_id) {
-                    if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
-                        if group.check_hot_timeout(&ctx_clone, guild_id, post_game_timeout).await {
-                            info!("Deadline timer fired: removed timed-out players from group {}", group_id);
-                            group.queue_dash_update(&ctx_clone, guild_id).await;
+                    if let Some(category) = server.categories.iter_mut().find(|g| g.category_id == category_id) {
+                        if category.check_hot_timeout(&ctx_clone, guild_id, post_game_timeout).await {
+                            info!("Deadline timer fired: removed timed-out players from category {}", category_id);
+                            category.queue_dash_update(&ctx_clone, guild_id).await;
                         }
                     }
                 }
@@ -673,8 +676,8 @@ impl Group {
     pub async fn check_hot_timeout(&mut self, ctx: &Context, guild_id: GI, post_game_timeout: Option<u16>) -> bool {
         let mut changes_made = false;
 
-        // Check hot sessions across all subgroups
-        for sg in &mut self.subgroups {
+        // Check hot sessions across all formats
+        for sg in &mut self.formats {
             let quota = sg.quota as usize;
 
             // Find hot sessions that have timed out
@@ -711,7 +714,7 @@ impl Group {
                     .collect();
 
                 let guild_name = guild_name(ctx, guild_id);
-                let full_prefix = log_prefix_subgroup(
+                let full_prefix = log_prefix_format(
                     &guild_name, 
                     self.name.as_deref().unwrap_or("unknown"), 
                     &sg.name
@@ -736,9 +739,9 @@ impl Group {
             }
         }
 
-        // If changes were made, regenerate teams for each subgroup that still has a hot session
+        // If changes were made, regenerate teams for each format that still has a hot session
         if changes_made {
-            let hot_sg_ids: Vec<u8> = self.subgroups.iter()
+            let hot_sg_ids: Vec<u8> = self.formats.iter()
                 .filter(|sg| sg.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= sg.quota as usize))
                 .map(|sg| sg.id)
                 .collect();
@@ -755,8 +758,8 @@ impl Group {
     pub async fn check_timeout(&mut self, db: &DB, ctx: &Context, guild_id: GI) -> bool {
         let mut changes_made = false;
 
-        // Check idle sessions across all subgroups (not hot/push/live)
-        for sg in &mut self.subgroups {
+        // Check idle sessions across all formats (not hot/push/live)
+        for sg in &mut self.formats {
             for session in sg.sessions.iter_mut() {
                 if !session.is_idle() {
                     continue;
@@ -831,12 +834,12 @@ impl Group {
         let red_vc = team_pair.red_vc;
         let blu_vc = team_pair.blu_vc;
 
-        // Get the hot game in the target subgroup
-        let sg = self.subgroup_mut(sg_id)
-            .ok_or_else(|| anyhow!("Subgroup {} not found for push", sg_id))?;
+        // Get the hot game in the target format
+        let sg = self.format_mut(sg_id)
+            .ok_or_else(|| anyhow!("Format {} not found for push", sg_id))?;
         let game = sg.sessions.iter_mut()
             .find(|s| s.status == SessionStatus::Hot)
-            .ok_or(anyhow!("No hot session found for push in subgroup {}", sg_id))?;
+            .ok_or(anyhow!("No hot session found for push in format {}", sg_id))?;
 
         // Store the team channels on the session
         game.team_channels = Some(team_pair);
@@ -873,11 +876,11 @@ impl Group {
         }
 
         // Set game status to Live and extract overflow players
-        let sg = self.subgroup_mut(sg_id).unwrap();
+        let sg = self.format_mut(sg_id).unwrap();
         let quota = sg.quota as usize;
         let session_idx = sg.sessions.iter()
             .position(|s| s.status == SessionStatus::Push)
-            .ok_or(anyhow!("Push session not found in subgroup {}", sg_id))?;
+            .ok_or(anyhow!("Push session not found in format {}", sg_id))?;
         let game = &mut sg.sessions[session_idx];
         game.live();
 
@@ -890,7 +893,7 @@ impl Group {
             Vec::new()
         };
 
-        // Create new idle session for next game in this subgroup
+        // Create new idle session for next game in this format
         self.create_session_sg(sg_id)?;
 
         // Add overflow players to the new idle session
@@ -908,9 +911,9 @@ impl Group {
         Ok(())
     }
 
-    /// Collect all team channel pairs occupied by active sessions across all subgroups
+    /// Collect all team channel pairs occupied by active sessions across all formats
     pub fn all_occupied_teams(&self) -> Vec<TeamChannel> {
-        let mut occupied: Vec<TeamChannel> = self.subgroups.iter()
+        let mut occupied: Vec<TeamChannel> = self.formats.iter()
             .flat_map(|sg| sg.sessions.iter())
             .filter(|s| s.is_active())
             .filter_map(|s| s.team_channels.clone())
@@ -927,7 +930,7 @@ impl Group {
     pub async fn ensure_team_vcs(&mut self, ctx: &Context, guild_id: GI) -> Result<Option<TeamChannel>, Error> {
         use serenity::all::{CreateChannel, ChannelType};
 
-        // Check which team pairs are currently occupied by active sessions across all subgroups
+        // Check which team pairs are currently occupied by active sessions across all formats
         let occupied: Vec<TeamChannel> = self.all_occupied_teams();
 
         // Check if there's already a free pair
@@ -993,7 +996,7 @@ impl Group {
     /// When `force` is true, all free pairs are deleted (used by destroy policy triggers).
     /// When `force` is false, `keep_minimum` is respected (preserving at least one free pair).
     pub async fn cleanup_team_vcs(&mut self, ctx: &Context, force: bool) {
-        // Collect occupied pairs from active sessions across all subgroups
+        // Collect occupied pairs from active sessions across all formats
         let occupied: Vec<TeamChannel> = self.all_occupied_teams();
 
         // Partition into occupied and free
@@ -1027,7 +1030,7 @@ impl Group {
     /// Creates VCs if keep_minimum is on and none exist, or cleans up if keep_minimum
     /// was turned off and no active games need them.
     pub async fn reconcile_team_vcs(&mut self, ctx: &Context, guild_id: GI) {
-        let has_active = self.subgroups.iter().any(|sg|
+        let has_active = self.formats.iter().any(|sg|
             sg.sessions.iter().any(|s| s.is_active())
         );
 
@@ -1050,14 +1053,14 @@ impl Group {
         }
 
         // Check if all idle sessions are empty (no queued players)
-        let all_idle_empty = self.subgroups.iter().all(|sg|
+        let all_idle_empty = self.formats.iter().all(|sg|
             sg.sessions.iter()
                 .filter(|s| s.is_idle())
                 .all(|s| s.pool.is_empty())
         );
 
         // Also check there are no active games
-        let no_active = !self.subgroups.iter().any(|sg|
+        let no_active = !self.formats.iter().any(|sg|
             sg.sessions.iter().any(|s| s.is_active())
         );
 
@@ -1066,7 +1069,7 @@ impl Group {
         }
     }
 
-    /// Check if a channel is one of this group's team VCs
+    /// Check if a channel is one of this category's team VCs
     pub fn is_team_vc(&self, channel_id: CI) -> bool {
         self.channels.teams.iter().any(|t| t.contains_channel(channel_id))
     }
@@ -1085,10 +1088,10 @@ impl Group {
             None => return,
         };
 
-        // Collect (subgroup_id, session_index) of live sessions whose team VCs are empty
+        // Collect (format_id, session_index) of live sessions whose team VCs are empty
         let mut to_pull: Vec<u8> = Vec::new();
 
-        for sg in &self.subgroups {
+        for sg in &self.formats {
             for session in &sg.sessions {
                 if !session.is_active() {
                     continue;
@@ -1106,7 +1109,7 @@ impl Group {
                     .count();
 
                 if red_count == 0 && blu_count == 0 {
-                    info!("All players left team VCs (RED={} BLU={}) for subgroup {}, auto-ending game",
+                    info!("All players left team VCs (RED={} BLU={}) for format {}, auto-ending game",
                         tc.red_vc, tc.blu_vc, sg.id);
                     to_pull.push(sg.id);
                 }
@@ -1115,7 +1118,7 @@ impl Group {
 
         for sg_id in to_pull {
             if let Err(e) = self.pull_sg(sg_id, ctx, guild_id, db, manager.clone()).await {
-                warn!("Failed to auto-end game in subgroup {}: {}", sg_id, e);
+                warn!("Failed to auto-end game in format {}: {}", sg_id, e);
             }
         }
     }
@@ -1128,12 +1131,12 @@ impl Group {
         // Extract queue vc channel ID
         let queue_vc = self.channels.queue_vc;
 
-        // Find the active game (Hot or Live status) in the target subgroup
-        let sg = self.subgroup_mut(sg_id)
-            .ok_or_else(|| anyhow!("Subgroup {} not found for pull", sg_id))?;
+        // Find the active game (Hot or Live status) in the target format
+        let sg = self.format_mut(sg_id)
+            .ok_or_else(|| anyhow!("Format {} not found for pull", sg_id))?;
         let active_session_idx = sg.sessions.iter()
             .position(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live)
-            .ok_or(anyhow!("No active game to pull in subgroup {}", sg_id))?;
+            .ok_or(anyhow!("No active game to pull in format {}", sg_id))?;
         let game = &mut sg.sessions[active_session_idx];
 
         game.pull();
@@ -1178,9 +1181,9 @@ impl Group {
         // Check if quota will be met after re-queuing players to avoid unnecessary VC deletion/recreation
         let quota_will_be_met = {
             let mut projected_count = 0;
-            if let Some(idle_idx) = self.subgroup_mut(sg_id).unwrap().sessions.iter().position(|s| s.status == SessionStatus::Idle) {
+            if let Some(idle_idx) = self.format_mut(sg_id).unwrap().sessions.iter().position(|s| s.status == SessionStatus::Idle) {
                 // Count existing players in idle session
-                projected_count += self.subgroups[sg_id as usize].sessions[idle_idx].pool.len();
+                projected_count += self.formats[sg_id as usize].sessions[idle_idx].pool.len();
             }
             // Add players who will be re-queued (those successfully moved)
             projected_count += successfully_moved.len();
@@ -1192,7 +1195,7 @@ impl Group {
         
         if skip_cleanup {
             // Add team channels to recently_freed_teams to prevent immediate recreation
-            let sg = self.subgroup_mut(sg_id).unwrap();
+            let sg = self.format_mut(sg_id).unwrap();
             let team_channels = sg.sessions[active_session_idx].team_channels.clone();
             // Clear from pulled session first
             sg.sessions[active_session_idx].team_channels = None;
@@ -1203,7 +1206,7 @@ impl Group {
             }
         } else {
             // Clear team_channels from the pulled session so cleanup sees them as free
-            let sg = self.subgroup_mut(sg_id).unwrap();
+            let sg = self.format_mut(sg_id).unwrap();
             sg.sessions[active_session_idx].team_channels = None;
         }
 
@@ -1220,7 +1223,7 @@ impl Group {
             TeamVcDestroyPolicy::AfterTimeout => {
                 // Spawn a timer that cleans up team VCs if no new game starts
                 if let Some(mgr) = manager.clone() {
-                    let group_id     = self.group_id;
+                    let category_id     = self.category_id;
                     let timeout_secs = self.timeout as u64;
                     let ctx_clone    = ctx.clone();
 
@@ -1230,13 +1233,13 @@ impl Group {
 
                         let mut manager_lock = mgr.lock().await;
                         if let Ok(server) = manager_lock.get_server(guild_id) {
-                            if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id) {
+                            if let Some(category) = server.categories.iter_mut().find(|g| g.category_id == category_id) {
                                 // Only clean up if no active games are running
-                                let has_active = group.subgroups.iter().any(|sg|
+                                let has_active = category.formats.iter().any(|sg|
                                     sg.sessions.iter().any(|s| s.is_active())
                                 );
                                 if !has_active {
-                                    group.cleanup_team_vcs(&ctx_clone, true).await;
+                                    category.cleanup_team_vcs(&ctx_clone, true).await;
                                 }
                             }
                         }
@@ -1247,12 +1250,12 @@ impl Group {
         }
 
         // Find or create the idle session (queue) and add all players back to it
-        let sg = self.subgroup_mut(sg_id).unwrap();
+        let sg = self.format_mut(sg_id).unwrap();
         let idle_session_idx = match sg.sessions.iter().position(|s| s.status == SessionStatus::Idle) {
             Some(idx) => idx,
             None => {
                 // No idle session exists (game ended from Hot without push), create one
-                info!("No idle session found, creating one for re-queuing players in subgroup {}", sg_id);
+                info!("No idle session found, creating one for re-queuing players in format {}", sg_id);
                 sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
                 sg.sessions.len() - 1
             }
@@ -1276,7 +1279,7 @@ impl Group {
         }
 
         // Remove the finished session
-        let sg = self.subgroup_mut(sg_id).unwrap();
+        let sg = self.format_mut(sg_id).unwrap();
         sg.sessions.retain(|s| s.status != SessionStatus::Pull);
 
         // Check if the queue now meets quota and transition to Hot if needed
@@ -1292,7 +1295,7 @@ impl Group {
     pub async fn refresh_player_ranks(&mut self, _ctx: &Context, guild_id: GI, db: &DB) {
         use crate::handlers::player::get_player_rank;
 
-        for sg in &mut self.subgroups {
+        for sg in &mut self.formats {
             for session in &mut sg.sessions {
                 for player in &mut session.pool {
                     if let Some(updated_rank) = get_player_rank(db, guild_id, player.player.user_id).await {
@@ -1326,9 +1329,9 @@ impl Group {
             })
             .collect();
 
-        // Update flags for all players in all sessions across all subgroups
+        // Update flags for all players in all sessions across all formats
         let mut corrected: Vec<String> = Vec::new();
-        for sg in &mut self.subgroups {
+        for sg in &mut self.formats {
             for session in &mut sg.sessions {
                 for player in &mut session.pool {
                     let user_id      = player.player.user_id.get();
@@ -1350,20 +1353,20 @@ impl Group {
     pub async fn generate_teams_sg(&mut self, sg_id: u8, ctx: &Context, guild_id: GI, _db: Option<&DB>) {
         use itertools::Itertools;
 
-        let sg = match self.subgroup(sg_id) {
+        let sg = match self.format(sg_id) {
             Some(sg) => sg,
-            None => { warn!("Subgroup {} not found for team generation", sg_id); return; }
+            None => { warn!("Format {} not found for team generation", sg_id); return; }
         };
         let quota = sg.quota as usize;
 
         // Get the hot game (session was just set to hot before this is called)
         let Some(session_idx) = sg.sessions.iter()
             .position(|s| s.status == SessionStatus::Hot) else {
-            warn!("No hot session found for team generation in subgroup {}", sg_id);
+            warn!("No hot session found for team generation in format {}", sg_id);
             return;
         };
 
-        let sg = self.subgroup_mut(sg_id).unwrap();
+        let sg = self.format_mut(sg_id).unwrap();
         let game = &mut sg.sessions[session_idx];
 
         if game.pool.len() < quota {
@@ -1420,22 +1423,22 @@ impl Group {
             use rand::seq::SliceRandom;
 
             // Randomize by swapping players with the same ELO
-            // Group players by ELO, then shuffle within each ELO group
+            // Category players by ELO, then shuffle within each ELO category
             let mut rng = rand::rng();
 
             // Create map of ELO -> Vec<indices in players_to_balance>
-            let mut elo_groups: HashMap<u32, Vec<usize>> = HashMap::new();
+            let mut elo_categories: HashMap<u32, Vec<usize>> = HashMap::new();
             for (i, player) in players_to_balance.iter().enumerate().take(pool_size) {
                 let elo = player.1;
-                elo_groups.entry(elo).or_default().push(i);
+                elo_categories.entry(elo).or_default().push(i);
             }
 
             // Store original team assignments before shuffling
             let original_red = red_indices.clone();
             let original_blu = blu_indices.clone();
 
-            // For each ELO group with multiple players, shuffle them across teams
-            for (_elo, indices) in &mut elo_groups {
+            // For each ELO category with multiple players, shuffle them across teams
+            for (_elo, indices) in &mut elo_categories {
                 if indices.len() > 1 {
                     // Count how many of this ELO are on each team (using ORIGINAL assignments)
                     let red_count = indices.iter().filter(|&&i| original_red.contains(&i)).count();
@@ -1558,7 +1561,7 @@ impl Group {
         let queue_vc = self.channels.queue_vc;
 
         // Get current queue count from idle sessions
-        let current_count = self.subgroups[0].sessions.iter()
+        let current_count = self.formats[0].sessions.iter()
             .find(|s| s.status == SessionStatus::Idle)
             .map(|s| s.pool.len())
             .unwrap_or(0);
@@ -1608,7 +1611,7 @@ impl Group {
         }
 
         // Build new name with count
-        let new_name = format!("{} {}/{}", base_name, current_count, self.subgroups[0].quota);
+        let new_name = format!("{} {}/{}", base_name, current_count, self.formats[0].quota);
 
         // Update the channel name
         if new_name != current_name {
@@ -1626,7 +1629,7 @@ impl Group {
         self.queue_dash_update(ctx, guild_id).await;
     }
 
-    /// Checks if this group contains the given channel_id in any of its channels
+    /// Checks if this category contains the given channel_id in any of its channels
     pub fn contains_channel(&self, channel_id: CI) -> bool {
         self.channels.contains_channel(channel_id)
     }
@@ -1638,19 +1641,19 @@ impl Group {
     pub fn is_quota_sg(&self, sg_id: u8) -> bool {
         let g = self.get_sessions_by_status_sg(sg_id, &SessionStatus::Idle);
         if g.is_empty() {
-            warn!("No idle sessions found when checking quota for subgroup {}", sg_id);
+            warn!("No idle sessions found when checking quota for format {}", sg_id);
             return false;
         }
         if g.len() > 1 {
-            warn!("Multiple idle games found in subgroup {}, faulty", sg_id);
+            warn!("Multiple idle games found in format {}, faulty", sg_id);
         }
         let l = g[0].pool.len();
-        let q = self.subgroup(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
+        let q = self.format(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
         match l.cmp(&q) {
             std::cmp::Ordering::Less    => false,
             std::cmp::Ordering::Equal   => true,
             std::cmp::Ordering::Greater => {
-                warn!("Quota met late, more players than quota in subgroup {}", sg_id);
+                warn!("Quota met late, more players than quota in format {}", sg_id);
                 true
             },
         }
@@ -1667,11 +1670,11 @@ impl Group {
         let queue_chat = self.channels.queue_chat;
         let mut player_mentions = Vec::new();
         let mut players_to_dm = Vec::new();
-        let quota = self.subgroups[0].quota as usize;
+        let quota = self.formats[0].quota as usize;
 
         // Get the HOT session specifically, not the last session
         // This ensures we notify the correct players when quota is met
-        if let Some(hot_session) = self.subgroups[0].sessions.iter()
+        if let Some(hot_session) = self.formats[0].sessions.iter()
             .find(|s| s.status == SessionStatus::Hot) {
             // Ping ALL players in the first 'quota' positions (not extras queued for next match)
             // This ensures everyone in the match gets notified, not just those missing from VC
@@ -1687,8 +1690,8 @@ impl Group {
         // Only log notification if there are actually players to notify
         if !player_mentions.is_empty() {
             let guild_name = guild_name(ctx, guild_id);
-            let sg_name = &self.subgroups[0].name;
-            let full_prefix = log_prefix_subgroup(
+            let sg_name = &self.formats[0].name;
+            let full_prefix = log_prefix_format(
                 &guild_name, 
                 self.name.as_deref().unwrap_or("unknown"), 
                 sg_name

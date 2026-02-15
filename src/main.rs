@@ -4,7 +4,7 @@ use std::sync::Arc;
 use time::macros::format_description;
 use tracing_subscriber::fmt::time::UtcTime;
 use anyhow::Result;
-use pf_pug_bot::{RED, commands, log_prefix_group};
+use pf_pug_bot::{RED, commands, log_prefix_category};
 use serenity::all::{
     Client, GatewayIntents, EventHandler, Ready, Guild,Interaction,
     VoiceState, Command, Context, CommandOptionType as COT,
@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use pf_pug_bot::database::migrations::DatabaseMigrations;
-use pf_pug_bot::database::repositories::GroupRepository;
+use pf_pug_bot::database::repositories::CategoryRepository;
 use pf_pug_bot::handlers::{self, admin};
 use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, DmMessageTracker, DmTrackerKey, Database, Manager, QueueToggleType::{self, *}, Roles, Server, SessionStatus, VoiceStateUpdate, log_queue_toggle};
 
@@ -106,7 +106,7 @@ async fn get_server_with_error<'a>(
         Ok(s) => Ok(s),
         Err(e) => {
             error!("Server not found: {e}");
-            let _ = send_error_response(itx, ctx, "Server not configured. Please use `/config` to create roles and groups.").await;
+            let _ = send_error_response(itx, ctx, "Server not configured. Please use `/config` to create roles and categories.").await;
             Err(anyhow::anyhow!("Server not found"))
         }
     }
@@ -186,13 +186,13 @@ impl EventHandler for Handler {
 
                     let mut manager_lock = manager.lock().await;
                     
-                    // Check all groups in all servers
+                    // Check all categories in all servers
                     for server in manager_lock.servers.iter_mut() {
                         let guild_id = server.guild_id;
-                        for group in server.groups.iter_mut() {
-                            if group.check_timeout(&database, &ctx_clone, guild_id).await {
+                        for category in server.categories.iter_mut() {
+                            if category.check_timeout(&database, &ctx_clone, guild_id).await {
                                 // Players were removed, update dashboard
-                                group.queue_dash_update(&ctx_clone, guild_id).await;
+                                category.queue_dash_update(&ctx_clone, guild_id).await;
                             }
                         }
                     }
@@ -242,36 +242,44 @@ impl EventHandler for Handler {
         let guild_id = guild.id;
         match self.db.get_config(guild_id).await {
             Ok(_config) => {
-                // Load groups from database into manager
-                let group_repo = GroupRepository::new(self.db.pool().clone());
-                match group_repo.get_groups_for_guild(guild_id).await {
-                    Ok(groups) => {
+                // Load categories from database into manager
+                let category_repo = CategoryRepository::new(self.db.pool().clone());
+                match category_repo.get_categories_for_guild(guild_id).await {
+                    Ok(categories) => {
                         let mut manager = self.manager.lock().await;
                         if manager.get_server(guild.id).is_err() {
                             let mut server = Server::new(guild.id, guild.name.clone(), Roles::empty());
-                            for group in groups {
-                                if let Err(e) = server.add_group(group) {
-                                    error!("Failed to add group: {e}");
+                            for mut category in categories {
+                                // Update guild name in database if it's missing
+                                if category.guild_name.is_none() {
+                                    if let Err(e) = self.db.categories.update_guild_name(guild_id, category.category_id, &guild.name).await {
+                                        error!("Failed to update guild name for category {}: {}", category.category_id, e);
+                                    } else {
+                                        category.guild_name = Some(guild.name.clone());
+                                    }
+                                }
+                                if let Err(e) = server.add_category(category) {
+                                    error!("Failed to add category: {e}");
                                 }
                             }
                             // Clean up orphaned dynamic VCs from previous bot runs
-                            for group in &mut server.groups {
-                                group.cleanup_orphaned_vcs(&ctx).await;
+                            for category in &mut server.categories {
+                                category.cleanup_orphaned_vcs(&ctx).await;
                             }
 
-                            let groups_len = server.groups.len();
+                            let categories_len = server.categories.len();
                             manager.servers.push(server);
 
-                            if groups_len > 0 {
+                            if categories_len > 0 {
                                 self.check_existing_voice_users(&ctx, &guild, &mut manager).await;
                                 self.create_guild_dashboard_from_manager(&ctx, &guild, &mut manager).await;
                             } else {
-                                warn!("[{}] No valid group configurations.", guild.name);
+                                warn!("[{}] No valid category configurations.", guild.name);
                             }
                         }
                     },
                     Err(e) => {
-                        error!("Failed to load groups for guild {}: {}", guild.name, e);
+                        error!("Failed to load categories for guild {}: {}", guild.name, e);
                         // Still create an empty server so commands can work
                         let mut manager = self.manager.lock().await;
                         if manager.get_server(guild.id).is_err() {
@@ -304,7 +312,7 @@ impl EventHandler for Handler {
                     info!("[{}] {} used /{}", guild_name, tag, itx.data.name);
                 };
 
-                // Handle commands that don't need a server/group first
+                // Handle commands that don't need a server/category first
                 let result = match cd.name.as_str() {
                     "prefs" => {
                         info();
@@ -499,11 +507,11 @@ impl EventHandler for Handler {
                     return;
                 }
 
-                // Handle group settings select menu
-                if itx.data.custom_id == "group_settings_select" {
-                    let result = handlers::handle_group_settings_select(&ctx, &itx, &self.db, &self.manager).await;
+                // Handle category settings select menu
+                if itx.data.custom_id == "category_settings_select" {
+                    let result = handlers::handle_category_settings_select(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
-                        error!("Error handling group settings select: {e}");
+                        error!("Error handling category settings select: {e}");
                     }
                     return;
                 }
@@ -526,11 +534,11 @@ impl EventHandler for Handler {
                     return;
                 }
 
-                // Handle group settings buttons (including link message, subgroup, and elo gate buttons)
-                if itx.data.custom_id.starts_with("group_settings_") || itx.data.custom_id.starts_with("group_link_msg_") || itx.data.custom_id.starts_with("group_sg_") || itx.data.custom_id.starts_with("elo_gate_") {
-                    let result = handlers::handle_group_settings_button(&ctx, &itx, &self.db, &self.manager).await;
+                // Handle category settings buttons (including link message, format, and elo gate buttons)
+                if itx.data.custom_id.starts_with("category_settings_") || itx.data.custom_id.starts_with("category_link_msg_") || itx.data.custom_id.starts_with("category_sg_") || itx.data.custom_id.starts_with("elo_gate_") {
+                    let result = handlers::handle_category_settings_button(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
-                        error!("Error handling group settings interaction: {e}");
+                        error!("Error handling category settings interaction: {e}");
                     }
                     return;
                 }
@@ -557,13 +565,13 @@ impl EventHandler for Handler {
                 let guild_id = itx.guild_id.unwrap();
                 let channel_id = itx.channel_id;
 
-                let group = match manager.get_group_by_channel(guild_id, channel_id) {
-                    Ok(group) => group,
+                let category = match manager.get_category_by_channel(guild_id, channel_id) {
+                    Ok(category) => category,
                     Err(_) => {
-                        // Group not in manager - try to recover from database
+                        // Category not in manager - try to recover from database
                         let guild_name = pf_pug_bot::guild_name(&ctx, guild_id);
                         let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{channel_id}"));
-                        info!("[{}] Group not found in manager for #{}, attempting recovery from database", guild_name, channel_name);
+                        info!("[{}] Category not found in manager for #{}, attempting recovery from database", guild_name, channel_name);
 
                         // Get the message ID from the interaction
                         let message_id = itx.message.id;
@@ -571,49 +579,49 @@ impl EventHandler for Handler {
                         let channel_id_u64 = channel_id.get();
                         let message_id_u64 = message_id.get();
 
-                        // Load groups from database for this guild
-                        let group_repo = GroupRepository::new(self.db.pool().clone());
-                        match group_repo.get_groups_for_guild(guild_id_u64).await {
-                            Ok(groups) => {
-                                // Find the group that matches this dashboard channel
-                                if let Some(mut recovered_group) = groups.into_iter()
+                        // Load categories from database for this guild
+                        let category_repo = CategoryRepository::new(self.db.pool().clone());
+                        match category_repo.get_categories_for_guild(guild_id_u64).await {
+                            Ok(categories) => {
+                                // Find the category that matches this dashboard channel
+                                if let Some(mut recovered_category) = categories.into_iter()
                                     .find(|g| g.channels.dashboard.get() == channel_id_u64)
                                 {
-                                    info!("[{}] Found group in database for #{}", guild_name, channel_name);
+                                    info!("[{}] Found category in database for #{}", guild_name, channel_name);
 
                                     // Update the dashboard message ID in the database
-                                    if let Err(e) = group_repo.update_dashboard_msg(guild_id_u64, channel_id_u64, message_id_u64).await {
+                                    if let Err(e) = category_repo.update_dashboard_msg(guild_id_u64, channel_id_u64, message_id_u64).await {
                                         error!("[{}] Failed to update dashboard message ID: {}", guild_name, e);
                                     } else {
                                         info!("[{}] Updated dashboard message ID in database", guild_name);
-                                        // Update the in-memory group too
-                                        recovered_group.dashboard_msg = message_id;
+                                        // Update the in-memory category too
+                                        recovered_category.dashboard_msg = message_id;
                                     }
 
-                                    // Add the recovered group to the manager
+                                    // Add the recovered category to the manager
                                     let server = manager.get_server(guild_id);
                                     if let Ok(server) = server {
-                                        if let Err(e) = server.add_group(recovered_group) {
-                                            error!("[{}] Failed to add recovered group: {}", guild_name, e);
+                                        if let Err(e) = server.add_category(recovered_category) {
+                                            error!("[{}] Failed to add recovered category: {}", guild_name, e);
                                         } else {
-                                            info!("[{}] Recovered group added to manager", guild_name);
+                                            info!("[{}] Recovered category added to manager", guild_name);
                                         }
 
-                                        // Now get the group from the manager
-                                        manager.get_group_by_channel(guild_id, channel_id).unwrap()
+                                        // Now get the category from the manager
+                                        manager.get_category_by_channel(guild_id, channel_id).unwrap()
                                     } else {
                                         error!("[{}] Could not get server from manager", guild_name);
                                         send_component_error_response(&itx, &ctx, "Dashboard state was lost. Please run `/setup` to reconfigure.").await;
                                         return;
                                     }
                                 } else {
-                                    error!("[{}] No group found in database for #{}", guild_name, channel_name);
+                                    error!("[{}] No category found in database for #{}", guild_name, channel_name);
                                     send_component_error_response(&itx, &ctx, "Dashboard configuration not found. Please run `/config` to configure this server.").await;
                                     return;
                                 }
                             },
                             Err(e) => {
-                                error!("Failed to load groups from database: {e}");
+                                error!("Failed to load categories from database: {e}");
                                 send_component_error_response(&itx, &ctx, "Failed to access database. Please contact an administrator.").await;
                                 return;
                             }
@@ -635,7 +643,7 @@ impl EventHandler for Handler {
                     itx.data.custom_id, itx.user.id, itx.message.id, 
                     itx.token);
 
-                let result = group.dash_handle_button_interaction(&comp_ctx).await;
+                let result = category.dash_handle_button_interaction(&comp_ctx).await;
 
                 if let Err(e) = result {
                     error!("Error handling button '{}': {} | User: {} | Guild: {} | Message: {} | Token: {:?}", 
@@ -662,25 +670,25 @@ impl EventHandler for Handler {
                 // Handle modal submissions for server settings
                 if itx.data.custom_id.starts_with("server_settings_modal_") 
                     || itx.data.custom_id.starts_with("server_settings_rank_modal_")
-                    || itx.data.custom_id.starts_with("server_settings_group_modal_") 
+                    || itx.data.custom_id.starts_with("server_settings_category_modal_") 
                 {
                     let result = handlers::handle_server_settings_modal(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
                         error!("Error handling server settings modal '{}': {}", itx.data.custom_id, e);
                     }
                 }
-                // Handle modal submissions for group settings (including subgroup modals)
-                if itx.data.custom_id.starts_with("group_settings_modal_") || itx.data.custom_id.starts_with("group_sg_modal_") {
-                    let result = handlers::handle_group_settings_modal(&ctx, &itx, &self.db, &self.manager).await;
+                // Handle modal submissions for category settings (including format modals)
+                if itx.data.custom_id.starts_with("category_settings_modal_") || itx.data.custom_id.starts_with("category_sg_modal_") {
+                    let result = handlers::handle_category_settings_modal(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
-                        error!("Error handling group settings modal '{}': {}", itx.data.custom_id, e);
+                        error!("Error handling category settings modal '{}': {}", itx.data.custom_id, e);
                     }
                 }
                 // Handle modal submissions for linking dashboard message
-                if itx.data.custom_id.starts_with("group_link_msg_modal_") {
-                    let result = handlers::handle_group_link_msg_modal(&ctx, &itx, &self.db, &self.manager).await;
+                if itx.data.custom_id.starts_with("category_link_msg_modal_") {
+                    let result = handlers::handle_category_link_msg_modal(&ctx, &itx, &self.db, &self.manager).await;
                     if let Err(e) = result {
-                        error!("Error handling group link message modal '{}': {}", itx.data.custom_id, e);
+                        error!("Error handling category link message modal '{}': {}", itx.data.custom_id, e);
                     }
                 }
                 // Handle modal submissions for player settings
@@ -724,7 +732,7 @@ impl EventHandler for Handler {
         let left_team_vc = {
             let mut manager = self.manager.lock().await;
 
-            // Determine which channel to use for group lookup based on state
+            // Determine which channel to use for category lookup based on state
             // For disconnects/moves, use old channel; for connects, use new channel
             let lookup_channel = match state {
                 VoiceStateUpdate::Disconnected | VoiceStateUpdate::Moved => {
@@ -745,32 +753,32 @@ impl EventHandler for Handler {
                 VoiceStateUpdate::Reconnected => return,
             };
 
-            let group = match manager.get_group_by_channel(server, lookup_channel) {
+            let category = match manager.get_category_by_channel(server, lookup_channel) {
                 Ok(g) => g,
                 Err(_) => return,
             };
 
             match state {
                 VoiceStateUpdate::Disconnected => {
-                    let was_team_vc = group.is_team_vc(lookup_channel);
-                    self.handle_player_leave_vc(&ctx, group, server, user_id, &tag).await;
-                    group.check_team_vc_cleanup_on_leave(&ctx).await;
-                    group.queue_dash_update(&ctx, server).await;
+                    let was_team_vc = category.is_team_vc(lookup_channel);
+                    self.handle_player_leave_vc(&ctx, category, server, user_id, &tag).await;
+                    category.check_team_vc_cleanup_on_leave(&ctx).await;
+                    category.queue_dash_update(&ctx, server).await;
                     was_team_vc
                 },
                 VoiceStateUpdate::Connected => {
-                    if group.get_inactives().is_empty() {
-                        if let Err(e) = group.create_session() {
+                    if category.get_inactives().is_empty() {
+                        if let Err(e) = category.create_session() {
                             warn!("Failed to create session on VC connect: {e}");
                         }
                     }
                     false
                 },
                 VoiceStateUpdate::Moved => {
-                    let was_team_vc = group.is_team_vc(lookup_channel);
-                    if group.channels.queue_vc == lookup_channel {
-                        self.handle_player_leave_vc(&ctx, group, server, user_id, &tag).await;
-                        group.queue_dash_update(&ctx, server).await;
+                    let was_team_vc = category.is_team_vc(lookup_channel);
+                    if category.channels.queue_vc == lookup_channel {
+                        self.handle_player_leave_vc(&ctx, category, server, user_id, &tag).await;
+                        category.queue_dash_update(&ctx, server).await;
                     }
                     was_team_vc
                 },
@@ -785,13 +793,13 @@ impl EventHandler for Handler {
         // pull needs the manager Arc.
         if left_team_vc {
             let mut manager = self.manager.lock().await;
-            if let Ok(group) = manager.get_group_by_channel(server, {
+            if let Ok(category) = manager.get_category_by_channel(server, {
                 match &old {
                     Some(s) => s.channel_id.unwrap(),
                     None => return,
                 }
             }) {
-                group.check_team_vc_empty_auto_end(&ctx, server, &self.db, Some(self.manager.clone())).await;
+                category.check_team_vc_empty_auto_end(&ctx, server, &self.db, Some(self.manager.clone())).await;
             }
         }
 
@@ -818,12 +826,12 @@ impl EventHandler for Handler {
         {
             let mut manager = self.manager.lock().await;
 
-            // Find the guild by ID and check if the new channel is a queue voice channel in any group
-            match manager.get_group_by_channel(server, new.channel_id.unwrap()) {
-                Ok(group) => {
-                    if group.channels.queue_vc == new.channel_id.unwrap() {
+            // Find the guild by ID and check if the new channel is a queue voice channel in any category
+            match manager.get_category_by_channel(server, new.channel_id.unwrap()) {
+                Ok(category) => {
+                    if category.channels.queue_vc == new.channel_id.unwrap() {
                         // Check if player is already in any session and mark them as in VC
-                        if let Ok(session) = group.get_user_session(user_id).await {
+                        if let Ok(session) = category.get_user_session(user_id).await {
                             let was_hot = session.is_hot();
                             if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                                 let was_missing = !player.in_queue_vc;
@@ -833,7 +841,7 @@ impl EventHandler for Handler {
                                 // This removes them from the "Missing players" list
                                 if was_hot && was_missing {
                                     info!("{} joined VC during hot session, updating dashboard", tag);
-                                    group.queue_dash_update(&ctx, server).await;
+                                    category.queue_dash_update(&ctx, server).await;
                                 }
                             }
                         } else {
@@ -842,20 +850,20 @@ impl EventHandler for Handler {
                             if !user_prefs.vc_auto_join {
                                 // User has disabled VC auto-queue, log that they joined VC but didn't join queue
                                 let guild_name = pf_pug_bot::guild_name(&ctx, server);
-                                let group_name = group.name.as_deref().unwrap_or("Unknown");
-                                info!("{} {} joined queue VC but did not join the queue (auto-queue disabled)", log_prefix_group(&guild_name, &group_name), tag);
+                                let category_name = category.name.as_deref().unwrap_or("Unknown");
+                                info!("{} {} joined queue VC but did not join the queue (auto-queue disabled)", log_prefix_category(&guild_name, &category_name), tag);
                                 return;
                             }
 
                             // Ensure a session exists before trying to add player
-                            if group.get_inactives().is_empty() {
+                            if category.get_inactives().is_empty() {
                                 warn!("No idle sessions present when player {} joined VC, creating one", tag);
-                                if let Err(e) = group.create_session() {
+                                if let Err(e) = category.create_session() {
                                     error!("Failed to create session for player {}: {}", tag, e);
                                     let guild_name = pf_pug_bot::guild_name(&ctx, server);
-                                    let group_name = group.name.as_deref().unwrap_or("Unknown");
+                                    let category_name = category.name.as_deref().unwrap_or("Unknown");
                                     error!("{} {} joined VC but could not be added to queue (failed to create session)", 
-                                          log_prefix_group(&guild_name, &group_name), tag);
+                                          log_prefix_category(&guild_name, &category_name), tag);
                                     return;
                                 }
                             }
@@ -879,33 +887,33 @@ impl EventHandler for Handler {
                                     db: Some(&self.db),
                                     manager: Some(self.manager.clone()),
                                 };
-                                if let Err(e) = group.queue_player_with_vc_status(player.clone(), discord_rank, queue_ctx, true).await {
+                                if let Err(e) = category.queue_player_with_vc_status(player.clone(), discord_rank, queue_ctx, true).await {
                                     error!("Failed to add player to queue: {e}");
                                 } else {
                                     let guild_name = pf_pug_bot::guild_name(&ctx, server);
-                                    let group_name = group.name.as_deref().unwrap_or("Unknown");
-                                    let pool_len: usize = group.subgroups[0].sessions.iter().map(|s| s.pool.len()).sum();
-                                    let sg_name = group.subgroups.first().map(|sg| sg.name.as_str());
+                                    let category_name = category.name.as_deref().unwrap_or("Unknown");
+                                    let pool_len: usize = category.formats[0].sessions.iter().map(|s| s.pool.len()).sum();
+                                    let sg_name = category.formats.first().map(|sg| sg.name.as_str());
                                     
                                     // Check if queue was already full when this player joined
-                                    if pool_len > group.quota() as usize {
+                                    if pool_len > category.quota() as usize {
                                         warn!("{} {} joined VC and was added to queue, but queue exceeded quota ({} > {})", 
-                                              log_prefix_group(&guild_name, &group_name), tag, pool_len, group.quota());
+                                              log_prefix_category(&guild_name, &category_name), tag, pool_len, category.quota());
                                     }
                                     
-                                    log_queue_toggle(&guild_name, &group_name, &tag, QueueToggleType::VJ, Some((pool_len, group.quota() as usize)), sg_name, Some(pool_len));
+                                    log_queue_toggle(&guild_name, &category_name, &tag, QueueToggleType::VJ, Some((pool_len, category.quota() as usize)), sg_name, Some(pool_len));
                                 }
 
-                                group.queue_dash_update(&ctx, server).await;
+                                category.queue_dash_update(&ctx, server).await;
                             }
                         }
 
                         // Get post-game timeout from database
                         let post_game_timeout = self.db.config.get_post_game_timeout(server).await.ok();
                         
-                        if group.check_hot_timeout(&ctx, server, post_game_timeout).await {
+                        if category.check_hot_timeout(&ctx, server, post_game_timeout).await {
                             info!("Hot session timeout detected, updating dashboard");
-                            group.queue_dash_update(&ctx, server).await;
+                            category.queue_dash_update(&ctx, server).await;
                         }
                     }
                 },
@@ -923,18 +931,18 @@ impl Handler {
     async fn handle_player_leave_vc(
         &self,
         ctx: &Context,
-        group: &mut pf_pug_bot::models::Group,
+        category: &mut pf_pug_bot::models::Category,
         guild_id: serenity::all::GuildId,
         user_id: serenity::all::UserId,
         tag: &str,
     ) {
         let guild_name = pf_pug_bot::guild_name(&ctx, guild_id);
-        let group_name = group.name.as_deref().unwrap_or("Unknown").to_string();
-        let sg_name = group.get_user_sg_name(user_id);
+        let category_name = category.name.as_deref().unwrap_or("Unknown").to_string();
+        let sg_name = category.get_user_sg_name(user_id);
 
-        let quota = group.quota() as usize;
+        let quota = category.quota() as usize;
 
-        let should_regenerate = if let Ok(sesh) = group.get_user_session(user_id).await {
+        let should_regenerate = if let Ok(sesh) = category.get_user_session(user_id).await {
             if sesh.is_active() {
                 // Player is in an active session (Push/Live) - bot is moving them, not a voluntary leave
                 return;
@@ -977,7 +985,7 @@ impl Handler {
             }
 
             // Log after removal so pool count is accurate, but use position before removal
-            log_queue_toggle(&guild_name, &group_name, tag, VL, Some((sesh.pool.len(), quota)), sg_name.as_deref(), position_before_removal);
+            log_queue_toggle(&guild_name, &category_name, tag, VL, Some((sesh.pool.len(), quota)), sg_name.as_deref(), position_before_removal);
 
             if was_hot && sesh.pool.len() >= quota {
                 true
@@ -989,12 +997,12 @@ impl Handler {
             }
         } else {
             // Player not found in any session
-            log_queue_toggle(&guild_name, &group_name, tag, VL, None, sg_name.as_deref(), None);
+            log_queue_toggle(&guild_name, &category_name, tag, VL, None, sg_name.as_deref(), None);
             false
         };
 
         if should_regenerate {
-            group.generate_teams(ctx, guild_id, Some(&self.db)).await;
+            category.generate_teams(ctx, guild_id, Some(&self.db)).await;
         }
     }
 
@@ -1050,13 +1058,13 @@ impl Handler {
             }
         };
 
-        // Iterate through all groups and check their queue voice channels
-        for group in &mut server.groups {
-            let queue_vc_id = group.channels.queue_vc;
-            let _dashboard_channel = group.channels.dashboard;
+        // Iterate through all categories and check their queue voice channels
+        for category in &mut server.categories {
+            let queue_vc_id = category.channels.queue_vc;
+            let _dashboard_channel = category.channels.dashboard;
 
             // Check if there's an idle session available
-            let has_idle_session = !group.get_sessions_by_status(&SessionStatus::Idle).is_empty();
+            let has_idle_session = !category.get_sessions_by_status(&SessionStatus::Idle).is_empty();
 
             if !has_idle_session {
                 info!("No idle session available for existing users in {}", queue_vc_id);
@@ -1068,7 +1076,7 @@ impl Handler {
             for (user_id, voice_state) in &guild.voice_states {
                 // Check if user is in this queue voice channel
                 if voice_state.channel_id == Some(queue_vc_id) {
-                    if group.get_user_session(*user_id).await.is_ok() {
+                    if category.get_user_session(*user_id).await.is_ok() {
                         info!("User {} already in session, skipping", user_id);
                         continue;
                     }
@@ -1084,10 +1092,10 @@ impl Handler {
             }
 
             // Add all players to the session WITHOUT quota check
-            let sg_name_owned = group.subgroups.first().map(|sg| sg.name.clone());
-            let group_name = group.name.as_deref().unwrap_or("Unknown").to_string();
-            if let Ok(session) = group.get_queue().await {
-                // Get server and group names for logging
+            let sg_name_owned = category.formats.first().map(|sg| sg.name.clone());
+            let category_name = category.name.as_deref().unwrap_or("Unknown").to_string();
+            if let Ok(session) = category.get_queue().await {
+                // Get server and category names for logging
                 let guild_name = guild.name.clone();
 
                 use pf_pug_bot::handlers::player::resolve_player_for_queue;
@@ -1104,7 +1112,7 @@ impl Handler {
                     };
 
                     let position = session.pool.len() + 1;
-                    log_queue_toggle(&guild_name, &group_name, &player.tag.clone(), QueueToggleType::VJ, None, sg_name_owned.as_deref(), Some(position));
+                    log_queue_toggle(&guild_name, &category_name, &player.tag.clone(), QueueToggleType::VJ, None, sg_name_owned.as_deref(), Some(position));
                     session.add_player(player);
                 }
             }
@@ -1113,19 +1121,19 @@ impl Handler {
             if users_added > 0 {
 
                 // NOW check quota once after all players added
-                if group.is_quota() {
-                    if let Err(e) = group.hot(ctx, Some(guild.id), Some(&self.db), Some(self.manager.clone())).await {
+                if category.is_quota() {
+                    if let Err(e) = category.hot(ctx, Some(guild.id), Some(&self.db), Some(self.manager.clone())).await {
                         error!("Failed to transition to hot: {e}");
                     }
                 }
 
                 // Update the dashboard to reflect the new users
-                group.queue_dash_update(ctx, guild.id).await;
+                category.queue_dash_update(ctx, guild.id).await;
             }
         }
     }
 
-    /// Creates dashboard for a guild using in-memory groups from manager
+    /// Creates dashboard for a guild using in-memory categories from manager
     async fn create_guild_dashboard_from_manager(&self, ctx: &Context, guild: &Guild, manager: &mut Manager) {
         // FIRST: Check bot permissions
         let (has_perms, missing_perms) = self.check_bot_permissions(ctx, guild).await;
@@ -1161,7 +1169,7 @@ impl Handler {
             return;
         }
 
-        // Get server from manager (already has groups with existing users loaded)
+        // Get server from manager (already has categories with existing users loaded)
         let server = match manager.get_server(guild.id) {
             Ok(s) => s,
             Err(e) => {
@@ -1170,14 +1178,14 @@ impl Handler {
             }
         };
 
-        for group in &mut server.groups {
+        for category in &mut server.categories {
             // Validate that the dashboard channel still exists
-            let channel_id = group.channels.dashboard;
+            let channel_id = category.channels.dashboard;
             let channel_exists = match ctx.http.get_channel(channel_id).await {
                 Ok(_) => true,
                 Err(e) => {
                     if e.to_string().contains("10003") || e.to_string().contains("Unknown channel") {
-                        warn!("[{}] Dashboard channel {} no longer exists, skipping group", guild.name, channel_id);
+                        warn!("[{}] Dashboard channel {} no longer exists, skipping category", guild.name, channel_id);
                         false
                     } else {
                         warn!("[{}] Error checking dashboard channel {}: {}", guild.name, channel_id, e);
@@ -1191,22 +1199,22 @@ impl Handler {
             }
 
             // Check if dashboard already exists
-            if group.has_dashboard(ctx).await {
-                group.queue_dash_update(ctx, guild.id).await;
+            if category.has_dashboard(ctx).await {
+                category.queue_dash_update(ctx, guild.id).await;
                 continue;
             }
 
-            // Create dashboard for each group's dashboard channel
+            // Create dashboard for each category's dashboard channel
             let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
 
             // Create dashboard in the dashboard channel
-            match group.dash_publish(ctx, channel_id, &self.db, guild.id).await {
+            match category.dash_publish(ctx, channel_id, &self.db, guild.id).await {
                 Ok(_) => {
                     info!("Dashboard created successfully for channel {}", channel_name);
 
                     // Persist the dashboard message ID to database
-                    let dashboard_msg_id = group.dashboard_msg.get();
-                    if let Err(e) = self.db.groups.update_dashboard_msg(
+                    let dashboard_msg_id = category.dashboard_msg.get();
+                    if let Err(e) = self.db.categories.update_dashboard_msg(
                         guild.id,
                         channel_id.get(),
                         dashboard_msg_id
@@ -1350,9 +1358,9 @@ async fn main(
                         .collect())
                     .unwrap_or_default();
 
-                for group in &mut server.groups {
+                for category in &mut server.categories {
                     let mut kept = Vec::new();
-                    for tc in &group.channels.teams {
+                    for tc in &category.channels.teams {
                         let red_empty = !vc_members.contains(&tc.red_vc.get());
                         let blu_empty = !vc_members.contains(&tc.blu_vc.get());
 
@@ -1363,7 +1371,7 @@ async fn main(
                             kept.push(tc.clone());
                         }
                     }
-                    group.channels.teams = kept;
+                    category.channels.teams = kept;
                 }
             }
         } else {
@@ -1380,7 +1388,7 @@ async fn main(
                     .map(|g| g.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
                 
-                for group in &mut server.groups {
+                for category in &mut server.categories {
                     // Create offline dashboard embed
                     use serenity::all::CreateEmbedFooter;
                     
@@ -1390,15 +1398,15 @@ async fn main(
                         .footer(CreateEmbedFooter::new(format!("Shutdown at {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"))));
                     
                     // Try to update the existing dashboard message
-                    let channel_id = group.channels.dashboard;
-                    let message_id = group.dashboard_msg;
+                    let channel_id = category.channels.dashboard;
+                    let message_id = category.dashboard_msg;
                     
                     match channel_id.edit_message(&http_for_shutdown, message_id, EditMessage::new().embed(offline_embed).components(vec![])).await {
                         Ok(_) => {
-                            info!("[{}] Marked dashboard for group {} as offline", guild_name, group.group_id);
+                            info!("[{}] Marked dashboard for category {} as offline", guild_name, category.category_id);
                         }
                         Err(e) => {
-                            warn!("[{}] Failed to update dashboard for group {}: {}", guild_name, group.group_id, e);
+                            warn!("[{}] Failed to update dashboard for category {}: {}", guild_name, category.category_id, e);
                         }
                     }
                 }

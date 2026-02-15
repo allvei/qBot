@@ -27,43 +27,45 @@ pub async fn get_user_tag(ctx: &Context, user_id: UserId, db: &crate::Database) 
     }
 }
 
-pub fn log_queue_toggle(guild_name: &str, group_name: &str, tag: &str, queue_type: QueueToggleType, pool_size: Option<(usize, usize)>, sg_name: Option<&str>, position: Option<usize>) {
+pub fn log_queue_toggle(guild_name: &str, category_name: &str, tag: &str, queue_type: QueueToggleType, pool_size: Option<(usize, usize)>, sg_name: Option<&str>, position: Option<usize>) {
     let (action, source) = match queue_type {
-        QueueToggleType::BJ => ("joined", "button"),
-        QueueToggleType::BL => ("left",   "button"),
-        QueueToggleType::VJ => ("joined", "vc"),
-        QueueToggleType::VL => ("left",   "vc"),
+        QueueToggleType::BJ => ("joined", None),
+        QueueToggleType::BL => ("left",   None),
+        QueueToggleType::VJ => ("joined", Some("VC")),
+        QueueToggleType::VL => ("left",   Some("VC")),
     };
 
     let pos_part = position.map(|p| format!("#{}", p)).unwrap_or_default();
 
-    let prefix = log_prefix_subgroup(guild_name, group_name, sg_name.unwrap_or(""));
+    let prefix = log_prefix_format(guild_name, category_name, sg_name.unwrap_or(""));
     
-    match pool_size {
-        Some((current, quota)) => info!("{} {} {} {} ({}) [{}/{}]", prefix, pos_part, tag, action, source, current, quota),
-        None                   => info!("{} {} {} {} ({})",         prefix, pos_part, tag, action, source),
+    match (pool_size, source) {
+        (Some((current, quota)), Some(src)) => info!("{} {} {} {} ({}) [{}/{}]", prefix, pos_part, tag, action, src, current, quota),
+        (Some((current, quota)), None)       => info!("{} {} {} {} [{}/{}]",     prefix, pos_part, tag, action, current, quota),
+        (None, Some(src))                    => info!("{} {} {} {} ({})",       prefix, pos_part, tag, action, src),
+        (None, None)                         => info!("{} {} {} {}",             prefix, pos_part, tag, action),
     }
 }
 
-/// Generate log prefix in format [GUILD_NAME/GROUP_NAME/SUBGROUP_NAME]
-pub fn log_prefix_group(guild_name: &str, group_name: &str) -> String {
-    format!("[{}/{}]", guild_name, group_name)
+/// Generate log prefix in format [GUILD_NAME/CATEGORY_NAME/FORMAT_NAME]
+pub fn log_prefix_category(guild_name: &str, category_name: &str) -> String {
+    format!("[{}/{}]", guild_name, category_name)
 }
 
-/// Generate log prefix in format [GUILD_NAME/GROUP_NAME/SUBGROUP_NAME]
-pub fn log_prefix_subgroup(guild_name: &str, group_name: &str, subgroup_name: &str) -> String {
-    let sg_suffix = if subgroup_name.is_empty() { 
+/// Generate log prefix in format [GUILD_NAME/CATEGORY_NAME/FORMAT_NAME]
+pub fn log_prefix_format(guild_name: &str, category_name: &str, format_name: &str) -> String {
+    let sg_suffix = if format_name.is_empty() { 
         "".to_string() 
     } else { 
-        format!("/{}", subgroup_name) 
+        format!("/{}", format_name) 
     };
-    format!("[{}/{}{}]", guild_name, group_name, sg_suffix)
+    format!("[{}/{}{}]", guild_name, category_name, sg_suffix)
 }
 
 /// Generate log prefix from Context and IDs
-pub async fn log_prefix_from_context(ctx: &Context, guild_id: serenity::all::GuildId, group_name: &str, subgroup_name: &str) -> String {
+pub async fn log_prefix_from_context(ctx: &Context, guild_id: serenity::all::GuildId, category_name: &str, format_name: &str) -> String {
     let guild_name = guild_name(ctx, guild_id);
-    log_prefix_subgroup(&guild_name, group_name, subgroup_name)
+    log_prefix_format(&guild_name, category_name, format_name)
 }
 
 pub enum QueueToggleType {

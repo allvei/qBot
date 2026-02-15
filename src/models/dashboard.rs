@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Error, Result};
 use std::{collections::{HashMap, HashSet}, sync::Arc, time::{Duration, SystemTime}};
-use crate::{QueueToggleType, log_queue_toggle, guild_name, log_prefix_group};
+use crate::{QueueToggleType, log_queue_toggle, guild_name, log_prefix_category};
 use serenity::{all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
     CreateEmbed as CE, CreateMessage as CM, CreateInteractionResponse as CIR,
@@ -10,7 +10,7 @@ use serenity::{all::{
 use tracing::{error, info, warn};
 use tokio::sync::mpsc;
 
-use crate::models::{ComponentContext as CC, DashboardQueueKey, Group, SessionStatus};
+use crate::models::{ComponentContext as CC, DashboardQueueKey, Category, SessionStatus};
 
 // Helper methods to reduce code duplication
 
@@ -150,7 +150,7 @@ pub enum ButtonType {
     SetupRunner,
     SetupAdmin,
 
-    // Init group flow buttons
+    // Init category flow buttons
     InitDashboard,
     InitQueue,
     InitQueueVc,
@@ -160,12 +160,12 @@ pub enum ButtonType {
     InitAdmin,
     InitQuota,
 
-    // Group link buttons
-    GroupLinkDashboard,
-    GroupLinkQueue,
-    GroupLinkQueueVc,
-    GroupLinkRed,
-    GroupLinkBlue,
+    // Category link buttons
+    CategoryLinkDashboard,
+    CategoryLinkQueue,
+    CategoryLinkQueueVc,
+    CategoryLinkRed,
+    CategoryLinkBlue,
 
     // Dashboard action buttons
     DashboardJoin,
@@ -208,12 +208,12 @@ impl ButtonType {
             "init_admin"      => Self::InitAdmin,
             "init_quota"      => Self::InitQuota,
 
-            // Group link buttons
-            "grouplink_dashboard" => Self::GroupLinkDashboard,
-            "grouplink_queue"     => Self::GroupLinkQueue,
-            "grouplink_queuevc"   => Self::GroupLinkQueueVc,
-            "grouplink_red"       => Self::GroupLinkRed,
-            "grouplink_blue"      => Self::GroupLinkBlue,
+            // Category link buttons
+            "categorylink_dashboard" => Self::CategoryLinkDashboard,
+            "categorylink_queue"     => Self::CategoryLinkQueue,
+            "categorylink_queuevc"   => Self::CategoryLinkQueueVc,
+            "categorylink_red"       => Self::CategoryLinkRed,
+            "categorylink_blue"      => Self::CategoryLinkBlue,
 
             // Dashboard buttons
             "join_queue"      => Self::DashboardJoin,
@@ -253,11 +253,11 @@ impl ButtonType {
             Self::InitRunner     |
             Self::InitAdmin      |
             Self::InitQuota      |
-            Self::GroupLinkDashboard |
-            Self::GroupLinkQueue     |
-            Self::GroupLinkQueueVc   |
-            Self::GroupLinkRed       |
-            Self::GroupLinkBlue
+            Self::CategoryLinkDashboard |
+            Self::CategoryLinkQueue     |
+            Self::CategoryLinkQueueVc   |
+            Self::CategoryLinkRed       |
+            Self::CategoryLinkBlue
         )
     }
 
@@ -289,7 +289,7 @@ impl ButtonType {
     }
 }
 
-impl Group {
+impl Category {
     /// Get the dashboard message
     pub async fn dash_get(&self, ctx: &Context) -> Result<Message> {
         let ch = CI::new(self.channels.dashboard.into());
@@ -301,12 +301,12 @@ impl Group {
     }
 
     /// Creates buttons for the dashboard
-    /// When multiple subgroups exist, each subgroup gets its own button row.
+    /// When multiple formats exist, each format gets its own button row.
     pub async fn create_dashboard_buttons(&self) -> Result<Vec<CAR>> {
-        let has_multiple = self.subgroups.len() > 1;
+        let has_multiple = self.formats.len() > 1;
         let mut buttons = Vec::new();
 
-        for sg in &self.subgroups {
+        for sg in &self.formats {
             let is_hot  = sg.sessions.iter().any(|s| s.is_hot());
             let is_live = sg.sessions.iter().any(|s| s.is_active());
             let has_queued_players = sg.sessions.iter()
@@ -368,20 +368,20 @@ impl Group {
         }
     }
 
-    /// Builds dashboard embed and components based on current group state.
-    /// Uses group name as title. Each subgroup gets its own queue section.
-    /// All content for a subgroup is rendered together (header, players, teams)
-    /// before moving to the next subgroup.
+    /// Builds dashboard embed and components based on current category state.
+    /// Uses category name as title. Each format gets its own queue section.
+    /// All content for a format is rendered together (header, players, teams)
+    /// before moving to the next format.
     pub async fn build_dashboard_content(&self, db: &crate::Database, guild_id: GI, in_game_players: &HashMap<UI, (GI, String)>) -> Result<(CE, Vec<CAR>)> {
         let timeout_seconds = self.timeout as u64;
         let post_game_timeout = db.config.get_post_game_timeout(guild_id).await.unwrap_or(120) as u64;
-        let has_multiple = self.subgroups.len() > 1;
+        let has_multiple = self.formats.len() > 1;
 
         let mut embed = CE::new().title(self.display_name());
 
-        // Single loop: each subgroup renders all its content together
-        let sg_count = self.subgroups.len();
-        for (sg_i, sg) in self.subgroups.iter().enumerate() {
+        // Single loop: each format renders all its content together
+        let sg_count = self.formats.len();
+        for (sg_i, sg) in self.formats.iter().enumerate() {
             let quota = sg.quota as usize;
             let inactives: Vec<_> = sg.sessions.iter().filter(|s| !s.is_active()).collect();
             let actives: Vec<_>   = sg.sessions.iter().filter(|s| s.is_active()).collect();
@@ -524,7 +524,7 @@ impl Group {
                     embed = add_waiting_field(embed, &sg_label, 0, quota, "*Join to get started!*");
                 } else {
                     // Idle with players - show player list and timers
-                    // Queue header as a field so it stays grouped with player fields
+                    // Queue header as a field so it stays categoryed with player fields
                     let mut players_field = String::new();
                     let mut timers_field  = String::new();
 
@@ -560,7 +560,7 @@ impl Group {
                         }
                     }
 
-                    // Use subgroup name in the field title
+                    // Use format name in the field title
                     embed = embed.field(
                         format!("{sg_label} - Idle ({queue_players}/{quota})"),
                         players_field,
@@ -573,7 +573,7 @@ impl Group {
                 embed = add_waiting_field(embed, &sg_label, 0, quota, "*Empty, join to get started!*");
             }
 
-            // Separator between subgroups
+            // Separator between formats
             if has_multiple && sg_i < sg_count - 1 {
                 embed = embed.field("\u{200B}", "", false);
             }
@@ -679,14 +679,14 @@ impl Group {
         }
     }
 
-    /// Initializes a dashboard based on current group state
+    /// Initializes a dashboard based on current category state
     pub async fn dash_init(&mut self, db: &crate::Database, guild_id: GI) -> Result<CM> {
         let (embed, buttons) = self.build_dashboard_content(db, guild_id, &HashMap::new()).await?;
         let message = CM::new().embed(embed).components(buttons);
         Ok(message)
     }
 
-    /// Updates a dashboard based on current group state
+    /// Updates a dashboard based on current category state
     /// Auto-recovers by creating a new dashboard if the current one is missing/deleted
     pub async fn dash_update(&mut self, ctx: &Context) -> Result<(), Error> {
         match self.dash_get(ctx).await {
@@ -718,7 +718,7 @@ impl Group {
         Err(anyhow!("dash_update requires db and guild_id - use dashboard queue"))
     }
 
-    /// Queue dashboard updates for all groups across all servers (non-blocking, batched)
+    /// Queue dashboard updates for all categories across all servers (non-blocking, batched)
     /// Used when game state changes (live/end) affect in-game status on other dashboards
     pub async fn queue_dash_update_all(&self, ctx: &Context) {
         let data = ctx.data.read().await;
@@ -730,13 +730,13 @@ impl Group {
     }
 
     /// Queue a dashboard update (non-blocking, batched)
-    /// Requires guild_id to be passed since Group doesn't store it
+    /// Requires guild_id to be passed since Category doesn't store it
     pub async fn queue_dash_update(&self, ctx: &Context, guild_id: GI) {
         //
         // Try to get queue from context data using the key from models module
         let data = ctx.data.read().await;
         if let Some(queue) = data.get::<DashboardQueueKey>() {
-            queue.lock().await.request_update(guild_id, self.group_id as u64);
+            queue.lock().await.request_update(guild_id, self.category_id as u64);
             //
         } else {
             warn!("Dashboard queue not initialized in Context");
@@ -758,9 +758,9 @@ impl Group {
         // Store channel IDs before any borrows
         let _dashboard_channel = self.channels.dashboard;
 
-        // If player is already in this subgroup, refresh their timeout and return
+        // If player is already in this format, refresh their timeout and return
         if self.is_user_in_sg(sg_id, user_id) {
-            if let Some(sg) = self.subgroup_mut(sg_id) {
+            if let Some(sg) = self.format_mut(sg_id) {
                 for session in &mut sg.sessions {
                     if let Some(sp) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                         sp.joined_at = std::time::SystemTime::now();
@@ -773,8 +773,8 @@ impl Group {
             return Ok(());
         }
 
-        // Check if we have an idle or hot session to join in the target subgroup
-        let has_joinable_session = self.subgroup(sg_id)
+        // Check if we have an idle or hot session to join in the target format
+        let has_joinable_session = self.format(sg_id)
             .map(|sg| sg.sessions.iter().any(|s|
                 s.status == SessionStatus::Idle || s.status == SessionStatus::Hot
             ))
@@ -879,20 +879,20 @@ impl Group {
 
             // Log the queue join attempt BEFORE adding to queue to fix race condition
             let server_name = guild_name(cc.ctx, guild_id);
-            let group_name = self.name.as_deref().unwrap_or("Unknown").to_string();
+            let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
             let username = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
             
             // Get current pool length BEFORE adding player
-            let (pool_len_before, sg_quota) = self.subgroup(sg_id)
+            let (pool_len_before, sg_quota) = self.format(sg_id)
                 .map(|sg| (sg.sessions.iter().map(|s| s.pool.len()).sum::<usize>(), sg.quota as usize))
                 .unwrap_or((0, 0));
-            let sg_name = self.subgroup(sg_id).map(|sg| sg.name.as_str());
+            let sg_name = self.format(sg_id).map(|sg| sg.name.as_str());
             
             // Clone sg_name to avoid borrowing issues
             let sg_name_owned = sg_name.map(|s| s.to_string());
             
             // Log BEFORE queue operation to fix race condition with quota notifications
-            log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BJ, Some((pool_len_before, sg_quota)), sg_name, Some(pool_len_before + 1));
+            log_queue_toggle(&server_name, &category_name, &username, QueueToggleType::BJ, Some((pool_len_before + 1, sg_quota)), sg_name, Some(pool_len_before + 1));
 
             if let Err(e) = self.queue_player_sg(sg_id, player, discord_rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
                 warn!("Failed to queue player: {e}");
@@ -908,7 +908,7 @@ impl Group {
                         guild_id,
                         user_id,
                         cc.db.clone(),
-                        self.group_id,
+                        self.category_id,
                         sg_id,
                         AlertType::Join,
                         sg_name_owned,
@@ -933,17 +933,17 @@ impl Group {
     async fn dash_leave_queue(&mut self, cc: &CC<'_>, sg_id: u8) -> Result<()> {
         let user_id = cc.component.user.id;
 
-        let quota = self.subgroup(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
+        let quota = self.format(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
 
         // Store fields before any borrows
         let _dashboard_channel = self.channels.dashboard;
         let queue_chat = self.channels.queue_chat;
-        let group_id = self.group_id;
-        let group_name = self.name.as_deref().unwrap_or("Unknown").to_string();
+        let category_id = self.category_id;
+        let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
 
-        // Get session index and subgroup name before mutable borrow
-        let sg_name_owned = self.subgroup(sg_id).map(|sg| sg.name.clone());
-        let session_idx = self.subgroup(sg_id)
+        // Get session index and format name before mutable borrow
+        let sg_name_owned = self.format(sg_id).map(|sg| sg.name.clone());
+        let session_idx = self.format(sg_id)
             .and_then(|sg| sg.sessions.iter()
                 .position(|s| s.pool.iter().any(|p| p.player.user_id == user_id)));
 
@@ -998,10 +998,10 @@ impl Group {
             session.remove_player(user_id);
             let pool_len = session.pool.len();
 
-            // Log with server and group context
+            // Log with server and category context
             let guild_id = cc.component.guild_id.unwrap();
             let server_name = guild_name(cc.ctx, guild_id);
-            log_queue_toggle(&server_name, &group_name, &username, QueueToggleType::BL, Some((pool_len, quota)), sg_name_owned.as_deref(), position_before_removal);
+            log_queue_toggle(&server_name, &category_name, &username, QueueToggleType::BL, Some((pool_len, quota)), sg_name_owned.as_deref(), position_before_removal);
 
             // Send leave announcement (delayed + buffered)
             {
@@ -1013,7 +1013,7 @@ impl Group {
                     guild_id,
                     user_id,
                     cc.db.clone(),
-                    group_id,
+                    category_id,
                     sg_id,
                     AlertType::Leave,
                     sg_name_owned.clone(),
@@ -1067,10 +1067,10 @@ impl Group {
 
     /// Handles the shuffle teams button
     async fn dash_shuffle(&mut self, cc: &CC<'_>, sg_id: u8) -> Result<()> {
-        let quota = self.subgroup(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
+        let quota = self.format(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
 
         // Find the game to shuffle - can be Idle (if quota met) or Hot
-        let has_shuffleable = self.subgroup(sg_id)
+        let has_shuffleable = self.format(sg_id)
             .map(|sg| sg.sessions.iter().any(|s|
                 (s.status == SessionStatus::Idle || s.status == SessionStatus::Hot) && s.pool.len() >= quota
             ))
@@ -1120,8 +1120,8 @@ impl Group {
             }
         }
 
-        // Check if there's a hot game to start in the target subgroup
-        let has_hot_game = self.subgroup(sg_id)
+        // Check if there's a hot game to start in the target format
+        let has_hot_game = self.format(sg_id)
             .map(|sg| sg.sessions.iter().any(|s| s.is_hot()))
             .unwrap_or(false);
 
@@ -1153,8 +1153,8 @@ impl Group {
         use serenity::all::CreateMessage;
         use std::time::SystemTime;
 
-        // Check if there's an active game to end in the target subgroup
-        let active_session = self.subgroup(sg_id)
+        // Check if there's an active game to end in the target format
+        let active_session = self.format(sg_id)
             .and_then(|sg| sg.sessions.iter()
                 .find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live));
 
@@ -1168,7 +1168,7 @@ impl Group {
         let match_time     = active_session.started_at
             .and_then(|started| SystemTime::now().duration_since(started).ok())
             .map(|d| d.as_secs());
-        let quota = self.subgroup(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
+        let quota = self.format(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
         let (team_red, team_blu) = get_sorted_teams(&active_session.pool, quota);
         let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
@@ -1218,7 +1218,7 @@ impl Group {
     /// Processes all button interactions in a modular way
     ///
     /// * `cc` - The component context with button information
-    /// Parse subgroup ID from button custom_id suffix (format: action:sg_id).
+    /// Parse format ID from button custom_id suffix (format: action:sg_id).
     /// Returns 0 if no suffix or invalid.
     fn parse_sg_id(parts: &[&str]) -> u8 {
         parts.get(1)
@@ -1232,11 +1232,11 @@ impl Group {
         let parts: Vec<&str> = custom_id.split(':').collect();
         let action  = parts[0];
 
-        // Get server and group names for logging - store channel ID before any mut borrows
+        // Get server and category names for logging - store channel ID before any mut borrows
         let guild_id = cc.component.guild_id.unwrap();
         let _dashboard_channel = self.channels.dashboard;
         let server_name = guild_name(cc.ctx, guild_id);
-        let group_name = self.name.as_deref().unwrap_or("Unknown").to_string();
+        let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
         let username = cc.ctx.cache.user(cc.component.user.id).map(|u| u.name.clone()).unwrap_or_else(|| cc.component.user.id.to_string());
 
         let sg_id = Self::parse_sg_id(&parts);
@@ -1249,36 +1249,36 @@ impl Group {
                 self.dash_leave_queue(cc, sg_id).await
             },
             "change_expiry"     => {
-                info!("{} {} requested expiry time change", log_prefix_group(&server_name, &group_name), username);
+                info!("{} {} requested expiry time change", log_prefix_category(&server_name, &category_name), username);
                 self.dash_change_expiry(cc, sg_id).await
             },
             "set_expiry"        => {
-                info!("{} {} changed expiry time", log_prefix_group(&server_name, &group_name), username);
+                info!("{} {} changed expiry time", log_prefix_category(&server_name, &category_name), username);
                 self.dash_set_expiry(cc, parts.get(1).copied()).await
             },
             "show_settings"     => {
-                info!("{} {} requested settings", log_prefix_group(&server_name, &group_name), username);
+                info!("{} {} requested settings", log_prefix_category(&server_name, &category_name), username);
                 self.dash_show_settings(cc).await
             },
             "shuffle_teams"     => {
-                info!("{} {} used Shuffle", log_prefix_group(&server_name, &group_name), username);
+                info!("{} {} used Shuffle", log_prefix_category(&server_name, &category_name), username);
                 self.dash_shuffle(cc, sg_id).await
             },
             "start_match"       => {
-                // Combined Start/End button: dispatch based on current subgroup state
-                let is_live = self.subgroup(sg_id)
+                // Combined Start/End button: dispatch based on current format state
+                let is_live = self.format(sg_id)
                     .map(|sg| sg.sessions.iter().any(|s| s.is_active()))
                     .unwrap_or(false);
                 if is_live {
-                    info!("{} {} used End", log_prefix_group(&server_name, &group_name), username);
+                    info!("{} {} used End", log_prefix_category(&server_name, &category_name), username);
                     self.dash_end(cc, sg_id).await
                 } else {
-                    info!("{} {} used Start", log_prefix_group(&server_name, &group_name), username);
+                    info!("{} {} used Start", log_prefix_category(&server_name, &category_name), username);
                     self.dash_start(cc, sg_id).await
                 }
             },
             "end_match"         => {
-                info!("{} {} used End", log_prefix_group(&server_name, &group_name), username);
+                info!("{} {} used End", log_prefix_category(&server_name, &category_name), username);
                 self.dash_end(cc, sg_id).await
             },
             _ => {
@@ -1293,9 +1293,9 @@ impl Group {
     async fn dash_change_expiry(&mut self, cc: &CC<'_>, _sg_id: u8) -> Result<()> {
         use serenity::all::{CreateButton as CB, ButtonStyle as BS};
 
-        // Check if user is in queue (across all subgroups)
+        // Check if user is in queue (across all formats)
         let user_id = cc.component.user.id;
-        let is_in_queue = self.subgroups.iter()
+        let is_in_queue = self.formats.iter()
             .any(|sg| sg.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.user_id == user_id)));
 
         if !is_in_queue {
@@ -1340,9 +1340,9 @@ impl Group {
             }
         };
 
-        // Find and update the player's expiry duration in any session across all subgroups
+        // Find and update the player's expiry duration in any session across all formats
         let mut found = false;
-        'outer: for sg in self.subgroups.iter_mut() {
+        'outer: for sg in self.formats.iter_mut() {
             for session in sg.sessions.iter_mut() {
                 if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                     player.timeout = duration;
@@ -1433,11 +1433,11 @@ impl Group {
 // Dashboard update queue
 //
 
-/// Request to update a specific group's dashboard
+/// Request to update a specific category's dashboard
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct DashboardUpdateRequest {
     pub guild_id: GI,
-    pub group_id: u64,
+    pub category_id: u64,
 }
 
 /// Dashboard update queue that batches updates to reduce API calls
@@ -1464,29 +1464,29 @@ impl DashboardUpdateQueue {
         Self { sender }
     }
 
-    /// Request a dashboard update for a specific group
-    pub fn request_update(&self, guild_id: GI, group_id: u64) {
-        let request = DashboardUpdateRequest { guild_id, group_id };
+    /// Request a dashboard update for a specific category
+    pub fn request_update(&self, guild_id: GI, category_id: u64) {
+        let request = DashboardUpdateRequest { guild_id, category_id };
         if let Err(e) = self.sender.send(request) {
             warn!("Failed to queue dashboard update: {e}");
         }
     }
 
-    /// Request dashboard updates for all groups across all servers
+    /// Request dashboard updates for all categories across all servers
     pub fn request_update_all(&self, manager: &crate::models::Manager) {
         for srv in &manager.servers {
-            for grp in &srv.groups {
-                self.request_update(srv.guild_id, grp.group_id as u64);
+            for grp in &srv.categories {
+                self.request_update(srv.guild_id, grp.category_id as u64);
             }
         }
     }
 
-    /// Request dashboard updates for all groups without needing the manager lock.
+    /// Request dashboard updates for all categories without needing the manager lock.
     /// Sends a sentinel that the batch processor expands once it acquires the lock.
     pub fn request_update_all_deferred(&self) {
         let request = DashboardUpdateRequest {
             guild_id: GI::new(1),
-            group_id: u64::MAX, // sentinel
+            category_id: u64::MAX, // sentinel
         };
         if let Err(e) = self.sender.send(request) {
             warn!("Failed to queue dashboard update-all: {e}");
@@ -1495,9 +1495,9 @@ impl DashboardUpdateQueue {
 
     /// Background task that batches and processes dashboard updates
     ///
-    /// This uses a HashSet to automatically deduplicate update requests for the same group.
+    /// This uses a HashSet to automatically deduplicate update requests for the same category.
     /// Since dashboards show current state, only the latest update matters - all previous
-    /// requests for the same group are redundant and automatically discarded.
+    /// requests for the same category are redundant and automatically discarded.
     async fn batch_processor(
         mut receiver: mpsc::UnboundedReceiver<DashboardUpdateRequest>,
         ctx: Context,
@@ -1505,7 +1505,7 @@ impl DashboardUpdateQueue {
         database: Arc<crate::Database>,
     ) {
         let batch_window = Duration::from_millis(200); // Wait 200ms to batch updates
-        // HashSet automatically deduplicates - if 10 updates come in for the same group,
+        // HashSet automatically deduplicates - if 10 updates come in for the same category,
         // we only keep one entry and process it once with the current state
         let mut pending_updates: HashSet<DashboardUpdateRequest> = HashSet::new();
 
@@ -1513,7 +1513,7 @@ impl DashboardUpdateQueue {
             // Wait for the first update request
             match receiver.recv().await {
                 Some(request) => {
-                    let mut update_all = request.group_id == u64::MAX;
+                    let mut update_all = request.category_id == u64::MAX;
                     if !update_all {
                         pending_updates.insert(request);
                     }
@@ -1524,7 +1524,7 @@ impl DashboardUpdateQueue {
                     loop {
                         match tokio::time::timeout_at(deadline, receiver.recv()).await {
                             Ok(Some(request)) => {
-                                if request.group_id == u64::MAX {
+                                if request.category_id == u64::MAX {
                                     update_all = true;
                                 } else {
                                     pending_updates.insert(request);
@@ -1545,7 +1545,7 @@ impl DashboardUpdateQueue {
                         }
                     }
 
-                    // Expand update-all sentinel into concrete group requests
+                    // Expand update-all sentinel into concrete category requests
                     if update_all {
                         Self::expand_update_all(&mut pending_updates, &manager).await;
                     }
@@ -1564,17 +1564,17 @@ impl DashboardUpdateQueue {
         }
     }
 
-    /// Expand an "update all" sentinel into concrete requests for every group.
+    /// Expand an "update all" sentinel into concrete requests for every category.
     async fn expand_update_all(
         pending: &mut HashSet<DashboardUpdateRequest>,
         manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
     ) {
         let mgr = manager.lock().await;
         for srv in &mgr.servers {
-            for grp in &srv.groups {
+            for grp in &srv.categories {
                 pending.insert(DashboardUpdateRequest {
                     guild_id: srv.guild_id,
-                    group_id: grp.group_id as u64,
+                    category_id: grp.category_id as u64,
                 });
             }
         }
@@ -1595,7 +1595,7 @@ impl DashboardUpdateQueue {
             let manager = manager.clone();
             let database = database.clone();
             let guild_id = update.guild_id;
-            let group_id = update.group_id;
+            let category_id = update.category_id;
 
             // Spawn a task for each dashboard update
             let task = tokio::spawn(async move {
@@ -1607,11 +1607,11 @@ impl DashboardUpdateQueue {
                     let mut manager_lock = manager.lock().await;
 
                     // Collect players in active sessions across all servers
-                    // Maps UserId -> (GuildId, subgroup_name) for "in-game" status display
+                    // Maps UserId -> (GuildId, format_name) for "in-game" status display
                     let mut in_game_players: HashMap<UI, (GI, String)> = HashMap::new();
                     for srv in &manager_lock.servers {
-                        for grp in &srv.groups {
-                            for sg in &grp.subgroups {
+                        for grp in &srv.categories {
+                            for sg in &grp.formats {
                                 let has_active = sg.sessions.iter().any(|s| s.is_active());
                                 if !has_active { continue; }
                                 for session in &sg.sessions {
@@ -1637,36 +1637,36 @@ impl DashboardUpdateQueue {
 
                     let guild_name = server.guild_name.clone();
 
-                    let group = match server.groups.iter_mut().find(|g| g.group_id == group_id as u8) {
+                    let category = match server.categories.iter_mut().find(|g| g.category_id == category_id as u8) {
                         Some(g) => g,
                         None => {
-                            warn!("[{}] Failed to find group {} for dashboard update", guild_name, group_id);
+                            warn!("[{}] Failed to find category {} for dashboard update", guild_name, category_id);
                             return;
                         }
                     };
 
                     // Log current session state
-                    let pool_size = group.subgroups[0].sessions.first().map(|s| s.pool.len()).unwrap_or(0);
+                    let pool_size = category.formats[0].sessions.first().map(|s| s.pool.len()).unwrap_or(0);
                     //
 
                     // Refresh player ranks from Discord to ensure dashboard shows current ranks
                     // This prevents desync when players are promoted while sitting in queue
-                    group.refresh_player_ranks(&ctx, guild_id, &database).await;
+                    category.refresh_player_ranks(&ctx, guild_id, &database).await;
 
                     // Validate VC status to ensure accurate display of who is in voice chat
                     // This prevents desync where flags don't match Discord's actual voice states
-                    group.validate_vc_status(&ctx, guild_id).await;
+                    category.validate_vc_status(&ctx, guild_id).await;
 
                     // Get dashboard message info
-                    let channel_id = group.channels.dashboard;
+                    let channel_id = category.channels.dashboard;
                     let dashboard_channel_id = channel_id.get();
-                    let message_id = group.dashboard_msg;
+                    let message_id = category.dashboard_msg;
 
                     // Generate dashboard content
-                    let (embed, buttons) = match group.build_dashboard_content(&database, guild_id, &in_game_players).await {
+                    let (embed, buttons) = match category.build_dashboard_content(&database, guild_id, &in_game_players).await {
                         Ok(content) => content,
                         Err(e) => {
-                            warn!("[{}] Failed to build dashboard content for group {}: {}", guild_name, group_id, e);
+                            warn!("[{}] Failed to build dashboard content for category {}: {}", guild_name, category_id, e);
                             return;
                         }
                     };
@@ -1696,14 +1696,14 @@ impl DashboardUpdateQueue {
                                     // Update the stored message ID in memory
                                     let mut manager_lock = manager.lock().await;
                                     if let Ok(server) = manager_lock.get_server(guild_id) {
-                                        if let Some(group) = server.groups.iter_mut().find(|g| g.group_id == group_id as u8) {
-                                            group.dashboard_msg = new_msg.id;
+                                        if let Some(category) = server.categories.iter_mut().find(|g| g.category_id == category_id as u8) {
+                                            category.dashboard_msg = new_msg.id;
                                         }
                                     }
                                     drop(manager_lock);
 
                                     // Persist to database
-                                    if let Err(e) = database.groups.update_dashboard_msg(guild_id, dashboard_channel_id, new_msg.id.get()).await {
+                                    if let Err(e) = database.categories.update_dashboard_msg(guild_id, dashboard_channel_id, new_msg.id.get()).await {
                                         warn!("Failed to update dashboard message ID in database: {e}");
                                     }
                                 }
