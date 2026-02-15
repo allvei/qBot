@@ -95,7 +95,7 @@ Code restructuring without changing functionality.
 1. **Be concise** - Users don't need technical details
 2. **Be specific** - Developers need enough detail to understand changes
 3. **Use present tense** - "Add feature" not "Added feature"
-4. **Group related changes** - Combine similar items with sub-bullets
+4. **Category related changes** - Combine similar items with sub-bullets
 5. **User perspective** - Write from the user's point of view for Users & Admins section
 
 ## Example

@@ -7,23 +7,23 @@ __ 12.02.26__
 __ 12.02.26__
 ## Users & Admins
 __Added__
-- **Subgroups support** - Groups can now contain multiple subgroups, each with their own quota, sessions, and settings.
+- **Formats support** - Categories can now contain multiple formats, each with their own quota, sessions, and settings.
 - **Dynamic team voice channels** - Automatic creation and cleanup of team voice channels based on configurable policies.
 - **Rank-gated categories** - Restrict channel category visibility by rank with access overwrites.
 - **Automatic game ending** - Games now end when all players leave team voice channels.
 - **ELO-Rank independent mode** - Option to decouple ELO from ranks for more flexible player management.
-- **Group creation wizard** - Create new groups with custom names, categories, and quotas through an intuitive menu system.
-- **Complete group removal** - Delete entire groups including all channels and categories with detailed feedback.
+- **Category creation wizard** - Create new categories with custom names, categories, and quotas through an intuitive menu system.
+- **Complete category removal** - Delete entire categories including all channels and categories with detailed feedback.
 - **Alert rate limiting** - Join/leave alerts are now buffered and rate-limited to prevent spam.
 - **Offline mode indicators** - Dashboard now shows when bot is offline and hides buttons during downtime.
 
 __Improved__
-- **Multi-subgroup dashboard** - Dashboard now displays and manages multiple subgroups within a group.
+- **Multi-format dashboard** - Dashboard now displays and manages multiple formats within a category.
 - **Team voice channel lifecycle** - Configurable policies for when to create/destroy team channels (on join, on hot, on game start & on leave, after pull, after timeout).
 - **Queue timeout refresh** - Re-joining via dashboard button now refreshes your queue timeout.
 - **Better setup flow** - Enhanced 7-step setup process with queue voice channel configuration.
 - **Player ELO validation** - Automatic ELO normalization based on Discord rank ranges.
-- **Cross-group player tracking** - See in-game status across all subgroups on dashboards.
+- **Cross-category player tracking** - See in-game status across all formats on dashboards.
 
 __Fixed__
 - **Rank access matching** - Better handling of duplicate rank names in dropdown menus.
@@ -36,7 +36,7 @@ __Fixed__
 
 ## Developers
 __Added__
-- Subgroup system with per-subgroup session management.
+- Format system with per-format session management.
 - ConfigToggle system for declarative configuration options.
 - Alert limiter component for rate-limiting notifications.
 - DM tracker for proper cleanup of direct messages.
@@ -45,7 +45,7 @@ __Added__
 
 __Refactored__
 - Complete settings system redesign with modular components.
-- Data structure updates for subgroups and team VC persistence.
+- Data structure updates for formats and team VC persistence.
 - Admin command consolidation with data-driven wizard steps.
 - Enhanced error handling throughout the application.
 - Improved voice state handling and rank assignment.

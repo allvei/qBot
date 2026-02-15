@@ -78,7 +78,7 @@ default_rank INTEGER
 
 ---
 
-### 3. Groups Table - Missing Columns in Migrations
+### 3. Categories Table - Missing Columns in Migrations
 
 **Issue**: The database has columns that migrations don't verify or create.
 
@@ -90,8 +90,8 @@ default_rank INTEGER
 
 **Current State**:
 
-- Migrations add these columns in `create_groups_table()` (lines 292-318)
-- But `verify_groups()` doesn't check for them (line 322-332)
+- Migrations add these columns in `create_categories_table()` (lines 292-318)
+- But `verify_categories()` doesn't check for them (line 322-332)
 
 **Impact**:
 
@@ -100,16 +100,16 @@ default_rank INTEGER
 
 **Files Affected**:
 
-- `src/database/migrations.rs` - `verify_groups()` method
+- `src/database/migrations.rs` - `verify_categories()` method
 
 **Recommendation**:
 
-- Add these columns to the `required_columns` list in `verify_groups()`
+- Add these columns to the `required_columns` list in `verify_categories()`
 - Ensure all column additions are verified
 
 ---
 
-### 4. Groups Table - Column Name Inconsistency
+### 4. Categories Table - Column Name Inconsistency
 
 **Issue**: Database has `hot_timeout` but code uses `timeout`.
 
@@ -124,16 +124,16 @@ default_rank INTEGER
 **Impact**:
 
 - Queries will fail if column name doesn't match
-- Group timeout settings won't work
+- Category timeout settings won't work
 
 **Files Affected**:
 
 - `src/database/migrations.rs`
-- `src/database/repositories/group.rs`
+- `src/database/repositories/category.rs`
 
 **Recommendation**:
 
-- Check actual database column name with `PRAGMA table_info(groups)`
+- Check actual database column name with `PRAGMA table_info(categories)`
 - Standardize on one name (suggest `hot_timeout` to be explicit)
 - Update all queries and migrations accordingly
 
@@ -299,7 +299,7 @@ INSERT OR IGNORE INTO users (user_id, steam_id, pm_hot_alert, timeout, join_aler
 1. Fix `config.default_rank` type (INTEGER → TEXT)
 2. Fix duplicate columns in migrations.rs line 188-189
 3. Fix `add_column!` default values
-4. Add missing columns to `verify_groups()`
+4. Add missing columns to `verify_categories()`
 5. Resolve `timeout` vs `hot_timeout` column name
 
 ### Medium Priority (Code Cleanup)
@@ -324,7 +324,7 @@ After refactoring, test:
 - [ ] User creation and retrieval
 - [ ] Guild-specific ELO tracking
 - [ ] Config get/set for all fields
-- [ ] Group creation with all columns
+- [ ] Category creation with all columns
 - [ ] Rank assignment and retrieval
 - [ ] Alert settings persistence
 - [ ] Database validation passes
