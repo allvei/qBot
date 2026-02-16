@@ -1,13 +1,9 @@
 # v0.7.0
 __ 16.02.26__
 ## Users & Admins
-__Improved__
-- **Queue speed** - Faster response times when joining or leaving queue.
-- **Queue reliability** - Better handling of queue operations and more stable player counts.
-
 __Fixed__
-- **Queue display updates** - Player count now shows correctly immediately after joining.
-- **Alert message system** - Fixed text sanitization that could cause overly long messages to break formatting.
+- **Queue display updates** - Player count now shows correctly immediately after joining queue.
+- **Alert message formatting** - Fixed text handling that could cause overly long alert messages to break display.
 
 ## Developers
 __Added__
