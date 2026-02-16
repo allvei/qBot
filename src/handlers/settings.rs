@@ -113,8 +113,9 @@ fn exceeds_alert_limits(text: &str) -> bool {
 /// Process text and replace with a random message from `replacements` if limits exceeded
 fn sanitize_text(text: &str, replacements: &[&str]) -> String {
     if SANITIZE_ALERTS_ENABLED && exceeds_alert_limits(text) {
-        use rand::Rng;
-        let idx = rand::rng().random_range(0..replacements.len());
+        use rand::RngExt;
+        let mut rng = rand::rng();
+        let idx = rng.random_range(0..replacements.len());
         return replacements[idx].to_string();
     }
     text.to_string()

@@ -1,7 +1,25 @@
+# v0.7.0
+__ 16.02.26__
+## Users & Admins
+__Fixed__
+- **Random number generation** - Fixed text sanitization system that replaces overly long alert messages with shorter alternatives.
+
+## Developers
+__Added__
+- Updated rand dependency to version 0.10.0 for better performance and security.
+
 # v0.6.0
 __ 12.02.26__
+## Users & Admins
+__Added__
+- **/remove** - Remove all players from queue, or remove a specific player when used with a user mention.
+
 ## New Commands
 - **/remove** - Remove all players from queue, or remove a specific player when used with a user mention.
+
+## Developers
+__Refactored__
+- Updated internal terminology from "groups" to "categories" throughout the codebase for better consistency with user-facing features.
 
 # v0.5.0
 __ 12.02.26__
