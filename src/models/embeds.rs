@@ -1,7 +1,7 @@
 use serenity::all::{ButtonStyle as BS, CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
 use crate::handlers::{build_settings_buttons, build_settings_embed};
 use crate::handlers::settings::{ServerSettings, build_server_settings_buttons, build_server_settings_embed};
-use crate::repositories::UserSettings;
+use crate::repo::UserSettings;
 
 pub struct Ephemeral {
 }

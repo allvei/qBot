@@ -19,8 +19,8 @@ use serenity::builder::{
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
-use pf_pug_bot::database::migrations::DatabaseMigrations;
-use pf_pug_bot::database::repositories::CategoryRepository;
+use pf_pug_bot::db::migrations::DatabaseMigrations;
+use pf_pug_bot::db::repo::CategoryRepository;
 use pf_pug_bot::handlers::{self, admin};
 use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, DmMessageTracker, DmTrackerKey, Database, Manager, QueueToggleType::{self, *}, Roles, Server, SessionStatus, VoiceStateUpdate, log_queue_toggle};
 

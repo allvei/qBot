@@ -332,7 +332,7 @@ pub async fn handle_settings_modal(
     interaction: &ModalInteraction,
     db: &Arc<Database>,
 ) -> Result<()> {
-    use crate::database::repositories::is_valid_user_text;
+    use crate::db::repo::is_valid_user_text;
 
     let user_id = interaction.user.id;
     let modal_id = &interaction.data.custom_id;
@@ -505,13 +505,13 @@ async fn update_settings_menu_from_modal(
 }
 
 /// Build settings embed
-pub fn build_settings_embed(settings: &crate::database::repositories::UserSettings) -> CE {
+pub fn build_settings_embed(settings: &crate::db::repo::UserSettings) -> CE {
     use crate::handlers::settings_menu::AsSettingsMenu;
     settings.as_settings_menu().build_embed()
 }
 
 /// Build settings buttons
-pub fn build_settings_buttons(settings: &crate::database::repositories::UserSettings) -> Vec<CAR> {
+pub fn build_settings_buttons(settings: &crate::db::repo::UserSettings) -> Vec<CAR> {
     use crate::handlers::settings_menu::AsSettingsMenu;
     settings.as_settings_menu().build_components()
 }
@@ -521,7 +521,7 @@ pub async fn build_join_alert_embed(
     ctx:       &Context,
     user_id:   serenity::all::UserId,
     guild_id:  Option<serenity::all::GuildId>,
-    settings:  &crate::database::repositories::UserSettings,
+    settings:  &crate::db::repo::UserSettings,
     rank_name: &str,
     sg_name:   Option<&str>,
 ) -> CE {
@@ -607,7 +607,7 @@ pub async fn build_leave_alert_embed(
     ctx: &Context,
     user_id: serenity::all::UserId,
     guild_id: Option<serenity::all::GuildId>,
-    settings: &crate::database::repositories::UserSettings,
+    settings: &crate::db::repo::UserSettings,
     sg_name: Option<&str>,
 ) -> CE {
     // Get display name - try member nickname first, then user name, then user ID
@@ -1674,7 +1674,7 @@ pub async fn handle_server_settings_button(
                 .unwrap_or(serenity::all::ChannelId::new(1));
             
             // Create category with existing message ID
-            let category_config = crate::database::repositories::category::CategoryConfig {
+            let category_config = crate::db::repo::category::CategoryConfig {
                 category_id: category_id.get(),
                 dashboard_channel_id: dashboard_channel.get(),
                 chat_channel_id: queue_channel.get(),
@@ -1772,7 +1772,7 @@ pub async fn handle_server_settings_button(
                                 info!("[{}] Dashboard message created with ID {} (linked category)", guild_name, dashboard_msg_id);
                                 
                                 // Create the category in the database
-                                let category_config = crate::database::repositories::category::CategoryConfig {
+                                let category_config = crate::db::repo::category::CategoryConfig {
                                     category_id: category_id.get(),
                                     dashboard_channel_id: dashboard_channel.get(),
                                     chat_channel_id: queue_channel.get(),
@@ -1906,7 +1906,7 @@ pub async fn handle_server_settings_button(
                                     info!("[{}] Dashboard message created with ID {} (linked category)", guild_name, dashboard_msg_id);
                                     
                                     // Create the category in the database
-                                    let category_config = crate::database::repositories::category::CategoryConfig {
+                                    let category_config = crate::db::repo::category::CategoryConfig {
                                         category_id: category_id.get(),
                                         dashboard_channel_id: dashboard_channel.unwrap().get(),
                                         chat_channel_id: queue_channel.unwrap().get(),
@@ -2129,7 +2129,7 @@ pub async fn handle_server_settings_button(
                 .unwrap_or(serenity::all::ChannelId::new(1));
 
             // Create new category with existing message ID
-            let category_config = crate::database::repositories::category::CategoryConfig {
+            let category_config = crate::db::repo::category::CategoryConfig {
                 category_id: category_id.get(),
                 dashboard_channel_id: dashboard_channel.get(),
                 chat_channel_id: queue_channel.get(),
@@ -2252,7 +2252,7 @@ pub async fn handle_server_settings_button(
                 Ok(_) => {
                     let dashboard_msg_id = temp_category.dashboard_msg.get();
                     
-                    let category_config = crate::database::repositories::category::CategoryConfig {
+                    let category_config = crate::db::repo::category::CategoryConfig {
                         category_id: category_id.get(),
                         dashboard_channel_id: dashboard_channel.get(),
                         chat_channel_id: queue_channel.get(),
@@ -3215,7 +3215,7 @@ pub async fn handle_server_settings_modal(
                         let dashboard_msg_id = temp_category.dashboard_msg.get();
                         info!("[{}] Dashboard message created with ID {}", guild_name, dashboard_msg_id);
 
-                        let category_config = crate::database::repositories::category::CategoryConfig {
+                        let category_config = crate::db::repo::category::CategoryConfig {
                             category_id: category_id.get(),
                             dashboard_channel_id: dashboard_channel.get(),
                             chat_channel_id: queue_channel.get(),
@@ -4346,7 +4346,7 @@ async fn apply_elo_gate(
     ctx: &Context,
     guild_id: GI,
     category_id: serenity::all::ChannelId,
-    ranks: &[crate::database::repositories::rank::GuildRank],
+    ranks: &[crate::db::repo::rank::GuildRank],
     min_idx: usize,
     max_idx: usize,
 ) -> Result<usize> {

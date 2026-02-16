@@ -4,7 +4,7 @@ use tracing::{error, info, warn};
 use serenity::all::GuildId as GI;
 
 use super::migrations::DatabaseMigrations;
-use super::repositories::CategoryRepository;
+use super::repo::CategoryRepository;
 
 /// Database validation and repair utility
 pub struct DatabaseValidator {

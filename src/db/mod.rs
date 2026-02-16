@@ -1,5 +1,5 @@
 pub mod migrations;
-pub mod repositories;
+pub mod repo;
 pub mod validator;
 
 use anyhow::Result;
@@ -9,7 +9,7 @@ use tracing::info;
 
 use crate::models::{FileManager, Category, Player, Server};
 use migrations::DatabaseMigrations;
-use repositories::{ConfigRepository, EloRepository, CategoryRepository, RankRepository, UserRepository};
+use repo::{ConfigRepository, EloRepository, CategoryRepository, RankRepository, UserRepository};
 
 /// Main database interface that orchestrates all repositories
 #[derive(Clone)]
@@ -99,7 +99,7 @@ impl Database {
         dashboard_msg: u64,
         quota:         u8,
     ) -> Result<Category> {
-        let config = repositories::category::CategoryConfig {
+        let config = repo::category::CategoryConfig {
             category_id:          category,
             dashboard_channel_id: dashboard,
             chat_channel_id:      chat,
@@ -120,7 +120,7 @@ impl Database {
         chat:          u64,
         quota:         u8,
     ) -> Result<Category> {
-        let config = repositories::category::CategoryConfig {
+        let config = repo::category::CategoryConfig {
             category_id:          category,
             dashboard_channel_id: dashboard,
             chat_channel_id:      chat,

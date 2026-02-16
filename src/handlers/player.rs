@@ -27,7 +27,7 @@ async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI) -> Option<Membe
 }
 
 /// Get user's rank from their Discord roles (highest rank role they have)
-pub async fn get_user_rank_from_discord_roles(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<crate::database::repositories::rank::GuildRank> {
+pub async fn get_user_rank_from_discord_roles(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<crate::db::repo::rank::GuildRank> {
     // Get the member and their roles
     let member = match get_member_cached(ctx, guild_id, user_id).await {
         Some(m) => m,

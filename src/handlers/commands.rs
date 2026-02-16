@@ -207,7 +207,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     let discord_rank = get_user_rank_from_discord_roles(&cc.ctx, &cc.db, guild_id, target_user).await;
     
     // Get guild ELO from database (this has the actual ELO, games, wins)
-    let mut guild_elo: crate::database::repositories::elo::GuildElo = match cc.db.elo.get(target_user, guild_id, &cc.db).await {
+    let mut guild_elo: crate::db::repo::elo::GuildElo = match cc.db.elo.get(target_user, guild_id, &cc.db).await {
         Ok(elo) => elo,
         Err(e) if e.to_string().contains("Failed to get default rank") => {
             let error_embed = CE::new()

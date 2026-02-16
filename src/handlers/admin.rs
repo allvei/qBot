@@ -14,7 +14,7 @@ use tracing::{error, info, warn};
 use crate::models::embeds::Ephemeral;
 use crate::player::{check_adm, check_run};
 use crate::{CYAN, DEFAULT_QUOTA, Database, GREEN, Manager, ORANGE, RED, guild_name};
-use crate::database::repositories::Repository;
+use crate::db::repo::Repository;
 use crate::handlers::player::validate_system_roles;
 use crate::models::{CommandContext as CC, Server, SETUP_STATE};
 
@@ -1086,7 +1086,7 @@ async fn save_and_create_category(
         .unwrap_or(0);
 
     // Create category in database
-    let category_config = crate::database::repositories::category::CategoryConfig {
+    let category_config = crate::db::repo::category::CategoryConfig {
         category_id: category,
         dashboard_channel_id: dashboard_channel,
         chat_channel_id: queue_channel,
@@ -1239,7 +1239,7 @@ async fn handle_categorylink_blue_selection(ctx: &Context, interaction: &CX, cha
             let dashboard_msg_id = temp_category.dashboard_msg.get();
 
             // Save to database
-            let category_config = crate::database::repositories::category::CategoryConfig {
+            let category_config = crate::db::repo::category::CategoryConfig {
                 category_id:          category_id.get(),
                 dashboard_channel_id: dashboard_channel.get(),
                 chat_channel_id:      queue_channel    .get(),

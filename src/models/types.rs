@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 use tracing::warn;
 
 use crate::RED;
-use crate::database::Database;
+use crate::db::Database;
 use crate::guild_name;
 use crate::models::{
     Manager as GameManager, Role,

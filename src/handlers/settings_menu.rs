@@ -268,7 +268,7 @@ pub trait AsSettingsMenu {
 // UserSettings implementation
 // ============================================================================
 
-impl AsSettingsMenu for crate::database::repositories::UserSettings {
+impl AsSettingsMenu for crate::db::repo::UserSettings {
     fn as_settings_menu(&self) -> SettingsMenu {
         // Format timeout: hours for full hours, minutes for partial
         let timeout_text = if self.timeout >= 60 && self.timeout % 60 == 0 {
@@ -944,7 +944,7 @@ pub async fn build_player_settings_menu(
     db: &crate::Database,
     guild_id: serenity::all::GuildId,
 ) -> (CE, Vec<CAR>) {
-    use crate::database::repositories::rank::GuildRank;
+    use crate::db::repo::rank::GuildRank;
 
     let uid = settings.user_id.get();
     let steam_display = settings.steam_id
