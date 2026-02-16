@@ -453,7 +453,7 @@ impl Repository<Category, u8> for CategoryRepository {
         let queue         = category.channels.queue_vc  .get();
         let category_id   = category.channels.category  .get();
         let config = CategoryConfig {
-            category_id:          category_id,
+            category_id,
             dashboard_channel_id: dashboard_ch,
             chat_channel_id:      chat,
             queue_vc_id:          queue,
@@ -480,7 +480,7 @@ impl Repository<Category, u8> for CategoryRepository {
         let queue        = category.channels.queue_vc  .get();
         let category_id  = category.channels.category  .get();
         let config = CategoryConfig {
-            category_id:          category_id,
+            category_id,
             dashboard_channel_id: dashboard_ch,
             chat_channel_id:      chat,
             queue_vc_id:          queue,
