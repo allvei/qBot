@@ -1,12 +1,26 @@
 # v0.7.0
 __ 16.02.26__
 ## Users & Admins
+__Added__
+- **Format-specific queue logging** - Queue logs now show which specific format players are joining/leaving when multiple formats are active.
+
+__Improved__
+- **Queue count display** - Player count now updates immediately after joining queue instead of showing stale numbers.
+- **Log clarity** - Queue logs now use actual category names instead of channel names for better readability.
+
 __Fixed__
+- **Log formatting** - Fixed missing action words in queue logs that showed incomplete information.
 - **Random number generation** - Fixed text sanitization system that replaces overly long alert messages with shorter alternatives.
 
 ## Developers
 __Added__
-- Updated rand dependency to version 0.10.0 for better performance and security.
+- Updated rand dependency to version 0.10.0 for better speed and security.
+- Error response helper functions to reduce code duplication across settings handlers.
+
+__Refactored__
+- Complete terminology change from "groups" to "categories" throughout the entire codebase for better consistency with user-facing features.
+- Consolidated error response handling in settings component with reusable helper functions.
+- Improved log formatting system with better subgroup support and clearer prefixes.
 
 # v0.6.0
 __ 12.02.26__
