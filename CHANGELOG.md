@@ -1,16 +1,13 @@
 # v0.7.0
 __ 16.02.26__
 ## Users & Admins
-__Added__
-- **Format-specific queue logging** - Queue logs now show which specific format players are joining/leaving when multiple formats are active.
-
 __Improved__
-- **Queue count display** - Player count now updates immediately after joining queue instead of showing stale numbers.
-- **Log clarity** - Queue logs now use actual category names instead of channel names for better readability.
+- **Queue speed** - Faster response times when joining or leaving queue.
+- **Queue reliability** - Better handling of queue operations and more stable player counts.
 
 __Fixed__
-- **Log formatting** - Fixed missing action words in queue logs that showed incomplete information.
-- **Random number generation** - Fixed text sanitization system that replaces overly long alert messages with shorter alternatives.
+- **Queue display updates** - Player count now shows correctly immediately after joining.
+- **Alert message system** - Fixed text sanitization that could cause overly long messages to break formatting.
 
 ## Developers
 __Added__
