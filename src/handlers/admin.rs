@@ -245,7 +245,7 @@ pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name
     // If bot-only dashboard is enabled, deny @everyone from sending messages
     if bot_only_dashboard {
         // Only deny permissions the bot itself has (Discord requires this)
-        let mut everyone_deny = Permissions::SEND_MESSAGES;
+        let mut everyone_deny = Permissions::SEND_MESSAGES | Permissions::ADD_REACTIONS;
         if let Ok(member) = guild_id.member(&ctx.http, bot_user_id).await {
             let bot_perms = guild.member_permissions(&member);
             if bot_perms.contains(Permissions::CREATE_PUBLIC_THREADS) {

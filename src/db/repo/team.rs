@@ -2,6 +2,7 @@ use anyhow::Result;
 use serenity::all::{ChannelId as CI, GuildId as GI};
 use sqlx::{SqlitePool, Row};
 use tracing::info;
+use crate::log::log_prefix_category;
 
 /// Repository for managing team voice channels
 #[derive(Clone)]
@@ -15,7 +16,7 @@ impl TeamRepository {
     }
 
     /// Add a team channel pair to the database
-    pub async fn add_team(&self, guild_id: GI, category_id: u8, red_vc: CI, blu_vc: CI) -> Result<()> {
+    pub async fn add_team(&self, guild_id: GI, category_id: u8, red_vc: CI, blu_vc: CI, guild_name: &str, category_name: &str) -> Result<()> {
         sqlx::query(
             "INSERT INTO teams (guild_id, category_id, red, blu) VALUES (?, ?, ?, ?)"
         )
@@ -26,8 +27,9 @@ impl TeamRepository {
         .execute(&self.pool)
         .await?;
 
-        info!("Added team channel pair to database: RED={} BLU={} for guild {} category {}", 
-              red_vc.get(), blu_vc.get(), guild_id.get(), category_id);
+        let prefix = log_prefix_category(guild_name, category_name);
+        info!("{} Added team channel pair to database: RED={} BLU={}", 
+              prefix, red_vc.get(), blu_vc.get());
         Ok(())
     }
 
@@ -70,7 +72,7 @@ impl TeamRepository {
     }
 
     /// Remove a specific team channel pair
-    pub async fn remove_team(&self, guild_id: GI, red_vc: CI, blu_vc: CI) -> Result<bool> {
+    pub async fn remove_team(&self, guild_id: GI, red_vc: CI, blu_vc: CI, guild_name: &str, category_name: &str) -> Result<bool> {
         let result = sqlx::query(
             "DELETE FROM teams WHERE guild_id = ? AND red = ? AND blu = ?"
         )
@@ -82,8 +84,9 @@ impl TeamRepository {
 
         let deleted = result.rows_affected() > 0;
         if deleted {
-            info!("Removed team channel pair from database: RED={} BLU={} for guild {}", 
-                  red_vc.get(), blu_vc.get(), guild_id.get());
+            let prefix = log_prefix_category(guild_name, category_name);
+            info!("{} Removed team channel pair from database: RED={} BLU={}", 
+                  prefix, red_vc.get(), blu_vc.get());
         }
         Ok(deleted)
     }

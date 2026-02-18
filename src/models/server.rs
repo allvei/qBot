@@ -548,7 +548,8 @@ impl Category {
                 warn!("Failed to delete tracked team VC {} ({}): {}", channel.name, channel.id, e);
             } else {
                 // Remove from database after successful deletion
-                if let Err(e) = db.teams.remove_team(self.guild_id, channel.id, CI::new(0)).await {
+                let guild_name = guild.name.clone();
+                if let Err(e) = db.teams.remove_team(self.guild_id, channel.id, CI::new(0), &guild_name, &self.display_name()).await {
                     warn!("Failed to remove team channel from database: {}", e);
                 }
             }
@@ -1018,7 +1019,8 @@ impl Category {
         self.channels.teams.push(pair.clone());
         
         // Persist to database
-        if let Err(e) = db.teams.add_team(guild_id, self.category_id, red_ch.id, blu_ch.id).await {
+        let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+        if let Err(e) = db.teams.add_team(guild_id, self.category_id, red_ch.id, blu_ch.id, &guild_name, &self.display_name()).await {
             warn!("Failed to persist team channels to database: {}", e);
         }
         
