@@ -372,10 +372,10 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &ComponentIntera
       // Show modal for customizing join announcement embed
       let settings = db.users.get_prefs(user_id).await?;
       let modal = CreateModal::new("settings_modal_announcement", "Customize join announcement").components(vec![
-        CAR::InputText(CIT::new(ITS::Short, "HEX Color", "join_alert_color").placeholder("e.g., 3447003 or FF5733").value(format!("{:06X}", settings.join_alert_color)).required(false).min_length(6).max_length(6),        ),
-        CAR::InputText(CIT::new(ITS::Paragraph, "Message", "join_alert").placeholder("e.g., Kafri: defense").value(settings.join_alert_desc.unwrap_or_default()).required(false).max_length(MAX_ALERT_CHARS as u16),        ),
-        CAR::InputText(CIT::new(ITS::Short, "Footer text", "join_alert_footer").placeholder("e.g., Good luck!").value(settings.join_alert_footer.unwrap_or_default()).required(false).max_length(2048),        ),
-        CAR::InputText(CIT::new(ITS::Short, "Thumbnail URL", "join_alert_img").placeholder("https://example.com/thumb.png").value(settings.join_alert_img.unwrap_or_default()).required(false).max_length(512),        ),
+        create_short_input_opt("HEX Color", "join_alert_color", "e.g., 3447003 or FF5733", &format!("{:06X}", settings.join_alert_color)),
+        create_paragraph_input_with_value("Message", "join_alert", "e.g., Kafri: defense", &settings.join_alert_desc.unwrap_or_default()),
+        create_short_input_opt("Footer text", "join_alert_footer", "e.g., Good luck!", &settings.join_alert_footer.unwrap_or_default()),
+        create_short_input_opt("Thumbnail URL", "join_alert_img", "https://example.com/thumb.png", &settings.join_alert_img.unwrap_or_default()),
       ]);
 
       let response = CIR::Modal(modal);
@@ -385,10 +385,10 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &ComponentIntera
       // Show modal for customizing leave announcement embed
       let settings = db.users.get_prefs(user_id).await?;
       let modal = CreateModal::new("settings_modal_leave_alert", "Customize leave announcement").components(vec![
-        CAR::InputText(CIT::new(ITS::Short, "Color (hex, optional)", "leave_alert_color").placeholder("e.g., 3447003 or FF5733").value(format!("{:06X}", settings.leave_alert_color)).required(false).min_length(6).max_length(6),        ),
-        CAR::InputText(CIT::new(ITS::Paragraph, "Description", "leave_alert").placeholder("e.g., {name} has left. Use {user} for mention").value(settings.leave_alert_desc.unwrap_or_default()).required(false).max_length(MAX_ALERT_CHARS as u16),        ),
-        CAR::InputText(CIT::new(ITS::Short, "Footer text", "leave_alert_footer").placeholder("e.g., See you next time!").value(settings.leave_alert_footer.unwrap_or_default()).required(false).max_length(MAX_ALERT_CHARS as u16),        ),
-        CAR::InputText(CIT::new(ITS::Short, "Thumbnail URL", "leave_alert_img").placeholder("https://example.com/thumb.png").value(settings.leave_alert_img.unwrap_or_default()).required(false).max_length(512),        ),
+        create_short_input_opt("Color (hex, optional)", "leave_alert_color", "e.g., 3447003 or FF5733", &format!("{:06X}", settings.leave_alert_color)),
+        create_paragraph_input_with_value("Description", "leave_alert", "e.g., {name} has left. Use {user} for mention", &settings.leave_alert_desc.unwrap_or_default()),
+        create_short_input_opt("Footer text", "leave_alert_footer", "e.g., See you next time!", &settings.leave_alert_footer.unwrap_or_default()),
+        create_short_input_opt("Thumbnail URL", "leave_alert_img", "https://example.com/thumb.png", &settings.leave_alert_img.unwrap_or_default()),
       ]);
 
       let response = CIR::Modal(modal);
@@ -792,7 +792,7 @@ pub async fn handle_server_settings_button(
 
       let current = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
       db.config.set_bool(guild_id, toggle.column, !current).await?;
-      interaction.create_response(&ctx.http, nav_server_settings(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_server_settings, guild_id)?;
     }
     // Generic handler for all rank config toggles (dynamic ELO, ELO-Rank linked, etc.)
     _ if RANK_CONFIG_TOGGLES.iter().any(|t| t.button_id == button_id) => {
@@ -803,17 +803,17 @@ pub async fn handle_server_settings_button(
       interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
     }
     "server_settings_roles" => {
-      interaction.create_response(&ctx.http, nav_role_config(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
     }
     "server_settings_roles_back" => {
-      interaction.create_response(&ctx.http, nav_server_settings(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_server_settings, guild_id)?;
     }
     "server_settings_runner_role" => {
       if let CIDK::RoleSelect { values } = &interaction.data.kind {
         if let Some(role_id) = values.first() {
           db.config.set_runner_role_id(guild_id, *role_id).await?;
         }
-        interaction.create_response(&ctx.http, nav_role_config(ctx, db, guild_id).await?).await?;
+        send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
       }
     }
     "server_settings_admin_role" => {
@@ -821,14 +821,14 @@ pub async fn handle_server_settings_button(
         if let Some(role_id) = values.first() {
           db.config.set_admin_role_id(guild_id, *role_id).await?;
         }
-        interaction.create_response(&ctx.http, nav_role_config(ctx, db, guild_id).await?).await?;
+        send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
       }
     }
     "server_settings_ranks" => {
-      interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?;
     }
     "server_settings_ranks_back" => {
-      interaction.create_response(&ctx.http, nav_server_settings(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_server_settings, guild_id)?;
     }
     "server_settings_rank_select" => {
       // Handle rank selection from dropdown (value is role ID)
@@ -858,26 +858,13 @@ pub async fn handle_server_settings_button(
       };
 
       // Get the role name to use as default
-      let role_name = match guild_id.roles(&ctx.http).await {
-        Ok(roles) => {
-          if let Some(role) = roles.get(&selected_role_id) {
-            role.name.clone()
-          } else {
-            // Fallback to role ID if role not found
-            selected_role_id.get().to_string()
-          }
-        }
-        Err(_) => {
-          // Fallback to role ID if API call fails
-          selected_role_id.get().to_string()
-        }
-      };
+      let role_name = get_role_name_with_fallback(ctx, guild_id, selected_role_id).await;
 
       // Show modal to specify rank name and ELO for the selected role
 
       let modal = CreateModal::new(format!("server_settings_rank_modal_link_{}", selected_role_id.get()), "Link existing rank").components(vec![
-        CAR::InputText(CIT::new(ITS::Short, "Rank name", "name").placeholder("e.g., Bronze, Gold, Platinum").value(&role_name).required(true).max_length(30)),
-        CAR::InputText(CIT::new(ITS::Short, "ELO Threshold", "elo").placeholder("Minimum ELO for this rank").required(true).min_length(1).max_length(3)),
+        create_value_input_sh("Rank name", "name", "e.g., Bronze, Gold, Platinum", &role_name),
+        create_input_sh_cap("ELO Threshold", "elo", "Minimum ELO for this rank", 1, 3),
       ]);
 
       let response = CIR::Modal(modal);
@@ -891,8 +878,8 @@ pub async fn handle_server_settings_button(
       let rank_name = button_id.strip_prefix("server_settings_rank_edit_").unwrap();
       if let Ok(Some(guild_rank)) = db.ranks.get_rank_by_name(guild_id, rank_name).await {
         let modal = CreateModal::new(format!("server_settings_rank_modal_{}", rank_name), format!("Edit {} rank", guild_rank.name)).components(vec![
-          CAR::InputText(CIT::new(ITS::Short, "Rank name", "name").placeholder("e.g., Beginner, Expert, Champion").value(&guild_rank.name).required(true).max_length(30)),
-          CAR::InputText(CIT::new(ITS::Short, "ELO Threshold", "elo").placeholder("Minimum ELO for this rank").value(guild_rank.elo.to_string()).required(true).min_length(1).max_length(3),          ),
+          create_value_input_sh("Rank name", "name", "e.g., Beginner, Expert, Champion", &guild_rank.name),
+          create_value_input_sh_cap("ELO Threshold", "elo", "Minimum ELO for this rank", &guild_rank.elo.to_string(), 1, 3),
         ]);
 
         let response = CIR::Modal(modal);
@@ -903,8 +890,8 @@ pub async fn handle_server_settings_button(
       // Show modal to add a new rank
 
       let modal = CreateModal::new("server_settings_rank_modal_add", "Add new rank").components(vec![
-        CAR::InputText(CIT::new(ITS::Short, "Rank name", "name").placeholder("e.g., Champion, Legend, Elite").required(true).max_length(30)),
-        CAR::InputText(CIT::new(ITS::Short, "ELO Threshold", "elo").placeholder("Minimum ELO for this rank").required(true).min_length(1).max_length(3)),
+        create_input_sh("Rank name", "name", "e.g., Champion, Legend, Elite"),
+        create_input_sh_cap("ELO Threshold", "elo", "Minimum ELO for this rank", 1, 3),
       ]);
 
       let response = CIR::Modal(modal);
@@ -984,7 +971,9 @@ pub async fn handle_server_settings_button(
 
       let current_timeout = db.config.get_post_game_timeout(guild_id).await.unwrap_or(120);
 
-      let modal = CreateModal::new("server_settings_post_game_timeout_modal", "Edit Post-Game Timeout").components(vec![CAR::InputText(CIT::new(ITS::Short, "Post-game timeout (seconds)", "post_game_timeout_input").placeholder("Enter timeout in seconds (30-300)").min_length(1).max_length(3).value(current_timeout.to_string()),      )]);
+      let modal = CreateModal::new("server_settings_post_game_timeout_modal", "Edit Post-Game Timeout").components(vec![
+        create_value_input_sh_cap("Post-game timeout (seconds)", "post_game_timeout_input", "Enter timeout in seconds (30-300)", &current_timeout.to_string(), 1, 3),
+      ]);
 
       interaction.create_response(&ctx.http, CIR::Modal(modal)).await?;
     }
@@ -1037,11 +1026,11 @@ pub async fn handle_server_settings_button(
       // Show modal to collect category settings before creating channels
 
       let modal = CreateModal::new("server_settings_modal_create_category", "Create a new category").components(vec![
-        CAR::InputText(CIT::new(ITS::Short, "Category name", "category_name").placeholder("e.g., NA PUGs, EU Competitive").required(true).max_length(50)),
-        CAR::InputText(CIT::new(ITS::Short, "Channel prefix", "channel_prefix").placeholder("e.g., pug, na, eu").required(true).max_length(20)),
-        CAR::InputText(CIT::new(ITS::Short, "Category name", "discord_category").placeholder("e.g., PUG Queue").value("PUG Queue").required(true).max_length(50)),
-        CAR::InputText(CIT::new(ITS::Short, "Quota (players per game)", "quota").placeholder("e.g., 12").value(crate::DEFAULT_QUOTA.to_string()).required(true).min_length(1).max_length(3),        ),
-        CAR::InputText(CIT::new(ITS::Paragraph, "Bot-only dashboard (yes/no)", "bot_only_dashboard").placeholder("Set to 'yes' to restrict dashboard channel to bot-only messages").value("yes").required(true).max_length(3),        ),
+        create_input_sh("Category name", "category_name", "e.g., NA PUGs, EU Competitive"),
+        create_input_sh("Channel prefix", "channel_prefix", "e.g., pug, na, eu"),
+        create_value_input_sh("Category name", "discord_category", "e.g., PUG Queue", "PUG Queue"),
+        create_value_input_sh_cap("Quota (players per game)", "quota", "e.g., 12", &crate::DEFAULT_QUOTA.to_string(), 1, 3),
+        create_paragraph_input_with_value("Bot-only dashboard (yes/no)", "bot_only_dashboard", "Set to 'yes' to restrict dashboard channel to bot-only messages", "yes"),
       ]);
 
       let response = CIR::Modal(modal);
@@ -2204,10 +2193,10 @@ pub async fn handle_server_settings_button(
             let categories = db.categories.get_categories_for_guild(guild_id).await?;
             if let Some(category) = categories.iter().find(|g| g.category_id == category_id) {
               let modal = CreateModal::new(format!("server_settings_category_modal_{category_id}"), "Edit category settings").components(vec![
-                CAR::InputText(CIT::new(ITS::Short, "Name", "name").placeholder("e.g., NA PUGs, EU Competitive").value(category.name.clone().unwrap_or_default()).required(false).max_length(50),                ),
-                CAR::InputText(CIT::new(ITS::Short, "Quota (2-100)", "quota").placeholder("Number of players required").value(category.quota().to_string()).required(true).min_length(1).max_length(3),                ),
-                CAR::InputText(CIT::new(ITS::Short, "Ready check duration (seconds)", "timeout").placeholder("Seconds for missing players to join VC").value(category.timeout.to_string()).required(true).min_length(1).max_length(3),                ),
-                CAR::InputText(CIT::new(ITS::Paragraph, "Connect info", "connect").placeholder("e.g., connect 192.168.1.1:27015; password secret").value(category.connect_info().unwrap_or_default().to_string()).required(false).max_length(500),                ),
+                create_short_input_opt("Name", "name", "e.g., NA PUGs, EU Competitive", &category.name.clone().unwrap_or_default()),
+                create_value_input_sh_cap("Quota (2-100)", "quota", "Number of players required", &category.quota().to_string(), 1, 3),
+                create_value_input_sh_cap("Ready check duration (seconds)", "timeout", "Seconds for missing players to join VC", &category.timeout.to_string(), 1, 3),
+                create_paragraph_input_with_value("Connect info", "connect", "e.g., connect 192.168.1.1:27015; password secret", &category.connect_info().unwrap_or_default().to_string()),
               ]);
 
               let response = CIR::Modal(modal);
@@ -3157,8 +3146,8 @@ pub async fn handle_category_settings_button(
     drop(manager_lock);
 
     let modal = CreateModal::new(format!("category_sg_modal_edit_{}_{}", category_id, sg_id), format!("Edit format: {}", sg_name)).components(vec![
-      CAR::InputText(CIT::new(ITS::Short, "Format name", "name").value(&sg_name).required(true).max_length(32)),
-      CAR::InputText(CIT::new(ITS::Short, "Quota (players per match)", "quota").value(&sg_quota).required(true).max_length(3)),
+      create_value_input_sh("Format name", "name", "", &sg_name),
+      create_value_input_sh("Quota (players per match)", "quota", "", &sg_quota),
     ]);
 
     let response = CIR::Modal(modal);
@@ -3337,22 +3326,22 @@ pub async fn handle_category_settings_button(
 
   // Match button action (button_id format: category_settings_edit_<action>_<category_id>)
   if button_id.starts_with("category_settings_edit_name_") {
-    let modal = CreateModal::new(format!("category_settings_modal_name_{category_id}"), "Set category name").components(vec![CAR::InputText(CIT::new(ITS::Short, "Category name", "name").placeholder("e.g., NA PUGs, EU Competitive").value(settings.name.unwrap_or_default()).required(false).max_length(50),    )]);
+    let modal = CreateModal::new(format!("category_settings_modal_name_{category_id}"), "Set category name").components(vec![create_short_input_opt("Category name", "name", "e.g., NA PUGs, EU Competitive", &settings.name.unwrap_or_default())]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("category_settings_edit_quota_") {
-    let modal = CreateModal::new(format!("category_settings_modal_quota_{category_id}"), "Set queue quota").components(vec![CAR::InputText(CIT::new(ITS::Short, "Quota (2-100)", "quota").placeholder("Number of players required").value(settings.quota.to_string()).required(true).min_length(1).max_length(3),    )]);
+    let modal = CreateModal::new(format!("category_settings_modal_quota_{category_id}"), "Set queue quota").components(vec![create_value_input_sh_cap("Quota (2-100)", "quota", "Number of players required", &settings.quota.to_string(), 1, 3)]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("category_settings_edit_timeout_") {
-    let modal = CreateModal::new(format!("category_settings_modal_timeout_{category_id}"), "Set ready check duration").components(vec![CAR::InputText(CIT::new(ITS::Short, "Timeout (seconds)", "timeout").placeholder("Seconds for missing players to join VC when queue goes hot").value(settings.timeout.to_string()).required(true).min_length(1).max_length(3),    )]);
+    let modal = CreateModal::new(format!("category_settings_modal_timeout_{category_id}"), "Set ready check duration").components(vec![create_value_input_sh_cap("Timeout (seconds)", "timeout", "Seconds for missing players to join VC when queue goes hot", &settings.timeout.to_string(), 1, 3)]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("category_settings_edit_connect_") {
-    let modal = CreateModal::new(format!("category_settings_modal_connect_{category_id}"), "Set server connect info").components(vec![CAR::InputText(CIT::new(ITS::Paragraph, "Connect command", "connect_info").placeholder("e.g., connect 192.168.1.1:27015; password secret").value(settings.connect_info.unwrap_or_default()).required(false).max_length(500),    )]);
+    let modal = CreateModal::new(format!("category_settings_modal_connect_{category_id}"), "Set server connect info").components(vec![create_paragraph_input_with_value("Connect command", "connect_info", "e.g., connect 192.168.1.1:27015; password secret", &settings.connect_info.unwrap_or_default())]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
@@ -3532,7 +3521,7 @@ pub async fn handle_category_settings_button(
   } else if button_id.starts_with("category_link_msg_manual_") {
     // Manual message ID input - show modal
 
-    let modal = CreateModal::new(format!("category_link_msg_modal_{}", category_id), "Enter dashboard message ID").components(vec![CAR::InputText(CIT::new(ITS::Short, "Message ID or link", "message_id").placeholder("e.g., 1467572971093885086 or https://discord.com/channels/.../...").required(true).min_length(17).max_length(200),    )]);
+    let modal = CreateModal::new(format!("category_link_msg_modal_{}", category_id), "Enter dashboard message ID").components(vec![create_input_sh_cap("Message ID or link", "message_id", "e.g., 1467572971093885086 or https://discord.com/channels/.../...", 17, 200)]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
@@ -3553,8 +3542,8 @@ pub async fn handle_category_settings_button(
     // Show modal to add a new format
 
     let modal = CreateModal::new(format!("category_sg_modal_add_{}", category_id), "Add format").components(vec![
-      CAR::InputText(CIT::new(ITS::Short, "Format name", "name").placeholder("e.g., Competitive, Casual").required(true).max_length(32)),
-      CAR::InputText(CIT::new(ITS::Short, "Quota (players per match)", "quota").placeholder("e.g., 12").required(true).max_length(3)),
+      create_input_sh("Format name", "name", "e.g., Competitive, Casual"),
+      create_input_sh("Quota (players per match)", "quota", "e.g., 12"),
     ]);
 
     let response = CIR::Modal(modal);
@@ -4100,17 +4089,17 @@ pub async fn handle_player_settings_button(ctx: &Context, interaction: &Componen
   let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
 
   if button_id.starts_with("player_settings_edit_steam_") {
-    let modal = CreateModal::new(format!("player_settings_modal_steam_{target_user_id}"), "Edit Steam ID").components(vec![CAR::InputText(CIT::new(ITS::Short, "Steam ID (64-bit)", "steam_id").placeholder("e.g., 76561198012345678").value(player.steam_id.map(|id| id.to_string()).unwrap_or_default()).required(false).max_length(20),    )]);
+    let modal = CreateModal::new(format!("player_settings_modal_steam_{target_user_id}"), "Edit Steam ID").components(vec![create_short_input_opt("Steam ID (64-bit)", "steam_id", "e.g., 76561198012345678", &player.steam_id.map(|id| id.to_string()).unwrap_or_default())]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("player_settings_edit_elo_") {
-    let modal = CreateModal::new(format!("player_settings_modal_elo_{target_user_id}"), "Edit ELO").components(vec![CAR::InputText(CIT::new(ITS::Short, "ELO", "elo").placeholder("e.g., 50").value(guild_elo.elo.to_string()).required(true).min_length(1).max_length(3))]);
+    let modal = CreateModal::new(format!("player_settings_modal_elo_{target_user_id}"), "Edit ELO").components(vec![create_value_input_sh_cap("ELO", "elo", "e.g., 50", &guild_elo.elo.to_string(), 1, 3)]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("player_settings_edit_rank_") {
-    let modal = CreateModal::new(format!("player_settings_modal_rank_{target_user_id}"), "Edit rank").components(vec![CAR::InputText(CIT::new(ITS::Short, "Rank", "rank").placeholder("e.g., Gold, Silver, Bronze").value(&guild_elo.rank.name).required(true).max_length(20))]);
+    let modal = CreateModal::new(format!("player_settings_modal_rank_{target_user_id}"), "Edit rank").components(vec![create_value_input_sh("Rank", "rank", "e.g., Gold, Silver, Bronze", &guild_elo.rank.name)]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
@@ -4119,10 +4108,10 @@ pub async fn handle_player_settings_button(ctx: &Context, interaction: &Componen
     let user_settings = db.users.get_prefs(target_uid).await?;
 
     let modal = CreateModal::new(format!("player_settings_modal_alerts_{target_user_id}"), "Edit player alerts").components(vec![
-      CAR::InputText(CIT::new(ITS::Short, "HEX color", "join_alert_color")         .placeholder("e.g., 3447003 or FF5733") .value(format!("{:06X}", user_settings.join_alert_color))                     .required(false).min_length(6).max_length(6),      ),
-      CAR::InputText(CIT::new(ITS::Paragraph, "Join alert message", "join_alert")  .placeholder("e.g., Kafri: defense")    .value(user_settings.join_alert_desc                     .unwrap_or_default()).required(false)              .max_length(MAX_ALERT_CHARS as u16),      ),
-      CAR::InputText(CIT::new(ITS::Short, "Join alert footer", "join_alert_footer").placeholder("e.g., Good luck!")        .value(user_settings.join_alert_footer                   .unwrap_or_default()).required(false)              .max_length(MAX_ALERT_CHARS as u16),      ),
-      CAR::InputText(CIT::new(ITS::Paragraph, "Leave alert message", "leave_alert").placeholder("e.g., See you next time!").value(user_settings.leave_alert_desc                    .unwrap_or_default()).required(false)              .max_length(MAX_ALERT_CHARS as u16),      ),
+      create_short_input_opt("HEX color", "join_alert_color", "e.g., 3447003 or FF5733", &format!("{:06X}", user_settings.join_alert_color)),
+      create_paragraph_input_with_value("Join alert message", "join_alert", "e.g., Kafri: defense", &user_settings.join_alert_desc.unwrap_or_default()),
+      create_short_input_opt("Join alert footer", "join_alert_footer", "e.g., Good luck!", &user_settings.join_alert_footer.unwrap_or_default()),
+      create_paragraph_input_with_value("Leave alert message", "leave_alert", "e.g., See you next time!", &user_settings.leave_alert_desc.unwrap_or_default()),
     ]);
 
     let response = CIR::Modal(modal);
