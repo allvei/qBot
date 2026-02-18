@@ -40,7 +40,7 @@ pub async fn handle_elo_change_confirmation(
             username,
             steam_id: player.steam_id,
             elo:      guild_elo.elo,
-            rank: guild_elo.rank.name.clone(),
+            rank:     guild_elo.rank.name.clone(),
             games:    guild_elo.games,
             wins:     guild_elo.wins,
         };
