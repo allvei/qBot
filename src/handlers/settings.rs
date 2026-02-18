@@ -182,10 +182,23 @@ async fn send_nav_response(interaction: &ComponentInteraction, ctx: &Context, re
   Ok(())
 }
 
+/// Helper function to send navigation response for modals
+async fn send_nav_response_modal(interaction: &ModalInteraction, ctx: &Context, response: Result<CIR>) -> Result<()> {
+  interaction.create_response(&ctx.http, response?).await?;
+  Ok(())
+}
+
 /// Macro to send navigation response with specific nav function
 macro_rules! send_nav {
   ($interaction:expr, $ctx:expr, $db:expr, $nav_fn:expr, $($arg:expr),*) => {{
     send_nav_response($interaction, $ctx, $nav_fn($ctx, $db, $($arg),*).await).await
+  }};
+}
+
+/// Macro to send navigation response for modals
+macro_rules! send_nav_modal {
+  ($interaction:expr, $ctx:expr, $db:expr, $nav_fn:expr, $($arg:expr),*) => {{
+    send_nav_response_modal($interaction, $ctx, $nav_fn($ctx, $db, $($arg),*).await).await
   }};
 }
 
@@ -800,7 +813,7 @@ pub async fn handle_server_settings_button(
 
       let current = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
       db.config.set_bool(guild_id, toggle.column, !current).await?;
-      interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?;
     }
     "server_settings_roles" => {
       send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
@@ -871,7 +884,7 @@ pub async fn handle_server_settings_button(
       interaction.create_response(&ctx.http, response).await?;
     }
     "server_settings_rank_back" => {
-      interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?;
     }
     _ if button_id.starts_with("server_settings_rank_edit_") => {
       // Handle rank name/ELO edit button
@@ -916,7 +929,7 @@ pub async fn handle_server_settings_button(
       db.ranks.delete_rank(guild_id, rank_name).await?;
       let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
       info!("{} deleted rank {}", user_tag, rank_name);
-      interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?;
     }
     _ if button_id.starts_with("server_settings_rank_role_") => {
       // Handle role selector for linking Discord role to rank
@@ -955,16 +968,16 @@ pub async fn handle_server_settings_button(
             // Set default rank as role ID
             db.config.set_default_rank_role_id(guild_id, role_id).await?;
 
-            interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
+            send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?;
           }
         }
       }
     }
     "server_settings_categories" => {
-      interaction.create_response(&ctx.http, nav_category_list(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_category_list, guild_id)?;
     }
     "server_settings_categories_back" => {
-      interaction.create_response(&ctx.http, nav_server_settings(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_server_settings, guild_id)?;
     }
     "server_settings_edit_post_game_timeout" => {
       // Show modal to edit post-game timeout
@@ -1020,7 +1033,7 @@ pub async fn handle_server_settings_button(
         info!("[{}] Initialized default ranks", guild_name);
       }
 
-      interaction.create_response(&ctx.http, nav_role_config(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
     }
     "server_settings_create_category" => {
       // Show modal to collect category settings before creating channels
@@ -1398,7 +1411,7 @@ pub async fn handle_server_settings_button(
       }
     }
     "server_settings_link_cancel" => {
-      interaction.create_response(&ctx.http, nav_category_list(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_category_list, guild_id)?;
     }
     _ if button_id.starts_with("link_use_existing_") => {
       // Link to existing dashboard message
@@ -2182,7 +2195,7 @@ pub async fn handle_server_settings_button(
       }
     }
     "server_settings_remove_cancel" => {
-      interaction.create_response(&ctx.http, nav_category_list(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_category_list, guild_id)?;
     }
     "server_settings_category_select" => {
       // Handle category selection from dropdown - show modal with all settings
@@ -2207,7 +2220,7 @@ pub async fn handle_server_settings_button(
       }
     }
     "server_settings_category_back" => {
-      interaction.create_response(&ctx.http, nav_category_list(ctx, db, guild_id).await?).await?;
+      send_nav!(interaction, ctx, db, nav_category_list, guild_id)?;
     }
     _ if button_id.starts_with("category_settings_link_message_") => {
       // Handle link message button - search for existing dashboard messages for this specific category
@@ -2500,7 +2513,7 @@ pub async fn handle_server_settings_modal(
     let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
     info!("{} added rank '{}' with ELO {} and role {}", user_tag, name, elo, role_id.get());
 
-    interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
+    send_nav_modal!(interaction, ctx, db, nav_rank_config, guild_id)?;
   } else if modal_id.starts_with("server_settings_rank_modal_link_") {
     // Handle link existing rank modal
     let role_id_str = modal_id.strip_prefix("server_settings_rank_modal_link_").unwrap();
@@ -2552,7 +2565,7 @@ pub async fn handle_server_settings_modal(
     let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
     info!("{} linked rank '{}' with ELO {} to role {}", user_tag, name, elo, role_id.get());
 
-    interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
+    send_nav_modal!(interaction, ctx, db, nav_rank_config, guild_id)?;
   } else if modal_id.starts_with("server_settings_rank_modal_") {
     // Handle rank name/ELO edit modal
     let old_rank_name = modal_id.strip_prefix("server_settings_rank_modal_").ok_or_else(|| anyhow::anyhow!("Invalid modal ID format: {}", modal_id))?;
@@ -2598,7 +2611,7 @@ pub async fn handle_server_settings_modal(
     db.ranks.update_rank_name(guild_id, old_rank_name, new_name).await?;
     db.ranks.update_rank_elo(guild_id, new_name, elo).await?;
 
-    interaction.create_response(&ctx.http, nav_rank_config(ctx, db, guild_id).await?).await?;
+    send_nav_modal!(interaction, ctx, db, nav_rank_config, guild_id)?;
   } else if modal_id.starts_with("server_settings_category_modal_") {
     // Handle category settings modal submission
     let category_id: u8 =
@@ -2666,7 +2679,7 @@ pub async fn handle_server_settings_modal(
       }
     }
 
-    interaction.create_response(&ctx.http, nav_category_list(ctx, db, guild_id).await?).await?;
+    send_nav_modal!(interaction, ctx, db, nav_category_list, guild_id)?;
   } else if modal_id == "server_settings_modal_create_category" {
     // Extract modal fields
     let mut category_name = String::new();
@@ -2832,7 +2845,7 @@ pub async fn handle_server_settings_modal(
     let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
     info!("{} set post-game timeout to {} seconds", user_tag, timeout);
 
-    interaction.create_response(&ctx.http, nav_role_config(ctx, db, guild_id).await?).await?;
+    send_nav_modal!(interaction, ctx, db, nav_role_config, guild_id)?;
   } else {
     warn!("Unknown server settings modal: {}", modal_id);
   }
