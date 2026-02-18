@@ -510,6 +510,17 @@ impl Category {
         self.channels.teams.clear();
 
         // Also delete any unknown VCs under our category (catch-all for orphans)
+        // But first, collect all team VCs that are currently in use by active sessions
+        let mut occupied_team_vcs = std::collections::HashSet::new();
+        for format in &self.formats {
+            for session in &format.sessions {
+                if let Some(ref team_channels) = session.team_channels {
+                    occupied_team_vcs.insert(team_channels.red_vc);
+                    occupied_team_vcs.insert(team_channels.blu_vc);
+                }
+            }
+        }
+
         for (_id, channel) in &guild.channels {
             if channel.kind != ChannelType::Voice {
                 continue;
@@ -518,6 +529,10 @@ impl Category {
                 continue;
             }
             if static_ids.contains(&channel.id) {
+                continue;
+            }
+            // Don't delete team VCs that are currently in use by active sessions
+            if occupied_team_vcs.contains(&channel.id) {
                 continue;
             }
 
