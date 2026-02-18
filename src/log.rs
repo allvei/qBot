@@ -18,13 +18,13 @@ pub async fn get_user_tag(ctx: &Context, user_id: UserId, db: &crate::Database) 
     }
     
     // Fallback to Discord API
-    match ctx.http.get_user(user_id).await {
-        Ok(user) => user.tag(),
-        Err(e) => {
+    ctx.http.get_user(user_id)
+        .await
+        .map(|user| user.tag())
+        .unwrap_or_else(|e| {
             warn!("Failed to get user {} from Discord API: {}, using user ID as fallback", user_id, e);
             user_id.to_string()
-        }
-    }
+        })
 }
 
 pub fn log_queue_toggle(guild_name: &str, category_name: &str, tag: &str, queue_type: QueueToggleType, pool_size: Option<(usize, usize)>, sg_name: Option<&str>, position: Option<usize>) {
