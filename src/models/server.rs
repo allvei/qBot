@@ -536,9 +536,17 @@ impl Category {
                 continue;
             }
 
-            info!("[{}] Cleaning up orphaned VC: {}", guild.name, channel.name);
+            // Only delete channels that look like team VCs (🔴 RED #X or 🔵 BLU #X)
+            // This prevents deleting user-created or other legitimate voice channels
+            let is_team_vc_name = channel.name.starts_with("🔴 RED #") || 
+                                 channel.name.starts_with("🔵 BLU #");
+            if !is_team_vc_name {
+                continue;
+            }
+
+            info!("[{}] Cleaning up orphaned team VC: {}", guild.name, channel.name);
             if let Err(e) = channel.id.delete(&ctx.http).await {
-                warn!("Failed to delete orphaned VC {} ({}): {}", channel.name, channel.id, e);
+                warn!("Failed to delete orphaned team VC {} ({}): {}", channel.name, channel.id, e);
             }
         }
     }
