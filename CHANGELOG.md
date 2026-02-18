@@ -1,3 +1,19 @@
+# v0.9.0
+__ 19.02.26__
+## Users & Admins
+__Fixed__
+- **Team voice channel protection** - Properly track team voice channels to avoid deleting unrelated channels.
+
+## Developers
+__Added__
+- **Team channel tracking** - Voice channels are now tracked in persistent storage for better management
+- **Settings abstraction helpers** - Comprehensive macros and helper functions to reduce code duplication
+
+__Refactored__
+- **Settings system** - Major code reduction with reusable patterns for modal interactions and data fetching
+- **Directory structure** - Shortened directory names to reduce log width and improve readability
+- **Error handling** - Consistent functional style patterns across settings components
+
 # v0.7.0
 __ 16.02.26__
 ## Users & Admins
