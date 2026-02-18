@@ -473,7 +473,8 @@ impl Category {
 
     /// Delete any orphaned dynamic VCs left under the category from a previous bot run.
     /// Also cleans up stale team VC pairs from `channels.teams`.
-    pub async fn cleanup_orphaned_vcs(&mut self, ctx: &Context) {
+    /// Only deletes channels that are tracked in the database as team channels.
+    pub async fn cleanup_orphaned_vcs(&mut self, ctx: &Context, db: &DB) {
         use serenity::all::ChannelType;
 
         let category_id = self.channels.category;
@@ -509,18 +510,23 @@ impl Category {
         }
         self.channels.teams.clear();
 
-        // Also delete any unknown VCs under our category (catch-all for orphans)
-        // But first, collect all team VCs that are currently in use by active sessions
-        let mut occupied_team_vcs = std::collections::HashSet::new();
-        for format in &self.formats {
-            for session in &format.sessions {
-                if let Some(ref team_channels) = session.team_channels {
-                    occupied_team_vcs.insert(team_channels.red_vc);
-                    occupied_team_vcs.insert(team_channels.blu_vc);
-                }
+        // Load tracked team channels from database
+        let tracked_teams = match db.teams.get_teams_for_category(self.guild_id, self.category_id).await {
+            Ok(teams) => teams,
+            Err(e) => {
+                warn!("Failed to load tracked team channels from database: {}", e);
+                return;
             }
+        };
+
+        // Create a set of all tracked team channel IDs
+        let mut tracked_channel_ids = std::collections::HashSet::new();
+        for (red_vc, blu_vc) in &tracked_teams {
+            tracked_channel_ids.insert(*red_vc);
+            tracked_channel_ids.insert(*blu_vc);
         }
 
+        // Only delete voice channels that are tracked in the database as team channels
         for (_id, channel) in &guild.channels {
             if channel.kind != ChannelType::Voice {
                 continue;
@@ -531,22 +537,20 @@ impl Category {
             if static_ids.contains(&channel.id) {
                 continue;
             }
-            // Don't delete team VCs that are currently in use by active sessions
-            if occupied_team_vcs.contains(&channel.id) {
+            // IMPORTANT: Only delete if it's tracked in the database as a team channel
+            if !tracked_channel_ids.contains(&channel.id) {
+                info!("[{}] Skipping untracked VC: {} (not in database)", guild.name, channel.name);
                 continue;
             }
 
-            // Only delete channels that look like team VCs (🔴 RED #X or 🔵 BLU #X)
-            // This prevents deleting user-created or other legitimate voice channels
-            let is_team_vc_name = channel.name.starts_with("🔴 RED #") || 
-                                 channel.name.starts_with("🔵 BLU #");
-            if !is_team_vc_name {
-                continue;
-            }
-
-            info!("[{}] Cleaning up orphaned team VC: {}", guild.name, channel.name);
+            info!("[{}] Cleaning up tracked team VC: {}", guild.name, channel.name);
             if let Err(e) = channel.id.delete(&ctx.http).await {
-                warn!("Failed to delete orphaned team VC {} ({}): {}", channel.name, channel.id, e);
+                warn!("Failed to delete tracked team VC {} ({}): {}", channel.name, channel.id, e);
+            } else {
+                // Remove from database after successful deletion
+                if let Err(e) = db.teams.remove_team(self.guild_id, channel.id, CI::new(0)).await {
+                    warn!("Failed to remove team channel from database: {}", e);
+                }
             }
         }
     }
@@ -634,8 +638,10 @@ impl Category {
         // Create team VCs if policy is OnHot
         if self.team_vc_settings.create_policy == TeamVcCreatePolicy::OnHot {
             if let Some(gid) = guild_id {
-                if let Err(e) = self.ensure_team_vcs(ctx, gid).await {
-                    warn!("Failed to ensure team VCs on hot: {e}");
+                if let Some(db) = db {
+                    if let Err(e) = self.ensure_team_vcs(ctx, gid, db).await {
+                        warn!("Failed to ensure team VCs on hot: {e}");
+                    }
                 }
             }
         }
@@ -839,13 +845,13 @@ impl Category {
         changes_made
     }
 
-    pub async fn push(&mut self, ctx: &Context, guild_id: GI) -> Result<(), Error> {
-        self.push_sg(0, ctx, guild_id).await
+    pub async fn push(&mut self, ctx: &Context, guild_id: GI, db: &DB) -> Result<(), Error> {
+        self.push_sg(0, ctx, guild_id, db).await
     }
 
-    pub async fn push_sg(&mut self, sg_id: u8, ctx: &Context, guild_id: GI) -> Result<(), Error> {
+    pub async fn push_sg(&mut self, sg_id: u8, ctx: &Context, guild_id: GI, db: &DB) -> Result<(), Error> {
         // Ensure a free team VC pair exists (creates one if needed)
-        self.ensure_team_vcs(ctx, guild_id).await?;
+        self.ensure_team_vcs(ctx, guild_id, db).await?;
 
         // Now find the free pair
         let occupied_teams: Vec<TeamChannel> = self.all_occupied_teams();
@@ -950,7 +956,7 @@ impl Category {
     /// Ensure at least one free team VC pair exists under the category.
     /// Called at the lifecycle point determined by `team_vc_settings.create_policy`.
     /// Returns the newly created pair, or None if a free pair already exists.
-    pub async fn ensure_team_vcs(&mut self, ctx: &Context, guild_id: GI) -> Result<Option<TeamChannel>, Error> {
+    pub async fn ensure_team_vcs(&mut self, ctx: &Context, guild_id: GI, db: &crate::Database) -> Result<Option<TeamChannel>, Error> {
         use serenity::all::{CreateChannel, ChannelType};
 
         // Check which team pairs are currently occupied by active sessions across all formats
@@ -1010,6 +1016,12 @@ impl Category {
 
         let pair = TeamChannel::new(red_ch.id, blu_ch.id);
         self.channels.teams.push(pair.clone());
+        
+        // Persist to database
+        if let Err(e) = db.teams.add_team(guild_id, self.category_id, red_ch.id, blu_ch.id).await {
+            warn!("Failed to persist team channels to database: {}", e);
+        }
+        
         info!("Created set {} of team VCs", pair_num);
 
         Ok(Some(pair))
@@ -1052,14 +1064,14 @@ impl Category {
     /// Reconcile team VCs after a setting change.
     /// Creates VCs if keep_minimum is on and none exist, or cleans up if keep_minimum
     /// was turned off and no active games need them.
-    pub async fn reconcile_team_vcs(&mut self, ctx: &Context, guild_id: GI) {
+    pub async fn reconcile_team_vcs(&mut self, ctx: &Context, guild_id: GI, db: &DB) {
         let has_active = self.formats.iter().any(|sg|
             sg.sessions.iter().any(|s| s.is_active())
         );
 
         if self.team_vc_settings.keep_minimum && self.channels.teams.is_empty() && !has_active {
             // keep_minimum is on but no VCs exist - create a pair
-            if let Err(e) = self.ensure_team_vcs(ctx, guild_id).await {
+            if let Err(e) = self.ensure_team_vcs(ctx, guild_id, db).await {
                 warn!("Failed to create team VCs after setting change: {e}");
             }
         } else if !has_active {
@@ -1537,8 +1549,10 @@ impl Category {
         // Create team VCs on first join if policy requires it
         if was_empty && self.team_vc_settings.create_policy == TeamVcCreatePolicy::OnFirstJoin {
             if let Some(gid) = queue_ctx.guild_id {
-                if let Err(e) = self.ensure_team_vcs(queue_ctx.ctx, gid).await {
-                    warn!("Failed to ensure team VCs on first join: {e}");
+                if let Some(db) = queue_ctx.db {
+                    if let Err(e) = self.ensure_team_vcs(queue_ctx.ctx, gid, db).await {
+                        warn!("Failed to ensure team VCs on first join: {e}");
+                    }
                 }
             }
         }
@@ -1559,8 +1573,10 @@ impl Category {
         // Create team VCs on first join if policy requires it
         if was_empty && self.team_vc_settings.create_policy == TeamVcCreatePolicy::OnFirstJoin {
             if let Some(gid) = queue_ctx.guild_id {
-                if let Err(e) = self.ensure_team_vcs(queue_ctx.ctx, gid).await {
-                    warn!("Failed to ensure team VCs on first join: {e}");
+                if let Some(db) = queue_ctx.db {
+                    if let Err(e) = self.ensure_team_vcs(queue_ctx.ctx, gid, db).await {
+                        warn!("Failed to ensure team VCs on first join: {e}");
+                    }
                 }
             }
         }

@@ -1134,7 +1134,7 @@ impl Category {
         cc.defer_update().await?;
 
         // Move players to team channels (Hot → Push → Live)
-        match self.push_sg(sg_id, cc.ctx, cc.component.guild_id.unwrap()).await {
+        match self.push_sg(sg_id, cc.ctx, cc.component.guild_id.unwrap(), &cc.db).await {
             Ok(_) => {
                 info!("Players moved to team channels and game is now live");
                 // Update all dashboards to reflect in-game status for match players

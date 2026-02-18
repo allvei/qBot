@@ -264,7 +264,7 @@ impl EventHandler for Handler {
                             }
                             // Clean up orphaned dynamic VCs from previous bot runs
                             for category in &mut server.categories {
-                                category.cleanup_orphaned_vcs(&ctx).await;
+                                category.cleanup_orphaned_vcs(&ctx, &self.db).await;
                             }
 
                             let categories_len = server.categories.len();

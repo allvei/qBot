@@ -3371,7 +3371,7 @@ pub async fn handle_category_settings_button(
         };
         category.team_vc_settings.create_policy = next;
         let _ = db.categories.update_team_vc_settings(guild_id, category_id, &category.team_vc_settings).await;
-        category.reconcile_team_vcs(ctx, guild_id).await;
+        category.reconcile_team_vcs(ctx, guild_id, db).await;
         refresh_category_settings!(interaction, ctx, category)?;
       }
     }
@@ -3389,7 +3389,7 @@ pub async fn handle_category_settings_button(
         };
         category.team_vc_settings.destroy_policy = next;
         let _ = db.categories.update_team_vc_settings(guild_id, category_id, &category.team_vc_settings).await;
-        category.reconcile_team_vcs(ctx, guild_id).await;
+        category.reconcile_team_vcs(ctx, guild_id, db).await;
         refresh_category_settings!(interaction, ctx, category)?;
       }
     }
@@ -3401,7 +3401,7 @@ pub async fn handle_category_settings_button(
       if let Some(category) = server.categories.iter_mut().find(|g| g.category_id == category_id) {
         category.team_vc_settings.keep_minimum = !category.team_vc_settings.keep_minimum;
         let _ = db.categories.update_team_vc_settings(guild_id, category_id, &category.team_vc_settings).await;
-        category.reconcile_team_vcs(ctx, guild_id).await;
+        category.reconcile_team_vcs(ctx, guild_id, db).await;
         refresh_category_settings!(interaction, ctx, category)?;
       }
     }
