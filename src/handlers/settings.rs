@@ -136,6 +136,68 @@ fn parse_mid(hex_str: &str) -> Result<u64> {
   Ok(u64::from_str_radix(hex_str, 16)?)
 }
 
+/// Create a short text input field for modals
+fn create_input_sh(label: &str, id: &str, placeholder: &str) -> CAR {
+  CAR::InputText(CIT::new(ITS::Short, label, id).placeholder(placeholder).required(true))
+}
+
+/// Create a short text input field with value for modals
+fn create_value_input_sh(label: &str, id: &str, placeholder: &str, value: &str) -> CAR {
+  CAR::InputText(CIT::new(ITS::Short, label, id).placeholder(placeholder).value(value).required(true))
+}
+
+/// Create a short text input field with optional value for modals
+fn create_short_input_opt(label: &str, id: &str, placeholder: &str, value: &str) -> CAR {
+  CAR::InputText(CIT::new(ITS::Short, label, id).placeholder(placeholder).value(value).required(false))
+}
+
+/// Create a short text input field with constraints for modals
+fn create_input_sh_cap(label: &str, id: &str, placeholder: &str, min_len: u16, max_len: u16) -> CAR {
+  CAR::InputText(CIT::new(ITS::Short, label, id).placeholder(placeholder).required(true).min_length(min_len).max_length(max_len))
+}
+
+/// Create a short text input field with value and constraints for modals
+fn create_value_input_sh_cap(label: &str, id: &str, placeholder: &str, value: &str, min_len: u16, max_len: u16) -> CAR {
+  CAR::InputText(CIT::new(ITS::Short, label, id).placeholder(placeholder).value(value).required(true).min_length(min_len).max_length(max_len))
+}
+
+/// Create a paragraph text input field for modals
+fn create_paragraph_input(label: &str, id: &str, placeholder: &str) -> CAR {
+  CAR::InputText(CIT::new(ITS::Paragraph, label, id).placeholder(placeholder).required(false))
+}
+
+/// Create a paragraph text input field with value for modals
+fn create_paragraph_input_with_value(label: &str, id: &str, placeholder: &str, value: &str) -> CAR {
+  CAR::InputText(CIT::new(ITS::Paragraph, label, id).placeholder(placeholder).value(value).required(false))
+}
+
+/// Create a paragraph text input field with constraints for modals
+fn create_paragraph_input_constrained(label: &str, id: &str, placeholder: &str, max_len: u16) -> CAR {
+  CAR::InputText(CIT::new(ITS::Paragraph, label, id).placeholder(placeholder).required(false).max_length(max_len))
+}
+
+/// Helper function to send navigation response
+async fn send_nav_response(interaction: &ComponentInteraction, ctx: &Context, response: Result<CIR>) -> Result<()> {
+  interaction.create_response(&ctx.http, response?).await?;
+  Ok(())
+}
+
+/// Macro to send navigation response with specific nav function
+macro_rules! send_nav {
+  ($interaction:expr, $ctx:expr, $db:expr, $nav_fn:expr, $($arg:expr),*) => {{
+    send_nav_response($interaction, $ctx, $nav_fn($ctx, $db, $($arg),*).await).await
+  }};
+}
+
+/// Helper function to get role name with fallback to role ID
+async fn get_role_name_with_fallback(ctx: &Context, guild_id: GI, role_id: RoleId) -> String {
+  guild_id.roles(&ctx.http)
+    .await
+    .ok()
+    .and_then(|roles| roles.get(&role_id).map(|role| role.name.clone()))
+    .unwrap_or_else(|| role_id.get().to_string())
+}
+
 /// Track DM activity for cleanup
 async fn track_dm_activity(ctx: &Context, user_id: UI) {
   if let Some(dm_tracker) = ctx.data.read().await.get::<crate::models::DmTrackerKey>() {
