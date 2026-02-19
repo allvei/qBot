@@ -838,7 +838,7 @@ impl Category {
                         }
                     }
                     changes_made = true;
-                    info!("Timeoutd {} player(s) from queue", players_to_remove.len());
+                    info!("Timed out {} player(s) from queue", players_to_remove.len());
                 }
             }
         }
