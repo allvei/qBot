@@ -4193,6 +4193,9 @@ pub async fn handle_player_settings_modal(
     let old_rank = guild_elo.rank.clone();
     let elo_ranks_linked = db.config.get_elo_ranks_linked(guild_id).await?;
 
+    // Get user tag for logging
+    let target_tag = crate::log::get_user_tag(ctx, target_uid, db).await;
+
     if elo_ranks_linked {
       let new_rank = crate::models::types::Rank::from_elo(db, guild_id, elo).await?;
 
@@ -4222,11 +4225,11 @@ pub async fn handle_player_settings_modal(
 
       // No rank change - proceed with ELO update (rank stays the same)
       db.elo.set(target_uid, guild_id, elo, new_rank.clone()).await?;
-      info!("Updated ELO for {} to {} (rank: {})", target_uid, elo, new_rank.name);
+      info!("Updated ELO for {} to {} (rank: {})", target_tag, elo, new_rank.name);
     } else {
       // ELO-Rank independent: update ELO only, keep existing rank
       db.elo.set(target_uid, guild_id, elo, old_rank.clone()).await?;
-      info!("Updated ELO for {} to {} (rank unchanged: {}, ELO-Rank independent)", target_uid, elo, old_rank.name);
+      info!("Updated ELO for {} to {} (rank unchanged: {}, ELO-Rank independent)", target_tag, elo, old_rank.name);
     }
 
     // Update dashboards where this player is queued
@@ -4240,15 +4243,16 @@ pub async fn handle_player_settings_modal(
 
           if player_in_queue {
             found_in_queue = true;
-            info!("Player {} ELO changed, updating dashboard for category {}", target_uid, category.category_id);
+            info!("Player {} ELO changed, updating dashboard for category {}", target_tag, category.display_name());
             category.queue_dash_update(ctx, guild_id).await;
           }
         }
         if !found_in_queue {
-          info!("Player {} ELO changed but not found in any queue, no dashboard update needed", target_uid);
+          info!("Player {} ELO changed but not found in any queue, no dashboard update needed", target_tag);
         }
       } else {
-        warn!("Failed to get server for guild {} when checking if player {} is queued", guild_id, target_uid);
+        let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+        warn!("Failed to get server for {} when checking if player {} is queued", guild_name, target_tag);
       }
     }
 

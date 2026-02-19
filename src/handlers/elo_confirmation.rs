@@ -100,8 +100,9 @@ pub async fn handle_elo_change_confirmation(
             }
         }
         
+        let user_tag = crate::log::get_user_tag(&ctx, target_uid, &db).await;
         info!("Updated ELO for {} from {} to {} and changed rank from {} to {}", 
-              target_uid, guild_elo.elo, new_elo, old_rank.name, new_rank.name);
+              user_tag, guild_elo.elo, new_elo, old_rank.name, new_rank.name);
 
         // Update dashboards where this player is queued
         {
@@ -113,7 +114,7 @@ pub async fn handle_elo_change_confirmation(
                     });
                     
                     if player_in_queue {
-                        info!("Player {} ELO changed, updating dashboard for category {}", target_uid, category.category_id);
+                        info!("Player {} ELO changed, updating dashboard for category {}", user_tag, category.display_name());
                         category.queue_dash_update(ctx, guild_id).await;
                     }
                 }

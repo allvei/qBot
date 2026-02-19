@@ -253,6 +253,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
 
     let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
     let target_tag = crate::log::get_user_tag(&cc.ctx, target_user, &cc.db).await;
-    info!("[{:?}] {} used /edit on {}", cc.intax.guild_id, user_tag, target_tag);
+    let guild_name = crate::models::constants::guild_name(&cc.ctx, cc.intax.guild_id.unwrap());
+    info!("[{}] {} used /edit on {}", guild_name, user_tag, target_tag);
     Ok(())
 }
