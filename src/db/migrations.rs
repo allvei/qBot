@@ -715,17 +715,17 @@ impl DatabaseMigrations {
         Ok(())
     }
     async fn verify_teams(&self)  -> Result<()> {
-        let required_columns = vec!["id", "guild_id", "category_id", "set_index", "session_id", "red", "blu", "created_at"];
-        self.verify_columns("teams", &required_columns).await?;
-        
-        // Migrate existing data to add set_index and session_id
+        // First, migrate existing data to add set_index and session_id if needed
         if !self.check_column("teams", "set_index").await? {
             info!("Migrating teams table to add set_index and session_id...");
             
             // Add new columns
             sqlx::query("ALTER TABLE teams ADD COLUMN set_index INTEGER DEFAULT 1").execute(&self.pool).await?;
             sqlx::query("ALTER TABLE teams ADD COLUMN session_id TEXT").execute(&self.pool).await?;
-            sqlx::query("ALTER TABLE teams ADD COLUMN created_at INTEGER DEFAULT (strftime('%s', 'now'))").execute(&self.pool).await?;
+            sqlx::query("ALTER TABLE teams ADD COLUMN created_at INTEGER DEFAULT 0").execute(&self.pool).await?;
+            
+            // Update created_at for existing records to current timestamp
+            sqlx::query("UPDATE teams SET created_at = strftime('%s', 'now') WHERE created_at = 0").execute(&self.pool).await?;
             
             // Update existing records to have sequential set_index within each guild/category
             let rows = sqlx::query("SELECT id, guild_id, category_id FROM teams ORDER BY id").fetch_all(&self.pool).await?;
@@ -749,6 +749,10 @@ impl DatabaseMigrations {
             
             info!("Teams table migration completed");
         }
+        
+        // Now verify all required columns exist
+        let required_columns = vec!["id", "guild_id", "category_id", "set_index", "session_id", "red", "blu", "created_at"];
+        self.verify_columns("teams", &required_columns).await?;
         
         Ok(())
     }
