@@ -499,7 +499,7 @@ impl Category {
                         }
                     }
                     embed = embed.field(
-                        format!("{sg_label} - Ready to start ({queue_players}/{quota})"),
+                        format!("{sg_label} - Ready to start"),
                         hot_info,
                         false,
                     );
