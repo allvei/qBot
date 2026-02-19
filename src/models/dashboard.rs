@@ -466,14 +466,6 @@ impl Category {
             }
             // --- Idle/Hot session ---
             else if let Some(current_session) = inactives.first() {
-                // Debug: Log session info to help identify duplication issues
-                if inactives.len() > 1 {
-                    warn!("Multiple inactive sessions found ({}), showing first one", inactives.len());
-                    for (i, session) in inactives.iter().enumerate() {
-                        warn!("  Session {}: {} players, status: {:?}", i, session.pool.len(), session.status);
-                    }
-                }
-                
                 let queue_players = current_session.pool.len();
 
                 if current_session.is_hot() {

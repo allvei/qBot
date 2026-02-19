@@ -1522,30 +1522,20 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
 
     // Remove the player from their current position
     let player = session.pool.remove(player_idx);
-    
-    // Debug: Log before and after state
-    info!("[{}] Before buffer: session has {} players", guild_name, session.pool.len() + 1);
-    for (i, p) in session.pool.iter().enumerate() {
-        if p.player.user_id == user_id {
-            warn!("[{}] DUPLICATE FOUND: Player {} already at position {}", guild_name, user_tag, i);
-        }
-    }
 
     // Insert the player at the front of the queue (index 0)
     session.pool.insert(0, player);
-    
-    // Debug: Log after state
-    info!("[{}] After buffer: session has {} players", guild_name, session.pool.len());
-    warn!("[{}] Player {} moved to position 0", guild_name, user_tag);
 
     let is_hot = session.is_hot();
 
     // If session is hot, regenerate teams with new order
+    // Note: generate_teams() already handles dashboard update
     if is_hot {
         category.generate_teams(cc.ctx, guild_id, Some(&cc.db)).await;
+    } else {
+        // Only update dashboard if not hot (since generate_teams() handles it for hot sessions)
+        category.queue_dash_update(cc.ctx, guild_id).await;
     }
-
-    category.queue_dash_update(cc.ctx, guild_id).await;
 
     let success_embed = CE::new()
         .title("Player buffered")
