@@ -544,6 +544,34 @@ impl Category {
             }
 
             info!("[{}] Cleaning up tracked team VC: {}", guild.name, channel.name);
+            
+            // Move any users in this team VC back to queue VC before deleting
+            if let Some(queue_vc_id) = guild.channels.get(&self.channels.queue_vc) {
+                // Get all members in this team VC
+                let members_in_vc: Vec<_> = guild.voice_states
+                    .iter()
+                    .filter(|(_user_id, voice_state)| voice_state.channel_id == Some(channel.id))
+                    .map(|(user_id, _voice_state)| *user_id)
+                    .collect();
+                
+                // Move each user back to queue VC
+                for user_id in members_in_vc {
+                    if let Ok(member) = guild.member(&ctx.http, user_id).await {
+                        use serenity::all::EditMember;
+                        if let Err(e) = ctx.http.edit_member(
+                            guild.id,
+                            user_id,
+                            &EditMember::new().voice_channel(queue_vc_id),
+                            Some("Moving user back to queue VC during cleanup")
+                        ).await {
+                            warn!("Failed to move user {} back to queue VC: {}", user_id, e);
+                        } else {
+                            info!("Moved user {} back to queue VC during team VC cleanup", user_id);
+                        }
+                    }
+                }
+            }
+            
             if let Err(e) = channel.id.delete(&ctx.http).await {
                 warn!("Failed to delete tracked team VC {} ({}): {}", channel.name, channel.id, e);
             } else {
