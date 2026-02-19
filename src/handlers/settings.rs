@@ -2690,6 +2690,9 @@ pub async fn handle_server_settings_modal(
           category.timeout = timeout;
           category.set_quota(quota);
           category.set_connect_info(connect_info.clone());
+          
+          // Update dashboard to reflect quota change
+          category.queue_dash_update(ctx, guild_id).await;
         }
       }
     }
