@@ -114,7 +114,8 @@ pub async fn handle_elo_change_confirmation(
                     });
                     
                     if player_in_queue {
-                        info!("Player {} ELO changed, updating dashboard for category {}", user_tag, category.display_name());
+                        let prefix = crate::log::log_prefix_category(&crate::models::constants::guild_name(&ctx, guild_id), &category.display_name());
+                        info!("{} Player {} ELO changed, updating dashboard", prefix, user_tag);
                         category.queue_dash_update(ctx, guild_id).await;
                     }
                 }

@@ -4243,7 +4243,8 @@ pub async fn handle_player_settings_modal(
 
           if player_in_queue {
             found_in_queue = true;
-            info!("Player {} ELO changed, updating dashboard for category {}", target_tag, category.display_name());
+            let prefix = crate::log::log_prefix_category(&crate::models::constants::guild_name(ctx, guild_id), &category.display_name());
+            info!("{} Player {} ELO changed, updating dashboard", prefix, target_tag);
             category.queue_dash_update(ctx, guild_id).await;
           }
         }
@@ -4252,7 +4253,7 @@ pub async fn handle_player_settings_modal(
         }
       } else {
         let guild_name = crate::models::constants::guild_name(ctx, guild_id);
-        warn!("Failed to get server for {} when checking if player {} is queued", guild_name, target_tag);
+        warn!("[{}] Failed to get server when checking if player {} is queued", guild_name, target_tag);
       }
     }
 
