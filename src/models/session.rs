@@ -221,17 +221,25 @@ impl Quota for Vec<SessionPlayer> {
 pub struct TeamChannel {
     pub red_vc: CI,
     pub blu_vc: CI,
+    pub set_index: u32,
+    pub session_id: Option<String>,
 }
 
 impl TeamChannel {
-    pub fn new(red_vc: CI, blu_vc: CI) -> Self {
-        Self { red_vc, blu_vc }
+    pub fn new(red_vc: CI, blu_vc: CI, set_index: u32) -> Self {
+        Self { red_vc, blu_vc, set_index, session_id: None }
+    }
+
+    pub fn with_session(red_vc: CI, blu_vc: CI, set_index: u32, session_id: String) -> Self {
+        Self { red_vc, blu_vc, set_index, session_id: Some(session_id) }
     }
 
     pub fn empty() -> Self {
         Self {
             red_vc: CI::new(1),
             blu_vc: CI::new(1),
+            set_index: 0,
+            session_id: None,
         }
     }
 

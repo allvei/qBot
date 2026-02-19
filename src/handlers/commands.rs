@@ -251,9 +251,6 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     let response = CIR::Message(CIRM::new().embed(embed).components(components).ephemeral(true));
     cc.intax.create_response(&cc.ctx.http, response).await?;
 
-    let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
-    let target_tag = crate::log::get_user_tag(&cc.ctx, target_user, &cc.db).await;
-    let guild_name = crate::models::constants::guild_name(&cc.ctx, cc.intax.guild_id.unwrap());
-    info!("[{}] {} used /edit on {}", guild_name, user_tag, target_tag);
+    crate::log::log_command_usage(&cc.ctx, &cc.intax, &cc.db, "edit", Some(target_user), None).await;
     Ok(())
 }

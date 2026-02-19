@@ -1,5 +1,5 @@
 use tracing::{info, warn};
-use serenity::all::{Context, UserId};
+use serenity::all::{Context, UserId, CommandInteraction};
 
 // Import guild_name function from constants
 use crate::models::constants::guild_name;
@@ -73,4 +73,52 @@ pub enum QueueToggleType {
     BL, // Button Leave
     VJ, // Voice Join
     VL, // Voice Leave
+}
+
+/// Log command usage with optional parameters
+pub async fn log_command_usage(
+    ctx: &Context,
+    interaction: &CommandInteraction,
+    db: &crate::Database,
+    command_name: &str,
+    target_user: Option<UserId>,
+    additional_params: Option<&str>,
+) {
+    let guild_name = guild_name(ctx, interaction.guild_id.unwrap());
+    let user_tag = get_user_tag(ctx, interaction.user.id, db).await;
+    
+    let mut message = format!("[{}] {} used /{}", guild_name, user_tag, command_name);
+    
+    // Add target user if specified
+    if let Some(target) = target_user {
+        let target_tag = get_user_tag(ctx, target, db).await;
+        message.push_str(&format!(" on {}", target_tag));
+    }
+    
+    // Add additional parameters if specified
+    if let Some(params) = additional_params {
+        message.push_str(&format!(" {}", params));
+    }
+    
+    info!("{}", message);
+}
+
+/// Simplified command logging without database (for commands that don't need user tags)
+pub fn log_command_usage_simple(
+    ctx: &Context,
+    interaction: &CommandInteraction,
+    command_name: &str,
+    additional_params: Option<&str>,
+) {
+    let guild_name = guild_name(ctx, interaction.guild_id.unwrap());
+    let user_tag = interaction.user.tag();
+    
+    let mut message = format!("[{}] {} used /{}", guild_name, user_tag, command_name);
+    
+    // Add additional parameters if specified
+    if let Some(params) = additional_params {
+        message.push_str(&format!(" {}", params));
+    }
+    
+    info!("{}", message);
 }

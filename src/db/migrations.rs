@@ -698,11 +698,15 @@ impl DatabaseMigrations {
         if !self.check_table("teams").await? {
             sqlx::query(
                 "CREATE TABLE teams (
-                    id       INTEGER PRIMARY KEY,
-                    guild_id INTEGER NOT NULL,
-                    category_id INTEGER NOT NULL,
-                    red      INTEGER NOT NULL,
-                    blu      INTEGER NOT NULL
+                    id           INTEGER PRIMARY KEY,
+                    guild_id     INTEGER NOT NULL,
+                    category_id  INTEGER NOT NULL,
+                    set_index    INTEGER NOT NULL,
+                    session_id   TEXT,
+                    red          INTEGER NOT NULL,
+                    blu          INTEGER NOT NULL,
+                    created_at   INTEGER DEFAULT (strftime('%s', 'now')),
+                    UNIQUE(guild_id, category_id, set_index)
                 )"
             )
             .execute(&self.pool)
@@ -711,8 +715,41 @@ impl DatabaseMigrations {
         Ok(())
     }
     async fn verify_teams(&self)  -> Result<()> {
-        let required_columns = vec!["id", "guild_id", "category_id", "red", "blu"];
+        let required_columns = vec!["id", "guild_id", "category_id", "set_index", "session_id", "red", "blu", "created_at"];
         self.verify_columns("teams", &required_columns).await?;
+        
+        // Migrate existing data to add set_index and session_id
+        if !self.check_column("teams", "set_index").await? {
+            info!("Migrating teams table to add set_index and session_id...");
+            
+            // Add new columns
+            sqlx::query("ALTER TABLE teams ADD COLUMN set_index INTEGER DEFAULT 1").execute(&self.pool).await?;
+            sqlx::query("ALTER TABLE teams ADD COLUMN session_id TEXT").execute(&self.pool).await?;
+            sqlx::query("ALTER TABLE teams ADD COLUMN created_at INTEGER DEFAULT (strftime('%s', 'now'))").execute(&self.pool).await?;
+            
+            // Update existing records to have sequential set_index within each guild/category
+            let rows = sqlx::query("SELECT id, guild_id, category_id FROM teams ORDER BY id").fetch_all(&self.pool).await?;
+            
+            let mut current_set: std::collections::HashMap<(i64, i64), i32> = std::collections::HashMap::new();
+            
+            for row in rows {
+                let guild_id: i64 = row.get("guild_id");
+                let category_id: i64 = row.get("category_id");
+                let id: i64 = row.get("id");
+                
+                let set_index = current_set.entry((guild_id, category_id)).or_insert(1);
+                sqlx::query("UPDATE teams SET set_index = ? WHERE id = ?")
+                    .bind(*set_index)
+                    .bind(id)
+                    .execute(&self.pool)
+                    .await?;
+                
+                *set_index += 1;
+            }
+            
+            info!("Teams table migration completed");
+        }
+        
         Ok(())
     }
     async fn create_formats_table(&self) -> Result<()> {

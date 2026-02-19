@@ -654,7 +654,7 @@ impl Category {
 
         // Notify requires guild_id for VC validation
         if let Some(gid) = guild_id {
-            self.notify(ctx, gid, db).await;
+            self.notify(ctx, gid, db, false).await; // false = not post-game
         } else {
             warn!("Cannot notify: guild_id not provided");
         }
@@ -1015,12 +1015,11 @@ impl Category {
                 .category(category)
         ).await.map_err(|e| anyhow!("Failed to create BLU VC: {e}"))?;
 
-        let pair = TeamChannel::new(red_ch.id, blu_ch.id);
+        let pair = TeamChannel::new(red_ch.id, blu_ch.id, pair_num as u32);
         self.channels.teams.push(pair.clone());
         
         // Persist to database
-        let guild_name = crate::models::constants::guild_name(ctx, guild_id);
-        if let Err(e) = db.teams.add_team(guild_id, self.category_id, red_ch.id, blu_ch.id, &guild_name, &self.display_name()).await {
+        if let Err(e) = db.teams.add_team(guild_id, self.category_id, red_ch.id, blu_ch.id, pair_num as u32, None).await {
             warn!("Failed to persist team channels to database: {}", e);
         }
         
@@ -1176,6 +1175,9 @@ impl Category {
             .ok_or(anyhow!("No active game to pull in format {}", sg_id))?;
         let game = &mut sg.sessions[active_session_idx];
 
+        // Determine if this is a post-game scenario (game was Live, not just Hot)
+        let post_game = game.status == SessionStatus::Live;
+
         game.pull();
 
         // Extract all players to move back to queue
@@ -1322,6 +1324,10 @@ impl Category {
         // Check if the queue now meets quota and transition to Hot if needed
         if self.is_quota_sg(sg_id) {
             self.hot_sg(sg_id, ctx, Some(guild_id), Some(db), manager).await?;
+        } else if post_game {
+            // If this is post-game but quota isn't met, still notify players who are waiting
+            // This is for the case where some players finished a game but not enough to start a new one
+            self.notify(ctx, guild_id, Some(db), true).await; // true = post-game
         }
 
         self.queue_dash_update(ctx, guild_id).await;
@@ -1704,7 +1710,9 @@ impl Category {
     /// Pings ALL players in the first 'quota' players, not just those missing from VC
     /// Only pings the first 'quota' players, not extras queued for next match
     /// Also sends DMs to players who have pm_hot_alert=true
-    pub async fn notify(&mut self, ctx: &Context, guild_id: GI, db: Option<&DB>) {
+    /// 
+    /// If `post_game` is true, only pings players who are NOT in voice chat (to avoid pinging players who just finished)
+    pub async fn notify(&mut self, ctx: &Context, guild_id: GI, db: Option<&DB>, post_game: bool) {
         // Validate VC status before sending notifications to prevent desync
         self.validate_vc_status(ctx, guild_id).await;
 
@@ -1717,11 +1725,29 @@ impl Category {
         // This ensures we notify the correct players when quota is met
         if let Some(hot_session) = self.formats[0].sessions.iter()
             .find(|s| s.status == SessionStatus::Hot) {
-            // Ping ALL players in the first 'quota' positions (not extras queued for next match)
-            // This ensures everyone in the match gets notified, not just those missing from VC
+            // Ping players based on post_game flag
             for player in hot_session.pool.iter().take(quota) {
-                player_mentions.push(format!("<@{}>", player.player.user_id));
-                players_to_dm.push(player.player.user_id);
+                // In post-game scenarios, only ping players NOT in voice chat
+                if post_game {
+                    // Check if player is in voice chat
+                    let in_voice = if let Some(guild) = ctx.cache.guild(guild_id) {
+                        guild.voice_states.get(&player.player.user_id)
+                            .map(|vs| vs.channel_id.is_some())
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
+                    
+                    // Only ping if NOT in voice (i.e., they didn't just finish a game)
+                    if !in_voice {
+                        player_mentions.push(format!("<@{}>", player.player.user_id));
+                        players_to_dm.push(player.player.user_id);
+                    }
+                } else {
+                    // Normal pre-game behavior: ping all players
+                    player_mentions.push(format!("<@{}>", player.player.user_id));
+                    players_to_dm.push(player.player.user_id);
+                }
             }
         } else {
             warn!("No hot session found when trying to notify players");
@@ -1897,7 +1923,8 @@ impl Channels {
 
     /// Pushs a red and blue channel to the vector
     pub fn add_team_channel_pair(&mut self, red_vc: CI, blu_vc: CI) {
-        self.teams.push(TeamChannel::new(red_vc, blu_vc));
+        let set_index = self.teams.len() as u32 + 1;
+        self.teams.push(TeamChannel::new(red_vc, blu_vc, set_index));
     }
 
     pub fn empty() -> Self {

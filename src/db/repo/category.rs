@@ -171,7 +171,7 @@ impl CategoryRepository {
             Ok(teams) if !teams.is_empty() => teams,
             _ => {
                 if red_id > 1 && blu_id > 1 {
-                    vec![TeamChannel::new(CI::new(red_id), CI::new(blu_id))]
+                    vec![TeamChannel::new(CI::new(red_id), CI::new(blu_id), 1)]
                 } else {
                     vec![]
                 }
@@ -242,12 +242,13 @@ impl CategoryRepository {
     fn build_teams_from_row(&self, result: &sqlx::sqlite::SqliteRow) -> Result<TeamChannel> {
         let red  = CI::new(result.get::<i64, _>("red") as u64);
         let blu  = CI::new(result.get::<i64, _>("blu") as u64);
-        let team = TeamChannel::new(red, blu);
+        let set_index = result.get::<Option<i32>, _>("set_index").unwrap_or(1) as u32;
+        let team = TeamChannel::new(red, blu, set_index);
         Ok(team)
     }
 
     pub async fn get_teams_for_category(&self, guild_id: GI, category_id: u8) -> Result<Vec<TeamChannel>> {
-        let rows = sqlx::query("SELECT red, blu FROM teams WHERE guild_id = ? AND category_id = ?")
+        let rows = sqlx::query("SELECT red, blu, set_index FROM teams WHERE guild_id = ? AND category_id = ?")
         .bind(guild_id.get() as i64)
         .bind(category_id as i64)
         .fetch_all(&self.pool)

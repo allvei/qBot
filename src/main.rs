@@ -112,17 +112,6 @@ async fn get_server_with_error<'a>(
     }
 }
 
-/// Log command usage with proper context
-async fn log_command_usage(
-    ctx: &Context,
-    itx: &CommandInteraction,
-    tag: &str,
-    command_name: &str,
-) {
-    let guild_name = pf_pug_bot::guild_name(ctx, itx.guild_id.unwrap());
-    info!("[{}] {} used /{}", guild_name, tag, command_name);
-}
-
 /// Check if interaction is still valid for response
 fn is_interaction_valid(interaction: &serenity::all::Interaction) -> bool {
     match interaction {
@@ -297,7 +286,7 @@ impl EventHandler for Handler {
     async fn interaction_create(&self,ctx: Context,pl: Interaction,) {
         match pl {
             Interaction::Command(itx) => {
-                let tag = pf_pug_bot::log::get_user_tag(&ctx, itx.user.id, &self.db).await;
+                let _tag = pf_pug_bot::log::get_user_tag(&ctx, itx.user.id, &self.db).await;
                 let cmd_ctx     = CommandContext {
                     ctx:     &ctx,
                     intax:   &itx,
@@ -307,27 +296,22 @@ impl EventHandler for Handler {
                 let cd  = &itx.data;
                 let cdo = &cd.options;
 
-                let info = || {
-                    let guild_name = pf_pug_bot::guild_name(&ctx, itx.guild_id.unwrap());
-                    info!("[{}] {} used /{}", guild_name, tag, itx.data.name);
-                };
-
                 // Handle commands that don't need a server/category first
                 let result = match cd.name.as_str() {
                     "prefs" => {
-                        info();
+                        pf_pug_bot::log::log_command_usage_simple(&ctx, &itx, "prefs", None);
                         commands::cmd_prefs(&cmd_ctx).await
                     }
                     "config" => {
-                        info();
+                        pf_pug_bot::log::log_command_usage_simple(&ctx, &itx, "config", None);
                         commands::cmd_config(&cmd_ctx).await
                     }
                     "edit" => {
-                        info();
+                        pf_pug_bot::log::log_command_usage_simple(&ctx, &itx, "edit", None);
                         commands::cmd_edit_player(&cmd_ctx).await
                     }
                     "migrate" => {
-                        info();
+                        pf_pug_bot::log::log_command_usage_simple(&ctx, &itx, "migrate", None);
                         commands::cmd_migrate(&cmd_ctx).await
                     }
                     _ => {
@@ -340,29 +324,31 @@ impl EventHandler for Handler {
 
                         match cd.name.as_str() {
                             "buffer" => {
-                                log_command_usage(&ctx, &itx, &tag, "buffer").await;
                                 if let Some(user_id) = extract_user_option(cdo, "buffer").await {
+                                    pf_pug_bot::log::log_command_usage(&ctx, &itx, &self.db, "buffer", Some(user_id), None).await;
                                     admin::cmd_buffer(&cmd_ctx, server, user_id).await
                                 } else {
+                                    pf_pug_bot::log::log_command_usage_simple(&ctx, &itx, "buffer", None);
                                     Ok(())
                                 }
                             }
                             "fatkid" => {
-                                log_command_usage(&ctx, &itx, &tag, "fatkid").await;
                                 if let Some(user_id) = extract_user_option(cdo, "fatkid").await {
+                                    pf_pug_bot::log::log_command_usage(&ctx, &itx, &self.db, "fatkid", Some(user_id), None).await;
                                     admin::cmd_fatkid(&cmd_ctx, server, user_id).await
                                 } else {
+                                    pf_pug_bot::log::log_command_usage_simple(&ctx, &itx, "fatkid", None);
                                     Ok(())
                                 }
                             }
                             "remove" => {
-                                log_command_usage(&ctx, &itx, &tag, "remove").await;
+                                pf_pug_bot::log::log_command_usage_simple(&ctx, &itx, "remove", None);
                                 admin::cmd_remove_queue(&cmd_ctx, server, cdo.first()).await
                             }
                             "elo" => {
-                                log_command_usage(&ctx, &itx, &tag, "elo").await;
                                 if let Some(user_option) = cdo.first() {
                                     if let Some(user_id) = user_option.value.as_user_id() {
+                                        pf_pug_bot::log::log_command_usage(&ctx, &itx, &self.db, "elo", Some(user_id), None).await;
                                         match ctx.http.get_user(user_id).await {
                                             Ok(user) => admin::cmd_get_player_elo(&cmd_ctx, Some(user)).await,
                                             Err(_) => {
@@ -371,6 +357,7 @@ impl EventHandler for Handler {
                                             }
                                         }
                                     } else {
+                                        pf_pug_bot::log::log_command_usage_simple(&ctx, &itx, "elo", Some("invalid user"));
                                         let _ = send_error_response(&itx, &ctx, "Invalid user specified").await;
                                         Ok(())
                                     }

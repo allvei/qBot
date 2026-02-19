@@ -1227,6 +1227,8 @@ async fn handle_categorylink_blue_selection(ctx: &Context, interaction: &CX, cha
             teams: vec![TeamChannel {
                 red_vc: red_channel,
                 blu_vc: blue_channel,
+                set_index: 1,
+                session_id: None,
             }],
             dashboard: dashboard_channel,
         },

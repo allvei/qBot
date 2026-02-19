@@ -16,20 +16,21 @@ impl TeamRepository {
     }
 
     /// Add a team channel pair to the database
-    pub async fn add_team(&self, guild_id: GI, category_id: u8, red_vc: CI, blu_vc: CI, guild_name: &str, category_name: &str) -> Result<()> {
+    pub async fn add_team(&self, guild_id: GI, category_id: u8, red_vc: CI, blu_vc: CI, set_index: u32, session_id: Option<&str>) -> Result<()> {
         sqlx::query(
-            "INSERT INTO teams (guild_id, category_id, red, blu) VALUES (?, ?, ?, ?)"
+            "INSERT INTO teams (guild_id, category_id, set_index, session_id, red, blu) VALUES (?, ?, ?, ?, ?, ?)"
         )
         .bind(guild_id.get() as i64)
         .bind(category_id as i64)
+        .bind(set_index as i64)
+        .bind(session_id)
         .bind(red_vc.get() as i64)
         .bind(blu_vc.get() as i64)
         .execute(&self.pool)
         .await?;
 
-        let prefix = log_prefix_category(guild_name, category_name);
-        info!("{} Added team channel pair to database: RED={} BLU={}", 
-              prefix, red_vc.get(), blu_vc.get());
+        info!("Added team channel pair to database: SET={} RED={} BLU={} for guild {} category {}", 
+              set_index, red_vc.get(), blu_vc.get(), guild_id.get(), category_id);
         Ok(())
     }
 
