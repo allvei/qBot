@@ -852,14 +852,38 @@ impl Category {
                 if !players_to_remove.is_empty() {
                     // Remove the timed-out players
                     for user_id in &players_to_remove {
-                        session.remove_player(*user_id);
+                        // Check if player is in a team channel before removing
+                        let mut should_remove = true;
+                        if let Some(guild) = ctx.cache.guild(guild_id) {
+                            if let Some(voice_state) = guild.voice_states.get(user_id) {
+                                if let Some(channel_id) = voice_state.channel_id {
+                                    // Check if this is a team channel (not queue VC)
+                                    if channel_id != self.channels.queue_vc {
+                                        // Player is in a team channel, don't remove them
+                                        info!("Player {} is in team channel {}, not removing due to timeout", 
+                                              user_id, channel_id);
+                                        should_remove = false;
+                                        
+                                        // Reset their timeout since they're actively in a team
+                                        if let Some(session) = session.pool.iter_mut()
+                                            .find(|p| p.player.user_id == *user_id) {
+                                            session.joined_at = SystemTime::now();
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         
-                        // Optionally: disconnect from VC if vc_kick is enabled
-                        if let Ok(settings) = db.users.get_prefs(*user_id).await {
-                            if settings.vc_auto_leave {
-                                if let Ok(member) = guild_id.member(&ctx.http, *user_id).await {
-                                    if let Err(e) = member.disconnect_from_voice(&ctx.http).await {
-                                        warn!("Failed to disconnect timeoutd player from VC: {e}");
+                        if should_remove {
+                            session.remove_player(*user_id);
+                            
+                            // Optionally: disconnect from VC if vc_kick is enabled
+                            if let Ok(settings) = db.users.get_prefs(*user_id).await {
+                                if settings.vc_auto_leave {
+                                    if let Ok(member) = guild_id.member(&ctx.http, *user_id).await {
+                                        if let Err(e) = member.disconnect_from_voice(&ctx.http).await {
+                                            warn!("Failed to disconnect timeoutd player from VC: {e}");
+                                        }
                                     }
                                 }
                             }
