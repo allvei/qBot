@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Error, Result};
 use std::{collections::{HashMap, HashSet}, sync::Arc, time::{Duration, SystemTime}};
-use crate::{QueueToggleType, log_queue_toggle, guild_name, log_prefix_category};
+use crate::{guild_name, log_prefix_category};
 use serenity::{all::{
     ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB,
     CreateEmbed as CE, CreateMessage as CM, CreateInteractionResponse as CIR,
@@ -892,7 +892,11 @@ impl Category {
             let sg_name_owned = sg_name.map(|s| s.to_string());
             
             // Log BEFORE queue operation to fix race condition with quota notifications
-            log_queue_toggle(&server_name, &category_name, &username, QueueToggleType::BJ, Some((pool_len_before + 1, sg_quota)), sg_name, Some(pool_len_before + 1));
+            if let Some(format) = self.format(sg_id) {
+                if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, format, &player, "joined").await {
+                    warn!("Failed to log queue toggle: {e}");
+                }
+            }
 
             if let Err(e) = self.queue_player_sg(sg_id, player, discord_rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
                 warn!("Failed to queue player: {e}");
@@ -948,6 +952,7 @@ impl Category {
                 .position(|s| s.pool.iter().any(|p| p.player.user_id == user_id)));
 
         // Check if player is in queue
+        let format = self.format(sg_id).cloned(); // Get format before mutable borrow
         let should_regenerate_teams = if let Ok(session) = self.get_user_session_sg(sg_id, user_id) {
             // Check if player is physically in the queue VC
             let player_in_vc = if let Some(player) = session.pool.iter().find(|p| p.player.user_id == user_id) {
@@ -1001,7 +1006,15 @@ impl Category {
             // Log with server and category context
             let guild_id = cc.component.guild_id.unwrap();
             let server_name = guild_name(cc.ctx, guild_id);
-            log_queue_toggle(&server_name, &category_name, &username, QueueToggleType::BL, Some((pool_len, quota)), sg_name_owned.as_deref(), position_before_removal);
+            
+            // Resolve player for logging
+            if let Ok(player) = cc.db.get_user(user_id, cc.ctx).await {
+                if let Some(ref format) = format {
+                    if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, format, &player, "left").await {
+                        warn!("Failed to log queue toggle: {e}");
+                    }
+                }
+            }
 
             // Send leave announcement (delayed + buffered)
             {

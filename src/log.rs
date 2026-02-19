@@ -1,5 +1,6 @@
 use tracing::{info, warn};
 use serenity::all::{Context, UserId, CommandInteraction};
+use sqlx::Row;
 
 // Import guild_name function from constants
 use crate::models::constants::guild_name;
@@ -27,7 +28,66 @@ pub async fn get_user_tag(ctx: &Context, user_id: UserId, db: &crate::Database) 
         })
 }
 
-pub fn log_queue_toggle(guild_name: &str, category_name: &str, tag: &str, queue_type: QueueToggleType, pool_size: Option<(usize, usize)>, sg_name: Option<&str>, position: Option<usize>) {
+/// Async log function that extrapolates all information from Format, Player, and Action
+pub async fn log_queue_toggle(
+    _ctx: &Context,
+    db: &crate::Database,
+    format: &crate::models::Format,
+    player: &crate::models::Player,
+    action: &str, // "joined" or "left"
+) -> Result<(), anyhow::Error> {
+    // Get format info from database using format.id
+    // First, we need to find which category and guild this format belongs to
+    let format_info = sqlx::query(
+        "SELECT f.guild_id, f.category_id, c.guild_name, c.name as category_name, f.name as format_name 
+         FROM formats f 
+         JOIN categories c ON f.guild_id = c.guild_id AND f.category_id = c.category_id 
+         WHERE f.format_id = ?"
+    )
+    .bind(format.id as i64)
+    .fetch_one(&db.pool)
+    .await?;
+    
+    let _guild_id: serenity::all::GuildId = serenity::all::GuildId::new(format_info.get::<i64, _>("guild_id") as u64);
+    let guild_name: String = format_info.get("guild_name");
+    let category_name: String = format_info.get("category_name");
+    let format_name: String = format_info.get("format_name");
+    
+    // Get pool size and player position from format's sessions
+    let pool_size = format.sessions.iter()
+        .find(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot)
+        .map(|s| (s.pool.len(), format.quota as usize));
+    
+    let position = pool_size.as_ref()
+        .and_then(|(_current, _)| {
+            format.sessions.iter()
+                .find(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot)
+                .and_then(|s| s.pool.iter().position(|p| p.player.user_id == player.user_id))
+                .map(|pos| pos + 1)
+        });
+    
+    // Determine queue type based on action
+    let queue_type = match action {
+        "joined" => crate::QueueToggleType::BJ,
+        "left" => crate::QueueToggleType::BL,
+        _ => crate::QueueToggleType::BJ, // default
+    };
+    
+    // Call the original function with extrapolated data
+    log_queue_toggle_sync(
+        &guild_name,
+        &category_name,
+        &player.tag,
+        queue_type,
+        pool_size,
+        Some(&format_name),
+        position,
+    );
+    
+    Ok(())
+}
+
+pub fn log_queue_toggle_sync(guild_name: &str, category_name: &str, tag: &str, queue_type: QueueToggleType, pool_size: Option<(usize, usize)>, sg_name: Option<&str>, position: Option<usize>) {
     let (action, source) = match queue_type {
         QueueToggleType::BJ => ("joined", None),
         QueueToggleType::BL => ("left",   None),
@@ -41,9 +101,9 @@ pub fn log_queue_toggle(guild_name: &str, category_name: &str, tag: &str, queue_
     
     match (pool_size, source) {
         (Some((current, quota)), Some(src)) => info!("{} {} {} {} ({}) [{}/{}]", prefix, pos_part, tag, action, src, current, quota),
-        (Some((current, quota)), None)       => info!("{} {} {} {} [{}/{}]",     prefix, pos_part, tag, action, current, quota),
-        (None, Some(src))                    => info!("{} {} {} {} ({})",       prefix, pos_part, tag, action, src),
-        (None, None)                         => info!("{} {} {} {}",             prefix, pos_part, tag, action),
+        (Some((current, quota)), None)      => info!("{} {} {} {} [{}/{}]",      prefix, pos_part, tag, action, current, quota),
+        (None, Some(src))                   => info!("{} {} {} {} ({})",         prefix, pos_part, tag, action, src),
+        (None, None)                        => info!("{} {} {} {}",              prefix, pos_part, tag, action),
     }
 }
 

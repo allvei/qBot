@@ -22,7 +22,7 @@ use tracing::{debug, error, info, warn};
 use pf_pug_bot::db::migrations::DatabaseMigrations;
 use pf_pug_bot::db::repo::CategoryRepository;
 use pf_pug_bot::handlers::{self, admin};
-use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, DmMessageTracker, DmTrackerKey, Database, Manager, QueueToggleType::{self, *}, Roles, Server, SessionStatus, VoiceStateUpdate, log_queue_toggle};
+use pf_pug_bot::{ButtonType, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, DmMessageTracker, DmTrackerKey, Database, Manager, Roles, Server, SessionStatus, VoiceStateUpdate};
 
 fn cmd(name: impl Into<String,>,desc: impl Into<String,>,) -> CC {
     CC::new(name.into(),).description(desc.into(),)
@@ -888,7 +888,10 @@ impl EventHandler for Handler {
                                               log_prefix_category(&guild_name, &category_name), tag, pool_len, category.quota());
                                     }
                                     
-                                    log_queue_toggle(&guild_name, &category_name, &tag, QueueToggleType::VJ, Some((pool_len, category.quota() as usize)), sg_name, Some(pool_len));
+                                    let format = &category.formats[0];
+                                    if let Err(e) = pf_pug_bot::log_queue_toggle(&ctx, &self.db, format, &player, "joined").await {
+                                        warn!("Failed to log queue toggle: {e}");
+                                    }
                                 }
 
                                 category.queue_dash_update(&ctx, server).await;
@@ -928,6 +931,9 @@ impl Handler {
         let sg_name = category.get_user_sg_name(user_id);
 
         let quota = category.quota() as usize;
+
+        // Clone format before mutable borrow to avoid borrowing issues
+        let format = category.formats[0].clone();
 
         let should_regenerate = if let Ok(sesh) = category.get_user_session(user_id).await {
             if sesh.is_active() {
@@ -972,7 +978,12 @@ impl Handler {
             }
 
             // Log after removal so pool count is accurate, but use position before removal
-            log_queue_toggle(&guild_name, &category_name, tag, VL, Some((sesh.pool.len(), quota)), sg_name.as_deref(), position_before_removal);
+            // Resolve player for logging
+            if let Ok(player) = self.db.get_user(user_id, &ctx).await {
+                if let Err(e) = pf_pug_bot::log_queue_toggle(&ctx, &self.db, &format, &player, "left").await {
+                    warn!("Failed to log queue toggle: {e}");
+                }
+            }
 
             if was_hot && sesh.pool.len() >= quota {
                 true
@@ -984,7 +995,12 @@ impl Handler {
             }
         } else {
             // Player not found in any session
-            log_queue_toggle(&guild_name, &category_name, tag, VL, None, sg_name.as_deref(), None);
+            // Resolve player for logging
+            if let Ok(player) = self.db.get_user(user_id, &ctx).await {
+                if let Err(e) = pf_pug_bot::log_queue_toggle(&ctx, &self.db, &format, &player, "left").await {
+                    warn!("Failed to log queue toggle: {e}");
+                }
+            }
             false
         };
 
@@ -1081,6 +1097,7 @@ impl Handler {
             // Add all players to the session WITHOUT quota check
             let sg_name_owned = category.formats.first().map(|sg| sg.name.clone());
             let category_name = category.name.as_deref().unwrap_or("Unknown").to_string();
+            let format = category.formats[0].clone(); // Clone format before mutable borrow
             if let Ok(session) = category.get_queue().await {
                 // Get server and category names for logging
                 let guild_name = guild.name.clone();
@@ -1099,7 +1116,9 @@ impl Handler {
                     };
 
                     let position = session.pool.len() + 1;
-                    log_queue_toggle(&guild_name, &category_name, &player.tag.clone(), QueueToggleType::VJ, None, sg_name_owned.as_deref(), Some(position));
+                    if let Err(e) = pf_pug_bot::log_queue_toggle(&ctx, &self.db, &format, &player, "joined").await {
+                        warn!("Failed to log queue toggle: {e}");
+                    }
                     session.add_player(player);
                 }
             }
