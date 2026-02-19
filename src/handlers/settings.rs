@@ -66,7 +66,13 @@ macro_rules! get_player_settings {
 /// Macro to extract modal input text value
 macro_rules! get_modal_input {
   ($interaction:expr, $index:expr) => {{
-    $interaction.data.components.get($index).and_then(|row| row.components.first()).and_then(|c| if let ARC::InputText(input) = c { input.value.clone() } else { None }).unwrap_or_default()
+    $interaction
+      .data
+      .components
+      .get($index)
+      .and_then(|row| row.components.first())
+      .and_then(|c| if let ARC::InputText(input) = c { input.value.clone() } else { None })
+      .unwrap_or_default()
   }};
   ($interaction:expr) => {{
     get_modal_input!($interaction, 0)
@@ -74,24 +80,14 @@ macro_rules! get_modal_input {
 }
 
 /// Helper function to create and send embed/button response
-async fn send_embed_button_response(
-  interaction: &ComponentInteraction,
-  ctx: &Context,
-  embed: CE,
-  components: Vec<CAR>,
-) -> Result<()> {
+async fn send_embed_button_response(interaction: &ComponentInteraction, ctx: &Context, embed: CE, components: Vec<CAR>) -> Result<()> {
   let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
   interaction.create_response(&ctx.http, response).await?;
   Ok(())
 }
 
 /// Helper function for modal interactions
-async fn send_embed_button_response_modal(
-  interaction: &ModalInteraction,
-  ctx: &Context,
-  embed: CE,
-  components: Vec<CAR>,
-) -> Result<()> {
+async fn send_embed_button_response_modal(interaction: &ModalInteraction, ctx: &Context, embed: CE, components: Vec<CAR>) -> Result<()> {
   let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
   interaction.create_response(&ctx.http, response).await?;
   Ok(())
@@ -204,11 +200,7 @@ macro_rules! send_nav_modal {
 
 /// Helper function to get role name with fallback to role ID
 async fn get_role_name_with_fallback(ctx: &Context, guild_id: GI, role_id: RoleId) -> String {
-  guild_id.roles(&ctx.http)
-    .await
-    .ok()
-    .and_then(|roles| roles.get(&role_id).map(|role| role.name.clone()))
-    .unwrap_or_else(|| role_id.get().to_string())
+  guild_id.roles(&ctx.http).await.ok().and_then(|roles| roles.get(&role_id).map(|role| role.name.clone())).unwrap_or_else(|| role_id.get().to_string())
 }
 
 /// Track DM activity for cleanup
@@ -615,10 +607,12 @@ pub async fn build_join_alert_embed(ctx: &Context, user_id: UI, guild_id: Option
   };
 
   // Create embed with title showing nickname + "joined the queue"
-  let mut embed = CE::new().title(match sg_name {
+  let mut embed = CE::new()
+    .title(match sg_name {
       Some(name) => format!("{display_name} joined the {name} queue"),
       None => format!("{display_name} joined the queue"),
-    }).color(settings.join_alert_color as u32);
+    })
+    .color(settings.join_alert_color as u32);
 
   // Only add description if there is one
   if let Some(desc) = description {
@@ -677,10 +671,12 @@ pub async fn build_leave_alert_embed(ctx: &Context, user_id: UI, guild_id: Optio
   };
 
   // Create embed with title showing nickname + "left the queue"
-  let mut embed = CE::new().title(match sg_name {
+  let mut embed = CE::new()
+    .title(match sg_name {
       Some(name) => format!("{display_name} left the {name} queue"),
       None => format!("{display_name} left the queue"),
-    }).color(settings.join_alert_color as u32);
+    })
+    .color(settings.join_alert_color as u32);
 
   // Only add description if there is one
   if let Some(desc) = description {
@@ -902,10 +898,8 @@ pub async fn handle_server_settings_button(
     "server_settings_rank_add" => {
       // Show modal to add a new rank
 
-      let modal = CreateModal::new("server_settings_rank_modal_add", "Add new rank").components(vec![
-        create_input_sh("Rank name", "name", "e.g., Champion, Legend, Elite"),
-        create_input_sh_cap("ELO Threshold", "elo", "Minimum ELO for this rank", 1, 3),
-      ]);
+      let modal = CreateModal::new("server_settings_rank_modal_add", "Add new rank")
+        .components(vec![create_input_sh("Rank name", "name", "e.g., Champion, Legend, Elite"), create_input_sh_cap("ELO Threshold", "elo", "Minimum ELO for this rank", 1, 3)]);
 
       let response = CIR::Modal(modal);
       interaction.create_response(&ctx.http, response).await?;
@@ -913,9 +907,14 @@ pub async fn handle_server_settings_button(
     "server_settings_rank_link" => {
       // Show role selector for linking existing rank
       let response = CIR::UpdateMessage(
-        CIRM::new().embed(
-            CE::new().title("Link ranks").description("Select a Discord role to link to a new rank. The role will be used to assign this rank to players automatically.").color(0x5865F2),
-          ).components(vec![
+        CIRM::new()
+          .embed(
+            CE::new()
+              .title("Link ranks")
+              .description("Select a Discord role to link to a new rank. The role will be used to assign this rank to players automatically.")
+              .color(0x5865F2),
+          )
+          .components(vec![
             CAR::SelectMenu(
               CSM::new("server_settings_rank_link_role", CSMK::Role { default_roles: None }).placeholder("Select a Discord role to link").min_values(1).max_values(1),
             ),
@@ -984,9 +983,14 @@ pub async fn handle_server_settings_button(
 
       let current_timeout = db.config.get_post_game_timeout(guild_id).await.unwrap_or(120);
 
-      let modal = CreateModal::new("server_settings_post_game_timeout_modal", "Edit Post-Game Timeout").components(vec![
-        create_value_input_sh_cap("Post-game timeout (seconds)", "post_game_timeout_input", "Enter timeout in seconds (30-300)", &current_timeout.to_string(), 1, 3),
-      ]);
+      let modal = CreateModal::new("server_settings_post_game_timeout_modal", "Edit Post-Game Timeout").components(vec![create_value_input_sh_cap(
+        "Post-game timeout (seconds)",
+        "post_game_timeout_input",
+        "Enter timeout in seconds (30-300)",
+        &current_timeout.to_string(),
+        1,
+        3,
+      )]);
 
       interaction.create_response(&ctx.http, CIR::Modal(modal)).await?;
     }
@@ -1070,13 +1074,17 @@ pub async fn handle_server_settings_button(
       }
 
       // Create dropdown with categories
-      let options: Vec<CSMO> = categories.iter().take(25) // Discord limit
+      let options: Vec<CSMO> = categories
+        .iter()
+        .take(25) // Discord limit
         .map(|(id, name)| CSMO::new(name.clone(), id.get().to_string()).description(format!("Category ID: {}", id.get())))
         .collect();
 
       let select_menu = CSM::new("server_settings_link_category_select", CSMK::String { options }).placeholder("Select a category to link");
 
-      let embed = CE::new().title(format!("{} - Link Existing Category", guild_name)).description(
+      let embed = CE::new()
+        .title(format!("{} - Link Existing Category", guild_name))
+        .description(
           "**Select a category to link as a category**\n\n\
                     The category must contain these channels:\n\
                     • `dashboard` - Text channel for the dashboard\n\
@@ -1085,7 +1093,8 @@ pub async fn handle_server_settings_button(
                     • `red` - Voice channel for red team\n\
                     • `blue` - Voice channel for blue team\n\n\
                     Channel names must match exactly (case-insensitive).",
-        ).color(0x5865F2);
+        )
+        .color(0x5865F2);
 
       let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("server_settings_link_cancel").label("Cancel").style(BS::Secondary)])];
 
@@ -1199,10 +1208,12 @@ pub async fn handle_server_settings_button(
 
               if available_channels.is_empty() {
                 let response = CIR::Message(
-                  CIRM::new().content(format!(
+                  CIRM::new()
+                    .content(format!(
                       "No suitable channels found in this category.\n\n\
                                             Please create the required channels first."
-                    )).ephemeral(true),
+                    ))
+                    .ephemeral(true),
                 );
                 interaction.create_response(&ctx.http, response).await?;
                 return Ok(());
@@ -1242,7 +1253,10 @@ pub async fn handle_server_settings_button(
               status.push_str(&format!("Red Team: {}\n", if let Some(id) = red_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
               status.push_str(&format!("Blue Team: {}\n", if let Some(id) = blue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
 
-              let embed = CE::new().title(format!("{} - Link Channels", guild_name)).description(format!("{}\n\n**Next:** Select the {} channel from the dropdown below.", status, next_channel_name)).color(0x5865F2);
+              let embed = CE::new()
+                .title(format!("{} - Link Channels", guild_name))
+                .description(format!("{}\n\n**Next:** Select the {} channel from the dropdown below.", status, next_channel_name))
+                .color(0x5865F2);
 
               let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("server_settings_link_cancel").label("Cancel").style(BS::Secondary)])];
 
@@ -1424,9 +1438,9 @@ pub async fn handle_server_settings_button(
       }
 
       let dashboard_channel = parse_cid(parts[0])?;
-      let queue_channel =     parse_cid(parts[1])?;
-      let queue_vc_channel =  parse_cid(parts[2])?;
-      let dashboard_msg_id =  parse_mid(parts[5])?;
+      let queue_channel = parse_cid(parts[1])?;
+      let queue_vc_channel = parse_cid(parts[2])?;
+      let dashboard_msg_id = parse_mid(parts[5])?;
 
       // Derive category from dashboard channel's parent
       let category_id = ctx.cache.channel(dashboard_channel).and_then(|ch| ch.parent_id).unwrap_or(CI::new(1));
@@ -1481,10 +1495,10 @@ pub async fn handle_server_settings_button(
       }
 
       let dashboard_channel = parse_cid(parts[0])?;
-      let queue_channel =     parse_cid(parts[1])?;
-      let queue_vc_channel =  parse_cid(parts[2])?;
-      let red_channel =       parse_cid(parts[3])?;
-      let blue_channel =      parse_cid(parts[4])?;
+      let queue_channel = parse_cid(parts[1])?;
+      let queue_vc_channel = parse_cid(parts[2])?;
+      let red_channel = parse_cid(parts[3])?;
+      let blue_channel = parse_cid(parts[4])?;
 
       // Derive category from dashboard channel's parent
       let category_id = ctx.cache.channel(dashboard_channel).and_then(|ch| ch.parent_id).unwrap_or(CI::new(1));
@@ -1503,12 +1517,7 @@ pub async fn handle_server_settings_button(
           category: category_id,
           queue_chat: queue_channel,
           queue_vc: queue_vc_channel,
-          teams: vec![TeamChannel { 
-                red_vc: red_channel, 
-                blu_vc: blue_channel, 
-                set_index: 1,
-                session_id: None,
-            }],
+          teams: vec![TeamChannel { red_vc: red_channel, blu_vc: blue_channel, set_index: 1, session_id: None }],
           dashboard: dashboard_channel,
         },
         vec![],
@@ -1584,10 +1593,10 @@ pub async fn handle_server_settings_button(
 
             let category_id = parse_cid(parts[0])?;
             let mut dashboard_channel = parse_opt_cid(parts[1])?;
-            let mut queue_channel =     parse_opt_cid(parts[2])?;
-            let mut queue_vc_channel =  parse_opt_cid(parts[3])?;
-            let mut red_channel =       parse_opt_cid(parts[4])?;
-            let mut blue_channel =      parse_opt_cid(parts[5])?;
+            let mut queue_channel = parse_opt_cid(parts[2])?;
+            let mut queue_vc_channel = parse_opt_cid(parts[3])?;
+            let mut red_channel = parse_opt_cid(parts[4])?;
+            let mut blue_channel = parse_opt_cid(parts[5])?;
             let type_char = parts[6];
             let channel_type = match type_char {
               "d" => "dashboard",
@@ -1601,10 +1610,10 @@ pub async fn handle_server_settings_button(
             // Update the appropriate channel based on type
             match channel_type {
               "dashboard" => dashboard_channel = Some(selected_channel),
-              "queue" =>     queue_channel =     Some(selected_channel),
-              "queue_vc" =>  queue_vc_channel =  Some(selected_channel),
-              "red" =>       red_channel =       Some(selected_channel),
-              "blue" =>      blue_channel =      Some(selected_channel),
+              "queue" => queue_channel = Some(selected_channel),
+              "queue_vc" => queue_vc_channel = Some(selected_channel),
+              "red" => red_channel = Some(selected_channel),
+              "blue" => blue_channel = Some(selected_channel),
               _ => {}
             }
 
@@ -1630,12 +1639,7 @@ pub async fn handle_server_settings_button(
                   category: category_id,
                   queue_chat: queue_channel.unwrap(),
                   queue_vc: queue_vc_channel.unwrap(),
-                  teams: vec![TeamChannel { 
-                    red_vc: red_channel.unwrap(), 
-                    blu_vc: blue_channel.unwrap(),
-                    set_index: 1,
-                    session_id: None,
-                }],
+                  teams: vec![TeamChannel { red_vc: red_channel.unwrap(), blu_vc: blue_channel.unwrap(), set_index: 1, session_id: None }],
                   dashboard: dashboard_channel.unwrap(),
                 },
                 vec![],
@@ -1766,7 +1770,10 @@ pub async fn handle_server_settings_button(
               status.push_str(&format!("Red Team: {}\n", if let Some(id) = red_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
               status.push_str(&format!("Blue Team: {}\n", if let Some(id) = blue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
 
-              let embed = CE::new().title(format!("{} - Link Channels", guild_name)).description(format!("{}\n\n**Next:** Select the {} channel from the dropdown below.", status, next_channel_name)).color(0x5865F2);
+              let embed = CE::new()
+                .title(format!("{} - Link Channels", guild_name))
+                .description(format!("{}\n\n**Next:** Select the {} channel from the dropdown below.", status, next_channel_name))
+                .color(0x5865F2);
 
               let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("server_settings_link_cancel").label("Cancel").style(BS::Secondary)])];
 
@@ -1930,12 +1937,7 @@ pub async fn handle_server_settings_button(
           category: category_id,
           queue_chat: queue_channel,
           queue_vc: queue_vc_channel,
-          teams: vec![TeamChannel { 
-                red_vc: red_channel, 
-                blu_vc: blue_channel, 
-                set_index: 1,
-                session_id: None,
-            }],
+          teams: vec![TeamChannel { red_vc: red_channel, blu_vc: blue_channel, set_index: 1, session_id: None }],
           dashboard: dashboard_channel,
         },
         vec![],
@@ -2006,21 +2008,27 @@ pub async fn handle_server_settings_button(
       }
 
       // Create dropdown with categories
-      let options: Vec<CSMO> = categories.iter().map(|category| {
+      let options: Vec<CSMO> = categories
+        .iter()
+        .map(|category| {
           let name = category.display_name();
           CSMO::new(name.clone(), category.category_id.to_string()).description(format!("Category ID: {}", category.category_id))
-        }).collect();
+        })
+        .collect();
 
       let select_menu = CSM::new("server_settings_remove_category_select", CSMK::String { options }).placeholder("Select a category to remove");
 
-      let embed = CE::new().title(format!("{} - Remove Category", guild_name)).description(
+      let embed = CE::new()
+        .title(format!("{} - Remove Category", guild_name))
+        .description(
           "**⚠️ Warning: This action cannot be undone!**\n\n\
                     Select a category to remove. This will:\n\
                     • Delete the category from the database\n\
                     • Remove it from the server manager\n\
                     • **NOT** delete the Discord channels\n\n\
                     You can manually delete the channels afterwards if needed.",
-        ).color(0xFF0000);
+        )
+        .color(0xFF0000);
 
       let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("server_settings_remove_cancel").label("Cancel").style(BS::Secondary)])];
 
@@ -2062,14 +2070,17 @@ pub async fn handle_server_settings_button(
 
             let display_name = category_name.unwrap_or_else(|| format!("Category {}", category_id));
 
-            let embed = CE::new().title(format!("{} - Delete Channels?", guild_name)).description(format!(
+            let embed = CE::new()
+              .title(format!("{} - Delete Channels?", guild_name))
+              .description(format!(
                 "**Removing category: {}**\n\n\
                                 The following Discord channels are associated with this category:\n\n\
                                 {}\n\n\
                                 **Do you want to delete these Discord channels?**\n\n\
                                 ⚠️ This action cannot be undone!",
                 display_name, channel_list
-              )).color(0xFF0000);
+              ))
+              .color(0xFF0000);
 
             let components = vec![CAR::Buttons(vec![
               CB::new(format!("server_settings_remove_confirm_delete_{}", category_id)).label("Yes, delete channels").style(BS::Danger),
@@ -2224,7 +2235,12 @@ pub async fn handle_server_settings_button(
                 create_short_input_opt("Name", "name", "e.g., NA PUGs, EU Competitive", &category.name.clone().unwrap_or_default()),
                 create_value_input_sh_cap("Quota (2-100)", "quota", "Number of players required", &category.quota().to_string(), 1, 3),
                 create_value_input_sh_cap("Ready check duration (seconds)", "timeout", "Seconds for missing players to join VC", &category.timeout.to_string(), 1, 3),
-                create_paragraph_input_with_value("Connect info", "connect", "e.g., connect 192.168.1.1:27015; password secret", &category.connect_info().unwrap_or_default().to_string()),
+                create_paragraph_input_with_value(
+                  "Connect info",
+                  "connect",
+                  "e.g., connect 192.168.1.1:27015; password secret",
+                  &category.connect_info().unwrap_or_default().to_string(),
+                ),
               ]);
 
               let response = CIR::Modal(modal);
@@ -2510,7 +2526,9 @@ pub async fn handle_server_settings_modal(
     let guild_name = guild_name(ctx, guild_id);
     let role_name = name.to_string();
 
-    let role_id = match guild_id.create_role(&ctx.http, ER::new().name(&role_name).colour(Color::from_rgb(128, 128, 128)).hoist(false).mentionable(true).permissions(Permissions::empty())).await
+    let role_id = match guild_id
+      .create_role(&ctx.http, ER::new().name(&role_name).colour(Color::from_rgb(128, 128, 128)).hoist(false).mentionable(true).permissions(Permissions::empty()))
+      .await
     {
       Ok(role) => {
         info!("[{}] Created new role {} for rank {}", guild_name, role.name, name);
@@ -2690,7 +2708,7 @@ pub async fn handle_server_settings_modal(
           category.timeout = timeout;
           category.set_quota(quota);
           category.set_connect_info(connect_info.clone());
-          
+
           // Update dashboard to reflect quota change
           category.queue_dash_update(ctx, guild_id).await;
         }
@@ -2906,7 +2924,10 @@ pub async fn handle_player_settings_rank_select(
       warn!("Failed to find rank for role ID {}: {}", selected_role_id, e);
 
       // Send error message to user
-      let error_embed = CE::new().title("Rank Not Found").description(format!("The rank for role <@&{}> was not found in the database. Please ensure ranks are properly configured in server settings.", selected_role_id)).color(RED);
+      let error_embed = CE::new()
+        .title("Rank Not Found")
+        .description(format!("The rank for role <@&{}> was not found in the database. Please ensure ranks are properly configured in server settings.", selected_role_id))
+        .color(RED);
       let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
       interaction.create_response(&ctx.http, response).await?;
       return Ok(());
@@ -2992,13 +3013,13 @@ pub async fn handle_player_settings_rank_select(
 
   let updated_guild_elo = db.elo.get(target_uid, guild_id, db).await?;
   let settings = PlayerSettings {
-    user_id:  target_uid,
+    user_id: target_uid,
     username,
     steam_id: player.steam_id,
-    elo:      updated_guild_elo.elo,
-    rank:     updated_guild_elo.rank.name.clone(),
-    games:    updated_guild_elo.games,
-    wins:     updated_guild_elo.wins,
+    elo: updated_guild_elo.elo,
+    rank: updated_guild_elo.rank.name.clone(),
+    games: updated_guild_elo.games,
+    wins: updated_guild_elo.wins,
   };
 
   let (embed, components) = nav_player_settings(&settings, db, guild_id).await;
@@ -3013,29 +3034,29 @@ pub async fn handle_player_settings_rank_select(
 
 /// Category settings structure for display
 pub struct CategorySettings {
-  pub category_id:  u8,
-  pub name:         Option<String>,
-  pub quota:        u8,
-  pub timeout:      u16,
+  pub category_id: u8,
+  pub name: Option<String>,
+  pub quota: u8,
+  pub timeout: u16,
   pub connect_info: Option<String>,
   pub format_names: Vec<String>,
-  pub vc_create:    String,
-  pub vc_destroy:   String,
-  pub vc_keep_min:  bool,
+  pub vc_create: String,
+  pub vc_destroy: String,
+  pub vc_keep_min: bool,
 }
 
 impl CategorySettings {
   pub fn from_category(category: &crate::models::Category) -> Self {
     Self {
-      category_id:  category.category_id,
-      name:         category.name.clone(),
-      quota:        category.quota(),
-      timeout:      category.timeout,
+      category_id: category.category_id,
+      name: category.name.clone(),
+      quota: category.quota(),
+      timeout: category.timeout,
       connect_info: category.connect_info().map(|s| s.to_string()),
       format_names: category.formats.iter().map(|sg| sg.name.clone()).collect(),
-      vc_create:    category.team_vc_settings.create_policy.to_string(),
-      vc_destroy:   category.team_vc_settings.destroy_policy.to_string(),
-      vc_keep_min:  category.team_vc_settings.keep_minimum,
+      vc_create: category.team_vc_settings.create_policy.to_string(),
+      vc_destroy: category.team_vc_settings.destroy_policy.to_string(),
+      vc_keep_min: category.team_vc_settings.keep_minimum,
     }
   }
 }
@@ -3044,15 +3065,15 @@ impl CategorySettings {
 pub fn build_category_settings_embed(settings: &CategorySettings) -> CE {
   use {AsSettingsMenu, CategorySettingsDisplay};
   let display = CategorySettingsDisplay {
-    category_id:  settings.category_id,
-    name:         settings.name.clone(),
-    quota:        settings.quota,
-    timeout:      settings.timeout,
+    category_id: settings.category_id,
+    name: settings.name.clone(),
+    quota: settings.quota,
+    timeout: settings.timeout,
     connect_info: settings.connect_info.clone(),
     format_names: settings.format_names.clone(),
-    vc_create:    settings.vc_create.clone(),
-    vc_destroy:   settings.vc_destroy.clone(),
-    vc_keep_min:  settings.vc_keep_min,
+    vc_create: settings.vc_create.clone(),
+    vc_destroy: settings.vc_destroy.clone(),
+    vc_keep_min: settings.vc_keep_min,
   };
   display.as_settings_menu().build_embed()
 }
@@ -3076,11 +3097,14 @@ pub fn build_category_settings_buttons(category_id: u8) -> Vec<CAR> {
 
 /// Build category selector for choosing which category to configure
 pub fn build_category_selector(categories: &[crate::models::Category]) -> CAR {
-  let options: Vec<CSMO> = categories.iter().map(|g| {
+  let options: Vec<CSMO> = categories
+    .iter()
+    .map(|g| {
       let label = g.display_name();
       let value = g.category_id.to_string();
       CSMO::new(label, value)
-    }).collect();
+    })
+    .collect();
 
   CAR::SelectMenu(CSM::new("category_settings_select", CSMK::String { options }).placeholder("Select a category...").min_values(1).max_values(1))
 }
@@ -3176,10 +3200,8 @@ pub async fn handle_category_settings_button(
     }
     drop(manager_lock);
 
-    let modal = CreateModal::new(format!("category_sg_modal_edit_{}_{}", category_id, sg_id), format!("Edit format: {}", sg_name)).components(vec![
-      create_value_input_sh("Format name", "name", "", &sg_name),
-      create_value_input_sh("Quota (players per match)", "quota", "", &sg_quota),
-    ]);
+    let modal = CreateModal::new(format!("category_sg_modal_edit_{}_{}", category_id, sg_id), format!("Edit format: {}", sg_name))
+      .components(vec![create_value_input_sh("Format name", "name", "", &sg_name), create_value_input_sh("Quota (players per match)", "quota", "", &sg_quota)]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
@@ -3192,7 +3214,10 @@ pub async fn handle_category_settings_button(
     if let Ok(category_id) = category_id_str.parse::<u8>() {
       let ranks = db.ranks.get_ranks(guild_id).await?;
       if ranks.is_empty() {
-        let embed = CE::new().title("No ranks configured").description("You need to configure ranks before setting up an ELO gate.\nGo to server settings and set up ranks first.").color(RED);
+        let embed = CE::new()
+          .title("No ranks configured")
+          .description("You need to configure ranks before setting up an ELO gate.\nGo to server settings and set up ranks first.")
+          .color(RED);
         let response = CIR::UpdateMessage(
           CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![CB::new(format!("category_settings_back_{category_id}")).label("Back").style(BS::Secondary)])]),
         );
@@ -3200,7 +3225,10 @@ pub async fn handle_category_settings_button(
         return Ok(());
       }
 
-      let embed = CE::new().title("ELO Gate - Select minimum rank").description("Select the **minimum** rank that can view this category's category.\nAll ranks from min to max (inclusive) will have access.").color(0x5865F2);
+      let embed = CE::new()
+        .title("ELO Gate - Select minimum rank")
+        .description("Select the **minimum** rank that can view this category's category.\nAll ranks from min to max (inclusive) will have access.")
+        .color(0x5865F2);
 
       let mut options: Vec<(String, String)> = Vec::new();
       options.push(("No minimum".to_string(), format!("{}_0", category_id)));
@@ -3240,7 +3268,10 @@ pub async fn handle_category_settings_button(
       let ranks = db.ranks.get_ranks(guild_id).await?;
       let min_rank_name = if min_idx == 0 { "No minimum" } else { ranks.get(min_idx).map(|r| r.name.as_str()).unwrap_or("?") };
 
-      let embed = CE::new().title("ELO Gate - Select maximum rank").description(format!("Minimum rank: **{}**\n\nNow select the **maximum** rank that can view this category's category.", min_rank_name)).color(0x5865F2);
+      let embed = CE::new()
+        .title("ELO Gate - Select maximum rank")
+        .description(format!("Minimum rank: **{}**\n\nNow select the **maximum** rank that can view this category's category.", min_rank_name))
+        .color(0x5865F2);
 
       let mut options: Vec<(String, String)> =
         ranks.iter().enumerate().filter(|(i, _)| *i >= min_idx).map(|(i, r)| (format!("{} (ELO {})", r.name, r.elo), format!("{}_{}_{}", category_id, min_idx, i))).collect();
@@ -3287,10 +3318,15 @@ pub async fn handle_category_settings_button(
         Ok(count) => {
           let min_name = if min_idx == 0 { "No minimum" } else { ranks.get(min_idx).map(|r| r.name.as_str()).unwrap_or("?") };
           let max_name = if max_idx >= ranks.len().saturating_sub(1) { "No maximum" } else { ranks.get(max_idx).map(|r| r.name.as_str()).unwrap_or("?") };
-          let embed = CE::new().title("ELO Gate Applied").description(format!("Category visibility restricted to ranks **{}** through **{}**.\n{} rank role(s) granted view access.", min_name, max_name, count)).color(crate::GREEN);
+          let embed = CE::new()
+            .title("ELO Gate Applied")
+            .description(format!("Category visibility restricted to ranks **{}** through **{}**.\n{} rank role(s) granted view access.", min_name, max_name, count))
+            .color(crate::GREEN);
 
           let response = CIR::UpdateMessage(
-            CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![CB::new(format!("category_settings_back_{category_id}")).label("Back to category settings").style(BS::Secondary)])]),
+            CIRM::new()
+              .embed(embed)
+              .components(vec![CAR::Buttons(vec![CB::new(format!("category_settings_back_{category_id}")).label("Back to category settings").style(BS::Secondary)])]),
           );
           interaction.create_response(&ctx.http, response).await?;
         }
@@ -3326,7 +3362,9 @@ pub async fn handle_category_settings_button(
         Ok(_) => {
           let embed = CE::new().title("ELO Gate Cleared").description("Category is now visible to everyone.").color(crate::GREEN);
           let response = CIR::UpdateMessage(
-            CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![CB::new(format!("category_settings_back_{category_id}")).label("Back to category settings").style(BS::Secondary)])]),
+            CIRM::new()
+              .embed(embed)
+              .components(vec![CAR::Buttons(vec![CB::new(format!("category_settings_back_{category_id}")).label("Back to category settings").style(BS::Secondary)])]),
           );
           interaction.create_response(&ctx.http, response).await?;
         }
@@ -3357,22 +3395,46 @@ pub async fn handle_category_settings_button(
 
   // Match button action (button_id format: category_settings_edit_<action>_<category_id>)
   if button_id.starts_with("category_settings_edit_name_") {
-    let modal = CreateModal::new(format!("category_settings_modal_name_{category_id}"), "Set category name").components(vec![create_short_input_opt("Category name", "name", "e.g., NA PUGs, EU Competitive", &settings.name.unwrap_or_default())]);
+    let modal = CreateModal::new(format!("category_settings_modal_name_{category_id}"), "Set category name").components(vec![create_short_input_opt(
+      "Category name",
+      "name",
+      "e.g., NA PUGs, EU Competitive",
+      &settings.name.unwrap_or_default(),
+    )]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("category_settings_edit_quota_") {
-    let modal = CreateModal::new(format!("category_settings_modal_quota_{category_id}"), "Set queue quota").components(vec![create_value_input_sh_cap("Quota (2-100)", "quota", "Number of players required", &settings.quota.to_string(), 1, 3)]);
+    let modal = CreateModal::new(format!("category_settings_modal_quota_{category_id}"), "Set queue quota").components(vec![create_value_input_sh_cap(
+      "Quota (2-100)",
+      "quota",
+      "Number of players required",
+      &settings.quota.to_string(),
+      1,
+      3,
+    )]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("category_settings_edit_timeout_") {
-    let modal = CreateModal::new(format!("category_settings_modal_timeout_{category_id}"), "Set ready check duration").components(vec![create_value_input_sh_cap("Timeout (seconds)", "timeout", "Seconds for missing players to join VC when queue goes hot", &settings.timeout.to_string(), 1, 3)]);
+    let modal = CreateModal::new(format!("category_settings_modal_timeout_{category_id}"), "Set ready check duration").components(vec![create_value_input_sh_cap(
+      "Timeout (seconds)",
+      "timeout",
+      "Seconds for missing players to join VC when queue goes hot",
+      &settings.timeout.to_string(),
+      1,
+      3,
+    )]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("category_settings_edit_connect_") {
-    let modal = CreateModal::new(format!("category_settings_modal_connect_{category_id}"), "Set server connect info").components(vec![create_paragraph_input_with_value("Connect command", "connect_info", "e.g., connect 192.168.1.1:27015; password secret", &settings.connect_info.unwrap_or_default())]);
+    let modal = CreateModal::new(format!("category_settings_modal_connect_{category_id}"), "Set server connect info").components(vec![create_paragraph_input_with_value(
+      "Connect command",
+      "connect_info",
+      "e.g., connect 192.168.1.1:27015; password secret",
+      &settings.connect_info.unwrap_or_default(),
+    )]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
@@ -3531,12 +3593,15 @@ pub async fn handle_category_settings_button(
         }
         drop(manager_lock);
 
-        let embed = CE::new().title("Dashboard Message Linked").description(format!(
+        let embed = CE::new()
+          .title("Dashboard Message Linked")
+          .description(format!(
             "Successfully linked existing dashboard message to this category.\n\n\
                         Message ID: `{}`\n\n\
                         The bot will now update this message instead of creating a new one.",
             dashboard_msg_id
-          )).color(0x57F287);
+          ))
+          .color(0x57F287);
 
         let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![]));
         interaction.create_response(&ctx.http, response).await?;
@@ -3552,7 +3617,13 @@ pub async fn handle_category_settings_button(
   } else if button_id.starts_with("category_link_msg_manual_") {
     // Manual message ID input - show modal
 
-    let modal = CreateModal::new(format!("category_link_msg_modal_{}", category_id), "Enter dashboard message ID").components(vec![create_input_sh_cap("Message ID or link", "message_id", "e.g., 1467572971093885086 or https://discord.com/channels/.../...", 17, 200)]);
+    let modal = CreateModal::new(format!("category_link_msg_modal_{}", category_id), "Enter dashboard message ID").components(vec![create_input_sh_cap(
+      "Message ID or link",
+      "message_id",
+      "e.g., 1467572971093885086 or https://discord.com/channels/.../...",
+      17,
+      200,
+    )]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
@@ -3572,10 +3643,8 @@ pub async fn handle_category_settings_button(
   } else if button_id.starts_with("category_sg_add_") {
     // Show modal to add a new format
 
-    let modal = CreateModal::new(format!("category_sg_modal_add_{}", category_id), "Add format").components(vec![
-      create_input_sh("Format name", "name", "e.g., Competitive, Casual"),
-      create_input_sh("Quota (players per match)", "quota", "e.g., 12"),
-    ]);
+    let modal = CreateModal::new(format!("category_sg_modal_add_{}", category_id), "Add format")
+      .components(vec![create_input_sh("Format name", "name", "e.g., Competitive, Casual"), create_input_sh("Quota (players per match)", "quota", "e.g., 12")]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
@@ -3742,7 +3811,13 @@ pub async fn handle_category_link_msg_modal(
   let category_id: u8 = modal_id.strip_prefix("category_link_msg_modal_").and_then(|s| s.parse().ok()).ok_or_else(|| anyhow::anyhow!("Invalid modal ID format: {}", modal_id))?;
 
   // Get the message ID input
-  let message_input = interaction.data.components.first().and_then(|row| row.components.first()).and_then(|comp| if let ARC::InputText(input) = comp { input.value.as_ref() } else { None }).ok_or_else(|| anyhow::anyhow!("No message ID provided"))?;
+  let message_input = interaction
+    .data
+    .components
+    .first()
+    .and_then(|row| row.components.first())
+    .and_then(|comp| if let ARC::InputText(input) = comp { input.value.as_ref() } else { None })
+    .ok_or_else(|| anyhow::anyhow!("No message ID provided"))?;
 
   // Parse message ID from input (could be just ID or a Discord link)
   let dashboard_msg_id = if message_input.contains("discord.com/channels/") {
@@ -3776,14 +3851,17 @@ pub async fn handle_category_link_msg_modal(
           }
           drop(manager_lock);
 
-          let embed = CE::new().title("Dashboard Message Linked").description(format!(
+          let embed = CE::new()
+            .title("Dashboard Message Linked")
+            .description(format!(
               "Successfully linked dashboard message to this category.\n\n\
                             Message ID: `{}`\n\
                             Channel: <#{}>\n\n\
                             The bot will now update this message instead of creating a new one.",
               dashboard_msg_id,
               dashboard_channel.get()
-            )).color(0x57F287);
+            ))
+            .color(0x57F287);
 
           let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
           interaction.create_response(&ctx.http, response).await?;
@@ -3799,7 +3877,9 @@ pub async fn handle_category_link_msg_modal(
     }
     Err(e) => {
       warn!("Message {} not found in channel {}: {}", dashboard_msg_id, dashboard_channel, e);
-      let embed = CE::new().title("Message Not Found").description(format!(
+      let embed = CE::new()
+        .title("Message Not Found")
+        .description(format!(
           "Could not find message `{}` in <#{}>.\n\n\
                     Please verify:\n\
                     • The message ID is correct\n\
@@ -3807,7 +3887,8 @@ pub async fn handle_category_link_msg_modal(
                     • The bot has permission to view the channel",
           dashboard_msg_id,
           dashboard_channel.get()
-        )).color(0xED4245);
+        ))
+        .color(0xED4245);
 
       let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
       interaction.create_response(&ctx.http, response).await?;
@@ -3881,7 +3962,8 @@ pub async fn handle_category_settings_modal(
     category.set_quota(quota);
 
     // Update in database
-    db.set_category(guild_id, category.channels.category.get(), category.channels.queue_vc.get(), category.channels.dashboard.get(), category.channels.queue_chat.get(), quota).await?;
+    db.set_category(guild_id, category.channels.category.get(), category.channels.queue_vc.get(), category.channels.dashboard.get(), category.channels.queue_chat.get(), quota)
+      .await?;
 
     // Update dashboard
     category.queue_dash_update(ctx, guild_id).await;
@@ -4086,13 +4168,13 @@ pub struct PlayerSettings {
 impl PlayerSettings {
   pub fn to_display(&self) -> PlayerSettingsDisplay {
     PlayerSettingsDisplay {
-      user_id:  self.user_id,
+      user_id: self.user_id,
       username: self.username.clone(),
       steam_id: self.steam_id,
-      elo:      self.elo,
-      rank:     self.rank.clone(),
-      games:    self.games,
-      wins:     self.wins,
+      elo: self.elo,
+      rank: self.rank.clone(),
+      games: self.games,
+      wins: self.wins,
     }
   }
 }
@@ -4120,17 +4202,34 @@ pub async fn handle_player_settings_button(ctx: &Context, interaction: &Componen
   let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
 
   if button_id.starts_with("player_settings_edit_steam_") {
-    let modal = CreateModal::new(format!("player_settings_modal_steam_{target_user_id}"), "Edit Steam ID").components(vec![create_short_input_opt("Steam ID (64-bit)", "steam_id", "e.g., 76561198012345678", &player.steam_id.map(|id| id.to_string()).unwrap_or_default())]);
+    let modal = CreateModal::new(format!("player_settings_modal_steam_{target_user_id}"), "Edit Steam ID").components(vec![create_short_input_opt(
+      "Steam ID (64-bit)",
+      "steam_id",
+      "e.g., 76561198012345678",
+      &player.steam_id.map(|id| id.to_string()).unwrap_or_default(),
+    )]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("player_settings_edit_elo_") {
-    let modal = CreateModal::new(format!("player_settings_modal_elo_{target_user_id}"), "Edit ELO").components(vec![create_value_input_sh_cap("ELO", "elo", "e.g., 50", &guild_elo.elo.to_string(), 1, 3)]);
+    let modal = CreateModal::new(format!("player_settings_modal_elo_{target_user_id}"), "Edit ELO").components(vec![create_value_input_sh_cap(
+      "ELO",
+      "elo",
+      "e.g., 50",
+      &guild_elo.elo.to_string(),
+      1,
+      3,
+    )]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("player_settings_edit_rank_") {
-    let modal = CreateModal::new(format!("player_settings_modal_rank_{target_user_id}"), "Edit rank").components(vec![create_value_input_sh("Rank", "rank", "e.g., Gold, Silver, Bronze", &guild_elo.rank.name)]);
+    let modal = CreateModal::new(format!("player_settings_modal_rank_{target_user_id}"), "Edit rank").components(vec![create_value_input_sh(
+      "Rank",
+      "rank",
+      "e.g., Gold, Silver, Bronze",
+      &guild_elo.rank.name,
+    )]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
@@ -4222,14 +4321,17 @@ pub async fn handle_player_settings_modal(
         // Rank would change - show confirmation prompt
         let username = ctx.http.get_user(target_uid).await.map(|u| u.name.clone()).unwrap_or_else(|_| target_user_id.to_string());
 
-        let confirm_embed = CE::new().title("Rank Change Required").description(format!(
+        let confirm_embed = CE::new()
+          .title("Rank Change Required")
+          .description(format!(
             "Setting **{}'s** ELO to **{}** will change their rank:\n\n\
                         **Current:** {} (ELO {})\n\
                         **New:** {} (ELO {})\n\n\
                         This will update their Discord role from <@&{}> to <@&{}>.\n\n\
                         Do you want to continue?",
             username, elo, old_rank.name, guild_elo.elo, new_rank.name, elo, old_rank.role_id, new_rank.role_id
-          )).color(0xFFA500);
+          ))
+          .color(0xFFA500);
 
         let confirm_buttons = vec![CAR::Buttons(vec![
           CB::new(format!("confirm_elo_change_{}_{}", target_user_id, elo)).label("Confirm").style(BS::Success),

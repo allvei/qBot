@@ -6,8 +6,8 @@ pub mod log;
 pub mod models;
 
 pub use db::*;
-pub use handlers::{admin, player, commands};
+pub use handlers::{admin, commands, player};
 pub use log::*;
-pub use models::*;
-pub use models::constants::guild_name;
 pub use log::{log_prefix_category, log_prefix_format};
+pub use models::constants::guild_name;
+pub use models::*;
