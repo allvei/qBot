@@ -324,7 +324,7 @@ impl EventHandler for Handler {
 
                         match cd.name.as_str() {
                             "buffer" => {
-                                if let Some(user_id) = extract_user_option(cdo, "buffer").await {
+                                if let Some(user_id) = extract_user_option(cdo, "user").await {
                                     pf_pug_bot::log::log_command_usage(&ctx, &itx, &self.db, "buffer", Some(user_id), None).await;
                                     admin::cmd_buffer(&cmd_ctx, server, user_id).await
                                 } else {
@@ -333,7 +333,7 @@ impl EventHandler for Handler {
                                 }
                             }
                             "fatkid" => {
-                                if let Some(user_id) = extract_user_option(cdo, "fatkid").await {
+                                if let Some(user_id) = extract_user_option(cdo, "user").await {
                                     pf_pug_bot::log::log_command_usage(&ctx, &itx, &self.db, "fatkid", Some(user_id), None).await;
                                     admin::cmd_fatkid(&cmd_ctx, server, user_id).await
                                 } else {
