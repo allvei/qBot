@@ -1121,15 +1121,15 @@ impl Category {
     let _dashboard_channel = self.channels.dashboard;
     let gld_nm = guild_name(cc.ctx, gld_id);
     let ctg_nm = self.name.as_deref().unwrap_or("Unknown").to_string();
-    let frm_id = Self::parse_sg_id(&parts);
+    let fmt_id = Self::parse_sg_id(&parts);
     let usr_tg = get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
 
     match action {
-      "join_queue" => self.dash_join_queue(cc, frm_id).await,
-      "leave_queue" => self.dash_leave_queue(cc, frm_id).await,
+      "join_queue" => self.dash_join_queue(cc, fmt_id).await,
+      "leave_queue" => self.dash_leave_queue(cc, fmt_id).await,
       "change_expiry" => {
         info!("{} {} requested expiry time change", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
-        self.dash_change_expiry(cc, frm_id).await
+        self.dash_change_expiry(cc, fmt_id).await
       }
       "set_expiry" => {
         info!("{} {} changed expiry time", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
@@ -1141,22 +1141,22 @@ impl Category {
       }
       "shuffle_teams" => {
         info!("{} {} used Shuffle", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
-        self.dash_shuffle(cc, frm_id).await
+        self.dash_shuffle(cc, fmt_id).await
       }
       "start_match" => {
         // Combined Start/End button: dispatch based on current format state
-        let is_live = self.format(frm_id).map(|sg| sg.sessions.iter().any(|s| s.is_active())).unwrap_or(false);
+        let is_live = self.format(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.is_active())).unwrap_or(false);
         if is_live {
           info!("{} {} used End", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
-          self.dash_end(cc, frm_id).await
+          self.dash_end(cc, fmt_id).await
         } else {
           info!("{} {} used Start", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
-          self.dash_start(cc, frm_id).await
+          self.dash_start(cc, fmt_id).await
         }
       }
       "end_match" => {
         info!("{} {} used End", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
-        self.dash_end(cc, frm_id).await
+        self.dash_end(cc, fmt_id).await
       }
       _ => {
         cc.reply(&format!("Unknown button action: {action}")).await?;
