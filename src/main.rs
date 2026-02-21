@@ -797,6 +797,12 @@ impl EventHandler for Handler {
               if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                 let was_missing = !player.in_queue_vc;
                 player.in_queue_vc = true;
+                
+                // Clear any VC leave grace period since they rejoined
+                if player.vc_leave_grace_until.is_some() {
+                  info!("Player {} rejoined queue VC, clearing grace period", tag);
+                  player.vc_leave_grace_until = None;
+                }
 
                 // Update dashboard if player was missing in a hot session
                 // This removes them from the "Missing players" list
@@ -924,8 +930,24 @@ impl Handler {
             false
           }
         } else {
-          // Regular idle session: don't auto-remove
-          false
+          // Regular idle session: check position for grace period
+          if let Some(position) = sesh.pool.iter().position(|p| p.player.user_id == user_id) {
+            if position < quota {
+              // Player has position < quota, give them 10 second grace period
+              if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+                player.vc_leave_grace_until = Some(std::time::SystemTime::now() + std::time::Duration::from_secs(10));
+                info!("Player {} left queue VC with position {}/{}, giving 10 second grace period", 
+                      user_id, position + 1, quota);
+              }
+              false // Don't remove immediately
+            } else {
+              // Position >= quota, remove immediately
+              true
+            }
+          } else {
+            // Player not found in pool, remove
+            true
+          }
         }
       };
 

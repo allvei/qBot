@@ -78,11 +78,11 @@ impl TeamDisplay {
 }
 
 /// Helper function to calculate average ELO for a team
-fn get_avg_elo(team: &[crate::models::SessionPlayer]) -> u16 {
+fn get_avg_elo(team: &[crate::models::SessionPlayer]) -> f64 {
   if team.is_empty() {
-    0
+    0.0
   } else {
-    (team.iter().map(|p| p.player.elo as u32).sum::<u32>() / team.len() as u32) as u16
+    (team.iter().map(|p| p.player.elo as f64).sum::<f64>() / team.len() as f64 * 1000.0).floor() / 1000.0
   }
 }
 

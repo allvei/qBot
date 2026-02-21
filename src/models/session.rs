@@ -167,11 +167,12 @@ pub struct SessionPlayer {
   pub in_queue_cmd: bool,
   pub joined_at: SystemTime,
   pub timeout: u8,
+  pub vc_leave_grace_until: Option<SystemTime>,
 }
 
 impl SessionPlayer {
   pub fn add(player: Player) -> Self {
-    Self { player, team: None, in_queue_vc: false, in_queue_cmd: false, joined_at: SystemTime::now(), timeout: DEFAULT_TIMEOUT }
+    Self { player, team: None, in_queue_vc: false, in_queue_cmd: false, joined_at: SystemTime::now(), timeout: DEFAULT_TIMEOUT, vc_leave_grace_until: None }
   }
 
   pub fn team(&mut self, team: Team) {

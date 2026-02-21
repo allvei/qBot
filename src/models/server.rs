@@ -746,6 +746,22 @@ impl Category {
 
         let mut players_to_remove = Vec::new();
 
+        // First, check for expired VC leave grace periods
+        for player in &session.pool {
+          if let Some(grace_until) = player.vc_leave_grace_until {
+            if let Ok(elapsed) = grace_until.duration_since(SystemTime::now()) {
+              // Grace period hasn't expired yet
+              continue;
+            } else {
+              // Grace period expired, remove the player
+              info!("VC leave grace period expired for player {}, removing from queue", player.player.tag);
+              players_to_remove.push(player.player.user_id);
+            }
+          }
+        }
+
+        // Then check regular timeouts
+
         for player in &session.pool {
           let timeout = player.timeout;
 
