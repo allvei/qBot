@@ -920,8 +920,24 @@ impl Handler {
         let is_post_game = sesh.ready_at.is_none() && !sesh.is_hot();
 
         if is_post_game {
-          // Post-game behavior: check server-wide post_game_auto_leave setting
-          self.db.config.get_bool(guild_id, "post_game_auto_leave", true).await.unwrap_or(true)
+          // Post-game behavior: give 10-second grace period for position < quota
+          if let Some(position) = sesh.pool.iter().position(|p| p.player.user_id == user_id) {
+            if position < quota {
+              // Player has position < quota, give them 10 second grace period
+              if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+                player.vc_leave_grace_until = Some(std::time::SystemTime::now() + std::time::Duration::from_secs(10));
+                info!("Player {} left VC during post-game with position {}/{}, giving 10 second grace period", 
+                      user_id, position + 1, quota);
+              }
+              false // Don't remove immediately
+            } else {
+              // Position >= quota, remove immediately using post_game_auto_leave setting
+              self.db.config.get_bool(guild_id, "post_game_auto_leave", true).await.unwrap_or(true)
+            }
+          } else {
+            // Player not found in pool, use post_game_auto_leave setting
+            self.db.config.get_bool(guild_id, "post_game_auto_leave", true).await.unwrap_or(true)
+          }
         } else if sesh.is_hot() {
           // Hot game behavior: check user's vc_auto_leave preference
           if let Ok(settings) = self.db.users.get_prefs(user_id).await {
@@ -930,24 +946,8 @@ impl Handler {
             false
           }
         } else {
-          // Regular idle session: check position for grace period
-          if let Some(position) = sesh.pool.iter().position(|p| p.player.user_id == user_id) {
-            if position < quota {
-              // Player has position < quota, give them 10 second grace period
-              if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
-                player.vc_leave_grace_until = Some(std::time::SystemTime::now() + std::time::Duration::from_secs(10));
-                info!("Player {} left queue VC with position {}/{}, giving 10 second grace period", 
-                      user_id, position + 1, quota);
-              }
-              false // Don't remove immediately
-            } else {
-              // Position >= quota, remove immediately
-              true
-            }
-          } else {
-            // Player not found in pool, remove
-            true
-          }
+          // Regular idle session: don't auto-remove
+          false
         }
       };
 
