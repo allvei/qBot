@@ -92,16 +92,26 @@ pub fn log_queue_toggle_sync(
     QueueToggleType::VL => ("left", Some("VC")),
   };
 
-  let pos_part = position.map(|p| format!("#{}", p)).unwrap_or_default();
+  let pos_part = if let Some(p) = position {
+    format!("#{}", p)
+  } else {
+    warn!("Position not available for queue toggle log - this may indicate an issue with queue state");
+    String::new()
+  };
 
   let prefix = log_prefix_format(guild_name, category_name, sg_name.unwrap_or(""));
 
   match (pool_size, source) {
     (Some((current, quota)), Some(src)) => info!("{} {} {} {} ({}) [{}/{}]", prefix, pos_part, tag, action, src, current, quota),
-    (Some((current, quota)), None) => info!("{} {} {} {} [{}/{}]", prefix, pos_part, tag, action, current, quota),
-    (None, Some(src)) => info!("{} {} {} {} ({})", prefix, pos_part, tag, action, src),
-    (None, None) => info!("{} {} {} {}", prefix, pos_part, tag, action),
+    (Some((current, quota)), None) =>      info!("{} {} {} {} [{}/{}]",      prefix, pos_part, tag, action, current, quota),
+    (None, Some(src)) =>                   info!("{} {} {} {} ({})",         prefix, pos_part, tag, action, src),
+    (None, None) =>                        info!("{} {} {} {}",              prefix, pos_part, tag, action),
   }
+}
+
+/// Generate log prefix in format [GUILD_NAME]
+pub fn log_prefix_guild(guild_name: &str) -> String {
+  format!("[{}]", guild_name)
 }
 
 /// Generate log prefix in format [GUILD_NAME/CATEGORY_NAME/FORMAT_NAME]

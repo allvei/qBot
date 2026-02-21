@@ -1,4 +1,4 @@
-use crate::{guild_name, log_prefix_category};
+use crate::{get_user_tag, guild_name, log_prefix_category, log_prefix_guild};
 use anyhow::{anyhow, Error, Result};
 use serenity::all::{
   ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR,
@@ -1117,47 +1117,46 @@ impl Category {
     let action = parts[0];
 
     // Get server and category names for logging - store channel ID before any mut borrows
-    let guild_id = cc.component.guild_id.unwrap();
+    let gld_id = cc.component.guild_id.unwrap();
     let _dashboard_channel = self.channels.dashboard;
-    let server_name = guild_name(cc.ctx, guild_id);
-    let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
-    let username = cc.ctx.cache.user(cc.component.user.id).map(|u| u.name.clone()).unwrap_or_else(|| cc.component.user.id.to_string());
-
-    let sg_id = Self::parse_sg_id(&parts);
+    let gld_nm = guild_name(cc.ctx, gld_id);
+    let ctg_nm = self.name.as_deref().unwrap_or("Unknown").to_string();
+    let frm_id = Self::parse_sg_id(&parts);
+    let usr_tg = get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
 
     match action {
-      "join_queue" => self.dash_join_queue(cc, sg_id).await,
-      "leave_queue" => self.dash_leave_queue(cc, sg_id).await,
+      "join_queue" => self.dash_join_queue(cc, frm_id).await,
+      "leave_queue" => self.dash_leave_queue(cc, frm_id).await,
       "change_expiry" => {
-        info!("{} {} requested expiry time change", log_prefix_category(&server_name, &category_name), username);
-        self.dash_change_expiry(cc, sg_id).await
+        info!("{} {} requested expiry time change", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
+        self.dash_change_expiry(cc, frm_id).await
       }
       "set_expiry" => {
-        info!("{} {} changed expiry time", log_prefix_category(&server_name, &category_name), username);
+        info!("{} {} changed expiry time", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
         self.dash_set_expiry(cc, parts.get(1).copied()).await
       }
       "show_settings" => {
-        info!("{} {} requested settings", log_prefix_category(&server_name, &category_name), username);
+        info!("{} {} requested settings", log_prefix_guild(&gld_nm), usr_tg);
         self.dash_show_settings(cc).await
       }
       "shuffle_teams" => {
-        info!("{} {} used Shuffle", log_prefix_category(&server_name, &category_name), username);
-        self.dash_shuffle(cc, sg_id).await
+        info!("{} {} used Shuffle", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
+        self.dash_shuffle(cc, frm_id).await
       }
       "start_match" => {
         // Combined Start/End button: dispatch based on current format state
-        let is_live = self.format(sg_id).map(|sg| sg.sessions.iter().any(|s| s.is_active())).unwrap_or(false);
+        let is_live = self.format(frm_id).map(|sg| sg.sessions.iter().any(|s| s.is_active())).unwrap_or(false);
         if is_live {
-          info!("{} {} used End", log_prefix_category(&server_name, &category_name), username);
-          self.dash_end(cc, sg_id).await
+          info!("{} {} used End", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
+          self.dash_end(cc, frm_id).await
         } else {
-          info!("{} {} used Start", log_prefix_category(&server_name, &category_name), username);
-          self.dash_start(cc, sg_id).await
+          info!("{} {} used Start", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
+          self.dash_start(cc, frm_id).await
         }
       }
       "end_match" => {
-        info!("{} {} used End", log_prefix_category(&server_name, &category_name), username);
-        self.dash_end(cc, sg_id).await
+        info!("{} {} used End", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
+        self.dash_end(cc, frm_id).await
       }
       _ => {
         cc.reply(&format!("Unknown button action: {action}")).await?;
