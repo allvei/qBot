@@ -141,9 +141,7 @@ impl DmMessageTracker {
           // Delete all tracked messages
           for message_id in &session.message_ids {
             match http.delete_message(session.channel_id, *message_id, None).await {
-              Ok(_) => {
-                info!("[DM/{}] Deleted message", session.username);
-              }
+              Ok(_) => (),
               Err(e) => {
                 warn!("[DM/{}] Failed to delete message ID {}: {e}", session.username, message_id);
               }

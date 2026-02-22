@@ -20,7 +20,7 @@ pub enum AlertType {
 #[derive(Debug, Clone)]
 struct AlertIntent {
   alert_type: AlertType,
-  sg_name: Option<String>,
+  fmt_name: Option<String>,
   rank_name: String,
 }
 
@@ -28,7 +28,7 @@ struct AlertIntent {
 /// Alerts across formats for the same user in the same category get combined.
 type BufferKey = (u8, u64);
 
-type RateLimitKey = (u8, u8, u64); // (category_id, sg_id, user_id)
+type RateLimitKey = (u8, u8, u64); // (category_id, fmt_id, user_id)
 
 struct PendingAlert {
   intents: Vec<AlertIntent>,
@@ -52,9 +52,9 @@ pub fn schedule_alert(
   user_id: UserId,
   db: std::sync::Arc<crate::Database>,
   category_id: u8,
-  sg_id: u8,
+  fmt_id: u8,
   alert_type: AlertType,
-  sg_name: Option<String>,
+  fmt_name: Option<String>,
   rank_name: String,
 ) {
   let buffer_key = (category_id, user_id.get());
@@ -66,11 +66,11 @@ pub fn schedule_alert(
 
       match entry {
         std::collections::hash_map::Entry::Occupied(mut occ) => {
-          occ.get_mut().intents.push(AlertIntent { alert_type, sg_name, rank_name });
+          occ.get_mut().intents.push(AlertIntent { alert_type, fmt_name, rank_name });
           false // not the first, timer already running
         }
         std::collections::hash_map::Entry::Vacant(vac) => {
-          vac.insert(PendingAlert { intents: vec![AlertIntent { alert_type, sg_name, rank_name }], ctx, channel, guild_id, user_id, db });
+          vac.insert(PendingAlert { intents: vec![AlertIntent { alert_type, fmt_name, rank_name }], ctx, channel, guild_id, user_id, db });
           true // first intent, we need to start the timer
         }
       }
@@ -92,10 +92,10 @@ pub fn schedule_alert(
     let Some(alert) = alert else { return };
 
     // Resolve intents: cancel opposing join/leave pairs per format
-    let mut net: HashMap<Option<String>, i8> = HashMap::new(); // sg_name -> net (+1 join, -1 leave)
+    let mut net: HashMap<Option<String>, i8> = HashMap::new(); // fmt_name -> net (+1 join, -1 leave)
     let mut rank_name = String::new();
     for intent in &alert.intents {
-      let counter = net.entry(intent.sg_name.clone()).or_insert(0);
+      let counter = net.entry(intent.fmt_name.clone()).or_insert(0);
       match intent.alert_type {
         AlertType::Join => *counter += 1,
         AlertType::Leave => *counter -= 1,
@@ -108,11 +108,11 @@ pub fn schedule_alert(
     // Collect remaining joins and leaves
     let mut join_names: Vec<Option<String>> = Vec::new();
     let mut leave_names: Vec<Option<String>> = Vec::new();
-    for (sg_name, count) in &net {
+    for (fmt_name, count) in &net {
       if *count > 0 {
-        join_names.push(sg_name.clone());
+        join_names.push(fmt_name.clone());
       } else if *count < 0 {
-        leave_names.push(sg_name.clone());
+        leave_names.push(fmt_name.clone());
       }
       // count == 0 means join+leave cancelled out
     }
@@ -124,8 +124,8 @@ pub fn schedule_alert(
     }
 
     // Rate limit check (use first sg or 0)
-    let rate_sg = sg_id;
-    let rate_key = (category_id, rate_sg, alert.user_id.get());
+    let rate_fmt = fmt_id;
+    let rate_key = (category_id, rate_fmt, alert.user_id.get());
     {
       let mut limiter = RATE_LIMITER.lock().await;
       let timestamps = limiter.entry(rate_key).or_insert_with(VecDeque::new);
@@ -149,13 +149,13 @@ pub fn schedule_alert(
     use crate::handlers::settings::{build_join_alert_embed, build_leave_alert_embed};
 
     if !join_names.is_empty() {
-      let combined = combine_sg_names(&join_names);
+      let combined = combine_fmt_names(&join_names);
       let embed = build_join_alert_embed(&alert.ctx, alert.user_id, Some(alert.guild_id), &settings, &rank_name, combined.as_deref()).await;
       let _ = alert.channel.send_message(&alert.ctx.http, CreateMessage::new().embed(embed)).await;
     }
 
     if !leave_names.is_empty() {
-      let combined = combine_sg_names(&leave_names);
+      let combined = combine_fmt_names(&leave_names);
       let embed = build_leave_alert_embed(&alert.ctx, alert.user_id, Some(alert.guild_id), &settings, combined.as_deref()).await;
       let _ = alert.channel.send_message(&alert.ctx.http, CreateMessage::new().embed(embed)).await;
     }
@@ -163,7 +163,7 @@ pub fn schedule_alert(
 }
 
 /// Combine format names: ["4v4", "3v3"] -> "4v4 & 3v3"
-fn combine_sg_names(names: &[Option<String>]) -> Option<String> {
+fn combine_fmt_names(names: &[Option<String>]) -> Option<String> {
   let concrete: Vec<&str> = names.iter().filter_map(|n| n.as_deref()).collect();
   if concrete.is_empty() {
     None

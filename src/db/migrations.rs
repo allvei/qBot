@@ -1,72 +1,91 @@
 use anyhow::Result;
-use serenity::{all::GuildId as GI};
+use serenity::all::GuildId as GI;
 use sqlx::{Row, SqlitePool};
 use tracing::info;
 
-use crate::DEFAULT_HOT_JOIN_TIMEOUT;
+use crate::db::helpers::MigrationHelpers;
+use crate::{add_columns, DEFAULT_HOT_JOIN_TIMEOUT};
 
 macro_rules! add_column {
-    ($self:ident, $table:literal, $name:literal, $type:literal, $default:literal) => {
-        if !$self.check_column($table, $name).await? {
-            sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {} {} DEFAULT {}", $table, $name, $type, $default))
-                .execute(&$self.pool).await?;
-        }
-    };
+  ($self:ident, $table:literal, $name:literal, $type:literal, $default:literal) => {
+    if !$self.check_column($table, $name).await? {
+      sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {} {} DEFAULT {}", $table, $name, $type, $default)).execute(&$self.pool).await?;
+    }
+  };
 }
 
 macro_rules! add_column_not_null {
-    ($self:ident, $table:literal, $name:literal, $type:literal, $default:literal) => {
-        if !$self.check_column($table, $name).await? {
-            sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {} {} NOT NULL DEFAULT {}", $table, $name, $type, $default))
-                .execute(&$self.pool).await?;
-        }
-    };
+  ($self:ident, $table:literal, $name:literal, $type:literal, $default:literal) => {
+    if !$self.check_column($table, $name).await? {
+      sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {} {} NOT NULL DEFAULT {}", $table, $name, $type, $default)).execute(&$self.pool).await?;
+    }
+  };
 }
 
 /// Database migration system for managing schema changes
 pub struct DatabaseMigrations {
-    pool: SqlitePool,
+  pool: SqlitePool,
+}
+
+impl MigrationHelpers for DatabaseMigrations {
+    /// Add a column if it doesn't exist
+    async fn add_column_if_missing(&self, table: &str, column: &str, column_type: &str, default: &str) -> Result<()> {
+        if !self.check_column(table, column).await? {
+            sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {} {} DEFAULT {}", table, column, column_type, default))
+                .execute(&self.pool)
+                .await?;
+        }
+        Ok(())
+    }
+    
+    /// Add multiple columns from a list of (column, type, default) tuples
+    async fn add_columns_if_missing(&self, table: &str, columns: &[(&str, &str, &str)]) -> Result<()> {
+        for (column, column_type, default) in columns {
+            self.add_column_if_missing(table, column, column_type, default).await?;
+        }
+        Ok(())
+    }
 }
 
 impl DatabaseMigrations {
-    pub fn new(pool: &SqlitePool) -> Self {
-        Self {pool: pool.clone()}
-    }
+  pub fn new(pool: &SqlitePool) -> Self {
+    Self { pool: pool.clone() }
+  }
 
-    // MASTERS
-    
-    /// Run all migrations in order
-    pub async fn create_tables(&self) -> Result<()> {
-        self.create_config_table()   .await?;
-        self.create_users_table()    .await?;
-        self.create_categories_table()   .await?;
-        self.create_teams_table()    .await?;
-        self.create_formats_table().await?;
-        self.create_elo_table()      .await?;
-        self.create_ranks_table()    .await?;
-        
-        // Add foreign key constraint after both tables exist
-        self.add_config_foreign_key().await?;
-        
-        Ok(())
-    }
-    pub async fn verify_schemas(&self) -> Result<()> {
-        self.verify_config()   .await?;
-        self.verify_users()    .await?;
-        self.verify_categories()   .await?;
-        self.verify_teams()    .await?;
-        self.verify_formats().await?;
-        self.verify_elos()     .await?;
-        self.verify_ranks()    .await?;
-        Ok(())
-    }
+  // MASTERS
 
-    // CREATE TABLES
+  /// Run all migrations in order
+  pub async fn create_tables(&self) -> Result<()> {
+    self.create_config_table().await?;
+    self.create_users_table().await?;
+    self.create_categories_table().await?;
+    self.create_teams_table().await?;
+    self.create_formats_table().await?;
+    self.create_elo_table().await?;
+    self.create_ranks_table().await?;
 
-    async fn create_config_table(&self) -> Result<()> {
-        if !self.check_table("config").await? {
-            sqlx::query(
-                "CREATE TABLE config (
+    // Add foreign key constraint after both tables exist
+    self.add_config_foreign_key().await?;
+
+    Ok(())
+  }
+  pub async fn verify_schemas(&self) -> Result<()> {
+    self.verify_config().await?;
+    self.verify_users().await?;
+    self.verify_categories().await?;
+    self.verify_teams().await?;
+    self.verify_formats().await?;
+    self.verify_elos().await?;
+    self.verify_ranks().await?;
+    Ok(())
+  }
+
+  // CREATE TABLES
+
+  async fn create_config_table(&self) -> Result<()> {
+    if !self.check_table("config").await? {
+      sqlx::query(
+        "CREATE TABLE config (
                     guild_id          INTEGER NOT NULL,
                     runner_id         INTEGER,
                     admin_id          INTEGER,
@@ -75,27 +94,27 @@ impl DatabaseMigrations {
                     elo_ranks_linked  INTEGER DEFAULT 1,
                     post_game_auto_leave INTEGER DEFAULT 1,
                     PRIMARY KEY(guild_id)
-                )"
-            )
-            .execute(&self.pool)
-            .await?;
-        } else if !self.check_column("config", "guild_id").await? {
-            add_column_not_null!(self, "config", "guild_id", "INTEGER", "0");
-        }
-        Ok(())
+                )",
+      )
+      .execute(&self.pool)
+      .await?;
+    } else if !self.check_column("config", "guild_id").await? {
+      add_column_not_null!(self, "config", "guild_id", "INTEGER", "0");
     }
-    async fn verify_config(&self) -> Result<()> {
-        let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank", "elo_ranks_linked", "post_game_auto_leave", "post_game_timeout"];
-        add_column!(self, "config", "elo_ranks_linked", "INTEGER", "1");
-        add_column!(self, "config", "post_game_auto_leave", "INTEGER", "1");
-        add_column!(self, "config", "post_game_timeout", "INTEGER", "120");
-        self.verify_columns("config", &required_columns).await?;
-        Ok(())
-    }
-    async fn create_users_table(&self) ->  Result<()> {
-        if !self.check_table("users").await? {
-            sqlx::query(
-                "CREATE TABLE users (
+    Ok(())
+  }
+  async fn verify_config(&self) -> Result<()> {
+    let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank", "elo_ranks_linked", "post_game_auto_leave", "post_game_timeout"];
+    add_column!(self, "config", "elo_ranks_linked", "INTEGER", "1");
+    add_column!(self, "config", "post_game_auto_leave", "INTEGER", "1");
+    add_column!(self, "config", "post_game_timeout", "INTEGER", "120");
+    self.verify_columns("config", &required_columns).await?;
+    Ok(())
+  }
+  async fn create_users_table(&self) -> Result<()> {
+    if !self.check_table("users").await? {
+      sqlx::query(
+        "CREATE TABLE users (
                     user_id                  INTEGER PRIMARY KEY,
                     steam_id                 INTEGER,
                     discord_tag              TEXT    DEFAULT NULL,
@@ -117,69 +136,59 @@ impl DatabaseMigrations {
                     leave_alert_img          TEXT    DEFAULT NULL,
                     leave_alert_footer       TEXT    DEFAULT NULL,
                     leave_alert_footer_img   TEXT    DEFAULT NULL
-                )"
-            )
-            .execute(&self.pool)
-            .await?;
-        } else {
-            // Verify schema integrity
-            let has_unique       = self.check_unique("users", "user_id").await?;
-            let has_user_id      = self.check_column("users", "user_id").await?;
-            let has_steam_id     = self.check_column("users", "steam_id")  .await?;
-            let has_pm_hot_alert = self.check_column("users", "pm_hot_alert").await?;
+                )",
+      )
+      .execute(&self.pool)
+      .await?;
+    } else {
+      // Verify schema integrity
+      let has_unique = self.check_unique("users", "user_id").await?;
+      let has_user_id = self.check_column("users", "user_id").await?;
+      let has_steam_id = self.check_column("users", "steam_id").await?;
+      let has_pm_hot_alert = self.check_column("users", "pm_hot_alert").await?;
 
-            // Add pm_hot_alert column if missing
-            if has_user_id && !has_pm_hot_alert {
-                add_column!(self, "users", "pm_hot_alert", "INTEGER", "1");
-            }
+      // Add pm_hot_alert column if missing
+      if has_user_id && !has_pm_hot_alert {
+        add_column!(self, "users", "pm_hot_alert", "INTEGER", "1");
+      }
 
-            // Add new settings columns if missing
-            if has_user_id {
-                add_column!(self, "users", "discord_tag",              "TEXT",    "NULL");
-                add_column!(self, "users", "pm_hot_alert",             "INTEGER", "1");
-                add_column!(self, "users", "pm_queue_alert_threshold", "INTEGER", "NULL");
-                add_column!(self, "users", "timeout",                  "INTEGER", "30");
-                add_column!(self, "users", "vc_auto_join",             "INTEGER", "0");
-                add_column!(self, "users", "join_alert_title",         "TEXT",    "NULL");
-                add_column!(self, "users", "join_alert",               "TEXT",    "NULL");
-                add_column!(self, "users", "join_alert_color",         "INTEGER", "3447003");
-                add_column!(self, "users", "join_alert_img",           "TEXT",    "NULL");
-                add_column!(self, "users", "join_alert_footer",        "TEXT",    "NULL");
-                add_column!(self, "users", "join_alert_footer_img",    "TEXT",    "NULL");
-                add_column!(self, "users", "vc_auto_leave",            "INTEGER", "0");
-                add_column!(self, "users", "post_game_auto_leave",    "INTEGER", "1");
-                add_column!(self, "users", "leave_alert_title",        "TEXT",    "NULL");
-                add_column!(self, "users", "leave_alert",              "TEXT",    "NULL");
-                add_column!(self, "users", "leave_alert_color",        "INTEGER", "3447003");
-                add_column!(self, "users", "leave_alert_img",          "TEXT",    "NULL");
-                add_column!(self, "users", "leave_alert_footer",       "TEXT",    "NULL");
-                add_column!(self, "users", "leave_alert_footer_img",   "TEXT",    "NULL");
-            }
+      // Add new settings columns if missing
+      if has_user_id {
+        add_column!(self, "users", "discord_tag", "TEXT", "NULL");
+        add_column!(self, "users", "pm_hot_alert", "INTEGER", "1");
+        add_column!(self, "users", "pm_queue_alert_threshold", "INTEGER", "NULL");
+        add_column!(self, "users", "timeout", "INTEGER", "30");
+        add_column!(self, "users", "vc_auto_join", "INTEGER", "0");
+        add_column!(self, "users", "join_alert_title", "TEXT", "NULL");
+        add_column!(self, "users", "join_alert", "TEXT", "NULL");
+        add_column!(self, "users", "join_alert_color", "INTEGER", "3447003");
+        add_column!(self, "users", "join_alert_img", "TEXT", "NULL");
+        add_column!(self, "users", "join_alert_footer", "TEXT", "NULL");
+        add_column!(self, "users", "join_alert_footer_img", "TEXT", "NULL");
+        add_column!(self, "users", "vc_auto_leave", "INTEGER", "0");
+        add_column!(self, "users", "post_game_auto_leave", "INTEGER", "1");
+        add_column!(self, "users", "leave_alert_title", "TEXT", "NULL");
+        add_column!(self, "users", "leave_alert", "TEXT", "NULL");
+        add_column!(self, "users", "leave_alert_color", "INTEGER", "3447003");
+        add_column!(self, "users", "leave_alert_img", "TEXT", "NULL");
+        add_column!(self, "users", "leave_alert_footer", "TEXT", "NULL");
+        add_column!(self, "users", "leave_alert_footer_img", "TEXT", "NULL");
+      }
 
-            // Drop old elo column if it exists (ELO is now in elo table)
-            if has_user_id && self.check_column("users", "elo").await? {
-                sqlx::query("ALTER TABLE users DROP COLUMN elo")
-                    .execute(&self.pool)
-                    .await
-                    .ok(); // Ignore errors if column doesn't exist
-            }
+      // Drop old elo column if it exists (ELO is now in elo table)
+      if has_user_id && self.check_column("users", "elo").await? {
+        sqlx::query("ALTER TABLE users DROP COLUMN elo").execute(&self.pool).await.ok();
+        // Ignore errors if column doesn't exist
+      }
 
-            if !has_user_id || !has_steam_id || !has_unique {
+      if !has_user_id || !has_steam_id || !has_unique {
+        // Backup existing data if any
+        let backup_data = if has_user_id { sqlx::query("SELECT user_id, steam_id FROM users").fetch_all(&self.pool).await.unwrap_or_default() } else { Vec::new() };
 
-                // Backup existing data if any
-                let backup_data = if has_user_id {
-                    sqlx::query("SELECT user_id, steam_id FROM users")
-                        .fetch_all(&self.pool)
-                        .await
-                        .unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-
-                // Drop and recreate table
-                sqlx::query("DROP TABLE users").execute(&self.pool).await?;
-                sqlx::query(
-                    "CREATE TABLE users (
+        // Drop and recreate table
+        sqlx::query("DROP TABLE users").execute(&self.pool).await?;
+        sqlx::query(
+          "CREATE TABLE users (
                         user_id                  INTEGER PRIMARY KEY,
                         steam_id                 INTEGER,
                         discord_tag              TEXT    DEFAULT NULL,
@@ -201,56 +210,59 @@ impl DatabaseMigrations {
                         leave_alert_img          TEXT    DEFAULT NULL,
                         leave_alert_footer       TEXT    DEFAULT NULL,
                         leave_alert_footer_img   TEXT    DEFAULT NULL
-                    )"
-                )
-                .execute(&self.pool)
-                .await?;
+                    )",
+        )
+        .execute(&self.pool)
+        .await?;
 
-                // Restore data if we had any
-                for row in backup_data {
-                    let user_id: i64 = row.get("user_id");
-                    let steam_id: Option<i64> = row.try_get("steam_id").ok();
-                    sqlx::query("INSERT OR IGNORE INTO users (user_id, steam_id) VALUES (?, ?)
-                                 ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id")
-                        .bind(user_id)
-                        .bind(steam_id)
-                        .execute(&self.pool)
-                        .await?;
-                }
-            }
+        // Restore data if we had any
+        for row in backup_data {
+          let user_id: i64 = row.get("user_id");
+          let steam_id: Option<i64> = row.try_get("steam_id").ok();
+          sqlx::query(
+            "INSERT OR IGNORE INTO users (user_id, steam_id) VALUES (?, ?)
+                                 ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id",
+          )
+          .bind(user_id)
+          .bind(steam_id)
+          .execute(&self.pool)
+          .await?;
         }
-        Ok(())
+      }
     }
-    async fn verify_users(&self)  -> Result<()> {
-        let required_columns = vec![
-            "user_id",
-            "steam_id",
-            "pm_hot_alert",
-            "pm_queue_alert_threshold",
-            "timeout",
-            "vc_auto_join",
-            "join_alert_title",
-            "join_alert",
-            "join_alert_color",
-            "join_alert_img",
-            "join_alert_footer",
-            "join_alert_footer_img",
-            "vc_auto_leave",
-            "leave_alert_title",
-            "leave_alert",
-            "leave_alert_color",
-            "leave_alert_img",
-            "leave_alert_footer",
-            "leave_alert_footer_img",
-        ];
-        self.verify_columns("users", &required_columns).await?;
-        Ok(())
-    }
-    async fn create_categories_table(&self) -> Result<()> {
-        use crate::DEFAULT_QUOTA;
+    Ok(())
+  }
+  async fn verify_users(&self) -> Result<()> {
+    let required_columns = vec![
+      "user_id",
+      "steam_id",
+      "pm_hot_alert",
+      "pm_queue_alert_threshold",
+      "timeout",
+      "vc_auto_join",
+      "join_alert_title",
+      "join_alert",
+      "join_alert_color",
+      "join_alert_img",
+      "join_alert_footer",
+      "join_alert_footer_img",
+      "vc_auto_leave",
+      "leave_alert_title",
+      "leave_alert",
+      "leave_alert_color",
+      "leave_alert_img",
+      "leave_alert_footer",
+      "leave_alert_footer_img",
+    ];
+    self.verify_columns("users", &required_columns).await?;
+    Ok(())
+  }
+  async fn create_categories_table(&self) -> Result<()> {
+    use crate::DEFAULT_QUOTA;
 
-        if !self.check_table("categories").await? {
-            sqlx::query(&format!("CREATE TABLE categories (
+    if !self.check_table("categories").await? {
+      sqlx::query(&format!(
+        "CREATE TABLE categories (
                     id                INTEGER PRIMARY KEY,
                     category_id          INTEGER DEFAULT 0,
                     name              TEXT,
@@ -268,29 +280,29 @@ impl DatabaseMigrations {
                     quota             INTEGER DEFAULT {DEFAULT_QUOTA},
                     connect_info      TEXT
                 )"
-            ))
-            .execute(&self.pool)
-            .await?;
+      ))
+      .execute(&self.pool)
+      .await?;
+    } else {
+      // Check if essential columns exist
+      let has_id = self.check_column("categories", "id").await?;
+      let has_guild_id = self.check_column("categories", "guild_id").await?;
+
+      // If missing id or guild_id, need to recreate table (can't add PRIMARY KEY column)
+      if !has_id || !has_guild_id {
+        // Backup existing data before dropping table
+        let backup_data = if has_guild_id {
+          sqlx::query("SELECT category_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment, quota, connect_info FROM categories")
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default()
         } else {
-            // Check if essential columns exist
-            let has_id = self.check_column("categories", "id").await?;
-            let has_guild_id = self.check_column("categories", "guild_id").await?;
+          Vec::new()
+        };
 
-            // If missing id or guild_id, need to recreate table (can't add PRIMARY KEY column)
-            if !has_id || !has_guild_id {
-                // Backup existing data before dropping table
-                let backup_data = if has_guild_id {
-                    sqlx::query("SELECT category_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment, quota, connect_info FROM categories")
-                        .fetch_all(&self.pool)
-                        .await
-                        .unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-
-                sqlx::query("DROP TABLE categories").execute(&self.pool).await?;
-                sqlx::query(&format!(
-                    "CREATE TABLE categories (
+        sqlx::query("DROP TABLE categories").execute(&self.pool).await?;
+        sqlx::query(&format!(
+          "CREATE TABLE categories (
                         id                INTEGER PRIMARY KEY,
                         category_id          INTEGER DEFAULT 0,
                         name              TEXT,
@@ -307,182 +319,120 @@ impl DatabaseMigrations {
                         quota             INTEGER DEFAULT {DEFAULT_QUOTA},
                         connect_info      TEXT
                     )"
-                ))
-                .execute(&self.pool)
-                .await?;
+        ))
+        .execute(&self.pool)
+        .await?;
 
-                // Restore backed up data
-                for row in backup_data {
-                    let category_id: i64 = row.try_get("category_id").unwrap_or(0);
-                    let name: Option<String> = row.try_get("name").ok();
-                    let timeout: i64 = row.try_get("timeout").unwrap_or(DEFAULT_HOT_JOIN_TIMEOUT as i64);
-                    let guild_id: i64 = row.get("guild_id");
-                    let dashboard: i64 = row.get("dashboard");
-                    let chat: i64 = row.get("chat");
-                    let queue: i64 = row.get("queue");
-                    let dashboard_msg: i64 = row.try_get("dashboard_msg").unwrap_or(0);
-                    let red: i64 = row.get("red");
-                    let blu: i64 = row.get("blu");
-                    let game: i64 = row.try_get("game").unwrap_or(0);
-                    let game_increment: i64 = row.try_get("game_increment").unwrap_or(0);
-                    let quota: i64 = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
-                    let connect_info: Option<String> = row.try_get("connect_info").ok();
+        // Restore backed up data
+        for row in backup_data {
+          let category_id: i64 = row.try_get("category_id").unwrap_or(0);
+          let name: Option<String> = row.try_get("name").ok();
+          let timeout: i64 = row.try_get("timeout").unwrap_or(DEFAULT_HOT_JOIN_TIMEOUT as i64);
+          let guild_id: i64 = row.get("guild_id");
+          let dashboard: i64 = row.get("dashboard");
+          let chat: i64 = row.get("chat");
+          let queue: i64 = row.get("queue");
+          let dashboard_msg: i64 = row.try_get("dashboard_msg").unwrap_or(0);
+          let red: i64 = row.get("red");
+          let blu: i64 = row.get("blu");
+          let game: i64 = row.try_get("game").unwrap_or(0);
+          let game_increment: i64 = row.try_get("game_increment").unwrap_or(0);
+          let quota: i64 = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
+          let connect_info: Option<String> = row.try_get("connect_info").ok();
 
-                    sqlx::query(
-                        "INSERT INTO categories (category_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment, quota, connect_info)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    )
-                    .bind(category_id)
-                    .bind(name)
-                    .bind(timeout)
-                    .bind(guild_id)
-                    .bind(dashboard)
-                    .bind(chat)
-                    .bind(queue)
-                    .bind(dashboard_msg)
-                    .bind(red)
-                    .bind(blu)
-                    .bind(game)
-                    .bind(game_increment)
-                    .bind(quota)
-                    .bind(connect_info)
-                    .execute(&self.pool)
-                    .await?;
-                }
-            }
+          sqlx::query(
+            "INSERT INTO categories (category_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment, quota, connect_info)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          )
+          .bind(category_id)
+          .bind(name)
+          .bind(timeout)
+          .bind(guild_id)
+          .bind(dashboard)
+          .bind(chat)
+          .bind(queue)
+          .bind(dashboard_msg)
+          .bind(red)
+          .bind(blu)
+          .bind(game)
+          .bind(game_increment)
+          .bind(quota)
+          .bind(connect_info)
+          .execute(&self.pool)
+          .await?;
+        }
+      }
 
-            // Add name column if missing
-            if !self.check_column("categories", "name").await? {
-                sqlx::query("ALTER TABLE categories ADD COLUMN name TEXT")
-                    .execute(&self.pool)
-                    .await?;
-            }
+      // Add multiple columns using helper macro
+      add_columns!(self, "categories",
+        "name": "TEXT" => "NULL",
+        "connect_info": "TEXT" => "NULL",
+        "team_balance_method": "TEXT" => "'BCH'",
+        "dm_alert_enabled": "INTEGER" => "0",
+        "dm_alert_threshold": "INTEGER" => "0",
+        "category": "INTEGER" => "0",
+        "dm_alert_users": "TEXT" => "'[]'",
+        "team_vc_create_policy": "TEXT" => "'on_hot'",
+        "team_vc_destroy_policy": "TEXT" => "'after_pull'",
+        "team_vc_keep_minimum": "INTEGER" => "1",
+        "guild_name": "TEXT" => "NULL",
+      );
 
-            // Add connect_info column if missing
-            if !self.check_column("categories", "connect_info").await? {
-                sqlx::query("ALTER TABLE categories ADD COLUMN connect_info TEXT")
-                    .execute(&self.pool)
-                    .await?;
-            }
-
-            // Add team_balance_method column if missing
-            if !self.check_column("categories", "team_balance_method").await? {
-                sqlx::query("ALTER TABLE categories ADD COLUMN team_balance_method TEXT DEFAULT 'BCH'")
-                    .execute(&self.pool)
-                    .await?;
-            }
-
-            // Add dm_alert_enabled column if missing
-            if !self.check_column("categories", "dm_alert_enabled").await? {
-                sqlx::query("ALTER TABLE categories ADD COLUMN dm_alert_enabled INTEGER DEFAULT 0")
-                    .execute(&self.pool)
-                    .await?;
-            }
-
-            // Add dm_alert_threshold column if missing
-            if !self.check_column("categories", "dm_alert_threshold").await? {
-                sqlx::query("ALTER TABLE categories ADD COLUMN dm_alert_threshold INTEGER DEFAULT 0")
-                    .execute(&self.pool)
-                    .await?;
-            }
-
-            // Add category column if missing
-            if !self.check_column("categories", "category").await? {
-                sqlx::query("ALTER TABLE categories ADD COLUMN category INTEGER DEFAULT 0")
-                    .execute(&self.pool)
-                    .await?;
-            }
-
-            // Add dm_alert_users column if missing (JSON array of user IDs)
-            if !self.check_column("categories", "dm_alert_users").await? {
-                sqlx::query("ALTER TABLE categories ADD COLUMN dm_alert_users TEXT DEFAULT '[]'")
-                    .execute(&self.pool)
-                    .await?;
-            }
-
-            // Add team VC lifecycle settings columns if missing
-            if !self.check_column("categories", "team_vc_create_policy").await? {
-                sqlx::query("ALTER TABLE categories ADD COLUMN team_vc_create_policy TEXT DEFAULT 'on_hot'")
-                    .execute(&self.pool)
-                    .await?;
-            }
-            if !self.check_column("categories", "team_vc_destroy_policy").await? {
-                sqlx::query("ALTER TABLE categories ADD COLUMN team_vc_destroy_policy TEXT DEFAULT 'after_pull'")
-                    .execute(&self.pool)
-                    .await?;
-            }
-            if !self.check_column("categories", "team_vc_keep_minimum").await? {
-                sqlx::query("ALTER TABLE categories ADD COLUMN team_vc_keep_minimum INTEGER DEFAULT 1")
-                    .execute(&self.pool)
-                    .await?;
-            }
-
-            // Add guild_name column if missing
-            if !self.check_column("categories", "guild_name").await? {
-                sqlx::query("ALTER TABLE categories ADD COLUMN guild_name TEXT")
-                    .execute(&self.pool)
-                    .await?;
-            }
-
-            // Check if UNIQUE constraints exist on channel columns
-            // SQLite doesn't have a direct way to check constraints, so we check if duplicate channels exist
-            let has_duplicates: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM (
+      // Check if UNIQUE constraints exist on channel columns
+      // SQLite doesn't have a direct way to check constraints, so we check if duplicate channels exist
+      let has_duplicates: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (
                     SELECT dashboard FROM categories CATEGORY BY dashboard HAVING COUNT(*) > 1
                     UNION ALL
                     SELECT chat FROM categories CATEGORY BY chat HAVING COUNT(*) > 1
                     UNION ALL
                     SELECT queue FROM categories CATEGORY BY queue HAVING COUNT(*) > 1
-                )"
-            )
-            .fetch_one(&self.pool)
-            .await
-            .unwrap_or(0);
+                )",
+      )
+      .fetch_one(&self.pool)
+      .await
+      .unwrap_or(0);
 
-            // If no duplicates exist, we can safely add UNIQUE constraints by recreating the table
-            if has_duplicates == 0 {
-                // Check if constraints already exist by trying to insert a duplicate
-                // If it fails with UNIQUE constraint error, constraints exist
-                let test_result = sqlx::query("SELECT dashboard FROM categories LIMIT 1")
-                    .fetch_optional(&self.pool)
-                    .await?;
+      // If no duplicates exist, we can safely add UNIQUE constraints by recreating the table
+      if has_duplicates == 0 {
+        // Check if constraints already exist by trying to insert a duplicate
+        // If it fails with UNIQUE constraint error, constraints exist
+        let test_result = sqlx::query("SELECT dashboard FROM categories LIMIT 1").fetch_optional(&self.pool).await?;
 
-                if let Some(row) = test_result {
-                    let test_dashboard: i64 = row.get("dashboard");
-                    
-                    // Try to insert a duplicate to test if UNIQUE constraint exists
-                    let constraint_exists = sqlx::query(
-                        "INSERT INTO categories (guild_id, dashboard, chat, queue, red, blu, quota) 
-                         VALUES (999999, ?, 999998, 999997, 999996, 999995, 12)"
-                    )
-                    .bind(test_dashboard)
-                    .execute(&self.pool)
-                    .await
-                    .is_err();
+        if let Some(row) = test_result {
+          let test_dashboard: i64 = row.get("dashboard");
 
-                    // Clean up test row if it was inserted
-                    let _ = sqlx::query("DELETE FROM categories WHERE guild_id = 999999")
-                        .execute(&self.pool)
-                        .await;
+          // Try to insert a duplicate to test if UNIQUE constraint exists
+          let constraint_exists = sqlx::query(
+            "INSERT INTO categories (guild_id, dashboard, chat, queue, red, blu, quota) 
+                         VALUES (999999, ?, 999998, 999997, 999996, 999995, 12)",
+          )
+          .bind(test_dashboard)
+          .execute(&self.pool)
+          .await
+          .is_err();
 
-                    // If constraint doesn't exist, recreate table with UNIQUE constraints
-                    if !constraint_exists {
-                        info!("Adding UNIQUE constraints to category channels...");
-                        
-                        // Backup all data
-                        let backup_data = sqlx::query(
-                            "SELECT id, category_id, name, timeout, guild_id, category, dashboard, chat, queue, 
+          // Clean up test row if it was inserted
+          let _ = sqlx::query("DELETE FROM categories WHERE guild_id = 999999").execute(&self.pool).await;
+
+          // If constraint doesn't exist, recreate table with UNIQUE constraints
+          if !constraint_exists {
+            info!("Adding UNIQUE constraints to category channels...");
+
+            // Backup all data
+            let backup_data = sqlx::query(
+              "SELECT id, category_id, name, timeout, guild_id, category, dashboard, chat, queue, 
                              dashboard_msg, red, blu, game, game_increment, quota, connect_info,
                              team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users
-                             FROM categories"
-                        )
-                        .fetch_all(&self.pool)
-                        .await?;
+                             FROM categories",
+            )
+            .fetch_all(&self.pool)
+            .await?;
 
-                        // Drop and recreate table with UNIQUE constraints
-                        sqlx::query("DROP TABLE categories").execute(&self.pool).await?;
-                        sqlx::query(&format!(
-                            "CREATE TABLE categories (
+            // Drop and recreate table with UNIQUE constraints
+            sqlx::query("DROP TABLE categories").execute(&self.pool).await?;
+            sqlx::query(&format!(
+              "CREATE TABLE categories (
                                 id                INTEGER PRIMARY KEY,
                                 category_id          INTEGER DEFAULT 0,
                                 name              TEXT,
@@ -504,115 +454,113 @@ impl DatabaseMigrations {
                                 dm_alert_threshold INTEGER DEFAULT 0,
                                 dm_alert_users    TEXT DEFAULT '[]'
                             )"
-                        ))
-                        .execute(&self.pool)
-                        .await?;
+            ))
+            .execute(&self.pool)
+            .await?;
 
-                        // Restore data
-                        for row in backup_data {
-                            let id: i64 = row.get("id");
-                            let category_id: i64 = row.try_get("category_id").unwrap_or(0);
-                            let name: Option<String> = row.try_get("name").ok();
-                            let timeout: i64 = row.try_get("timeout").unwrap_or(DEFAULT_HOT_JOIN_TIMEOUT as i64);
-                            let guild_id: i64 = row.get("guild_id");
-                            let dashboard: i64 = row.get("dashboard");
-                            let chat: i64 = row.get("chat");
-                            let queue: i64 = row.get("queue");
-                            let dashboard_msg: i64 = row.try_get("dashboard_msg").unwrap_or(0);
-                            let red: i64 = row.get("red");
-                            let blu: i64 = row.get("blu");
-                            let game: i64 = row.try_get("game").unwrap_or(0);
-                            let game_increment: i64 = row.try_get("game_increment").unwrap_or(0);
-                            let quota: i64 = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
-                            let connect_info: Option<String> = row.try_get("connect_info").ok();
-                            let category: i64 = row.try_get("category").unwrap_or(0);
-                            let team_balance_method: Option<String> = row.try_get("team_balance_method").ok();
-                            let dm_alert_enabled: i64 = row.try_get("dm_alert_enabled").unwrap_or(0);
-                            let dm_alert_threshold: i64 = row.try_get("dm_alert_threshold").unwrap_or(0);
-                            let dm_alert_users: String = row.try_get("dm_alert_users").unwrap_or_else(|_| "[]".to_string());
+            // Restore data
+            for row in backup_data {
+              let id: i64 = row.get("id");
+              let category_id: i64 = row.try_get("category_id").unwrap_or(0);
+              let name: Option<String> = row.try_get("name").ok();
+              let timeout: i64 = row.try_get("timeout").unwrap_or(DEFAULT_HOT_JOIN_TIMEOUT as i64);
+              let guild_id: i64 = row.get("guild_id");
+              let dashboard: i64 = row.get("dashboard");
+              let chat: i64 = row.get("chat");
+              let queue: i64 = row.get("queue");
+              let dashboard_msg: i64 = row.try_get("dashboard_msg").unwrap_or(0);
+              let red: i64 = row.get("red");
+              let blu: i64 = row.get("blu");
+              let game: i64 = row.try_get("game").unwrap_or(0);
+              let game_increment: i64 = row.try_get("game_increment").unwrap_or(0);
+              let quota: i64 = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
+              let connect_info: Option<String> = row.try_get("connect_info").ok();
+              let category: i64 = row.try_get("category").unwrap_or(0);
+              let team_balance_method: Option<String> = row.try_get("team_balance_method").ok();
+              let dm_alert_enabled: i64 = row.try_get("dm_alert_enabled").unwrap_or(0);
+              let dm_alert_threshold: i64 = row.try_get("dm_alert_threshold").unwrap_or(0);
+              let dm_alert_users: String = row.try_get("dm_alert_users").unwrap_or_else(|_| "[]".to_string());
 
-                            sqlx::query(
-                                "INSERT INTO categories (id, category_id, name, timeout, guild_id, category, dashboard, chat, queue, 
+              sqlx::query(
+                "INSERT INTO categories (id, category_id, name, timeout, guild_id, category, dashboard, chat, queue, 
                                  dashboard_msg, red, blu, game, game_increment, quota, connect_info,
                                  team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                            )
-                            .bind(id)
-                            .bind(category_id)
-                            .bind(name)
-                            .bind(timeout)
-                            .bind(guild_id)
-                            .bind(category)
-                            .bind(dashboard)
-                            .bind(chat)
-                            .bind(queue)
-                            .bind(dashboard_msg)
-                            .bind(red)
-                            .bind(blu)
-                            .bind(game)
-                            .bind(game_increment)
-                            .bind(quota)
-                            .bind(connect_info)
-                            .bind(team_balance_method)
-                            .bind(dm_alert_enabled)
-                            .bind(dm_alert_threshold)
-                            .bind(dm_alert_users)
-                            .execute(&self.pool)
-                            .await?;
-                        }
-
-                        info!("Successfully added UNIQUE constraints to category channels");
-                    }
-                }
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              )
+              .bind(id)
+              .bind(category_id)
+              .bind(name)
+              .bind(timeout)
+              .bind(guild_id)
+              .bind(category)
+              .bind(dashboard)
+              .bind(chat)
+              .bind(queue)
+              .bind(dashboard_msg)
+              .bind(red)
+              .bind(blu)
+              .bind(game)
+              .bind(game_increment)
+              .bind(quota)
+              .bind(connect_info)
+              .bind(team_balance_method)
+              .bind(dm_alert_enabled)
+              .bind(dm_alert_threshold)
+              .bind(dm_alert_users)
+              .execute(&self.pool)
+              .await?;
             }
 
-            // Drop UNIQUE constraint from legacy red/blu columns (now in teams table)
-            self.migrate_categories_drop_red_blu_unique().await?;
+            info!("Successfully added UNIQUE constraints to category channels");
+          }
         }
-        Ok(())
+      }
+
+      // Drop UNIQUE constraint from legacy red/blu columns (now in teams table)
+      self.migrate_categories_drop_red_blu_unique().await?;
+    }
+    Ok(())
+  }
+
+  /// Recreate the categories table without UNIQUE on red/blu if needed.
+  /// These legacy columns now hold placeholder value 1 for every row;
+  /// the real team channels live in the `teams` table.
+  async fn migrate_categories_drop_red_blu_unique(&self) -> Result<()> {
+    use crate::DEFAULT_QUOTA;
+
+    // Quick probe: try inserting two rows with the same red value.
+    // If the second insert fails, UNIQUE still exists and we must migrate.
+    let probe_ok = sqlx::query(
+      "INSERT INTO categories (guild_id, dashboard, chat, queue, red, blu, quota)
+             VALUES (999999, 999991, 999992, 999993, 1, 1, 12)",
+    )
+    .execute(&self.pool)
+    .await
+    .is_ok();
+
+    // Clean up probe row
+    let _ = sqlx::query("DELETE FROM categories WHERE guild_id = 999999").execute(&self.pool).await;
+
+    if probe_ok {
+      // No UNIQUE on red/blu (or table was empty) - nothing to do
+      return Ok(());
     }
 
-    /// Recreate the categories table without UNIQUE on red/blu if needed.
-    /// These legacy columns now hold placeholder value 1 for every row;
-    /// the real team channels live in the `teams` table.
-    async fn migrate_categories_drop_red_blu_unique(&self) -> Result<()> {
-        use crate::DEFAULT_QUOTA;
+    info!("Dropping UNIQUE constraints from legacy red/blu columns...");
 
-        // Quick probe: try inserting two rows with the same red value.
-        // If the second insert fails, UNIQUE still exists and we must migrate.
-        let probe_ok = sqlx::query(
-            "INSERT INTO categories (guild_id, dashboard, chat, queue, red, blu, quota)
-             VALUES (999999, 999991, 999992, 999993, 1, 1, 12)"
-        )
-        .execute(&self.pool)
-        .await
-        .is_ok();
-
-        // Clean up probe row
-        let _ = sqlx::query("DELETE FROM categories WHERE guild_id = 999999")
-            .execute(&self.pool)
-            .await;
-
-        if probe_ok {
-            // No UNIQUE on red/blu (or table was empty) - nothing to do
-            return Ok(());
-        }
-
-        info!("Dropping UNIQUE constraints from legacy red/blu columns...");
-
-        let backup_data = sqlx::query(
-            "SELECT id, category_id, name, timeout, guild_id, category, dashboard, chat, queue,
+    let backup_data = sqlx::query(
+      "SELECT id, category_id, name, timeout, guild_id, category, dashboard, chat, queue,
              dashboard_msg, red, blu, game, game_increment, quota, connect_info,
              team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users,
              team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum
-             FROM categories"
-        )
-        .fetch_all(&self.pool)
-        .await?;
+             FROM categories",
+    )
+    .fetch_all(&self.pool)
+    .await?;
 
-        sqlx::query("DROP TABLE categories").execute(&self.pool).await?;
-        sqlx::query(&format!(
-            "CREATE TABLE categories (
+    sqlx::query("DROP TABLE categories").execute(&self.pool).await?;
+    sqlx::query(&format!(
+      "CREATE TABLE categories (
                 id                    INTEGER PRIMARY KEY,
                 category_id              INTEGER DEFAULT 0,
                 name                  TEXT,
@@ -637,67 +585,82 @@ impl DatabaseMigrations {
                 team_vc_destroy_policy TEXT DEFAULT 'after_pull',
                 team_vc_keep_minimum   INTEGER DEFAULT 1
             )"
-        ))
-        .execute(&self.pool)
-        .await?;
+    ))
+    .execute(&self.pool)
+    .await?;
 
-        for row in backup_data {
-            sqlx::query(
-                "INSERT INTO categories (id, category_id, name, timeout, guild_id, category,
+    for row in backup_data {
+      sqlx::query(
+        "INSERT INTO categories (id, category_id, name, timeout, guild_id, category,
                  dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment,
                  quota, connect_info, team_balance_method, dm_alert_enabled,
                  dm_alert_threshold, dm_alert_users,
                  team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum)
-                 VALUES (?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?)"
-            )
-            .bind(row.get::<i64, _>("id"))
-            .bind(row.try_get::<i64, _>("category_id").unwrap_or(0))
-            .bind(row.try_get::<Option<String>, _>("name").ok().flatten())
-            .bind(row.try_get::<i64, _>("timeout").unwrap_or(DEFAULT_HOT_JOIN_TIMEOUT as i64))
-            .bind(row.get::<i64, _>("guild_id"))
-            .bind(row.try_get::<i64, _>("category").unwrap_or(0))
-            .bind(row.get::<i64, _>("dashboard"))
-            .bind(row.get::<i64, _>("chat"))
-            .bind(row.get::<i64, _>("queue"))
-            .bind(row.try_get::<i64, _>("dashboard_msg").unwrap_or(0))
-            .bind(row.get::<i64, _>("red"))
-            .bind(row.get::<i64, _>("blu"))
-            .bind(row.try_get::<i64, _>("game").unwrap_or(0))
-            .bind(row.try_get::<i64, _>("game_increment").unwrap_or(0))
-            .bind(row.try_get::<i64, _>("quota").unwrap_or(DEFAULT_QUOTA as i64))
-            .bind(row.try_get::<Option<String>, _>("connect_info").ok().flatten())
-            .bind(row.try_get::<Option<String>, _>("team_balance_method").ok().flatten())
-            .bind(row.try_get::<i64, _>("dm_alert_enabled").unwrap_or(0))
-            .bind(row.try_get::<i64, _>("dm_alert_threshold").unwrap_or(0))
-            .bind(row.try_get::<String, _>("dm_alert_users").unwrap_or_else(|_| "[]".to_string()))
-            .bind(row.try_get::<Option<String>, _>("team_vc_create_policy").ok().flatten())
-            .bind(row.try_get::<Option<String>, _>("team_vc_destroy_policy").ok().flatten())
-            .bind(row.try_get::<i64, _>("team_vc_keep_minimum").unwrap_or(1))
-            .execute(&self.pool)
-            .await?;
-        }
+                 VALUES (?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?)",
+      )
+      .bind(row.get::<i64, _>("id"))
+      .bind(row.try_get::<i64, _>("category_id").unwrap_or(0))
+      .bind(row.try_get::<Option<String>, _>("name").ok().flatten())
+      .bind(row.try_get::<i64, _>("timeout").unwrap_or(DEFAULT_HOT_JOIN_TIMEOUT as i64))
+      .bind(row.get::<i64, _>("guild_id"))
+      .bind(row.try_get::<i64, _>("category").unwrap_or(0))
+      .bind(row.get::<i64, _>("dashboard"))
+      .bind(row.get::<i64, _>("chat"))
+      .bind(row.get::<i64, _>("queue"))
+      .bind(row.try_get::<i64, _>("dashboard_msg").unwrap_or(0))
+      .bind(row.get::<i64, _>("red"))
+      .bind(row.get::<i64, _>("blu"))
+      .bind(row.try_get::<i64, _>("game").unwrap_or(0))
+      .bind(row.try_get::<i64, _>("game_increment").unwrap_or(0))
+      .bind(row.try_get::<i64, _>("quota").unwrap_or(DEFAULT_QUOTA as i64))
+      .bind(row.try_get::<Option<String>, _>("connect_info").ok().flatten())
+      .bind(row.try_get::<Option<String>, _>("team_balance_method").ok().flatten())
+      .bind(row.try_get::<i64, _>("dm_alert_enabled").unwrap_or(0))
+      .bind(row.try_get::<i64, _>("dm_alert_threshold").unwrap_or(0))
+      .bind(row.try_get::<String, _>("dm_alert_users").unwrap_or_else(|_| "[]".to_string()))
+      .bind(row.try_get::<Option<String>, _>("team_vc_create_policy").ok().flatten())
+      .bind(row.try_get::<Option<String>, _>("team_vc_destroy_policy").ok().flatten())
+      .bind(row.try_get::<i64, _>("team_vc_keep_minimum").unwrap_or(1))
+      .execute(&self.pool)
+      .await?;
+    }
 
-        info!("Successfully dropped UNIQUE from red/blu columns");
-        Ok(())
-    }
-    async fn verify_categories(&self) -> Result<()> {
-        // Add name column if missing
-        add_column!(self, "categories", "name", "TEXT", "NULL");
-        
-        let required_columns = vec![
-            "id", "category_id", "timeout", "guild_id", "category", "dashboard",
-            "chat", "queue", "dashboard_msg", "red", "blu",
-            "game", "game_increment", "quota", "connect_info",
-            "team_balance_method", "dm_alert_enabled", "dm_alert_threshold",
-            "dm_alert_users", "guild_name"
-        ];
-        self.verify_columns("categories", &required_columns).await?;
-        Ok(())
-    }
-    async fn create_teams_table(&self) ->  Result<()> {
-        if !self.check_table("teams").await? {
-            sqlx::query(
-                "CREATE TABLE teams (
+    info!("Successfully dropped UNIQUE from red/blu columns");
+    Ok(())
+  }
+  async fn verify_categories(&self) -> Result<()> {
+    // Add name column if missing
+    add_column!(self, "categories", "name", "TEXT", "NULL");
+
+    let required_columns = vec![
+      "id",
+      "category_id",
+      "timeout",
+      "guild_id",
+      "category",
+      "dashboard",
+      "chat",
+      "queue",
+      "dashboard_msg",
+      "red",
+      "blu",
+      "game",
+      "game_increment",
+      "quota",
+      "connect_info",
+      "team_balance_method",
+      "dm_alert_enabled",
+      "dm_alert_threshold",
+      "dm_alert_users",
+      "guild_name",
+    ];
+    self.verify_columns("categories", &required_columns).await?;
+    Ok(())
+  }
+  async fn create_teams_table(&self) -> Result<()> {
+    if !self.check_table("teams").await? {
+      sqlx::query(
+        "CREATE TABLE teams (
                     id           INTEGER PRIMARY KEY,
                     guild_id     INTEGER NOT NULL,
                     category_id  INTEGER NOT NULL,
@@ -707,59 +670,55 @@ impl DatabaseMigrations {
                     blu          INTEGER NOT NULL,
                     created_at   INTEGER DEFAULT (strftime('%s', 'now')),
                     UNIQUE(guild_id, category_id, set_index)
-                )"
-            )
-            .execute(&self.pool)
-            .await?;
-        }
-        Ok(())
+                )",
+      )
+      .execute(&self.pool)
+      .await?;
     }
-    async fn verify_teams(&self)  -> Result<()> {
-        // First, migrate existing data to add set_index and session_id if needed
-        if !self.check_column("teams", "set_index").await? {
-            info!("Migrating teams table to add set_index and session_id...");
-            
-            // Add new columns
-            sqlx::query("ALTER TABLE teams ADD COLUMN set_index INTEGER DEFAULT 1").execute(&self.pool).await?;
-            sqlx::query("ALTER TABLE teams ADD COLUMN session_id TEXT").execute(&self.pool).await?;
-            sqlx::query("ALTER TABLE teams ADD COLUMN created_at INTEGER DEFAULT 0").execute(&self.pool).await?;
-            
-            // Update created_at for existing records to current timestamp
-            sqlx::query("UPDATE teams SET created_at = strftime('%s', 'now') WHERE created_at = 0").execute(&self.pool).await?;
-            
-            // Update existing records to have sequential set_index within each guild/category
-            let rows = sqlx::query("SELECT id, guild_id, category_id FROM teams ORDER BY id").fetch_all(&self.pool).await?;
-            
-            let mut current_set: std::collections::HashMap<(i64, i64), i32> = std::collections::HashMap::new();
-            
-            for row in rows {
-                let guild_id: i64 = row.get("guild_id");
-                let category_id: i64 = row.get("category_id");
-                let id: i64 = row.get("id");
-                
-                let set_index = current_set.entry((guild_id, category_id)).or_insert(1);
-                sqlx::query("UPDATE teams SET set_index = ? WHERE id = ?")
-                    .bind(*set_index)
-                    .bind(id)
-                    .execute(&self.pool)
-                    .await?;
-                
-                *set_index += 1;
-            }
-            
-            info!("Teams table migration completed");
-        }
-        
-        // Now verify all required columns exist
-        let required_columns = vec!["id", "guild_id", "category_id", "set_index", "session_id", "red", "blu", "created_at"];
-        self.verify_columns("teams", &required_columns).await?;
-        
-        Ok(())
+    Ok(())
+  }
+  async fn verify_teams(&self) -> Result<()> {
+    // First, migrate existing data to add set_index and session_id if needed
+    if !self.check_column("teams", "set_index").await? {
+      info!("Migrating teams table to add set_index and session_id...");
+
+      // Add new columns
+      sqlx::query("ALTER TABLE teams ADD COLUMN set_index INTEGER DEFAULT 1").execute(&self.pool).await?;
+      sqlx::query("ALTER TABLE teams ADD COLUMN session_id TEXT").execute(&self.pool).await?;
+      sqlx::query("ALTER TABLE teams ADD COLUMN created_at INTEGER DEFAULT 0").execute(&self.pool).await?;
+
+      // Update created_at for existing records to current timestamp
+      sqlx::query("UPDATE teams SET created_at = strftime('%s', 'now') WHERE created_at = 0").execute(&self.pool).await?;
+
+      // Update existing records to have sequential set_index within each guild/category
+      let rows = sqlx::query("SELECT id, guild_id, category_id FROM teams ORDER BY id").fetch_all(&self.pool).await?;
+
+      let mut current_set: std::collections::HashMap<(i64, i64), i32> = std::collections::HashMap::new();
+
+      for row in rows {
+        let guild_id: i64 = row.get("guild_id");
+        let category_id: i64 = row.get("category_id");
+        let id: i64 = row.get("id");
+
+        let set_index = current_set.entry((guild_id, category_id)).or_insert(1);
+        sqlx::query("UPDATE teams SET set_index = ? WHERE id = ?").bind(*set_index).bind(id).execute(&self.pool).await?;
+
+        *set_index += 1;
+      }
+
+      info!("Teams table migration completed");
     }
-    async fn create_formats_table(&self) -> Result<()> {
-        if !self.check_table("formats").await? {
-            sqlx::query(
-                "CREATE TABLE formats (
+
+    // Now verify all required columns exist
+    let required_columns = vec!["id", "guild_id", "category_id", "set_index", "session_id", "red", "blu", "created_at"];
+    self.verify_columns("teams", &required_columns).await?;
+
+    Ok(())
+  }
+  async fn create_formats_table(&self) -> Result<()> {
+    if !self.check_table("formats").await? {
+      sqlx::query(
+        "CREATE TABLE formats (
                     id            INTEGER PRIMARY KEY,
                     guild_id      INTEGER NOT NULL,
                     category_id      INTEGER NOT NULL,
@@ -768,22 +727,22 @@ impl DatabaseMigrations {
                     quota         INTEGER NOT NULL DEFAULT 12,
                     connect_info  TEXT,
                     UNIQUE(guild_id, category_id, format_id)
-                )"
-            )
-            .execute(&self.pool)
-            .await?;
-        }
-        Ok(())
+                )",
+      )
+      .execute(&self.pool)
+      .await?;
     }
-    async fn verify_formats(&self) -> Result<()> {
-        let required_columns = vec!["id", "guild_id", "category_id", "format_id", "name", "quota", "connect_info"];
-        self.verify_columns("formats", &required_columns).await?;
-        Ok(())
-    }
-    async fn create_elo_table(&self) ->    Result<()> {
-        if !self.check_table("elo").await? {
-            sqlx::query(
-                "CREATE TABLE elo (
+    Ok(())
+  }
+  async fn verify_formats(&self) -> Result<()> {
+    let required_columns = vec!["id", "guild_id", "category_id", "format_id", "name", "quota", "connect_info"];
+    self.verify_columns("formats", &required_columns).await?;
+    Ok(())
+  }
+  async fn create_elo_table(&self) -> Result<()> {
+    if !self.check_table("elo").await? {
+      sqlx::query(
+        "CREATE TABLE elo (
                     id        INTEGER PRIMARY KEY,
                     guild_id  INTEGER NOT NULL,
                     user_id   INTEGER NOT NULL,
@@ -794,53 +753,47 @@ impl DatabaseMigrations {
                     UNIQUE(guild_id, user_id),
                     FOREIGN KEY (rank)    REFERENCES ranks(id) ON DELETE SET NULL,
                     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-                )"
-            )
-            .execute(&self.pool)
-            .await?;
-        }
-        Ok(())
+                )",
+      )
+      .execute(&self.pool)
+      .await?;
     }
-    async fn verify_elos(&self)   -> Result<()> {
-        let required_columns = vec!["id", "guild_id", "user_id", "elo", "rank", "games", "wins"];
-        self.verify_columns("elo", &required_columns).await?;
-        
-        // Check if we need to migrate the foreign key constraint
-        self.migrate_elo_foreign_key().await?;
-        
-        Ok(())
+    Ok(())
+  }
+  async fn verify_elos(&self) -> Result<()> {
+    let required_columns = vec!["id", "guild_id", "user_id", "elo", "rank", "games", "wins"];
+    self.verify_columns("elo", &required_columns).await?;
+
+    // Check if we need to migrate the foreign key constraint
+    self.migrate_elo_foreign_key().await?;
+
+    Ok(())
+  }
+
+  /// Migrate elo table to fix foreign key constraint from ranks(role_id) to ranks(id)
+  async fn migrate_elo_foreign_key(&self) -> Result<()> {
+    // Check if the elo table exists and has data
+    if !self.check_table("elo").await? {
+      return Ok(());
     }
-    
-    /// Migrate elo table to fix foreign key constraint from ranks(role_id) to ranks(id)
-    async fn migrate_elo_foreign_key(&self) -> Result<()> {
-        // Check if the elo table exists and has data
-        if !self.check_table("elo").await? {
-            return Ok(());
-        }
-        
-        // Check the current foreign key constraint
-        // We need to check if it's referencing ranks(role_id) instead of ranks(id)
-        let pragma_result: Option<String> = sqlx::query_scalar(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='elo'"
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-        
-        if let Some(sql) = pragma_result {
-            // If the foreign key references role_id (with or without quotes), we need to migrate
-            if sql.contains("REFERENCES \"ranks\"(\"role_id\")") || sql.contains("REFERENCES ranks(role_id)") {
-                info!("Detected incorrect foreign key constraint, migrating elo table...");
-                
-                // Create backup
-                sqlx::query("CREATE TABLE elo_backup AS SELECT * FROM elo")
-                    .execute(&self.pool)
-                    .await?;
-                
-                // Drop and recreate table with correct foreign key
-                sqlx::query("DROP TABLE elo").execute(&self.pool).await?;
-                
-                sqlx::query(
-                    "CREATE TABLE elo (
+
+    // Check the current foreign key constraint
+    // We need to check if it's referencing ranks(role_id) instead of ranks(id)
+    let pragma_result: Option<String> = sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type='table' AND name='elo'").fetch_optional(&self.pool).await?;
+
+    if let Some(sql) = pragma_result {
+      // If the foreign key references role_id (with or without quotes), we need to migrate
+      if sql.contains("REFERENCES \"ranks\"(\"role_id\")") || sql.contains("REFERENCES ranks(role_id)") {
+        info!("Detected incorrect foreign key constraint, migrating elo table...");
+
+        // Create backup
+        sqlx::query("CREATE TABLE elo_backup AS SELECT * FROM elo").execute(&self.pool).await?;
+
+        // Drop and recreate table with correct foreign key
+        sqlx::query("DROP TABLE elo").execute(&self.pool).await?;
+
+        sqlx::query(
+          "CREATE TABLE elo (
                         id        INTEGER PRIMARY KEY,
                         guild_id  INTEGER NOT NULL,
                         user_id   INTEGER NOT NULL,
@@ -851,14 +804,14 @@ impl DatabaseMigrations {
                         UNIQUE(guild_id, user_id),
                         FOREIGN KEY (rank)    REFERENCES ranks(id) ON DELETE SET NULL,
                         FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-                    )"
-                )
-                .execute(&self.pool)
-                .await?;
-                
-                // Restore data, converting role_id to rank.id
-                sqlx::query(
-                    "INSERT INTO elo (id, guild_id, user_id, elo, rank, games, wins)
+                    )",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Restore data, converting role_id to rank.id
+        sqlx::query(
+          "INSERT INTO elo (id, guild_id, user_id, elo, rank, games, wins)
                      SELECT 
                          eb.id,
                          eb.guild_id,
@@ -868,123 +821,95 @@ impl DatabaseMigrations {
                          eb.games,
                          eb.wins
                      FROM elo_backup eb
-                     LEFT JOIN ranks r ON r.role_id = eb.rank AND r.guild_id = eb.guild_id"
-                )
-                .execute(&self.pool)
-                .await?;
-                
-                // Clean up records that couldn't find matching ranks
-                sqlx::query("DELETE FROM elo WHERE rank = 0")
-                    .execute(&self.pool)
-                    .await?;
-                
-                // Drop backup
-                sqlx::query("DROP TABLE elo_backup")
-                    .execute(&self.pool)
-                    .await?;
-                
-                info!("Elo table migration completed successfully");
-            }
-        }
-        
-        Ok(())
+                     LEFT JOIN ranks r ON r.role_id = eb.rank AND r.guild_id = eb.guild_id",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Clean up records that couldn't find matching ranks
+        sqlx::query("DELETE FROM elo WHERE rank = 0").execute(&self.pool).await?;
+
+        // Drop backup
+        sqlx::query("DROP TABLE elo_backup").execute(&self.pool).await?;
+
+        info!("Elo table migration completed successfully");
+      }
     }
-    async fn create_ranks_table(&self) ->  Result<()> {
-        // Check if old schema exists (has position or role_ids columns)
-        let needs_migration = if self.check_table("ranks").await? {
-            self.check_column("ranks", "position").await? || self.check_column("ranks", "role_ids").await?
-        } else {
-            false
-        };
 
-        if needs_migration {
-            // Migrate old data to new schema
-            let old_data: Vec<(i64, String, i64)> = sqlx::query_as(
-                "SELECT guild_id, name, elo FROM ranks"
-            )
-            .fetch_all(&self.pool)
-            .await
-            .unwrap_or_default();
+    Ok(())
+  }
+  async fn create_ranks_table(&self) -> Result<()> {
+    // Check if old schema exists (has position or role_ids columns)
+    let needs_migration = if self.check_table("ranks").await? { self.check_column("ranks", "position").await? || self.check_column("ranks", "role_ids").await? } else { false };
 
-            sqlx::query("DROP TABLE ranks").execute(&self.pool).await?;
+    if needs_migration {
+      // Migrate old data to new schema
+      let old_data: Vec<(i64, String, i64)> = sqlx::query_as("SELECT guild_id, name, elo FROM ranks").fetch_all(&self.pool).await.unwrap_or_default();
 
-            sqlx::query(
-                "CREATE TABLE ranks (
+      sqlx::query("DROP TABLE ranks").execute(&self.pool).await?;
+
+      sqlx::query(
+        "CREATE TABLE ranks (
                     id       INTEGER PRIMARY KEY,
                     guild_id INTEGER NOT NULL,
                     name     TEXT    NOT NULL,
                     elo      INTEGER NOT NULL,
                     role_id  INTEGER NOT NULL
-                )"
-            )
-            .execute(&self.pool)
-            .await?;
+                )",
+      )
+      .execute(&self.pool)
+      .await?;
 
-            // Restore data
-            for (guild_id, name, elo) in old_data {
-                let _ = sqlx::query(
-                    "INSERT OR IGNORE INTO ranks (guild_id, name, elo) VALUES (?, ?, ?)"
-                )
-                .bind(guild_id)
-                .bind(&name)
-                .bind(elo)
-                .execute(&self.pool)
-                .await;
-            }
-        } else if !self.check_table("ranks").await? {
-            sqlx::query(
-                "CREATE TABLE ranks (
+      // Restore data
+      for (guild_id, name, elo) in old_data {
+        let _ = sqlx::query("INSERT OR IGNORE INTO ranks (guild_id, name, elo) VALUES (?, ?, ?)").bind(guild_id).bind(&name).bind(elo).execute(&self.pool).await;
+      }
+    } else if !self.check_table("ranks").await? {
+      sqlx::query(
+        "CREATE TABLE ranks (
                     id       INTEGER PRIMARY KEY,
                     guild_id INTEGER NOT NULL,
                     name     TEXT    NOT NULL,
                     elo      INTEGER NOT NULL,
                     role_id  INTEGER NOT NULL
-                )"
-            )
-            .execute(&self.pool)
-            .await?;
-        }
+                )",
+      )
+      .execute(&self.pool)
+      .await?;
+    }
 
-        Ok(())
-    }
-    async fn verify_ranks(&self)  -> Result<()> {
-        let required_columns = vec!["id", "guild_id", "name", "elo", "role_id"];
-        self.verify_columns("ranks", &required_columns).await?;
-        Ok(())
-    }
-    
-    /// Add foreign key constraint to config table after both tables exist
-    async fn add_config_foreign_key(&self) -> Result<()> {
-        // Check if foreign key already exists by trying to query pragma_foreign_key_list
-        let has_foreign_key = sqlx::query("PRAGMA foreign_key_list(config)")
-            .fetch_all(&self.pool)
-            .await?
-            .into_iter()
-            .any(|row| {
-                if let Ok(table) = row.try_get::<String, _>("table") {
-                    table == "ranks"
-                } else {
-                    false
-                }
-            });
-            
-        if !has_foreign_key {
-            // SQLite doesn't support adding foreign keys to existing tables directly
-            // We need to recreate the table
-            info!("Adding foreign key constraint to config table...");
-            
-            // Backup existing data
-            let backup_data = sqlx::query(
-                "SELECT guild_id, runner_id, admin_id, active_elo, default_rank FROM config"
-            )
-            .fetch_all(&self.pool)
-            .await?;
-            
-            // Drop and recreate table with foreign key
-            sqlx::query("DROP TABLE config").execute(&self.pool).await?;
-            
-            sqlx::query(
-                "CREATE TABLE config (
+    Ok(())
+  }
+  async fn verify_ranks(&self) -> Result<()> {
+    let required_columns = vec!["id", "guild_id", "name", "elo", "role_id"];
+    self.verify_columns("ranks", &required_columns).await?;
+    Ok(())
+  }
+
+  /// Add foreign key constraint to config table after both tables exist
+  async fn add_config_foreign_key(&self) -> Result<()> {
+    // Check if foreign key already exists by trying to query pragma_foreign_key_list
+    let has_foreign_key = sqlx::query("PRAGMA foreign_key_list(config)").fetch_all(&self.pool).await?.into_iter().any(|row| {
+      if let Ok(table) = row.try_get::<String, _>("table") {
+        table == "ranks"
+      } else {
+        false
+      }
+    });
+
+    if !has_foreign_key {
+      // SQLite doesn't support adding foreign keys to existing tables directly
+      // We need to recreate the table
+      info!("Adding foreign key constraint to config table...");
+
+      // Backup existing data
+      let backup_data = sqlx::query("SELECT guild_id, runner_id, admin_id, active_elo, default_rank FROM config").fetch_all(&self.pool).await?;
+
+      // Drop and recreate table with foreign key
+      sqlx::query("DROP TABLE config").execute(&self.pool).await?;
+
+      sqlx::query(
+        "CREATE TABLE config (
                     guild_id     INTEGER NOT NULL,
                     runner_id    INTEGER,
                     admin_id     INTEGER,
@@ -992,125 +917,107 @@ impl DatabaseMigrations {
                     default_rank INTEGER,
                     PRIMARY KEY(guild_id),
                     FOREIGN KEY (default_rank) REFERENCES ranks(role_id) ON DELETE SET NULL
-                )"
-            )
-            .execute(&self.pool)
-            .await?;
-            
-            // Restore data
-            for row in backup_data {
-                let guild_id: i64 = row.get("guild_id");
-                let runner_id: Option<i64> = row.try_get("runner_id").ok();
-                let admin_id: Option<i64> = row.try_get("admin_id").ok();
-                let active_elo: Option<i64> = row.try_get("active_elo").ok();
-                let default_rank: Option<i64> = row.try_get("default_rank").ok();
-                
-                sqlx::query(
-                    "INSERT INTO config (guild_id, runner_id, admin_id, active_elo, default_rank)
-                     VALUES (?, ?, ?, ?, ?)"
-                )
-                .bind(guild_id)
-                .bind(runner_id)
-                .bind(admin_id)
-                .bind(active_elo)
-                .bind(default_rank)
-                .execute(&self.pool)
-                .await?;
-            }
-            
-            info!("Successfully added foreign key constraint to config table");
-        }
-        
-        Ok(())
+                )",
+      )
+      .execute(&self.pool)
+      .await?;
+
+      // Restore data
+      for row in backup_data {
+        let guild_id: i64 = row.get("guild_id");
+        let runner_id: Option<i64> = row.try_get("runner_id").ok();
+        let admin_id: Option<i64> = row.try_get("admin_id").ok();
+        let active_elo: Option<i64> = row.try_get("active_elo").ok();
+        let default_rank: Option<i64> = row.try_get("default_rank").ok();
+
+        sqlx::query(
+          "INSERT INTO config (guild_id, runner_id, admin_id, active_elo, default_rank)
+                     VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(guild_id)
+        .bind(runner_id)
+        .bind(admin_id)
+        .bind(active_elo)
+        .bind(default_rank)
+        .execute(&self.pool)
+        .await?;
+      }
+
+      info!("Successfully added foreign key constraint to config table");
     }
 
-    // HELPERS
+    Ok(())
+  }
 
-    /// Verify that a table has all required columns
-    async fn verify_columns(&self, table_name: &str, required_columns: &[&str]) -> Result<()> {
-        let existing_cols: Vec<String> = sqlx::query(&format!("PRAGMA table_info({table_name})"))
-            .fetch_all(&self.pool).await?.into_iter().filter_map(|row| row.try_get::<String, _>("name").ok()).collect();
+  // HELPERS
 
-        for required_col in required_columns {
-            if !existing_cols.contains(&required_col.to_string()) {
-                return Err(anyhow::anyhow!("🔴 {} in {}", required_col, table_name));
-            }
-        }
-        Ok(())
+  /// Verify that a table has all required columns
+  async fn verify_columns(&self, table_name: &str, required_columns: &[&str]) -> Result<()> {
+    let existing_cols: Vec<String> =
+      sqlx::query(&format!("PRAGMA table_info({table_name})")).fetch_all(&self.pool).await?.into_iter().filter_map(|row| row.try_get::<String, _>("name").ok()).collect();
+
+    for required_col in required_columns {
+      if !existing_cols.contains(&required_col.to_string()) {
+        return Err(anyhow::anyhow!("🔴 {} in {}", required_col, table_name));
+      }
     }
-    /// Create a default category entry for a guild if none exists
-    pub async fn init_first_category(&self, guild_id: GI) -> Result<()> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*)
+    Ok(())
+  }
+  /// Create a default category entry for a guild if none exists
+  pub async fn init_first_category(&self, guild_id: GI) -> Result<()> {
+    let count: i64 = sqlx::query_scalar(
+      "SELECT COUNT(*)
             FROM categories
-            WHERE guild_id = ?"
-        )
-        .bind(guild_id.get() as i64)
-        .fetch_one(&self.pool)
-        .await?;
+            WHERE guild_id = ?",
+    )
+    .bind(guild_id.get() as i64)
+    .fetch_one(&self.pool)
+    .await?;
 
-        if count == 0 {
-            sqlx::query("INSERT INTO categories (category_id, guild_id, dashboard, chat, queue, red, blu)
-                        VALUES (1, ?, 1, 1, 1, 1, 1)"
-            )
-            .bind(guild_id.get() as i64)
-            .execute(&self.pool)
-            .await?;
-        }
-
-        Ok(())
+    if count == 0 {
+      sqlx::query(
+        "INSERT INTO categories (category_id, guild_id, dashboard, chat, queue, red, blu)
+                        VALUES (1, ?, 1, 1, 1, 1, 1)",
+      )
+      .bind(guild_id.get() as i64)
+      .execute(&self.pool)
+      .await?;
     }
-    /// Check if table exists
-    async fn check_table(&self, table_name: &str) -> Result<bool> {
-        let result = sqlx::query(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
-        )
-        .bind(table_name)
-        .fetch_optional(&self.pool)
-        .await?;
 
-        Ok(result.is_some())
+    Ok(())
+  }
+  /// Check if table exists
+  async fn check_table(&self, table_name: &str) -> Result<bool> {
+    let result = sqlx::query("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(table_name).fetch_optional(&self.pool).await?;
+
+    Ok(result.is_some())
+  }
+  /// Check if column exists in table
+  async fn check_column(&self, table_name: &str, column_name: &str) -> Result<bool> {
+    let existing_cols: Vec<String> =
+      sqlx::query(&format!("PRAGMA table_info({table_name})")).fetch_all(&self.pool).await?.into_iter().filter_map(|row| row.try_get::<String, _>("name").ok()).collect();
+
+    Ok(existing_cols.contains(&column_name.to_string()))
+  }
+  /// Check if a unique constraint exists on a column
+  async fn check_unique(&self, table: &str, column: &str) -> Result<bool> {
+    // INTEGER PRIMARY KEY is the rowid alias in SQLite and won't appear in index_list,
+    // so check table_info for the pk flag first.
+    let table_info = sqlx::query(&format!("PRAGMA table_info({table})")).fetch_all(&self.pool).await?;
+
+    let is_pk = table_info.iter().any(|row| {
+      let name: String = row.try_get("name").unwrap_or_default();
+      let pk: i64 = row.try_get("pk").unwrap_or(0);
+      name == column && pk > 0
+    });
+
+    if is_pk {
+      return Ok(true);
     }
-    /// Check if column exists in table
-    async fn check_column(&self, table_name: &str, column_name: &str) -> Result<bool> {
-        let existing_cols: Vec<String> = sqlx::query(&format!("PRAGMA table_info({table_name})"))
-            .fetch_all(&self.pool)
-            .await?
-            .into_iter()
-            .filter_map(|row| row.try_get::<String, _>("name").ok())
-            .collect();
 
-        Ok(existing_cols.contains(&column_name.to_string()))
-    }
-    /// Check if a unique constraint exists on a column
-    async fn check_unique(&self, table: &str, column: &str) -> Result<bool> {
-        // INTEGER PRIMARY KEY is the rowid alias in SQLite and won't appear in index_list,
-        // so check table_info for the pk flag first.
-        let table_info = sqlx::query(&format!("PRAGMA table_info({table})"))
-            .fetch_all(&self.pool)
-            .await?;
+    let index_info = sqlx::query(&format!("PRAGMA index_list({table})")).fetch_all(&self.pool).await?;
 
-        let is_pk = table_info.iter().any(|row| {
-            let name: String = row.try_get("name").unwrap_or_default();
-            let pk: i64 = row.try_get("pk").unwrap_or(0);
-            name == column && pk > 0
-        });
-
-        if is_pk {
-            return Ok(true);
-        }
-
-        let index_info = sqlx::query(&format!("PRAGMA index_list({table})"))
-            .fetch_all(&self.pool)
-            .await?;
-
-        let has_unique = index_info.iter().any(|row| {
-            if let Ok(unique) = row.try_get::<i64, _>("unique") {
-                unique == 1
-            } else {
-                false
-            }
-        });
-        Ok(has_unique)
-    }
+    let has_unique = index_info.iter().any(|row| if let Ok(unique) = row.try_get::<i64, _>("unique") { unique == 1 } else { false });
+    Ok(has_unique)
+  }
 }

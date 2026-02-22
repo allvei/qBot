@@ -1,6 +1,7 @@
 pub mod migrations;
 pub mod repo;
 pub mod validator;
+pub mod helpers;
 
 use anyhow::Result;
 use serenity::all::{Context as Ctx, UserId as UI, GuildId as GI};

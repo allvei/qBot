@@ -436,7 +436,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
   let category = guild.get_category(channel)?;
 
   // Check if we have an idle session
-  let idle_sessions = category.get_sessions_by_status(&SS::Idle);
+  let idle_sessions = category.get_seshs_by_status(&SS::Idle);
   if idle_sessions.is_empty() {
     cc.reply("No queue available. A match is currently in progress.").await?;
     return Ok(());
@@ -445,9 +445,9 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
   }
 
   // Check if player is already in game
-  if category.get_user_session(user).await.is_ok() {
+  if category.get_user_sesh(user).await.is_ok() {
     // Already in queue - refresh timeout
-    if let Ok(session) = category.get_user_session(user).await {
+    if let Ok(session) = category.get_user_sesh(user).await {
       if let Some(sp) = session.pool.iter_mut().find(|p| p.player.user_id == user) {
         sp.joined_at = std::time::SystemTime::now();
       }
@@ -457,7 +457,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
   } else {
     let queue = category.get_queue().await?;
-    queue.add_player(player);
+    queue.add_ply(player);
 
     let current_queue = queue.pool.len();
     let quota_reached = current_queue >= category.quota() as usize;
@@ -480,7 +480,7 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
   let (queue_count, queue_list, quota) = {
     let category = guild.get_category(channel)?;
 
-    let idle_games = category.get_sessions_by_status(&SS::Idle);
+    let idle_games = category.get_seshs_by_status(&SS::Idle);
 
     if idle_games.is_empty() {
       (0, "No active queue found.".to_string(), category.quota())
@@ -517,13 +517,13 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 
   // Find the first format with an active game
   let mut target_game = None;
-  let mut target_sg_name = String::new();
+  let mut target_fmt_name = String::new();
 
   for sg in &category.formats {
     if let Some(game) = sg.sessions.last() {
       if game.pool.len() >= quota {
         target_game = Some(game);
-        target_sg_name = sg.name.clone();
+        target_fmt_name = sg.name.clone();
         break;
       }
     }
@@ -557,7 +557,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
   // Update pool with new team assignments
   // Find the same format and session we found earlier
   for sg in &mut updated_category.formats {
-    if sg.name == target_sg_name {
+    if sg.name == target_fmt_name {
       if let Some(last_session) = sg.sessions.last_mut() {
         last_session.pool.clear();
         last_session.pool.extend(red_team.into_iter().chain(blu_team.into_iter()));
@@ -568,7 +568,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 
   // Find the session again for the rest of the logic
   let last_session =
-    updated_category.formats.iter_mut().find(|sg| sg.name == target_sg_name).and_then(|sg| sg.sessions.last_mut()).ok_or_else(|| anyhow!("No session available after update"))?;
+    updated_category.formats.iter_mut().find(|sg| sg.name == target_fmt_name).and_then(|sg| sg.sessions.last_mut()).ok_or_else(|| anyhow!("No session available after update"))?;
 
   let red_team_names: Vec<String> = last_session.pool.iter().filter(|sp| sp.team == Some(Team::Red)).map(|sp| format!("<@{}>", sp.player.user_id)).collect();
   let blu_team_names: Vec<String> = last_session.pool.iter().filter(|sp| sp.team == Some(Team::Blu)).map(|sp| format!("<@{}>", sp.player.user_id)).collect();

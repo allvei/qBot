@@ -576,7 +576,7 @@ pub fn build_settings_buttons(settings: &crate::db::repo::UserSettings) -> Vec<C
 }
 
 /// Build a join announcement embed (used for both actual announcements and previews)
-pub async fn build_join_alert_embed(ctx: &Context, user_id: UI, guild_id: Option<GI>, settings: &crate::db::repo::UserSettings, rank_name: &str, sg_name: Option<&str>) -> CE {
+pub async fn build_join_alert_embed(ctx: &Context, user_id: UI, guild_id: Option<GI>, settings: &crate::db::repo::UserSettings, rank_name: &str, fmt_name: Option<&str>) -> CE {
   // Get display name - try member nickname first, then user name, then user ID
   let display_name = if let Some(gid) = guild_id {
     // With guild context - try to get member for nickname
@@ -608,7 +608,7 @@ pub async fn build_join_alert_embed(ctx: &Context, user_id: UI, guild_id: Option
 
   // Create embed with title showing nickname + "joined the queue"
   let mut embed = CE::new()
-    .title(match sg_name {
+    .title(match fmt_name {
       Some(name) => format!("{display_name} joined the {name} queue"),
       None => format!("{display_name} joined the queue"),
     })
@@ -640,7 +640,7 @@ pub async fn build_join_alert_embed(ctx: &Context, user_id: UI, guild_id: Option
 }
 
 /// Build a leave announcement embed (used for both actual announcements and previews)
-pub async fn build_leave_alert_embed(ctx: &Context, user_id: UI, guild_id: Option<GI>, settings: &crate::db::repo::UserSettings, sg_name: Option<&str>) -> CE {
+pub async fn build_leave_alert_embed(ctx: &Context, user_id: UI, guild_id: Option<GI>, settings: &crate::db::repo::UserSettings, fmt_name: Option<&str>) -> CE {
   // Get display name - try member nickname first, then user name, then user ID
   let display_name = if let Some(gid) = guild_id {
     // With guild context - try to get member for nickname
@@ -672,7 +672,7 @@ pub async fn build_leave_alert_embed(ctx: &Context, user_id: UI, guild_id: Optio
 
   // Create embed with title showing nickname + "left the queue"
   let mut embed = CE::new()
-    .title(match sg_name {
+    .title(match fmt_name {
       Some(name) => format!("{display_name} left the {name} queue"),
       None => format!("{display_name} left the queue"),
     })
@@ -3122,22 +3122,22 @@ pub async fn handle_category_settings_button(
   let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
   info!("[Category Settings] {} pressed {}", user_tag, button_id);
 
-  // Handle format remove confirmation (button: category_sg_confirm_remove_{gid}_{sgid}, select: category_sg_confirm_remove with value gid_sgid)
-  if button_id == "category_sg_confirm_remove" || button_id.starts_with("category_sg_confirm_remove_") {
-    let selected = if button_id == "category_sg_confirm_remove" {
+  // Handle format remove confirmation (button: category_fmt_confirm_remove_{gid}_{sgid}, select: category_fmt_confirm_remove with value gid_fmtid)
+  if button_id == "category_fmt_confirm_remove" || button_id.starts_with("category_fmt_confirm_remove_") {
+    let selected = if button_id == "category_fmt_confirm_remove" {
       match &interaction.data.kind {
         CIDK::StringSelect { values } => values.first().cloned().unwrap_or_default(),
         _ => return Err(anyhow::anyhow!("Expected string select")),
       }
     } else {
-      button_id.strip_prefix("category_sg_confirm_remove_").unwrap().to_string()
+      button_id.strip_prefix("category_fmt_confirm_remove_").unwrap().to_string()
     };
     let parts: Vec<&str> = selected.split('_').collect();
     if parts.len() != 2 {
       return Err(anyhow::anyhow!("Invalid remove selection format"));
     }
     let category_id: u8 = parts[0].parse().map_err(|_| anyhow::anyhow!("Invalid category_id"))?;
-    let sg_id: u8 = parts[1].parse().map_err(|_| anyhow::anyhow!("Invalid format_id"))?;
+    let fmt_id: u8 = parts[1].parse().map_err(|_| anyhow::anyhow!("Invalid format_id"))?;
 
     let mut manager_lock = manager.lock().await;
     let category = {
@@ -3145,7 +3145,7 @@ pub async fn handle_category_settings_button(
       server.categories.iter_mut().find(|g| g.category_id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?
     };
 
-    match category.remove_format(sg_id) {
+    match category.rem_fmt(fmt_id) {
       Ok(_) => {
         // Persist to DB
         db.categories.save_all_formats(guild_id, category_id, &category.formats).await?;
@@ -3167,41 +3167,41 @@ pub async fn handle_category_settings_button(
     return Ok(());
   }
 
-  // Handle format edit (button: category_sg_edit_{gid}_{sgid}, select: category_sg_edit with value gid_sgid)
-  if button_id == "category_sg_edit" || button_id.starts_with("category_sg_edit_") {
-    let selected = if button_id == "category_sg_edit" {
+  // Handle format edit (button: category_fmt_edit_{gid}_{sgid}, select: category_fmt_edit with value gid_fmtid)
+  if button_id == "category_fmt_edit" || button_id.starts_with("category_fmt_edit_") {
+    let selected = if button_id == "category_fmt_edit" {
       // Select menu variant
       match &interaction.data.kind {
         CIDK::StringSelect { values } => values.first().cloned().unwrap_or_default(),
         _ => return Err(anyhow::anyhow!("Expected string select")),
       }
     } else {
-      // Button variant: strip prefix to get "gid_sgid"
-      button_id.strip_prefix("category_sg_edit_").unwrap().to_string()
+      // Button variant: strip prefix to get "gid_fmtid"
+      button_id.strip_prefix("category_fmt_edit_").unwrap().to_string()
     };
     let parts: Vec<&str> = selected.split('_').collect();
     if parts.len() != 2 {
       return Err(anyhow::anyhow!("Invalid edit selection format"));
     }
     let category_id: u8 = parts[0].parse().map_err(|_| anyhow::anyhow!("Invalid category_id"))?;
-    let sg_id: u8 = parts[1].parse().map_err(|_| anyhow::anyhow!("Invalid format_id"))?;
+    let fmt_id: u8 = parts[1].parse().map_err(|_| anyhow::anyhow!("Invalid format_id"))?;
 
     // Show modal to edit the format's name and quota
 
     let mut manager_lock = manager.lock().await;
-    let sg_name;
-    let sg_quota;
+    let fmt_name;
+    let fmt_quota;
     {
       let server = manager_lock.get_server(guild_id)?;
       let category = server.categories.iter().find(|g| g.category_id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?;
-      let sg = category.formats.iter().find(|s| s.id == sg_id).ok_or_else(|| anyhow::anyhow!("Format {} not found", sg_id))?;
-      sg_name = sg.name.clone();
-      sg_quota = sg.quota.to_string();
+      let sg = category.formats.iter().find(|s| s.id == fmt_id).ok_or_else(|| anyhow::anyhow!("Format {} not found", fmt_id))?;
+      fmt_name = sg.name.clone();
+      fmt_quota = sg.quota.to_string();
     }
     drop(manager_lock);
 
-    let modal = CreateModal::new(format!("category_sg_modal_edit_{}_{}", category_id, sg_id), format!("Edit format: {}", sg_name))
-      .components(vec![create_value_input_sh("Format name", "name", "", &sg_name), create_value_input_sh("Quota (players per match)", "quota", "", &sg_quota)]);
+    let modal = CreateModal::new(format!("category_fmt_modal_edit_{}_{}", category_id, fmt_id), format!("Edit format: {}", fmt_name))
+      .components(vec![create_value_input_sh("Format name", "name", "", &fmt_name), create_value_input_sh("Quota (players per match)", "quota", "", &fmt_quota)]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
@@ -3538,7 +3538,11 @@ pub async fn handle_category_settings_button(
         for (i, (msg_id, timestamp)) in existing_dashboard_msgs.iter().take(5).enumerate() {
           let state = format!("{}_{:x}", category_id, msg_id.get());
           let time_str = timestamp.unix_timestamp();
-          let label = if i == 0 { format!("Most recent (<t:{}:f>)", time_str) } else { format!("Message {} (<t:{}:f>)", i + 1, time_str) };
+          let label = if i == 0 { 
+        format!("Most recent ({})", crate::timestamp_from_unix(time_str, crate::Style::ShortDateTime)) 
+      } else { 
+        format!("Message {} ({})", i + 1, crate::timestamp_from_unix(time_str, crate::Style::ShortDateTime)) 
+      };
 
           buttons.push(CB::new(format!("category_link_msg_confirm_{}", state)).label(label).style(BS::Success));
         }
@@ -3633,22 +3637,22 @@ pub async fn handle_category_settings_button(
       FormatListDisplay { category_id, category_name: category.display_name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
     let response = CIR::UpdateMessage(CIRM::new().embed(display.build_embed()).components(display.build_components()));
     interaction.create_response(&ctx.http, response).await?;
-  } else if button_id.starts_with("category_sg_back_") {
+  } else if button_id.starts_with("category_fmt_back_") {
     // Back from formats list -> category settings
     let settings = CategorySettings::from_category(&category);
     let embed = build_category_settings_embed(&settings);
     let buttons = build_category_settings_buttons(settings.category_id);
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
     interaction.create_response(&ctx.http, response).await?;
-  } else if button_id.starts_with("category_sg_add_") {
+  } else if button_id.starts_with("category_fmt_add_") {
     // Show modal to add a new format
 
-    let modal = CreateModal::new(format!("category_sg_modal_add_{}", category_id), "Add format")
+    let modal = CreateModal::new(format!("category_fmt_modal_add_{}", category_id), "Add format")
       .components(vec![create_input_sh("Format name", "name", "e.g., Competitive, Casual"), create_input_sh("Quota (players per match)", "quota", "e.g., 12")]);
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
-  } else if button_id.starts_with("category_sg_remove_") {
+  } else if button_id.starts_with("category_fmt_remove_") {
     // Show select menu to pick which format to remove
     // Only non-default formats (id != 0) can be removed
     let removable: Vec<(String, String)> =
@@ -3659,10 +3663,10 @@ pub async fn handle_category_settings_button(
     } else {
       use create_selection_menu;
       let mut components = Vec::new();
-      if let Some(menu) = create_selection_menu("category_sg_confirm_remove", "Select format to remove", removable) {
+      if let Some(menu) = create_selection_menu("category_fmt_confirm_remove", "Select format to remove", removable) {
         components.push(menu);
       }
-      components.push(CAR::Buttons(vec![crate::models::embeds::Ephemeral::back(format!("category_sg_back_{}", category_id))]));
+      components.push(CAR::Buttons(vec![crate::models::embeds::Ephemeral::back(format!("category_fmt_back_{}", category_id))]));
       let embed = CE::new().title("Remove format").description("Select a format to remove. The default format cannot be removed.").color(0xED4245);
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
       interaction.create_response(&ctx.http, response).await?;
@@ -3911,9 +3915,9 @@ pub async fn handle_category_settings_modal(
   let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
   info!("[Category Settings] {} submitted modal {}", user_tag, modal_id);
 
-  // Handle format modals first (format: category_sg_modal_{action}_{category_id}_{sg_id})
+  // Handle format modals first (format: category_fmt_modal_{action}_{category_id}_{fmt_id})
   // These have two trailing IDs so they must be handled before the generic rsplit extraction.
-  if modal_id.starts_with("category_sg_modal_edit_") || modal_id.starts_with("category_sg_modal_add_") {
+  if modal_id.starts_with("category_fmt_modal_edit_") || modal_id.starts_with("category_fmt_modal_add_") {
     return handle_format_modal(ctx, interaction, db, manager, guild_id, modal_id).await;
   }
 
@@ -4011,7 +4015,7 @@ pub async fn handle_category_settings_modal(
 
 /// Handle format modal submissions (add and edit)
 /// Separated from handle_category_settings_modal because the modal ID format
-/// (category_sg_modal_{action}_{category_id}_{sg_id}) has two trailing IDs,
+/// (category_fmt_modal_{action}_{category_id}_{fmt_id}) has two trailing IDs,
 /// which breaks the generic rsplit('_').next() category_id extraction.
 async fn handle_format_modal(
   ctx: &Context,
@@ -4039,14 +4043,14 @@ async fn handle_format_modal(
     }
   };
 
-  if modal_id.starts_with("category_sg_modal_edit_") {
-    let suffix = modal_id.strip_prefix("category_sg_modal_edit_").unwrap();
+  if modal_id.starts_with("category_fmt_modal_edit_") {
+    let suffix = modal_id.strip_prefix("category_fmt_modal_edit_").unwrap();
     let parts: Vec<&str> = suffix.split('_').collect();
     if parts.len() != 2 {
       return Err(anyhow::anyhow!("Invalid edit modal ID format"));
     }
     let category_id: u8 = parts[0].parse().map_err(|_| anyhow::anyhow!("Invalid category_id"))?;
-    let sg_id: u8 = parts[1].parse().map_err(|_| anyhow::anyhow!("Invalid format_id"))?;
+    let fmt_id: u8 = parts[1].parse().map_err(|_| anyhow::anyhow!("Invalid format_id"))?;
 
     let mut manager_lock = manager.lock().await;
     let category = {
@@ -4054,11 +4058,11 @@ async fn handle_format_modal(
       server.categories.iter_mut().find(|g| g.category_id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?
     };
 
-    if let Some(sg) = category.formats.iter_mut().find(|s| s.id == sg_id) {
+    if let Some(sg) = category.formats.iter_mut().find(|s| s.id == fmt_id) {
       sg.name = name;
       sg.quota = quota;
     } else {
-      send_modal_error_response(interaction, ctx, &format!("Format {} not found.", sg_id)).await;
+      send_modal_error_response(interaction, ctx, &format!("Format {} not found.", fmt_id)).await;
       return Ok(());
     }
 
@@ -4073,8 +4077,8 @@ async fn handle_format_modal(
       FormatListDisplay { category_id, category_name: category.display_name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
     let response = CIR::UpdateMessage(CIRM::new().embed(display.build_embed()).components(display.build_components()));
     interaction.create_response(&ctx.http, response).await?;
-  } else if modal_id.starts_with("category_sg_modal_add_") {
-    let category_id: u8 = modal_id.strip_prefix("category_sg_modal_add_").and_then(|s| s.parse().ok()).ok_or_else(|| anyhow::anyhow!("Invalid add modal ID format"))?;
+  } else if modal_id.starts_with("category_fmt_modal_add_") {
+    let category_id: u8 = modal_id.strip_prefix("category_fmt_modal_add_").and_then(|s| s.parse().ok()).ok_or_else(|| anyhow::anyhow!("Invalid add modal ID format"))?;
 
     let mut manager_lock = manager.lock().await;
     let category = {
@@ -4082,7 +4086,7 @@ async fn handle_format_modal(
       server.categories.iter_mut().find(|g| g.category_id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?
     };
 
-    match category.add_format(name, quota) {
+    match category.add_fmt(name, quota) {
       Ok(_) => {
         // Persist to DB
         db.categories.save_all_formats(guild_id, category_id, &category.formats).await?;

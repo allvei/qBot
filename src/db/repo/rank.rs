@@ -1,7 +1,9 @@
 use anyhow::{Error, Result, anyhow};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 use tracing::info;
 use serenity::all::{RoleId, GuildId as GI};
+
+use crate::db::helpers::RowHelpers;
 
 /// A configurable rank for a guild (sorted by ELO)
 #[derive(Debug, Clone)]
@@ -15,6 +17,36 @@ pub struct GuildRank {
 impl GuildRank {
     pub fn new(guild_id: GI, name: String, elo: u16, role_id: RoleId) -> Self {
         Self { guild_id, name, elo, role_id }
+    }
+
+    /// Create GuildRank from a SQL row with validation
+    pub fn from_row(row: &SqliteRow, guild_id: GI) -> Option<Self> {
+        let name: String = match row.try_get("name") {
+            Ok(name) => name,
+            Err(_) => return None,
+        };
+        
+        let elo: i64 = match row.try_get("elo") {
+            Ok(elo) => elo,
+            Err(_) => return None,
+        };
+        
+        let role_id: i64 = match row.try_get("role_id") {
+            Ok(role_id) => role_id,
+            Err(_) => return None,
+        };
+        
+        // Skip ranks with invalid role_id (0 means NULL in database)
+        if role_id == 0 {
+            return None;
+        }
+
+        Some(GuildRank {
+            guild_id,
+            name,
+            elo: elo as u16,
+            role_id: RoleId::new(role_id as u64),
+        })
     }
 }
 
@@ -54,23 +86,9 @@ impl RankRepository {
 
         let mut ranks = Vec::new();
         for row in rows {
-            let name:    String = row.try_get("name")?;
-            let elo:     i64    = row.try_get("elo")?;
-            let role_id: i64    = row.try_get("role_id")?;
-            
-            // Skip ranks with invalid role_id (0 means NULL in database)
-            if role_id == 0 {
-                continue;
+            if let Some(rank) = GuildRank::from_row(&row, guild_id) {
+                ranks.push(rank);
             }
-            
-            let role_id = RoleId::new(role_id as u64);
-
-            ranks.push(GuildRank {
-                guild_id,
-                name,
-                elo: elo as u16,
-                role_id,
-            });
         }
 
         Ok(ranks)

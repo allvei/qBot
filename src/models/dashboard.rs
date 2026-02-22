@@ -28,8 +28,8 @@ async fn format_team_display(embed: serenity::all::CreateEmbed, pool: &[crate::m
 }
 
 /// Add waiting players field to embed
-fn add_waiting_field(embed: serenity::all::CreateEmbed, sg_label: &str, current: usize, quota: usize, message: &str) -> serenity::all::CreateEmbed {
-  embed.field(format!("{sg_label} - Idle ({current}/{quota})"), message, false)
+fn add_waiting_field(embed: serenity::all::CreateEmbed, fmt_label: &str, current: usize, quota: usize, message: &str) -> serenity::all::CreateEmbed {
+  embed.field(format!("{fmt_label} - Idle ({current}/{quota})"), message, false)
 }
 
 /// Create a button interaction response with proper error handling
@@ -79,11 +79,7 @@ impl TeamDisplay {
 
 /// Helper function to calculate average ELO for a team
 fn get_avg_elo(team: &[crate::models::SessionPlayer]) -> f64 {
-  if team.is_empty() {
-    0.0
-  } else {
-    (team.iter().map(|p| p.player.elo as f64).sum::<f64>() / team.len() as f64 * 1000.0).floor() / 1000.0
-  }
+  (team.iter().map(|p| p.player.elo as f64).sum::<f64>() / team.len() as f64 * 100.0).round() / 100.0
 }
 
 /// Helper function to format team players as a string for embed fields
@@ -281,20 +277,20 @@ impl Category {
       let is_live = sg.sessions.iter().any(|s| s.is_active());
       let has_queued_players = sg.sessions.iter().any(|s| (s.is_idle() || s.is_hot()) && !s.pool.is_empty());
 
-      let sg_suffix = format!(":{}", sg.id);
+      let fmt_suffix = format!(":{}", sg.id);
       let join_label = if has_multiple { format!("Join {}", sg.name) } else { "Join".to_string() };
 
       // Row: Join {name} | [Leave | Edit timeout] | Start/End | [Shuffle]
-      let mut row = vec![CB::new(format!("join_queue{sg_suffix}")).label(&join_label).style(BS::Success)];
+      let mut row = vec![CB::new(format!("join_queue{fmt_suffix}")).label(&join_label).style(BS::Success)];
       if has_queued_players {
-        row.push(CB::new(format!("leave_queue{sg_suffix}")).label("Leave").style(BS::Danger));
-        row.push(CB::new(format!("change_expiry{sg_suffix}")).label("Edit timeout").style(BS::Secondary));
+        row.push(CB::new(format!("leave_queue{fmt_suffix}")).label("Leave").style(BS::Danger));
+        row.push(CB::new(format!("change_expiry{fmt_suffix}")).label("Edit timeout").style(BS::Secondary));
       }
       if is_hot {
-        row.push(CB::new(format!("start_match{sg_suffix}")).label("Start").style(BS::Success));
-        row.push(CB::new(format!("shuffle_teams{sg_suffix}")).label("Shuffle").style(BS::Secondary));
+        row.push(CB::new(format!("start_match{fmt_suffix}")).label("Start").style(BS::Success));
+        row.push(CB::new(format!("shuffle_teams{fmt_suffix}")).label("Shuffle").style(BS::Secondary));
       } else if is_live {
-        row.push(CB::new(format!("start_match{sg_suffix}")).label("End").style(BS::Danger));
+        row.push(CB::new(format!("start_match{fmt_suffix}")).label("End").style(BS::Danger));
       }
       buttons.push(CAR::Buttons(row));
     }
@@ -310,7 +306,7 @@ impl Category {
     CB::new(action).label(label).style(style).disabled(!enabled)
   }
 
-  pub async fn has_dashboard(&self, ctx: &Context) -> bool {
+  pub async fn has_dash(&self, ctx: &Context) -> bool {
     let ch = CI::new(self.channels.dashboard.into());
     let msg = ch.message(&ctx.http, self.dashboard_msg).await;
     msg.is_ok()
@@ -341,13 +337,13 @@ impl Category {
     let mut embed = CE::new().title(self.display_name());
 
     // Single loop: each format renders all its content together
-    let sg_count = self.formats.len();
-    for (sg_i, sg) in self.formats.iter().enumerate() {
+    let fmt_count = self.formats.len();
+    for (fmt_i, sg) in self.formats.iter().enumerate() {
       let quota = sg.quota as usize;
       let inactives: Vec<_> = sg.sessions.iter().filter(|s| !s.is_active()).collect();
       let actives: Vec<_> = sg.sessions.iter().filter(|s| s.is_active()).collect();
 
-      let sg_label = if has_multiple { format!("{} queue", sg.name) } else { "Queue".to_string() };
+      let fmt_label = if has_multiple { format!("{} queue", sg.name) } else { "Queue".to_string() };
 
       // --- Active games (Hot/Push/Live/Pull) ---
       if !actives.is_empty() {
@@ -355,8 +351,7 @@ impl Category {
         let started_time = actives
           .first()
           .and_then(|session| session.started_at)
-          .and_then(|started_at| started_at.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
-          .map(|timestamp| format!("<t:{}:R>", timestamp.as_secs()))
+          .and_then(|started_at| crate::timestamp_from_system_time(&started_at, crate::Style::Relative))
           .unwrap_or_else(|| "recently".to_string());
 
         // Determine status for field title
@@ -382,7 +377,7 @@ impl Category {
 
                 if let Ok(d) = base_time.duration_since(SystemTime::UNIX_EPOCH) {
                   let deadline = d.as_secs() + deadline_timeout;
-                  match_info.push_str(&format!("Join deadline: <t:{deadline}:R>\n"));
+                  match_info.push_str(&format!("Join deadline: {}\n", crate::timestamp_from_unix(deadline as i64, crate::Style::Relative)));
                   match_info.push_str("Missing players will be removed.\n\n");
                 }
               }
@@ -397,7 +392,7 @@ impl Category {
           // Note: Push/Live/Pull status is now in the field title, no need to add here
         }
 
-        embed = embed.field(format!("{sg_label} - {}", status_text), match_info, false);
+        embed = embed.field(format!("{fmt_label} - {}", status_text), match_info, false);
 
         // Team fields for active sessions
         for session in &actives {
@@ -432,7 +427,7 @@ impl Category {
 
               if let Ok(d) = base_time.duration_since(SystemTime::UNIX_EPOCH) {
                 let deadline = d.as_secs() + deadline_timeout;
-                hot_info.push_str(&format!("Join deadline: <t:{deadline}:R>\n"));
+                hot_info.push_str(&format!("Join deadline: {}\n", crate::timestamp_from_unix(deadline as i64, crate::Style::Relative)));
                 hot_info.push_str("Missing players will be removed.\n\n");
               }
             }
@@ -441,7 +436,7 @@ impl Category {
               hot_info.push_str(&format!("  • ‹**{}**› <@{}>\n", player.player.elo, player.player.user_id));
             }
           }
-          embed = embed.field(format!("{sg_label} - Ready to start"), hot_info, false);
+          embed = embed.field(format!("{fmt_label} - Ready to start"), hot_info, false);
 
           // Team fields
           if queue_players >= quota {
@@ -457,7 +452,7 @@ impl Category {
           }
         } else if queue_players == 0 {
           // Empty queue
-          embed = add_waiting_field(embed, &sg_label, 0, quota, "*Join to get started!*");
+          embed = add_waiting_field(embed, &fmt_label, 0, quota, "*Join to get started!*");
         } else {
           // Idle with players - show player list and timers
           // Queue header as a field so it stays categoryed with player fields
@@ -468,9 +463,9 @@ impl Category {
             let elo_str = format!("‹**{}**› ", player.player.elo);
             players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
 
-            if let Some((game_guild_id, sg_name)) = in_game_players.get(&player.player.user_id) {
+            if let Some((game_guild_id, fmt_name)) = in_game_players.get(&player.player.user_id) {
               if *game_guild_id == guild_id {
-                timers_field.push_str(&format!("In {sg_name} game\n"));
+                timers_field.push_str(&format!("In {fmt_name} game\n"));
               } else {
                 timers_field.push_str("In-game\n");
               }
@@ -482,7 +477,7 @@ impl Category {
               if timeout > 0 {
                 if let Ok(join_time) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
                   let expiry_timestamp = join_time.as_secs() + (timeout as u64 * 60);
-                  timers_field.push_str(&format!("Timeout <t:{}:R>\n", expiry_timestamp));
+                  timers_field.push_str(&format!("Timeout {}\n", crate::timestamp_from_unix(expiry_timestamp as i64, crate::Style::Relative)));
                 } else {
                   timers_field.push_str("-\n");
                 }
@@ -493,16 +488,16 @@ impl Category {
           }
 
           // Use format name in the field title
-          embed = embed.field(format!("{sg_label} - Idle ({queue_players}/{quota})"), players_field, true);
+          embed = embed.field(format!("{fmt_label} - Idle ({queue_players}/{quota})"), players_field, true);
           embed = embed.field("Status", timers_field, true);
         }
       } else {
         // No sessions at all
-        embed = add_waiting_field(embed, &sg_label, 0, quota, "*Empty, join to get started!*");
+        embed = add_waiting_field(embed, &fmt_label, 0, quota, "*Empty, join to get started!*");
       }
 
       // Separator between formats
-      if has_multiple && sg_i < sg_count - 1 {
+      if has_multiple && fmt_i < fmt_count - 1 {
         embed = embed.field("\u{200B}", "", false);
       }
 
@@ -666,7 +661,7 @@ impl Category {
   }
 
   /// Handles the join queue button
-  async fn dash_join_queue(&mut self, cc: &CC<'_>, sg_id: u8) -> Result<()> {
+  async fn dash_join_queue(&mut self, cc: &CC<'_>, fmt_id: u8) -> Result<()> {
     let user_id = cc.component.user.id;
 
     // Get player tag from database (primary source)
@@ -679,8 +674,8 @@ impl Category {
     let _dashboard_channel = self.channels.dashboard;
 
     // If player is already in this format, refresh their timeout and return
-    if self.is_user_in_sg(sg_id, user_id) {
-      if let Some(sg) = self.format_mut(sg_id) {
+    if self.is_user_in_fmt(fmt_id, user_id) {
+      if let Some(sg) = self.fmt_mut(fmt_id) {
         for session in &mut sg.sessions {
           if let Some(sp) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
             sp.joined_at = std::time::SystemTime::now();
@@ -694,7 +689,7 @@ impl Category {
     }
 
     // Check if we have an idle or hot session to join in the target format
-    let has_joinable_session = self.format(sg_id).map(|sg| sg.sessions.iter().any(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)).unwrap_or(false);
+    let has_joinable_session = self.fmt(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)).unwrap_or(false);
 
     if !has_joinable_session {
       cc.reply("Cannot join - match is in progress. Please wait.").await?;
@@ -796,20 +791,20 @@ impl Category {
       let username = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
 
       // Get current pool length BEFORE adding player
-      let (pool_len_before, sg_quota) = self.format(sg_id).map(|sg| (sg.sessions.iter().map(|s| s.pool.len()).sum::<usize>(), sg.quota as usize)).unwrap_or((0, 0));
-      let sg_name = self.format(sg_id).map(|sg| sg.name.as_str());
+      let (pool_len_before, fmt_quota) = self.fmt(fmt_id).map(|sg| (sg.sessions.iter().map(|s| s.pool.len()).sum::<usize>(), sg.quota as usize)).unwrap_or((0, 0));
+      let fmt_name = self.fmt(fmt_id).map(|sg| sg.name.as_str());
 
-      // Clone sg_name to avoid borrowing issues
-      let sg_name_owned = sg_name.map(|s| s.to_string());
+      // Clone fmt_name to avoid borrowing issues
+      let fmt_name_owned = fmt_name.map(|s| s.to_string());
 
       // Log BEFORE queue operation to fix race condition with quota notifications
-      if let Some(format) = self.format(sg_id) {
-        if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, format, &player, "joined").await {
+      if let Some(format) = self.fmt(fmt_id) {
+        if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, self.category_id, format, &player, "joined").await {
           warn!("Failed to log queue toggle: {e}");
         }
       }
 
-      if let Err(e) = self.queue_player_sg(sg_id, player, discord_rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
+      if let Err(e) = self.queue_player_fmt(fmt_id, player, discord_rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
         warn!("Failed to queue player: {e}");
       } else {
         // Send join announcement (delayed + buffered)
@@ -823,9 +818,9 @@ impl Category {
             user_id,
             cc.db.clone(),
             self.category_id,
-            sg_id,
+            fmt_id,
             AlertType::Join,
-            sg_name_owned,
+            fmt_name_owned,
             player_rank.name.clone(),
           );
         }
@@ -844,10 +839,10 @@ impl Category {
   }
 
   /// Handles the leave queue button
-  async fn dash_leave_queue(&mut self, cc: &CC<'_>, sg_id: u8) -> Result<()> {
+  async fn dash_leave_queue(&mut self, cc: &CC<'_>, fmt_id: u8) -> Result<()> {
     let user_id = cc.component.user.id;
 
-    let quota = self.format(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
+    let quota = self.fmt(fmt_id).map(|sg| sg.quota as usize).unwrap_or(0);
 
     // Store fields before any borrows
     let _dashboard_channel = self.channels.dashboard;
@@ -856,12 +851,13 @@ impl Category {
     let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
 
     // Get session index and format name before mutable borrow
-    let sg_name_owned = self.format(sg_id).map(|sg| sg.name.clone());
-    let session_idx = self.format(sg_id).and_then(|sg| sg.sessions.iter().position(|s| s.pool.iter().any(|p| p.player.user_id == user_id)));
+    let fmt_name_owned = self.fmt(fmt_id).map(|sg| sg.name.clone());
+    let session_idx = self.fmt(fmt_id).and_then(|sg| sg.sessions.iter().position(|s| s.pool.iter().any(|p| p.player.user_id == user_id)));
 
     // Check if player is in queue
-    let format = self.format(sg_id).cloned(); // Get format before mutable borrow
-    let should_regenerate_teams = if let Ok(session) = self.get_user_session_sg(sg_id, user_id) {
+    let format = self.fmt(fmt_id).cloned(); // Get format before mutable borrow
+    let category_id = self.category_id; // Capture category_id before mutable borrow
+    let should_regenerate_teams = if let Ok(session) = self.get_user_sesh_fmt(fmt_id, user_id) {
       // Check if player is physically in the queue VC
       let player_in_vc = if let Some(player) = session.pool.iter().find(|p| p.player.user_id == user_id) { player.in_queue_vc } else { false };
 
@@ -907,7 +903,7 @@ impl Category {
       // Resolve player for logging
       if let Ok(player) = cc.db.get_user(user_id, cc.ctx).await {
         if let Some(ref format) = format {
-          if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, format, &player, "left").await {
+          if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, category_id, format, &player, "left").await {
             warn!("Failed to log queue toggle: {e}");
           }
         }
@@ -917,7 +913,7 @@ impl Category {
       {
         use crate::models::alert_limiter::{schedule_alert, AlertType};
 
-        schedule_alert(cc.ctx.clone(), queue_chat, guild_id, user_id, cc.db.clone(), category_id, sg_id, AlertType::Leave, sg_name_owned.clone(), String::new());
+        schedule_alert(cc.ctx.clone(), queue_chat, guild_id, user_id, cc.db.clone(), category_id, fmt_id, AlertType::Leave, fmt_name_owned.clone(), String::new());
       }
 
       // If session was hot, check what to do next
@@ -950,7 +946,7 @@ impl Category {
 
     // Regenerate teams if needed (outside the session borrow scope)
     if should_regenerate_teams {
-      self.generate_teams_sg(sg_id, cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
+      self.generate_teams_fmt(fmt_id, cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
     }
 
     // Check if team VCs should be cleaned up (OnLastLeave policy)
@@ -963,12 +959,12 @@ impl Category {
   }
 
   /// Handles the shuffle teams button
-  async fn dash_shuffle(&mut self, cc: &CC<'_>, sg_id: u8) -> Result<()> {
-    let quota = self.format(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
+  async fn dash_shuffle(&mut self, cc: &CC<'_>, fmt_id: u8) -> Result<()> {
+    let quota = self.fmt(fmt_id).map(|sg| sg.quota as usize).unwrap_or(0);
 
     // Find the game to shuffle - can be Idle (if quota met) or Hot
     let has_shuffleable =
-      self.format(sg_id).map(|sg| sg.sessions.iter().any(|s| (s.status == SessionStatus::Idle || s.status == SessionStatus::Hot) && s.pool.len() >= quota)).unwrap_or(false);
+      self.fmt(fmt_id).map(|sg| sg.sessions.iter().any(|s| (s.status == SessionStatus::Idle || s.status == SessionStatus::Hot) && s.pool.len() >= quota)).unwrap_or(false);
 
     if !has_shuffleable {
       cc.reply(&format!("No game ready for shuffling. Need at least {quota} players in queue.")).await?;
@@ -980,12 +976,12 @@ impl Category {
 
     // Refresh player ranks from Discord roles before shuffling teams
     if let Some(guild_id) = cc.component.guild_id {
-      self.refresh_player_ranks(cc.ctx, guild_id, &cc.db).await;
+      self.reload_player_ranks(cc.ctx, guild_id, &cc.db).await;
     }
 
     // Call the same team generation logic used by generate_teams
     // This ensures balanced teams using the BCH algorithm
-    self.generate_teams_sg(sg_id, cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
+    self.generate_teams_fmt(fmt_id, cc.ctx, cc.component.guild_id.unwrap(), Some(&cc.db)).await;
 
     // Update dashboard to show new teams
     self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
@@ -994,7 +990,7 @@ impl Category {
   }
 
   /// Handles the start match button
-  async fn dash_start(&mut self, cc: &CC<'_>, sg_id: u8) -> Result<()> {
+  async fn dash_start(&mut self, cc: &CC<'_>, fmt_id: u8) -> Result<()> {
     // Check if user has Runner role
     use crate::handlers::player::check_component_role;
     use crate::models::Role;
@@ -1015,7 +1011,7 @@ impl Category {
     }
 
     // Check if there's a hot game to start in the target format
-    let has_hot_game = self.format(sg_id).map(|sg| sg.sessions.iter().any(|s| s.is_hot())).unwrap_or(false);
+    let has_hot_game = self.fmt(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.is_hot())).unwrap_or(false);
 
     if !has_hot_game {
       cc.reply("No hot game ready to start.").await?;
@@ -1026,7 +1022,7 @@ impl Category {
     cc.defer_update().await?;
 
     // Move players to team channels (Hot → Push → Live)
-    match self.push_sg(sg_id, cc.ctx, cc.component.guild_id.unwrap(), &cc.db).await {
+    match self.push_fmt(fmt_id, cc.ctx, cc.component.guild_id.unwrap(), &cc.db).await {
       Ok(_) => {
         info!("Players moved to team channels and game is now live");
         // Update all dashboards to reflect in-game status for match players
@@ -1041,12 +1037,12 @@ impl Category {
   }
 
   /// Handles the end match button - directly ends the match
-  async fn dash_end(&mut self, cc: &CC<'_>, sg_id: u8) -> Result<()> {
+  async fn dash_end(&mut self, cc: &CC<'_>, fmt_id: u8) -> Result<()> {
     use serenity::all::CreateMessage;
     use std::time::SystemTime;
 
     // Check if there's an active game to end in the target format
-    let active_session = self.format(sg_id).and_then(|sg| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live));
+    let active_session = self.fmt(fmt_id).and_then(|sg| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live));
 
     if active_session.is_none() {
       cc.reply("No active match to end.").await?;
@@ -1056,7 +1052,7 @@ impl Category {
     // Capture match info before pulling
     let active_session = active_session.unwrap();
     let match_time = active_session.started_at.and_then(|started| SystemTime::now().duration_since(started).ok()).map(|d| d.as_secs());
-    let quota = self.format(sg_id).map(|sg| sg.quota as usize).unwrap_or(0);
+    let quota = self.fmt(fmt_id).map(|sg| sg.quota as usize).unwrap_or(0);
     let (team_red, team_blu) = get_sorted_teams(&active_session.pool, quota);
     let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
@@ -1085,7 +1081,7 @@ impl Category {
     }
 
     // Move players back to queue channel (Hot/Live → Pull → Idle)
-    match self.pull_sg(sg_id, cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await {
+    match self.pull_fmt(fmt_id, cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await {
       Ok(_) => {
         info!("Match ended, players moved back to queue");
         // Update all dashboards to clear in-game status for match players
@@ -1106,7 +1102,7 @@ impl Category {
   /// * `cc` - The component context with button information
   /// Parse format ID from button custom_id suffix (format: action:sg_id).
   /// Returns 0 if no suffix or invalid.
-  fn parse_sg_id(parts: &[&str]) -> u8 {
+  fn parse_fmt_id(parts: &[&str]) -> u8 {
     parts.get(1).and_then(|s| s.parse::<u8>().ok()).unwrap_or(0)
   }
 
@@ -1121,7 +1117,7 @@ impl Category {
     let _dashboard_channel = self.channels.dashboard;
     let gld_nm = guild_name(cc.ctx, gld_id);
     let ctg_nm = self.name.as_deref().unwrap_or("Unknown").to_string();
-    let fmt_id = Self::parse_sg_id(&parts);
+    let fmt_id = Self::parse_fmt_id(&parts);
     let usr_tg = get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
 
     match action {
@@ -1145,7 +1141,7 @@ impl Category {
       }
       "start_match" => {
         // Combined Start/End button: dispatch based on current format state
-        let is_live = self.format(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.is_active())).unwrap_or(false);
+        let is_live = self.fmt(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.is_active())).unwrap_or(false);
         if is_live {
           info!("{} {} used End", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
           self.dash_end(cc, fmt_id).await
@@ -1166,7 +1162,7 @@ impl Category {
   }
 
   /// Show expiry time options
-  async fn dash_change_expiry(&mut self, cc: &CC<'_>, _sg_id: u8) -> Result<()> {
+  async fn dash_change_expiry(&mut self, cc: &CC<'_>, _fmt_id: u8) -> Result<()> {
     use serenity::all::{ButtonStyle as BS, CreateButton as CB};
 
     // Check if user is in queue (across all formats)
@@ -1502,7 +1498,7 @@ impl DashboardUpdateQueue {
 
           // Refresh player ranks from Discord to ensure dashboard shows current ranks
           // This prevents desync when players are promoted while sitting in queue
-          category.refresh_player_ranks(&ctx, guild_id, &database).await;
+          category.reload_player_ranks(&ctx, guild_id, &database).await;
 
           // Validate VC status to ensure accurate display of who is in voice chat
           // This prevents desync where flags don't match Discord's actual voice states

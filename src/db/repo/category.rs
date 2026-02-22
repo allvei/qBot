@@ -180,7 +180,7 @@ impl CategoryRepository {
 
         let mut category = Category::new(
             guild_id,
-            guild_name,
+            guild_name.clone(),
             category_id,
             name,
             result.try_get::<i64, _>("quota")  .unwrap_or(8)  as u8,
@@ -219,8 +219,7 @@ impl CategoryRepository {
                 // No DB formats yet - keep the default created by Category::new
                 // and apply connect_info from the categories table
                 let category_name = category.name.as_deref().unwrap_or("Unknown");
-                let guild_name_display = category.guild_name.as_deref().unwrap_or("Unknown Guild");
-                info!("{} No formats in DB, using default", log_prefix_category(guild_name_display, category_name));
+                info!("{} Using default formats", log_prefix_category(guild_name.as_deref().unwrap_or("Unknown"), category_name));
                 category.set_connect_info(connect_info);
             }
         }

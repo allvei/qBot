@@ -33,11 +33,6 @@ impl TypeMapKey for DashboardQueueKey {
   type Value = Arc<Mutex<DashboardUpdateQueue>>;
 }
 
-pub struct GuildKey;
-impl TypeMapKey for GuildKey {
-  type Value = Arc<Mutex<crate::models::Manager>>;
-}
-
 pub struct DmTrackerKey;
 impl TypeMapKey for DmTrackerKey {
   type Value = Arc<DmMessageTracker>;

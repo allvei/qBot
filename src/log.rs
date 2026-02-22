@@ -108,7 +108,7 @@ pub fn log_queue_toggle_sync(
   tag: &str,
   queue_type: QTT,
   pool_size: Option<(usize, usize)>,
-  sg_name: Option<&str>,
+  fmt_name: Option<&str>,
   position: usize,
 ) {
   let (action, source) = match queue_type {
@@ -119,13 +119,13 @@ pub fn log_queue_toggle_sync(
   };
 
   let pos_part = if action != "left" { format!("#{} ", position) } else { String::new() };
-  let prefix = log_prefix_format(guild_name, category_name, sg_name.unwrap_or(""));
+  let prefix = log_prefix_format(guild_name, category_name, fmt_name.unwrap_or(""));
 
   match (pool_size, source) {
     (Some((current, quota)), Some(src)) => info!("{} {}{} {} ({}) [{}/{}]", prefix, pos_part, tag, action, src, current, quota),
-    (Some((current, quota)), None) =>      info!("{} {}{} {} [{}/{}]", prefix, pos_part, tag, action, current, quota),
-    (None, Some(src)) =>                   info!("{} {}{} {} ({})", prefix, pos_part, tag, action, src),
-    (None, None) =>                        info!("{} {}{} {}", prefix, pos_part, tag, action),
+    (Some((current, quota)), None) =>      info!("{} {}{} {} [{}/{}]",      prefix, pos_part, tag, action, current, quota),
+    (None, Some(src)) =>                   info!("{} {}{} {} ({})",         prefix, pos_part, tag, action, src),
+    (None, None) =>                        info!("{} {}{} {}",              prefix, pos_part, tag, action),
   }
 }
 
@@ -141,8 +141,8 @@ pub fn log_prefix_category(guild_name: &str, category_name: &str) -> String {
 
 /// Generate log prefix in format [GUILD_NAME/CATEGORY_NAME/FORMAT_NAME]
 pub fn log_prefix_format(guild_name: &str, category_name: &str, format_name: &str) -> String {
-  let sg_suffix = if format_name.is_empty() { "".to_string() } else { format!("/{}", format_name) };
-  format!("[{}/{}{}]", guild_name, category_name, sg_suffix)
+  let fmt_suffix = if format_name.is_empty() { "".to_string() } else { format!("/{}", format_name) };
+  format!("[{}/{}{}]", guild_name, category_name, fmt_suffix)
 }
 
 /// Generate log prefix from Context and IDs

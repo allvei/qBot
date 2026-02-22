@@ -1379,7 +1379,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
   let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
   info!("[{}] Finding session for user {}", guild_name, user_tag);
   // Find the session containing the player
-  let session = match category.get_user_session(user_id).await {
+  let session = match category.get_user_sesh(user_id).await {
     Ok(s) => s,
     Err(e) => {
       let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
@@ -1455,7 +1455,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
   let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
   info!("[{}] Finding session for user {}", guild_name, user_tag);
   // Find the session containing the player
-  let session = match category.get_user_session(user_id).await {
+  let session = match category.get_user_sesh(user_id).await {
     Ok(s) => s,
     Err(e) => {
       let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
@@ -1526,22 +1526,22 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
   let target_formats = if let Some(user_opt) = user_option {
     // For specific user removal, search all formats for that user
     if let Some(user_id) = user_opt.value.as_user_id() {
-      let mut target_sg_ids = Vec::new();
-      for (sg_idx, sg) in category.formats.iter().enumerate() {
+      let mut target_fmt_ids = Vec::new();
+      for (fmt_idx, sg) in category.formats.iter().enumerate() {
         // Check if user is in any session of this format
         for session in &sg.sessions {
           if session.pool.iter().any(|p| p.player.user_id == user_id.get()) {
-            target_sg_ids.push(sg_idx);
+            target_fmt_ids.push(fmt_idx);
             break;
           }
         }
       }
 
-      if target_sg_ids.is_empty() {
+      if target_fmt_ids.is_empty() {
         // User not found in any format, default to first format
         vec![0]
       } else {
-        target_sg_ids
+        target_fmt_ids
       }
     } else {
       vec![0] // Default to first format if user parsing fails
@@ -1563,8 +1563,8 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
           let mut removed_from_formats = Vec::new();
 
           // Remove from each targeted format
-          for &sg_idx in &target_formats {
-            if let Some(sg) = category.formats.get_mut(sg_idx) {
+          for &fmt_idx in &target_formats {
+            if let Some(sg) = category.formats.get_mut(fmt_idx) {
               for session in &mut sg.sessions {
                 if !session.is_active() {
                   let initial_len = session.pool.len();
@@ -1572,7 +1572,7 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
                   let removed_count = initial_len - session.pool.len();
                   if removed_count > 0 {
                     total_removed += removed_count;
-                    removed_from_formats.push((sg_idx, sg.name.clone()));
+                    removed_from_formats.push((fmt_idx, sg.name.clone()));
                   }
                 }
               }
@@ -1583,14 +1583,14 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
           category.queue_dash_update(cc.ctx, guild_id).await;
 
           if total_removed > 0 {
-            let sg_names: Vec<String> = removed_from_formats.iter().map(|(_, name)| format!("**{}**", name)).collect();
+            let fmt_names: Vec<String> = removed_from_formats.iter().map(|(_, name)| format!("**{}**", name)).collect();
 
             let success_embed = CE::new()
               .title("Player removed")
               .description(format!(
                 "Removed **{}** from the queue{}.",
                 target_user.name,
-                if removed_from_formats.len() > 1 { format!(" from formats: {}", sg_names.join(", ")) } else { String::new() }
+                if removed_from_formats.len() > 1 { format!(" from formats: {}", fmt_names.join(", ")) } else { String::new() }
               ))
               .color(GREEN);
             cc.intax.create_response(&cc.ctx.http, Ephemeral::send(success_embed)).await?;
@@ -1613,14 +1613,14 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
     let mut total_players = 0;
     let mut cleared_formats = Vec::new();
 
-    for (sg_idx, sg) in category.formats.iter_mut().enumerate() {
+    for (fmt_idx, sg) in category.formats.iter_mut().enumerate() {
       for session in &mut sg.sessions {
         if !session.is_active() {
           let count = session.pool.len();
           if count > 0 {
             total_players += count;
             session.pool.clear();
-            cleared_formats.push((sg_idx, sg.name.clone()));
+            cleared_formats.push((fmt_idx, sg.name.clone()));
           }
         }
       }
@@ -1634,8 +1634,8 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
       .description(format!(
         "Removed {total_players} player(s) from the queue{}.",
         if cleared_formats.len() > 1 {
-          let sg_names: Vec<String> = cleared_formats.iter().map(|(_, name)| format!("**{}**", name)).collect();
-          format!(" from formats: {}", sg_names.join(", "))
+          let fmt_names: Vec<String> = cleared_formats.iter().map(|(_, name)| format!("**{}**", name)).collect();
+          format!(" from formats: {}", fmt_names.join(", "))
         } else {
           String::new()
         }

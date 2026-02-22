@@ -704,14 +704,14 @@ impl FormatListDisplay {
     let mut buttons = Vec::new();
 
     if can_add {
-      buttons.push(CB::new(format!("category_sg_add_{gid}")).label("Add format").style(BS::Primary));
+      buttons.push(CB::new(format!("category_fmt_add_{gid}")).label("Add format").style(BS::Primary));
     }
 
     if self.formats.len() > 1 {
-      buttons.push(CB::new(format!("category_sg_remove_{gid}")).label("Remove format").style(BS::Danger));
+      buttons.push(CB::new(format!("category_fmt_remove_{gid}")).label("Remove format").style(BS::Danger));
     }
 
-    buttons.push(Eph::back(format!("category_sg_back_{gid}")));
+    buttons.push(Eph::back(format!("category_fmt_back_{gid}")));
 
     let mut components = vec![CAR::Buttons(buttons)];
 
@@ -719,7 +719,7 @@ impl FormatListDisplay {
     if !self.formats.is_empty() {
       let options: Vec<(String, String)> = self.formats.iter().map(|(id, name, quota)| (format!("{} (quota: {})", name, quota), format!("{}_{}", gid, id))).collect();
 
-      if let Some(menu) = create_selection_menu("category_sg_edit", "Select format to edit", options) {
+      if let Some(menu) = create_selection_menu("category_fmt_edit", "Select format to edit", options) {
         components.push(menu);
       }
     }
