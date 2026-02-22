@@ -118,39 +118,14 @@ pub fn log_queue_toggle_sync(
     QTT::VL => ("left", Some("VC")),
   };
 
-  let pos_part = format!("#{}", position);
-
+  let pos_part = if action != "left" { format!("#{} ", position) } else { String::new() };
   let prefix = log_prefix_format(guild_name, category_name, sg_name.unwrap_or(""));
 
   match (pool_size, source) {
-    (Some((current, quota)), Some(src)) => {
-      if action == "left" {
-        info!("{} {} {} ({}) [{}/{}]", prefix, tag, action, src, current, quota);
-      } else {
-        info!("{} {} {} {} ({}) [{}/{}]", prefix, pos_part, tag, action, src, current, quota);
-      }
-    },
-    (Some((current, quota)), None) => {
-      if action == "left" {
-        info!("{} {} {} [{}/{}]", prefix, tag, action, current, quota);
-      } else {
-        info!("{} {} {} {} [{}/{}]", prefix, pos_part, tag, action, current, quota);
-      }
-    },
-    (None, Some(src)) => {
-      if action == "left" {
-        info!("{} {} {} ({})", prefix, tag, action, src);
-      } else {
-        info!("{} {} {} {} ({})", prefix, pos_part, tag, action, src);
-      }
-    },
-    (None, None) => {
-      if action == "left" {
-        info!("{} {} {}", prefix, tag, action);
-      } else {
-        info!("{} {} {} {}", prefix, pos_part, tag, action);
-      }
-    },
+    (Some((current, quota)), Some(src)) => info!("{} {}{} {} ({}) [{}/{}]", prefix, pos_part, tag, action, src, current, quota),
+    (Some((current, quota)), None) =>      info!("{} {}{} {} [{}/{}]", prefix, pos_part, tag, action, current, quota),
+    (None, Some(src)) =>                   info!("{} {}{} {} ({})", prefix, pos_part, tag, action, src),
+    (None, None) =>                        info!("{} {}{} {}", prefix, pos_part, tag, action),
   }
 }
 
