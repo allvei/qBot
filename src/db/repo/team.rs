@@ -29,8 +29,6 @@ impl TeamRepository {
         .execute(&self.pool)
         .await?;
 
-        info!("Added team channel pair to database: SET={} RED={} BLU={} for guild {} category {}", 
-              set_index, red_vc.get(), blu_vc.get(), guild_id.get(), category_id);
         Ok(())
     }
 
