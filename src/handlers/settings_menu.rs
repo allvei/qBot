@@ -594,7 +594,7 @@ impl CategoryListDisplay {
         .map(|g| {
           let label = g.display_name();
           // Use format "categoryid_queueid" to ensure uniqueness (each category has unique queue channel)
-          let value = format!("{}_{}", g.category_id, g.channels.queue_vc.get());
+          let value = format!("{}_{}", g.ctg_id, g.channels.queue_vc.get());
           (label, value)
         })
         .collect();

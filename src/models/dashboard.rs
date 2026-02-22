@@ -651,7 +651,7 @@ impl Category {
     // Try to get queue from context data using the key from models module
     let data = ctx.data.read().await;
     if let Some(queue) = data.get::<DashboardQueueKey>() {
-      queue.lock().await.request_update(guild_id, self.category_id as u64);
+      queue.lock().await.request_update(guild_id, self.ctg_id as u64);
       //
     } else {
       warn!("Dashboard queue not initialized in Context");
@@ -799,7 +799,7 @@ impl Category {
 
       // Log BEFORE queue operation to fix race condition with quota notifications
       if let Some(format) = self.fmt(fmt_id) {
-        if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, self.category_id, format, &player, "joined").await {
+        if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, self.ctg_id, format, &player, "joined").await {
           warn!("Failed to log queue toggle: {e}");
         }
       }
@@ -817,7 +817,7 @@ impl Category {
             guild_id,
             user_id,
             cc.db.clone(),
-            self.category_id,
+            self.ctg_id,
             fmt_id,
             AlertType::Join,
             fmt_name_owned,
@@ -847,7 +847,7 @@ impl Category {
     // Store fields before any borrows
     let _dashboard_channel = self.channels.dashboard;
     let queue_chat = self.channels.queue_chat;
-    let category_id = self.category_id;
+    let category_id = self.ctg_id;
     let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
 
     // Get session index and format name before mutable borrow
@@ -856,7 +856,7 @@ impl Category {
 
     // Check if player is in queue
     let format = self.fmt(fmt_id).cloned(); // Get format before mutable borrow
-    let category_id = self.category_id; // Capture category_id before mutable borrow
+    let category_id = self.ctg_id; // Capture category_id before mutable borrow
     let should_regenerate_teams = if let Ok(session) = self.get_user_sesh_fmt(fmt_id, user_id) {
       // Check if player is physically in the queue VC
       let player_in_vc = if let Some(player) = session.pool.iter().find(|p| p.player.user_id == user_id) { player.in_queue_vc } else { false };
@@ -1333,7 +1333,7 @@ impl DashboardUpdateQueue {
   pub fn request_update_all(&self, manager: &crate::models::Manager) {
     for srv in &manager.servers {
       for grp in &srv.categories {
-        self.request_update(srv.guild_id, grp.category_id as u64);
+        self.request_update(srv.guild_id, grp.ctg_id as u64);
       }
     }
   }
@@ -1426,7 +1426,7 @@ impl DashboardUpdateQueue {
     let mgr = manager.lock().await;
     for srv in &mgr.servers {
       for grp in &srv.categories {
-        pending.insert(DashboardUpdateRequest { guild_id: srv.guild_id, category_id: grp.category_id as u64 });
+        pending.insert(DashboardUpdateRequest { guild_id: srv.guild_id, category_id: grp.ctg_id as u64 });
       }
     }
   }
@@ -1484,7 +1484,7 @@ impl DashboardUpdateQueue {
 
           let guild_name = server.guild_name.clone();
 
-          let category = match server.categories.iter_mut().find(|g| g.category_id == category_id as u8) {
+          let category = match server.categories.iter_mut().find(|g| g.ctg_id == category_id as u8) {
             Some(g) => g,
             None => {
               warn!("[{}] Failed to find category {} for dashboard update", guild_name, category_id);
@@ -1543,7 +1543,7 @@ impl DashboardUpdateQueue {
                   // Update the stored message ID in memory
                   let mut manager_lock = manager.lock().await;
                   if let Ok(server) = manager_lock.get_server(guild_id) {
-                    if let Some(category) = server.categories.iter_mut().find(|g| g.category_id == category_id as u8) {
+                    if let Some(category) = server.categories.iter_mut().find(|g| g.ctg_id == category_id as u8) {
                       category.dashboard_msg = new_msg.id;
                     }
                   }

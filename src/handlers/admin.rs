@@ -1113,7 +1113,7 @@ async fn handle_categorylink_blue_selection(
         || category.channels.queue_vc == queue_vc_channel
         || category.channels.teams.iter().any(|t| t.red_vc == red_channel || t.blu_vc == blue_channel)
       {
-        categories_to_remove.push((idx, category.category_id));
+        categories_to_remove.push((idx, category.ctg_id));
       }
     }
 
@@ -1168,7 +1168,7 @@ async fn handle_categorylink_blue_selection(
       };
       match db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
         Ok(db_category) => {
-          info!("[{}] Category {} created via categorylink", guild_name, db_category.category_id);
+          info!("[{}] Category {} created via categorylink", guild_name, db_category.ctg_id);
 
           // Add to manager
           let mut mgr = manager.lock().await;

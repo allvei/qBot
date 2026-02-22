@@ -162,14 +162,14 @@ impl ShutdownHandler {
                             info!(
                                 "[{}] Marked dashboard for category {} as offline", 
                                 guild_name, 
-                                category.category_id
+                                category.ctg_id
                             );
                         }
                         Err(e) => {
                             warn!(
                                 "[{}] Failed to update dashboard for category {}: {}", 
                                 guild_name, 
-                                category.category_id, 
+                                category.ctg_id, 
                                 e
                             );
                         }

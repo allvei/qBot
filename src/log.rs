@@ -2,7 +2,6 @@ use serenity::all::{CommandInteraction, Context, UserId as UI};
 use sqlx::Row;
 use tracing::{info, warn};
 
-// Import guild_name function from constants
 use crate::models::constants::guild_name;
 
 /// Get user tag for logging purposes - tries database first, then Discord API
