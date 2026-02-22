@@ -1,38 +1,29 @@
 //! Application initialization and management
-//! 
+//!
 //! This module handles the setup and lifecycle of the Discord bot application,
 //! including database initialization, client configuration, and graceful shutdown.
-use std::env;
 use std::sync::Arc;
 
 use anyhow::Result;
-use crate::{commands, log_prefix_category, RED, now, Style::Relative, guild_name, log_queue_toggle, log_prefix_format};
 use serenity::all::{
-  Client, Command, CommandDataOption, CommandInteraction, CommandOptionType as COT, Context, CreateEmbed, EditMessage, EventHandler, GatewayIntents, Guild, GuildId, Interaction, Ready, UserId, VoiceState
+  Client, Command, CommandDataOption, CommandInteraction, CommandOptionType as COT, Context, EventHandler, GatewayIntents, Guild, GuildId, Interaction,
+  Ready, UserId, VoiceState,
 };
 use serenity::async_trait;
 use serenity::builder::{CreateCommand as CC, CreateCommandOption as CCO, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
 use serenity::prelude::TypeMapKey;
-use time::macros::format_description;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
 use tracing::{debug, error, info, warn};
-use tracing_subscriber::fmt::time::UtcTime;
 
+use crate::commands;
 use crate::db::migrations::DatabaseMigrations;
 use crate::db::repo::CategoryRepository;
-use crate::handlers::{InteractionHelpers, admin};
+use crate::handlers::{admin, InteractionHelpers};
+use crate::models::server::QueueContext;
 use crate::{
-  ButtonType, Category, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database, DmMessageTracker, DmTrackerKey, Manager, Roles, Server, SessionStatus, VoiceStateUpdate, get_user_tag
+  get_user_tag, guild_name, log_prefix_category, log_prefix_format, log_queue_toggle, ButtonType, Category, CommandContext, ComponentContext, DashboardQueueKey,
+  DashboardUpdateQueue, Database, DmMessageTracker, DmTrackerKey, Manager, RED, Roles, Server, SessionStatus, ShutdownHandler, VoiceStateUpdate,
 };
-use tokio::sync::oneshot;
-
-use crate::{
-    ShutdownHandler,
-};
-
-// Import helper functions that were in main.rs
-use crate::handlers::player::{resolve_player_for_queue};
-use crate::models::server::{QueueContext};
 
 // Helper macros and functions that need to be available
 macro_rules! cmd {
@@ -75,130 +66,107 @@ impl CmdOp for CC {
 
 // Helper functions that were in main.rs
 async fn get_server_with_error<'a>(manager: &'a mut Manager, guild_id: GuildId, _itx: &CommandInteraction, _ctx: &Context) -> Result<&'a mut Server, String> {
-    manager.get_server(guild_id).map_err(|_| {
-        format!("Server not found. Please run `/setup` first.")
-    })
+  manager.get_server(guild_id).map_err(|_| format!("Server not found. Please run `/setup` first."))
 }
 
 async fn extract_user_option(options: &[CommandDataOption], name: &str) -> Option<UserId> {
-    options.iter()
-        .find(|opt| opt.name == name)
-        .and_then(|opt| opt.value.as_user_id())
+  options.iter().find(|opt| opt.name == name).and_then(|opt| opt.value.as_user_id())
 }
 
 async fn send_error_response(itx: &CommandInteraction, ctx: &Context, message: &str) -> Result<(), serenity::Error> {
-    let response = CIR::Message(CIRM::new().content(message).ephemeral(true));
-    itx.create_response(&ctx.http, response).await
+  let response = CIR::Message(CIRM::new().content(message).ephemeral(true));
+  itx.create_response(&ctx.http, response).await
 }
 
 fn is_interaction_valid(_pl: &Interaction) -> bool {
-    // Add validation logic here
-    true // Placeholder
+  // Add validation logic here
+  true // Placeholder
 }
 
 // Define TypeMapKey for Manager (temporary until moved to models)
 pub struct GuildKey;
 impl TypeMapKey for GuildKey {
-    type Value = Arc<Mutex<Manager>>;
+  type Value = Arc<Mutex<Manager>>;
 }
 
 /// Application state and lifecycle management
 pub struct Application {
-    pub db: Arc<Database>,
-    pub manager: Arc<Mutex<Manager>>,
-    pub dashboard_queue: Arc<Mutex<Option<DashboardUpdateQueue>>>,
+  pub db: Arc<Database>,
+  pub manager: Arc<Mutex<Manager>>,
+  pub dashboard_queue: Arc<Mutex<Option<DashboardUpdateQueue>>>,
 }
 
 impl Application {
-    /// Initialize the application with all required components
-    pub async fn new() -> Result<Self> {
-        // Load configuration
-        let config = crate::util::Config::load()?;
-        
-        // Initialize database
-        let db = Self::setup_database(&config.database_url).await?;
-        
-        // Initialize manager
-        let manager = Arc::new(Mutex::new(Manager::default()));
-        
-        // Initialize dashboard queue
-        let dashboard_queue = Arc::new(Mutex::new(None));
-        
-        Ok(Self {
-            db,
-            manager,
-            dashboard_queue,
-        })
-    }
-    
-    /// Setup database connection and run migrations
-    async fn setup_database(database_url: &str) -> Result<Arc<Database>> {
-        let db = Arc::new(Database::new(database_url).await?);
-        
-        let migrations = DatabaseMigrations::new(db.pool());
-        migrations.create_tables().await?;
-        migrations.verify_schemas().await?;
-        
-        Ok(db)
-    }
-    
-    /// Create and configure Discord client
-    async fn create_client(&self) -> Result<Client> {
-        let config = crate::util::Config::load()?;
-        let intents = GatewayIntents::GUILD_MESSAGES 
-            | GatewayIntents::GUILD_VOICE_STATES 
-            | GatewayIntents::GUILDS 
-            | GatewayIntents::GUILD_MEMBERS;
+  /// Initialize the application with all required components
+  pub async fn new() -> Result<Self> {
+    // Load configuration
+    let config = crate::util::Config::load()?;
 
-        let mut client = Client::builder(&config.token, intents)
-            .event_handler(Handler { 
-                db: self.db.clone(),
-                manager: self.manager.clone(),
-                dashboard_queue: self.dashboard_queue.clone(),
-            })
-            .await?;
+    // Initialize database
+    let db = Self::setup_database(&config.database_url).await?;
 
-        // Set the manager in the client data for global access
-        client.data.write().await.insert::<GuildKey>(self.manager.clone());
-        Ok(client)
-    }
-    
-    /// Run the application with graceful shutdown
-    pub async fn run(self) -> Result<()> {
-        let mut client = self.create_client().await?;
-        
-        // Set up signal handling
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        
-        // Spawn shutdown handler
-        let shutdown_handler = ShutdownHandler::new(
-            self.manager.clone(),
-            self.dashboard_queue.clone(),
-            client.cache.clone(),
-            client.http.clone(),
-        );
-        
-        tokio::spawn(async move {
-            shutdown_handler.handle_signals(shutdown_tx).await;
-        });
-        
-        // Start client
-        tokio::select! {
-            result = client.start() => {
-                if let Err(why) = result {
-                    error!("Client error: {:?}", why);
-                }
-            }
-            _ = shutdown_rx => {
-                info!("Shutting down client...");
+    // Initialize manager
+    let manager = Arc::new(Mutex::new(Manager::default()));
+
+    // Initialize dashboard queue
+    let dashboard_queue = Arc::new(Mutex::new(None));
+
+    Ok(Self { db, manager, dashboard_queue })
+  }
+
+  /// Setup database connection and run migrations
+  async fn setup_database(database_url: &str) -> Result<Arc<Database>> {
+    let db = Arc::new(Database::new(database_url).await?);
+
+    let migrations = DatabaseMigrations::new(db.pool());
+    migrations.create_tables().await?;
+    migrations.verify_schemas().await?;
+
+    Ok(db)
+  }
+
+  /// Create and configure Discord client
+  async fn create_client(&self) -> Result<Client> {
+    let config = crate::util::Config::load()?;
+    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILD_VOICE_STATES | GatewayIntents::GUILDS | GatewayIntents::GUILD_MEMBERS;
+
+    let mut client =
+      Client::builder(&config.token, intents).event_handler(Handler { db: self.db.clone(), manager: self.manager.clone(), dashboard_queue: self.dashboard_queue.clone() }).await?;
+
+    // Set the manager in the client data for global access
+    client.data.write().await.insert::<GuildKey>(self.manager.clone());
+    Ok(client)
+  }
+
+  /// Run the application with graceful shutdown
+  pub async fn run(self) -> Result<()> {
+    let mut client = self.create_client().await?;
+
+    // Set up signal handling
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+    // Spawn shutdown handler
+    let shutdown_handler = ShutdownHandler::new(self.manager.clone(), self.dashboard_queue.clone(), client.cache.clone(), client.http.clone());
+
+    tokio::spawn(async move {
+      shutdown_handler.handle_signals(shutdown_tx).await;
+    });
+
+    // Start client
+    tokio::select! {
+        result = client.start() => {
+            if let Err(why) = result {
+                error!("Client error: {:?}", why);
             }
         }
-        
-        Ok(())
+        _ = shutdown_rx => {
+            info!("Shutting down client...");
+        }
     }
+
+    Ok(())
+  }
 }
-
-
 
 struct Handler {
   db: Arc<Database>,
@@ -308,8 +276,8 @@ impl EventHandler for Handler {
               for mut category in categories {
                 // Update guild name in database if it's missing
                 if category.guild_name.is_none() {
-                  if let Err(e) = self.db.categories.update_guild_name(guild_id, category.category_id, &guild.name).await {
-                    error!("Failed to update guild name for category {}: {}", category.category_id, e);
+                  if let Err(e) = self.db.categories.update_guild_name(guild_id, category.ctg_id, &guild.name).await {
+                    error!("Failed to update guild name for category {}: {}", category.ctg_id, e);
                   } else {
                     category.guild_name = Some(guild.name.clone());
                   }
@@ -767,8 +735,24 @@ impl EventHandler for Handler {
 
     // Get player tag from database (primary source)
     let tag = match self.db.get_user(user_id, &ctx).await {
-      Ok(player) => player.tag,
-      Err(_) => user.display_name().to_string(),
+      Ok(player) => {
+        if !player.tag.is_empty() {
+          player.tag
+        } else {
+          // Fallback to Discord API tag (not display name)
+          ctx.http.get_user(user_id).await.map(|user| user.tag()).unwrap_or_else(|e| {
+            error!("Failed to get user {} from Discord API: {}, using user ID as fallback", user_id, e);
+            user_id.to_string()
+          })
+        }
+      },
+      Err(_) => {
+        // Fallback to Discord API tag (not display name)
+        ctx.http.get_user(user_id).await.map(|user| user.tag()).unwrap_or_else(|e| {
+          error!("Failed to get user {} from Discord API: {}, using user ID as fallback", user_id, e);
+          user_id.to_string()
+        })
+      },
     };
 
     // First manager lock scope
@@ -875,7 +859,7 @@ impl EventHandler for Handler {
               if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                 let was_missing = !player.in_queue_vc;
                 player.in_queue_vc = true;
-                
+
                 // Clear any VC leave grace period since they rejoined
                 if player.vc_leave_grace_until.is_some() {
                   info!("Player {} rejoined queue VC, clearing grace period", tag);
@@ -946,7 +930,7 @@ impl EventHandler for Handler {
                   }
 
                   let format = &category.formats[0];
-                  if let Err(e) = log_queue_toggle(&ctx, &self.db, server, category.category_id, &category.formats[0], &player, "joined").await {
+                  if let Err(e) = log_queue_toggle(&ctx, &self.db, server, category.ctg_id, &category.formats[0], &player, "joined").await {
                     warn!("Failed to log queue toggle: {e}");
                   }
                 }
@@ -985,7 +969,7 @@ impl Handler {
 
     // Clone format before mutable borrow to avoid borrowing issues
     let format = category.formats[0].clone();
-    let category_id = category.category_id; // Capture category_id before mutable borrow
+    let category_id = category.ctg_id; // Capture category_id before mutable borrow
 
     let should_regenerate = if let Ok(sesh) = category.get_user_sesh(user_id).await {
       if sesh.is_active() {
@@ -1161,7 +1145,7 @@ impl Handler {
       let fmt_name_owned = category.formats.first().map(|sg| sg.name.clone());
       let category_name = category.name.as_deref().unwrap_or("Unknown").to_string();
       let format = category.formats[0].clone(); // Clone format before mutable borrow
-      let category_id = category.category_id; // Capture category_id before mutable borrow
+      let category_id = category.ctg_id; // Capture category_id before mutable borrow
       if let Ok(session) = category.get_queue().await {
         // Get server and category names for logging
         let guild_name = guild.name.clone();
