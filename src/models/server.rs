@@ -265,7 +265,7 @@ impl Format {
 pub struct Category {
   pub guild_id: GI,
   pub guild_name: Option<String>,
-  pub category_id: u8,
+  pub ctg_id: u8,
   pub name: Option<String>,
   pub timeout: u16,
   pub dashboard_msg: MI,
@@ -299,7 +299,7 @@ impl Category {
     Self {
       guild_id,
       guild_name,
-      category_id,
+      ctg_id: category_id,
       name,
       timeout,
       dashboard_msg,
@@ -386,7 +386,7 @@ impl Category {
 
   /// Get display name for the category (name or "Category {id}")
   pub fn display_name(&self) -> String {
-    self.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("Category {}", self.category_id))
+    self.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("Category {}", self.ctg_id))
   }
 
   pub fn create_sesh(&mut self) -> Result<&mut Session> {
@@ -462,7 +462,7 @@ impl Category {
           if let Err(e) = vc_id.delete(&ctx.http).await {
             warn!("[{}] Failed to delete team VC {}: {}", guild.name, vc_id, e);
           } else {
-            info!("[{}] Cleaned up team VC from previous run: {}", guild.name, vc_id);
+            info!("[{}] Cleaned up orphaned team voice channel from previous run", guild.name);
           }
         }
       }
@@ -470,7 +470,7 @@ impl Category {
     self.channels.teams.clear();
 
     // Load tracked team channels from database
-    let tracked_teams = match db.teams.get_teams_for_category(self.guild_id, self.category_id).await {
+    let tracked_teams = match db.teams.get_teams_for_category(self.guild_id, self.ctg_id).await {
       Ok(teams) => teams,
       Err(e) => {
         warn!("Failed to load tracked team channels from database: {}", e);
@@ -502,7 +502,7 @@ impl Category {
         continue;
       }
 
-      info!("[{}] Cleaning up tracked team VC: {}", guild.name, channel.name);
+      info!("[{}] Cleaning up tracked team voice channel: {}", guild.name, channel.name);
 
       // Move any users in this team VC back to queue VC before deleting
       if let Some(queue_vc_id) = guild.channels.get(&self.channels.queue_vc) {
@@ -640,7 +640,7 @@ impl Category {
 
     // Spawn a targeted deadline timer for this hot session
     if let (Some(guild_id), Some(mgr)) = (guild_id, manager) {
-      let category_id = self.category_id;
+      let category_id = self.ctg_id;
       let timeout = self.timeout;
       let ctx_clone = ctx.clone();
 
@@ -656,7 +656,7 @@ impl Category {
         // Check if players have joined, remove those who haven't
         let mut manager_lock = mgr.lock().await;
         if let Ok(server) = manager_lock.get_server(guild_id) {
-          if let Some(category) = server.categories.iter_mut().find(|g| g.category_id == category_id) {
+          if let Some(category) = server.categories.iter_mut().find(|g| g.ctg_id == category_id) {
             if category.check_hot_timeout(&ctx_clone, guild_id, post_game_timeout).await {
               info!("Deadline timer fired: removed timed-out players from category {}", category_id);
               category.queue_dash_update(&ctx_clone, guild_id).await;
@@ -981,11 +981,16 @@ impl Category {
     self.channels.teams.push(pair.clone());
 
     // Persist to database
-    if let Err(e) = db.teams.add_team(guild_id, self.category_id, red_ch.id, blu_ch.id, pair_num as u32, None).await {
+    if let Err(e) = db.teams.add_team(guild_id, self.ctg_id, red_ch.id, blu_ch.id, pair_num as u32, None).await {
       warn!("Failed to persist team channels to database: {}", e);
     }
 
-    info!("Created set {} of team VCs", pair_num);
+    // Log with user-friendly message
+    let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+    let category_name = self.name.as_deref().unwrap_or("Unknown");
+    let prefix = crate::log::log_prefix_category(&guild_name, category_name);
+    
+    info!("{} Added set {} of team channels to database.", prefix, pair_num);
 
     Ok(Some(pair))
   }
@@ -1195,7 +1200,7 @@ impl Category {
       TeamVcDestroyPolicy::AfterTimeout => {
         // Spawn a timer that cleans up team VCs if no new game starts
         if let Some(mgr) = manager.clone() {
-          let category_id = self.category_id;
+          let category_id = self.ctg_id;
           let timeout_secs = self.timeout as u64;
           let ctx_clone = ctx.clone();
 
@@ -1205,7 +1210,7 @@ impl Category {
 
             let mut manager_lock = mgr.lock().await;
             if let Ok(server) = manager_lock.get_server(guild_id) {
-              if let Some(category) = server.categories.iter_mut().find(|g| g.category_id == category_id) {
+              if let Some(category) = server.categories.iter_mut().find(|g| g.ctg_id == category_id) {
                 // Only clean up if no active games are running
                 let has_active = category.formats.iter().any(|sg| sg.sessions.iter().any(|s| s.is_active()));
                 if !has_active {
