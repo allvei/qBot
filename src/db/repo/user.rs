@@ -109,7 +109,7 @@ impl UserRepository {
         // If no tag in database, fetch from Discord API and cache it
         if player.tag.is_empty() {
             if let Ok(user) = ctx.http.get_user(user_id).await {
-                player.tag = user.display_name().to_string();
+                player.tag = user.tag(); // Use tag() instead of display_name()
                 // Cache the tag for future use
                 let _ = self.update_discord_tag(user_id, &player.tag).await;
             }
