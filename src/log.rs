@@ -1,4 +1,4 @@
-use serenity::all::{CommandInteraction, Context, UserId as UI, GuildId as GI};
+use serenity::all::{CommandInteraction, Context, UserId as UI};
 use sqlx::Row;
 use tracing::{info, warn};
 
@@ -27,40 +27,61 @@ pub async fn get_user_tag(ctx: &Context, user_id: UI, db: &crate::Database) -> S
 
 /// Async log function that extrapolates all information from Format, Player, and Action
 pub async fn log_queue_toggle(
-  _ctx: &Context,
+  ctx: &Context,
   db: &crate::Database,
+  guild_id: serenity::all::GuildId,
+  category_id: u8,
   format: &crate::models::Format,
   player: &crate::models::Player,
   action: &str, // "joined" or "left"
 ) -> Result<(), anyhow::Error> {
-  // Get format info from database using format.id
-  // First, we need to find which category and guild this format belongs to
+  // Get format info from database using guild_id, category_id, and format_id
   let fmt_info = sqlx::query(
-    "SELECT f.guild_id, f.category_id, c.guild_name, c.name as category_name, f.name as format_name 
+    "SELECT f.id, c.guild_name, c.name as category_name, f.name as format_name 
          FROM formats f 
          JOIN categories c ON f.guild_id = c.guild_id AND f.category_id = c.category_id 
-         WHERE f.format_id = ?",
+         WHERE f.guild_id = ? AND f.category_id = ? AND f.format_id = ?",
   )
+  .bind(guild_id.get() as i64)
+  .bind(category_id as i64)
   .bind(format.id as i64)
   .fetch_one(&db.pool)
   .await?;
 
-  let _guild_id: GI = GI::new(fmt_info.get::<i64, _>("guild_id") as u64);
   let gld_nm: &str = fmt_info.get("guild_name");
   let ctg_nm: &str = fmt_info.get("category_name");
   let fmt_nm: &str = fmt_info.get("format_name");
 
   // Get pool size and position from format's sessions
+  // Adjust count to show the state AFTER the action
   let pool_size =
     format.sessions.iter().find(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot)
-      .map(|s| (s.pool.len(), format.quota as usize));
+      .map(|s| {
+        let current = s.pool.len();
+        let adjusted_count = if action == "joined" { 
+          current + 1  // After joining, count increases
+        } else { 
+          current.saturating_sub(1)  // After leaving, count decreases
+        };
+        (adjusted_count, format.quota as usize)
+      });
 
-  // Calculate position based on current session length to avoid race condition
+  // Calculate position based on actual player position in session
   let position = if action == "joined" {
-    // For joins, position is current pool length + 1 (the position they're getting)
-    pool_size.as_ref().map(|(current, _)| *current + 1).unwrap_or(1)
+    // For joins, find the player's actual position in the session after they would be added
+    format.sessions.iter()
+      .find(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot)
+      .and_then(|s| s.pool.iter().position(|p| p.player.user_id == player.user_id))
+      .map(|pos| pos + 1)
+      .unwrap_or_else(|| {
+        // If not found (race condition), use pool length + 1 as fallback
+        format.sessions.iter()
+          .find(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot)
+          .map(|s| s.pool.len() + 1)
+          .unwrap_or(1)
+      })
   } else {
-    // For leaves, look up their current position
+    // For leaves, look up their current position before removal
     format.sessions.iter()
       .find(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot)
       .and_then(|s| s.pool.iter().position(|p| p.player.user_id == player.user_id))
@@ -97,19 +118,39 @@ pub fn log_queue_toggle_sync(
     QTT::VL => ("left", Some("VC")),
   };
 
-  let pos_part = if let p = position {
-    format!("#{}", p)
-  } else {
-    format!("#E")
-  };
+  let pos_part = format!("#{}", position);
 
   let prefix = log_prefix_format(guild_name, category_name, sg_name.unwrap_or(""));
 
   match (pool_size, source) {
-    (Some((current, quota)), Some(src)) => info!("{} {} {} {} ({}) [{}/{}]", prefix, pos_part, tag, action, src, current, quota),
-    (Some((current, quota)), None) =>      info!("{} {} {} {} [{}/{}]",      prefix, pos_part, tag, action, current, quota),
-    (None, Some(src)) =>                   info!("{} {} {} {} ({})",         prefix, pos_part, tag, action, src),
-    (None, None) =>                        info!("{} {} {} {}",              prefix, pos_part, tag, action),
+    (Some((current, quota)), Some(src)) => {
+      if action == "left" {
+        info!("{} {} {} ({}) [{}/{}]", prefix, tag, action, src, current, quota);
+      } else {
+        info!("{} {} {} {} ({}) [{}/{}]", prefix, pos_part, tag, action, src, current, quota);
+      }
+    },
+    (Some((current, quota)), None) => {
+      if action == "left" {
+        info!("{} {} {} [{}/{}]", prefix, tag, action, current, quota);
+      } else {
+        info!("{} {} {} {} [{}/{}]", prefix, pos_part, tag, action, current, quota);
+      }
+    },
+    (None, Some(src)) => {
+      if action == "left" {
+        info!("{} {} {} ({})", prefix, tag, action, src);
+      } else {
+        info!("{} {} {} {} ({})", prefix, pos_part, tag, action, src);
+      }
+    },
+    (None, None) => {
+      if action == "left" {
+        info!("{} {} {}", prefix, tag, action);
+      } else {
+        info!("{} {} {} {}", prefix, pos_part, tag, action);
+      }
+    },
   }
 }
 
