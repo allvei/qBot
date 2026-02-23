@@ -4,7 +4,6 @@ pub mod elo_confirmation;
 pub mod player;
 pub mod response_helpers;
 pub mod settings;
-pub mod settings_menu;
 
 pub use elo_confirmation::handle_elo_change_confirmation;
 pub use settings::{
