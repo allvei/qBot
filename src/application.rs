@@ -130,7 +130,7 @@ impl Application {
     let config = crate::util::Config::load()?;
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILD_VOICE_STATES | GatewayIntents::GUILDS | GatewayIntents::GUILD_MEMBERS;
 
-    let mut client =
+    let client =
       Client::builder(&config.token, intents).event_handler(Handler { db: self.db.clone(), manager: self.manager.clone(), dashboard_queue: self.dashboard_queue.clone() }).await?;
 
     // Set the manager in the client data for global access
@@ -456,7 +456,7 @@ impl EventHandler for Handler {
           };
 
           // Re-check permissions
-          let (has_perms, missing_perms) = self.check_bot_permissions(&ctx, &guild).await;
+          let (has_perms, missing_perms) = self.check_perms(&ctx, &guild).await;
 
           if !has_perms {
             // Still missing permissions
@@ -718,7 +718,7 @@ impl EventHandler for Handler {
   async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
     let state = VoiceStateUpdate::get(&old, &new);
     let user_id = new.user_id;
-    let user = match ctx.http.get_user(user_id).await {
+    let _user = match ctx.http.get_user(user_id).await {
       Ok(u) => u,
       Err(e) => {
         error!("Failed to get user {}: {}", user_id, e);
@@ -916,7 +916,7 @@ impl EventHandler for Handler {
                   let guild_name = guild_name(&ctx, server);
                   let category_name = category.name.as_deref().unwrap_or("Unknown");
                   let pool_len: usize = category.formats[0].sessions.iter().map(|s| s.pool.len()).sum();
-                  let fmt_name = category.formats.first().map(|sg| sg.name.as_str());
+                  let _fmt_name = category.formats.first().map(|sg| sg.name.as_str());
 
                   // Check if queue was already full when this player joined
                   if pool_len > category.quota() as usize {
@@ -929,7 +929,7 @@ impl EventHandler for Handler {
                     );
                   }
 
-                  let format = &category.formats[0];
+                  let _format = &category.formats[0];
                   if let Err(e) = log_queue_toggle(&ctx, &self.db, server, category.ctg_id, &category.formats[0], &player, "joined").await {
                     warn!("Failed to log queue toggle: {e}");
                   }
@@ -959,7 +959,7 @@ impl EventHandler for Handler {
 impl Handler {
   /// Handle a player leaving the queue VC (disconnect or move away).
   /// Checks auto-leave preference, removes or resets timeout, and regenerates teams if needed.
-  async fn handle_player_leave_vc(&self, ctx: &Context, category: &mut Category, guild_id: GuildId, user_id: UserId, tag: &str) {
+  async fn handle_player_leave_vc(&self, ctx: &Context, category: &mut Category, guild_id: GuildId, user_id: UserId, _tag: &str) {
     let gld_nm = guild_name(ctx, guild_id);
     let ctg_nm = category.name.as_deref().unwrap_or("Unknown").to_string();
     let fmt_nm = category.get_user_fmt_name(user_id);
@@ -1022,7 +1022,7 @@ impl Handler {
       }
 
       // Capture position before removal for logging
-      let position_before_removal = sesh.pool.iter().position(|p| p.player.user_id == user_id).map(|p| p + 1);
+      let _position_before_removal = sesh.pool.iter().position(|p| p.player.user_id == user_id).map(|p| p + 1);
 
       if should_remove_player {
         sesh.remove_player(user_id);
@@ -1061,7 +1061,7 @@ impl Handler {
   }
 
   /// Check if bot has necessary permissions in the guild
-  async fn check_bot_permissions(&self, ctx: &Context, guild: &Guild) -> (bool, String) {
+  async fn check_perms(&self, ctx: &Context, guild: &Guild) -> (bool, String) {
     use serenity::all::Permissions;
 
     let mut missing_perms = Vec::new();
@@ -1142,13 +1142,13 @@ impl Handler {
       }
 
       // Add all players to the session WITHOUT quota check
-      let fmt_name_owned = category.formats.first().map(|sg| sg.name.clone());
-      let category_name = category.name.as_deref().unwrap_or("Unknown").to_string();
+      let _fmt_name_owned = category.formats.first().map(|sg| sg.name.clone());
+      let _category_name = category.name.as_deref().unwrap_or("Unknown").to_string();
       let format = category.formats[0].clone(); // Clone format before mutable borrow
       let category_id = category.ctg_id; // Capture category_id before mutable borrow
       if let Ok(session) = category.get_queue().await {
         // Get server and category names for logging
-        let guild_name = guild.name.clone();
+        let _guild_name = guild.name.clone();
 
         use crate::handlers::player::resolve_player_for_queue;
 
@@ -1163,7 +1163,7 @@ impl Handler {
             }
           };
 
-          let position = session.pool.len() + 1;
+          let _position = session.pool.len() + 1;
           if let Err(e) = log_queue_toggle(ctx, &self.db, guild.id, category_id, &format, &player, "joined").await {
             warn!("Failed to log queue toggle: {e}");
           }
@@ -1189,7 +1189,7 @@ impl Handler {
   /// Creates dashboard for a guild using in-memory categories from manager
   async fn create_guild_dashboard_from_manager(&self, ctx: &Context, guild: &Guild, manager: &mut Manager) {
     // FIRST: Check bot permissions
-    let (has_perms, missing_perms) = self.check_bot_permissions(ctx, guild).await;
+    let (has_perms, missing_perms) = self.check_perms(ctx, guild).await;
 
     if !has_perms {
       warn!("Bot is missing permissions in guild {}: {}", guild.name, missing_perms);

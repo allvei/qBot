@@ -512,7 +512,7 @@ impl Category {
 
         // Move each user back to queue VC
         for user_id in members_in_vc {
-          if let Ok(member) = guild.member(&ctx.http, user_id).await {
+          if let Ok(_member) = guild.member(&ctx.http, user_id).await {
             use serenity::all::EditMember;
             if let Err(e) = ctx.http.edit_member(guild.id, user_id, &EditMember::new().voice_channel(queue_vc_id), Some("Moving user back to queue VC during cleanup")).await {
               warn!("Failed to move user {} back to queue VC: {}", user_id, e);
@@ -757,7 +757,7 @@ impl Category {
         // First, check for expired VC leave grace periods
         for player in &session.pool {
           if let Some(grace_until) = player.vc_leave_grace_until {
-            if let Ok(elapsed) = grace_until.duration_since(SystemTime::now()) {
+            if let Ok(_elapsed) = grace_until.duration_since(SystemTime::now()) {
               // Grace period hasn't expired yet
               continue;
             } else {

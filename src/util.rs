@@ -1,8 +1,6 @@
 //! Utility functions for common operations throughout the codebase
 
 use chrono::Utc;
-use tracing_subscriber::fmt::time::UtcTime;
-use tracing_subscriber::util::SubscriberInitExt;
 
 /// Application configuration loaded from environment variables
 pub struct Config {

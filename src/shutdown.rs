@@ -4,7 +4,6 @@
 //! needs to shut down gracefully, including cleaning up voice channels and
 //! marking dashboards as offline.
 
-use anyhow::Result;
 use serenity::all::{Cache, Http, CreateEmbed, EditMessage};
 use std::sync::Arc;
 use tokio::sync::{Mutex, oneshot};

@@ -17,3 +17,6 @@ pub use models::constants::guild_name;
 pub use models::*;
 pub use shutdown::*;
 pub use util::*;
+
+// Import macros from settings utils
+pub use handlers::settings::utils::*;

@@ -26,7 +26,7 @@ pub async fn get_user_tag(ctx: &Context, user_id: UI, db: &crate::Database) -> S
 
 /// Async log function that extrapolates all information from Format, Player, and Action
 pub async fn log_queue_toggle(
-  ctx: &Context,
+  _ctx: &Context,
   db: &crate::Database,
   guild_id: serenity::all::GuildId,
   category_id: u8,

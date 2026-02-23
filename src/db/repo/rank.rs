@@ -3,7 +3,6 @@ use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 use tracing::info;
 use serenity::all::{RoleId, GuildId as GI};
 
-use crate::db::helpers::RowHelpers;
 
 /// A configurable rank for a guild (sorted by ELO)
 #[derive(Debug, Clone)]

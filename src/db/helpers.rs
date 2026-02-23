@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use serenity::all::{GuildId as GI, RoleId};
-use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
+use sqlx::{Row, sqlite::SqliteRow};
 
 use crate::Rank;
 

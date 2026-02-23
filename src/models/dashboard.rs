@@ -786,12 +786,12 @@ impl Category {
       let player_rank = discord_rank.clone();
 
       // Log the queue join attempt BEFORE adding to queue to fix race condition
-      let server_name = guild_name(cc.ctx, guild_id);
-      let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
-      let username = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
+      let _server_name = guild_name(cc.ctx, guild_id);
+      let _category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
+      let _username = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
 
       // Get current pool length BEFORE adding player
-      let (pool_len_before, fmt_quota) = self.fmt(fmt_id).map(|sg| (sg.sessions.iter().map(|s| s.pool.len()).sum::<usize>(), sg.quota as usize)).unwrap_or((0, 0));
+      let (_pool_len_before, _fmt_quota) = self.fmt(fmt_id).map(|sg| (sg.sessions.iter().map(|s| s.pool.len()).sum::<usize>(), sg.quota as usize)).unwrap_or((0, 0));
       let fmt_name = self.fmt(fmt_id).map(|sg| sg.name.as_str());
 
       // Clone fmt_name to avoid borrowing issues
@@ -847,8 +847,8 @@ impl Category {
     // Store fields before any borrows
     let _dashboard_channel = self.channels.dashboard;
     let queue_chat = self.channels.queue_chat;
-    let category_id = self.ctg_id;
-    let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
+    let _category_id = self.ctg_id;
+    let _category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
 
     // Get session index and format name before mutable borrow
     let fmt_name_owned = self.fmt(fmt_id).map(|sg| sg.name.clone());
@@ -888,17 +888,17 @@ impl Category {
       cc.defer_update().await?;
 
       let was_hot = session.is_hot();
-      let username = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
+      let _username = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
 
       // Capture position before removal for logging
-      let position_before_removal = session.pool.iter().position(|p| p.player.user_id == user_id).map(|p| p + 1);
+      let _position_before_removal = session.pool.iter().position(|p| p.player.user_id == user_id).map(|p| p + 1);
 
       session.remove_player(user_id);
       let pool_len = session.pool.len();
 
       // Log with server and category context
       let guild_id = cc.component.guild_id.unwrap();
-      let server_name = guild_name(cc.ctx, guild_id);
+      let _server_name = guild_name(cc.ctx, guild_id);
 
       // Resolve player for logging
       if let Ok(player) = cc.db.get_user(user_id, cc.ctx).await {

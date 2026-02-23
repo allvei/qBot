@@ -5,10 +5,10 @@
 
 use crate::models::embeds::Ephemeral;
 use crate::models::CommandContext as CC;
-use crate::{CYAN, GREEN, ORANGE, RED, YELLOW};
+use crate::{CYAN, GREEN, RED, YELLOW};
 use anyhow::Result;
 use serenity::all::{
-  ComponentInteraction as CX, Context, CreateActionRow as CAR, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, EmbedFooter,
+  ComponentInteraction as CX, Context, CreateActionRow as CAR, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM,
 };
 
 /// Common embed creation helpers
@@ -159,29 +159,29 @@ impl ComponentResponseExt for CX {
   /// Update with a success embed
   async fn update_success(&self, title: &str, description: &str) -> Result<()> {
     let embed = EmbedHelpers::success(title, description);
-    let response = CIR::UpdateMessage(CIRM::new().embed(embed));
+    let _response = CIR::UpdateMessage(CIRM::new().embed(embed));
     // Note: This needs Context, which we don't have in this trait
     // Implementation would need to be done differently or pass Context
     todo!("ComponentResponseExt needs Context parameter")
   }
 
   /// Update with an error embed
-  async fn update_error(&self, title: &str, description: &str) -> Result<()> {
+  async fn update_error(&self, _title: &str, _description: &str) -> Result<()> {
     todo!("ComponentResponseExt needs Context parameter")
   }
 
   /// Update with a warning embed
-  async fn update_warning(&self, title: &str, description: &str) -> Result<()> {
+  async fn update_warning(&self, _title: &str, _description: &str) -> Result<()> {
     todo!("ComponentResponseExt needs Context parameter")
   }
 
   /// Update with an info embed
-  async fn update_info(&self, title: &str, description: &str) -> Result<()> {
+  async fn update_info(&self, _title: &str, _description: &str) -> Result<()> {
     todo!("ComponentResponseExt needs Context parameter")
   }
 
   /// Update with plain text message
-  async fn update_message(&self, message: &str) -> Result<()> {
+  async fn update_message(&self, _message: &str) -> Result<()> {
     todo!("ComponentResponseExt needs Context parameter")
   }
 }
