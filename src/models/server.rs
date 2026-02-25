@@ -967,15 +967,15 @@ impl Category {
 
     let pair_num = self.channels.teams.len() + 1;
 
-    let red_ch = guild_id
-      .create_channel(&ctx.http, CreateChannel::new(format!("🔴 RED #{}", pair_num)).kind(ChannelType::Voice).category(category))
-      .await
-      .map_err(|e| anyhow!("Failed to create RED VC: {e}"))?;
-
     let blu_ch = guild_id
       .create_channel(&ctx.http, CreateChannel::new(format!("🔵 BLU #{}", pair_num)).kind(ChannelType::Voice).category(category))
       .await
       .map_err(|e| anyhow!("Failed to create BLU VC: {e}"))?;
+
+    let red_ch = guild_id
+      .create_channel(&ctx.http, CreateChannel::new(format!("🔴 RED #{}", pair_num)).kind(ChannelType::Voice).category(category))
+      .await
+      .map_err(|e| anyhow!("Failed to create RED VC: {e}"))?;
 
     let pair = TeamChannel::new(red_ch.id, blu_ch.id, pair_num as u32);
     self.channels.teams.push(pair.clone());

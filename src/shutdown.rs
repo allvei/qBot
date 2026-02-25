@@ -10,8 +10,7 @@ use tokio::sync::{Mutex, oneshot};
 use tracing::{info, warn};
 
 use crate::{
-    models::{DashboardUpdateQueue, Manager},
-    util::{now, Style},
+    log_prefix_category, models::{DashboardUpdateQueue, Manager}, util::{Style, now}
 };
 
 /// Handles graceful shutdown procedures
@@ -136,8 +135,8 @@ impl ShutdownHandler {
             info!("Marking all dashboards as offline...");
             
             for server in &mut manager_lock.servers {
-                let guild_id = server.guild_id;
-                let guild_name = self.cache.guild(guild_id)
+                let gld_id = server.guild_id;
+                let gld_nm = self.cache.guild(gld_id)
                     .map(|g| g.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
                 
@@ -149,28 +148,20 @@ impl ShutdownHandler {
                             "Shutdown at {}", now(Style::Relative)
                         )));
                     
-                    let channel_id = category.channels.dashboard;
-                    let message_id = category.dashboard_msg;
+                    let chn_id = category.channels.dashboard;
+                    let msg_id = category.dashboard_msg;
+                    let ctg_nm = category.name.as_ref().unwrap();
                     
-                    match channel_id.edit_message(
+                    match chn_id.edit_message(
                         &self.http, 
-                        message_id, 
+                        msg_id, 
                         EditMessage::new().embed(offline_embed).components(vec![])
                     ).await {
                         Ok(_) => {
-                            info!(
-                                "[{}] Marked dashboard for category {} as offline", 
-                                guild_name, 
-                                category.ctg_id
-                            );
+                            info!("{} Dashboard now offline", log_prefix_category(gld_nm.as_str(), ctg_nm.as_str()));
                         }
                         Err(e) => {
-                            warn!(
-                                "[{}] Failed to update dashboard for category {}: {}", 
-                                guild_name, 
-                                category.ctg_id, 
-                                e
-                            );
+                            warn!("{} Failed to update dashboard: {}", log_prefix_category(gld_nm.as_str(), ctg_nm.as_str()), e);
                         }
                     }
                 }
