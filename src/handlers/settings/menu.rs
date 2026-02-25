@@ -327,9 +327,9 @@ impl AsSettingsMenu for ServerSettingsDisplay {
             .row(SR::Buttons(vec![
                 SB::action("server_settings_edit_post_game_timeout", "Edit timeout", SBS::Secondary),
                 SB::action("server_settings_create_roles", "Create roles", SBS::Primary),
+                SB::action("server_settings_roles",  "Server Config", SBS::Secondary),
             ]))
             .row(SR::Buttons(vec![
-                SB::action("server_settings_roles",  "Server Config", SBS::Secondary),
                 SB::action("server_settings_ranks",  "Ranks", SBS::Secondary),
                 SB::action("server_settings_categories", "Categories", SBS::Secondary),
             ]))
