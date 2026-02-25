@@ -283,26 +283,57 @@ pub struct ServerSettingsDisplay {
 
 impl AsSettingsMenu for ServerSettingsDisplay {
   fn as_settings_menu(&self) -> SettingsMenu {
-    let _runner_display =
+    let runner_display =
       self.runner_role.as_ref().map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", ")).unwrap_or_else(|| "*Not configured*".to_string());
 
-    let _admin_display =
+    let admin_display =
       self.admin_role.as_ref().map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", ")).unwrap_or_else(|| "*Not configured*".to_string());
 
-    let _runner_default = self.runner_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
-    let _admin_default = self.admin_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
+    let runner_default = self.runner_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
+    let admin_default = self.admin_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
 
-    let menu = SettingsMenu::new(format!("{} - Server settings", self.guild_name))
+    SettingsMenu::new(format!("{} - Server settings", self.guild_name))
             .color(0x5865F2)
             .description("**Configuration Overview:**\n\n**Server-wide settings**\n• Roles (runner/admin permissions)\n• Team balance method\n• ELO & Rank linking\n\n**Rank management**\n• Add, remove & link ranks\n• Set default rank\n\n**Category management**\n• Queue channels & voice channels\n• Team channels & game settings")
+            .field(SF::new("Runner Role", runner_display))
+            .field(SF::new("Admin Role", admin_display))
+            .field(SF::new("Balance Method", &self.balance_method))
+            .field(SF::new("Post-game timeout", format!("{} seconds", self.post_game_timeout)))
+            .row(SR::RoleSelect { 
+              id: "server_settings_runner_role".to_string(), 
+              placeholder: "Select runner role".to_string(), 
+              default: runner_default 
+            })
+            .row(SR::RoleSelect { 
+              id: "server_settings_admin_role".to_string(), 
+              placeholder: "Select admin role".to_string(), 
+              default: admin_default 
+            })
+            .row(SR::StringSelect { 
+              id: "server_settings_balance".to_string(), 
+              placeholder: "Team balance method...".to_string(), 
+              options: vec![
+                ("Custom distribution algorithm".to_string(), "bch".to_string()), 
+                ("Average distribution".to_string(), "average".to_string())
+              ] 
+            })
+            .row(SR::Buttons(
+              SERVER_CONFIG_TOGGLES
+                .iter()
+                .zip(self.toggle_states.iter())
+                .map(|(toggle, &state)| SB::toggle(toggle.button_id, toggle.label_on, state))
+                .collect()
+            ))
             .row(SR::Buttons(vec![
-                SB::action("server_settings_roles",  "Server", SBS::Secondary),
+                SB::action("server_settings_edit_post_game_timeout", "Edit timeout", SBS::Secondary),
+                SB::action("server_settings_create_roles", "Create roles", SBS::Primary),
+            ]))
+            .row(SR::Buttons(vec![
+                SB::action("server_settings_roles",  "Server Config", SBS::Secondary),
                 SB::action("server_settings_ranks",  "Ranks", SBS::Secondary),
                 SB::action("server_settings_categories", "Categories", SBS::Secondary),
             ]))
-            .footer("Select a category to manage:");
-
-    menu
+            .footer("Configure server settings or navigate to specific sections")
   }
 }
 
