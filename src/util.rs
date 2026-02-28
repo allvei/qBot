@@ -29,6 +29,8 @@ pub fn init_logging() {
     use std::fs;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::filter::{EnvFilter, LevelFilter};
+    use tracing_subscriber::Layer;
     
     // Create logs directory if it doesn't exist
     if let Err(e) = fs::create_dir_all("logs") {
@@ -39,7 +41,7 @@ pub fn init_logging() {
         time::format_description::parse("[hour]:[minute]:[second]").unwrap()
     );
     
-    // Console layer (existing behavior)
+    // Console layer (existing behavior) - only show INFO and above
     let console_layer = tracing_subscriber::fmt::layer()
         .with_ansi(true)
         .with_target(false)
@@ -49,9 +51,19 @@ pub fn init_logging() {
         .with_file(true)
         .with_line_number(true)
         .with_level(false)
-        .compact();
+        .compact()
+        .with_filter(EnvFilter::from_default_env().add_directive(LevelFilter::INFO.into()));
     
-    // File layer with more detailed information
+    // File layer with application logs only - filter out spam
+    let file_filter = EnvFilter::new("pf_pug_bot=info")
+        .add_directive("serenity=warn".parse().unwrap())
+        .add_directive("tokio_tungstenite=warn".parse().unwrap())
+        .add_directive("tokio=warn".parse().unwrap())
+        .add_directive("hyper=warn".parse().unwrap())
+        .add_directive("h2=warn".parse().unwrap())
+        .add_directive("tower=warn".parse().unwrap())
+        .add_directive("tracing=warn".parse().unwrap());
+    
     let file_layer = tracing_subscriber::fmt::layer()
         .with_ansi(false) // No colors in file
         .with_target(true) // Include target in file
@@ -64,7 +76,8 @@ pub fn init_logging() {
         .with_writer(
             tracing_appender::rolling::daily("logs", "qbot.log")
         )
-        .json(); // Use structured JSON format for file logs
+        .json() // Use structured JSON format for file logs
+        .with_filter(file_filter);
     
     // Initialize subscriber with both layers
     tracing_subscriber::registry()
