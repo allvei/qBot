@@ -24,21 +24,52 @@ impl Config {
     }
 }
 
-/// Initialize tracing with minimal, colored format
+/// Initialize tracing with both console and file output
 pub fn init_logging() {
+    use std::fs;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    
+    // Create logs directory if it doesn't exist
+    if let Err(e) = fs::create_dir_all("logs") {
+        eprintln!("Failed to create logs directory: {}", e);
+    }
+    
     let timer = tracing_subscriber::fmt::time::UtcTime::new(
         time::format_description::parse("[hour]:[minute]:[second]").unwrap()
     );
-    tracing_subscriber::fmt()
+    
+    // Console layer (existing behavior)
+    let console_layer = tracing_subscriber::fmt::layer()
         .with_ansi(true)
         .with_target(false)
-        .with_timer(timer)
+        .with_timer(timer.clone())
         .with_thread_ids(false)
         .with_thread_names(false)
         .with_file(true)
         .with_line_number(true)
         .with_level(false)
-        .compact()
+        .compact();
+    
+    // File layer with more detailed information
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(false) // No colors in file
+        .with_target(true) // Include target in file
+        .with_timer(timer)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .with_file(true)
+        .with_line_number(true)
+        .with_level(true) // Include log level in file
+        .with_writer(
+            tracing_appender::rolling::daily("logs", "qbot.log")
+        )
+        .json(); // Use structured JSON format for file logs
+    
+    // Initialize subscriber with both layers
+    tracing_subscriber::registry()
+        .with(console_layer)
+        .with(file_layer)
         .init();
 }
 

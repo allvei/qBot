@@ -14,3 +14,4 @@ Cargo.lock
 /.windsurf
 rustfmt.toml
 CHANGELOG_TEMPLATE.md
+/logs/
