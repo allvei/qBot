@@ -980,8 +980,9 @@ impl Handler {
       let was_hot = sesh.is_hot();
 
       let should_remove_player = {
-        // Check if this is a post-game scenario (session was recently active)
-        let is_post_game = sesh.ready_at.is_none() && !sesh.is_hot();
+        // Check if this is a post-game scenario (session was recently active and is now Pull or Idle)
+        // NOT when session is Live (players being moved to team channels)
+        let is_post_game = sesh.ready_at.is_none() && !sesh.is_hot() && !matches!(sesh.status, SessionStatus::Live);
 
         if is_post_game {
           // Post-game behavior: give 10-second grace period for position < quota

@@ -76,7 +76,6 @@ pub fn init_logging() {
         .with_writer(
             tracing_appender::rolling::daily("logs", "qbot.log")
         )
-        .json() // Use structured JSON format for file logs
         .with_filter(file_filter);
     
     // Initialize subscriber with both layers

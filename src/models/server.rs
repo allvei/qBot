@@ -1635,11 +1635,11 @@ impl Category {
     let mut players_to_dm = Vec::new();
     let quota = self.formats[0].quota as usize;
 
-    // Get the HOT session specifically, not the last session
-    // This ensures we notify the correct players when quota is met
-    if let Some(hot_session) = self.formats[0].sessions.iter().find(|s| s.status == SessionStatus::Hot) {
+    // Get the HOT or PUSH session specifically, not just Hot
+    // This ensures we notify the correct players when quota is met, even during the brief Push state
+    if let Some(active_session) = self.formats[0].sessions.iter().find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Push) {
       // Ping players based on post_game flag
-      for player in hot_session.pool.iter().take(quota) {
+      for player in active_session.pool.iter().take(quota) {
         // In post-game scenarios, only ping players NOT in voice chat
         if post_game {
           // Check if player is in voice chat
