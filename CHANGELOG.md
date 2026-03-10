@@ -1,3 +1,35 @@
+# v0.10.0
+__11.03.26__
+## Users & Admins
+__Added__
+- **Match score reporting** - Runners can now report final scores on match history messages using a Report Score button. Scores appear at the top of the match summary.
+- **Team switch detection** - Bot now detects when two players swap teams during a live match and automatically updates their assignments after 2 minutes.
+
+__Improved__
+- **Matched team order to in-game** - Blue first, red second.
+- **Player visibility** - All players with team assignments now show correctly on dashboard. Previously, new players joining after someone left weren't displayed (showing 4v3 instead of 4v4).
+- **Server settings info** - Main settings screen now shows all config options for guidance.
+
+__Fixed__
+- **Command parsing** - Fixed /fatkid and /buffer commands not parsing user mentions correctly.
+- **Orphaned team channels** - Players in orphaned team channels are now moved back to queue voice channel during cleanup.
+- **Timeout behavior** - Players in team channels are no longer removed by timeout system, only players in queue.
+- **Post-game notifications** - Players who just finished a match are no longer pinged when queue fills up. Only players who were waiting in queue get notified.
+
+## Developers
+__Added__
+- **File logging system** - Daily rotating log files in logs/ directory with structured output for debugging and auditing.
+- **Log filtering** - Separate console and file log levels to reduce noise from Discord and HTTP libraries.
+- **Team switch tracking** - New pending_team_switch field in Session to track and validate team swaps.
+- **Modular settings system** - Reorganized settings into logical modules (menu, ui, server, categories, ranks, player_admin, alerts, core, utils).
+
+__Refactored__
+- **Settings architecture** - Complete restructure of settings system with AsSettingsMenu trait and organized component structure.
+- **Naming conventions** - Standardized category_id to ctg_id across codebase for consistency.
+- **Shutdown logging** - Improved dashboard offline messages with consistent prefix formatting.
+- **Queue logging** - Simplified log_queue_toggle to use Format, Player, and Action for cleaner code.
+- **Timestamp utilities** - Renamed now() to timestamp_now() for better clarity.
+
 # v0.9.0
 __ 19.02.26__
 ## Users & Admins
