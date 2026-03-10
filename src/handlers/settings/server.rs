@@ -49,7 +49,7 @@ pub async fn handle_server_settings_button(
 
       let current = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
       db.config.set_bool(guild_id, toggle.column, !current).await?;
-      send_nav!(interaction, ctx, db, nav_server_settings, guild_id)?;
+      send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
     }
     // Generic handler for all rank config toggles (dynamic ELO, ELO-Rank linked, etc.)
     _ if RANK_CONFIG_TOGGLES.iter().any(|t| t.button_id == button_id) => {
@@ -337,6 +337,7 @@ pub async fn handle_server_settings_button(
                     The category must contain these channels:\n\
                     • `dashboard` - Text channel for the dashboard\n\
                     • `queue` - Text channel for queue chat\n\
+                    • `ping` - Text channel for ping notifications\n\
                     • `queue-vc` - Voice channel for the queue\n\
                     • `red` - Voice channel for red team\n\
                     • `blue` - Voice channel for blue team\n\n\
@@ -358,11 +359,12 @@ pub async fn handle_server_settings_button(
             let guild_name = guild_name(ctx, guild_id);
 
             // Find channels in this category - extract data before any awaits
-            let (dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel) = {
+            let (dashboard_channel, queue_channel, ping_channel, queue_vc_channel, red_channel, blue_channel) = {
               let guild = ctx.cache.guild(guild_id).ok_or_else(|| anyhow!("Guild not found"))?;
 
               let mut dashboard_channel = None;
               let mut queue_channel = None;
+              let mut ping_channel = None;
               let mut queue_vc_channel = None;
               let mut red_channel = None;
               let mut blue_channel = None;
@@ -382,6 +384,11 @@ pub async fn handle_server_settings_button(
                     && (name_lower == "queue" || name_lower == "pug-chat" || name_lower == "chat" || name_lower == "queue-chat" || name_lower == "pug")
                   {
                     queue_channel = Some(*channel_id);
+                  }
+
+                  // Ping channel (text)
+                  if ping_channel.is_none() && channel.kind == ChannelType::Text && name_lower == "ping" {
+                    ping_channel = Some(*channel_id);
                   }
 
                   // Queue voice channel - try multiple variations
@@ -410,11 +417,11 @@ pub async fn handle_server_settings_button(
                 }
               }
 
-              (dashboard_channel, queue_channel, queue_vc_channel, red_channel, blue_channel)
+              (dashboard_channel, queue_channel, ping_channel, queue_vc_channel, red_channel, blue_channel)
             };
 
             // Check if any channels are missing
-            let has_all_channels = dashboard_channel.is_some() && queue_channel.is_some() && queue_vc_channel.is_some() && red_channel.is_some() && blue_channel.is_some();
+            let has_all_channels = dashboard_channel.is_some() && queue_channel.is_some() && ping_channel.is_some() && queue_vc_channel.is_some() && red_channel.is_some() && blue_channel.is_some();
 
             if !has_all_channels {
               // Start manual channel selection flow
@@ -443,13 +450,15 @@ pub async fn handle_server_settings_button(
 
               // Determine which channel to select first
               let (next_channel_type, next_channel_name, available_channels) = if dashboard_channel.is_none() {
-                ("dashboard", "Dashboard (text)", text_channels)
+                ("dashboard", "Dashboard (text)", text_channels.clone())
               } else if queue_channel.is_none() {
-                ("queue", "Queue chat (text)", text_channels)
+                ("queue", "Queue chat (text)", text_channels.clone())
+              } else if ping_channel.is_none() {
+                ("ping", "Ping channel (text)", text_channels)
               } else if queue_vc_channel.is_none() {
                 ("queue_vc", "Queue voice channel", voice_channels)
               } else if red_channel.is_none() {
-                ("red", "Red team voice channel", voice_channels)
+                ("red", "Red team voice channel", voice_channels.clone())
               } else {
                 ("blue", "Blue team voice channel", voice_channels)
               };
@@ -471,20 +480,22 @@ pub async fn handle_server_settings_button(
               let options: Vec<CSMO> = available_channels.iter().map(|(id, name)| CSMO::new(name.clone(), id.get().to_string())).collect();
 
               // Encode state compactly: use hex for IDs and single char for type
-              // Format: cat_d_q_qv_r_b_t where each is hex (or 0)
+              // Format: cat_d_q_p_qv_r_b_t where each is hex (or 0)
               let type_char = match next_channel_type {
                 "dashboard" => "d",
                 "queue" => "q",
+                "ping" => "p",
                 "queue_vc" => "v",
                 "red" => "r",
                 "blue" => "b",
                 _ => "x",
               };
               let state = format!(
-                "{:x}_{:x}_{:x}_{:x}_{:x}_{:x}_{}",
+                "{:x}_{:x}_{:x}_{:x}_{:x}_{:x}_{:x}_{}",
                 category_id.get(),
                 dashboard_channel.map(|c| c.get()).unwrap_or(0),
                 queue_channel.map(|c| c.get()).unwrap_or(0),
+                ping_channel.map(|c| c.get()).unwrap_or(0),
                 queue_vc_channel.map(|c| c.get()).unwrap_or(0),
                 red_channel.map(|c| c.get()).unwrap_or(0),
                 blue_channel.map(|c| c.get()).unwrap_or(0),
@@ -497,6 +508,7 @@ pub async fn handle_server_settings_button(
               let mut status = String::from("**Channel Linking Progress:**\n\n");
               status.push_str(&format!("Dashboard: {}\n", if let Some(id) = dashboard_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
               status.push_str(&format!("Queue Chat: {}\n", if let Some(id) = queue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
+              status.push_str(&format!("Ping Channel: {}\n", if let Some(id) = ping_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
               status.push_str(&format!("Queue Voice: {}\n", if let Some(id) = queue_vc_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
               status.push_str(&format!("Red Team: {}\n", if let Some(id) = red_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
               status.push_str(&format!("Blue Team: {}\n", if let Some(id) = blue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
@@ -699,6 +711,7 @@ pub async fn handle_server_settings_button(
         dashboard_channel_id: dashboard_channel.get(),
         chat_channel_id: queue_channel.get(),
         queue_vc_id: queue_vc_channel.get(),
+        ping_channel_id: 1,
         quota: crate::DEFAULT_QUOTA,
       };
 
@@ -765,6 +778,7 @@ pub async fn handle_server_settings_button(
           category: category_id,
           queue_chat: queue_channel,
           queue_vc: queue_vc_channel,
+          ping_channel: CI::new(1),
           teams: vec![TeamChannel { red_vc: red_channel, blu_vc: blue_channel, set_index: 1, session_id: None }],
           dashboard: dashboard_channel,
         },
@@ -785,6 +799,7 @@ pub async fn handle_server_settings_button(
             dashboard_channel_id: dashboard_channel.get(),
             chat_channel_id: queue_channel.get(),
             queue_vc_id: queue_vc_channel.get(),
+            ping_channel_id: 1,
             quota: crate::DEFAULT_QUOTA,
           };
           match db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
@@ -834,7 +849,7 @@ pub async fn handle_server_settings_button(
             let state_str = button_id.strip_prefix("link_ch_").unwrap();
             let parts: Vec<&str> = state_str.split('_').collect();
 
-            if parts.len() != 7 {
+            if parts.len() != 8 {
               send_component_error_response(interaction, ctx, "Invalid state. Please start over.").await;
               return Ok(());
             }
@@ -842,13 +857,15 @@ pub async fn handle_server_settings_button(
             let category_id = parse_cid(parts[0])?;
             let mut dashboard_channel = parse_opt_cid(parts[1])?;
             let mut queue_channel = parse_opt_cid(parts[2])?;
-            let mut queue_vc_channel = parse_opt_cid(parts[3])?;
-            let mut red_channel = parse_opt_cid(parts[4])?;
-            let mut blue_channel = parse_opt_cid(parts[5])?;
-            let type_char = parts[6];
+            let mut ping_channel = parse_opt_cid(parts[3])?;
+            let mut queue_vc_channel = parse_opt_cid(parts[4])?;
+            let mut red_channel = parse_opt_cid(parts[5])?;
+            let mut blue_channel = parse_opt_cid(parts[6])?;
+            let type_char = parts[7];
             let channel_type = match type_char {
               "d" => "dashboard",
               "q" => "queue",
+              "p" => "ping",
               "v" => "queue_vc",
               "r" => "red",
               "b" => "blue",
@@ -859,6 +876,7 @@ pub async fn handle_server_settings_button(
             match channel_type {
               "dashboard" => dashboard_channel = Some(selected_channel),
               "queue" => queue_channel = Some(selected_channel),
+              "ping" => ping_channel = Some(selected_channel),
               "queue_vc" => queue_vc_channel = Some(selected_channel),
               "red" => red_channel = Some(selected_channel),
               "blue" => blue_channel = Some(selected_channel),
@@ -866,7 +884,7 @@ pub async fn handle_server_settings_button(
             }
 
             // Check if all channels are now selected
-            if dashboard_channel.is_some() && queue_channel.is_some() && queue_vc_channel.is_some() && red_channel.is_some() && blue_channel.is_some() {
+            if dashboard_channel.is_some() && queue_channel.is_some() && ping_channel.is_some() && queue_vc_channel.is_some() && red_channel.is_some() && blue_channel.is_some() {
               // All channels selected - create the category
               let guild_name = guild_name(ctx, guild_id);
 
@@ -887,6 +905,7 @@ pub async fn handle_server_settings_button(
                   category: category_id,
                   queue_chat: queue_channel.unwrap(),
                   queue_vc: queue_vc_channel.unwrap(),
+                  ping_channel: ping_channel.unwrap(),
                   teams: vec![TeamChannel { red_vc: red_channel.unwrap(), blu_vc: blue_channel.unwrap(), set_index: 1, session_id: None }],
                   dashboard: dashboard_channel.unwrap(),
                 },
@@ -905,6 +924,7 @@ pub async fn handle_server_settings_button(
                     dashboard_channel_id: dashboard_channel.unwrap().get(),
                     chat_channel_id: queue_channel.unwrap().get(),
                     queue_vc_id: queue_vc_channel.unwrap().get(),
+                    ping_channel_id: ping_channel.unwrap().get(),
                     quota: crate::DEFAULT_QUOTA,
                   };
 
@@ -1089,6 +1109,7 @@ pub async fn handle_server_settings_button(
         dashboard_channel_id: dashboard_channel.get(),
         chat_channel_id: queue_channel.get(),
         queue_vc_id: queue_vc_channel.get(),
+        ping_channel_id: 1,
         quota: crate::DEFAULT_QUOTA,
       };
 
@@ -1185,6 +1206,7 @@ pub async fn handle_server_settings_button(
           category: category_id,
           queue_chat: queue_channel,
           queue_vc: queue_vc_channel,
+          ping_channel: CI::new(1),
           teams: vec![TeamChannel { red_vc: red_channel, blu_vc: blue_channel, set_index: 1, session_id: None }],
           dashboard: dashboard_channel,
         },
@@ -1200,6 +1222,7 @@ pub async fn handle_server_settings_button(
             dashboard_channel_id: dashboard_channel.get(),
             chat_channel_id: queue_channel.get(),
             queue_vc_id: queue_vc_channel.get(),
+            ping_channel_id: 1,
             quota: crate::DEFAULT_QUOTA,
           };
 
@@ -1472,27 +1495,25 @@ pub async fn handle_server_settings_button(
       send_nav!(interaction, ctx, db, nav_category_list, guild_id)?;
     }
     "server_settings_category_select" => {
-      // Handle category selection from dropdown - show modal with all settings
+      // Handle category selection from dropdown - show settings screen with buttons
       if let CIDK::StringSelect { values } = &interaction.data.kind {
-        if let Some(category_id_str) = values.first() {
-          if let Ok(category_id) = category_id_str.parse::<u8>() {
-            // Find the category
-            let categories = db.categories.get_categories_for_guild(guild_id).await?;
-            if let Some(category) = categories.iter().find(|g| g.ctg_id == category_id) {
-              let modal = CM::new(format!("server_settings_category_modal_{category_id}"), "Edit category settings").components(vec![
-                create_short_input_opt("Name", "name", "e.g., NA PUGs, EU Competitive", &category.name.clone().unwrap_or_default()),
-                create_value_input_sh_cap("Quota (2-100)", "quota", "Number of players required", &category.quota().to_string(), 1, 3),
-                create_value_input_sh_cap("Ready check duration (seconds)", "timeout", "Seconds for missing players to join VC", &category.timeout.to_string(), 1, 3),
-                create_paragraph_input_with_value(
-                  "Connect info",
-                  "connect",
-                  "e.g., connect 192.168.1.1:27015; password secret",
-                  &category.connect_info().unwrap_or_default().to_string(),
-                ),
-              ]);
+        if let Some(value_str) = values.first() {
+          // Parse format "categoryid_queueid" to handle duplicate category_id values
+          let parts: Vec<&str> = value_str.split('_').collect();
+          if parts.len() >= 2 {
+            if let Ok(category_id) = parts[0].parse::<u8>() {
+              // Find the category
+              let categories = db.categories.get_categories_for_guild(guild_id).await?;
+              if let Some(category) = categories.iter().find(|g| g.ctg_id == category_id) {
+                // Show category settings screen with buttons including Formats
+                let settings = CategorySettings::from_category(category);
 
-              let response = CIR::Modal(modal);
-              interaction.create_response(&ctx.http, response).await?;
+                let embed = build_category_settings_embed(&settings);
+                let buttons = build_category_settings_buttons(settings.category_id);
+
+                let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
+                interaction.create_response(&ctx.http, response).await?;
+              }
             }
           }
         }
@@ -1908,7 +1929,7 @@ pub async fn handle_server_settings_modal(
       db.categories.update_connect_info(guild_id, category_id, connect_info.as_deref()).await?;
     }
 
-    // Update in-memory category
+    // Update in-memory category and show full settings screen
     {
       let mut manager_lock = manager.lock().await;
       if let Ok(server) = manager_lock.get_server(guild_id) {
@@ -1920,11 +1941,21 @@ pub async fn handle_server_settings_modal(
 
           // Update dashboard to reflect quota change
           category.queue_dash_update(ctx, guild_id).await;
+
+          // Show full category settings screen with all buttons
+          let settings = CategorySettings::from_category(category);
+          let embed = build_category_settings_embed(&settings);
+          let buttons = build_category_settings_buttons(settings.category_id);
+
+          let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
+          interaction.create_response(&ctx.http, response).await?;
+          return Ok(());
         }
       }
     }
 
-    send_nav_modal!(interaction, ctx, db, nav_category_list, guild_id)?;
+    // Fallback if category not found
+    send_modal_error_response(interaction, ctx, "Category not found").await;
   } else if modal_id == "server_settings_modal_create_category" {
     // Extract modal fields
     let mut category_name = String::new();
@@ -1976,9 +2007,9 @@ pub async fn handle_server_settings_modal(
 
     let guild_name = guild_name(ctx, guild_id);
 
-    // Create channels
-    match crate::handlers::admin::create_category_channels(ctx, guild_id, &guild_category_name, &channel_prefix, bot_only_dashboard.as_str() == "yes").await {
-      Ok((category_id, dashboard_channel, queue_channel, queue_vc_channel)) => {
+    // Create channels (runner_role will be None for manual category creation)
+    match crate::handlers::admin::create_category_channels(ctx, guild_id, &guild_category_name, &channel_prefix, bot_only_dashboard.as_str() == "yes", None).await {
+      Ok((category_id, dashboard_channel, queue_channel, queue_vc_channel, ping_channel)) => {
         use crate::models::{Category, Channels};
 
         let mut temp_category = Category::new(
@@ -1989,7 +2020,7 @@ pub async fn handle_server_settings_modal(
           quota,
           crate::DEFAULT_HOT_JOIN_TIMEOUT,
           MI::new(1),
-          Channels { category: category_id, queue_chat: queue_channel, queue_vc: queue_vc_channel, teams: vec![], dashboard: dashboard_channel },
+          Channels { category: category_id, queue_chat: queue_channel, queue_vc: queue_vc_channel, ping_channel, teams: vec![], dashboard: dashboard_channel },
           vec![],
         );
 
@@ -2004,6 +2035,7 @@ pub async fn handle_server_settings_modal(
               dashboard_channel_id: dashboard_channel.get(),
               chat_channel_id: queue_channel.get(),
               queue_vc_id: queue_vc_channel.get(),
+              ping_channel_id: ping_channel.get(),
               quota,
             };
             match db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {

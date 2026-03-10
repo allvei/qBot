@@ -1,5 +1,6 @@
 use std::str::FromStr;
 use std::time::SystemTime;
+use std::collections::HashMap;
 
 use anyhow::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,14 @@ pub struct Session {
   pub match_ended_at: Option<SystemTime>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub team_channels: Option<TeamChannel>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub pending_team_switch: Option<PendingTeamSwitch>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingTeamSwitch {
+  pub detected_at: SystemTime,
+  pub swapped_teams: HashMap<UI, Team>,
 }
 
 impl Session {
@@ -51,7 +60,7 @@ impl Session {
 
   /// Create a new session
   pub fn new(status: SessionStatus, pool: Vec<SessionPlayer>) -> Self {
-    Self { status, pool, ready_at: None, started_at: None, match_ended_at: None, team_channels: None }
+    Self { status, pool, ready_at: None, started_at: None, match_ended_at: None, team_channels: None, pending_team_switch: None }
   }
 
   /// Check if the session is active
@@ -76,6 +85,7 @@ impl Session {
     self.started_at = None;
     self.match_ended_at = None;
     self.team_channels = None;
+    self.pending_team_switch = None;
     // Clear team assignments and VC join tracking when going back to idle
     for player in &mut self.pool {
       player.team = None;
@@ -107,9 +117,145 @@ impl Session {
     self.status = SessionStatus::Pull;
   }
 
+  /// Detect if players have switched teams based on current VC positions
+  /// Returns true if a valid swap is detected (one player from each team swapped)
+  pub fn detect_team_switch(&mut self, ctx: &serenity::all::Context, guild_id: serenity::all::GuildId) -> bool {
+    use tracing::debug;
+
+    // Only track switches during Live games
+    if self.status != SessionStatus::Live {
+      return false;
+    }
+
+    let Some(team_channels) = &self.team_channels else {
+      return false;
+    };
+
+    let red_vc = team_channels.red_vc;
+    let blu_vc = team_channels.blu_vc;
+
+    // Get current VC positions from Discord
+    let Some(guild) = ctx.cache.guild(guild_id) else {
+      return false;
+    };
+
+    let mut current_vc_positions = HashMap::new();
+    for player in &self.pool {
+      if let Some(voice_state) = guild.voice_states.get(&player.player.user_id) {
+        if let Some(channel_id) = voice_state.channel_id {
+          if channel_id == red_vc || channel_id == blu_vc {
+            current_vc_positions.insert(player.player.user_id, channel_id);
+          }
+        }
+      }
+    }
+
+    // Detect switches: find players whose VC doesn't match their assigned team
+    let mut swapped_teams = HashMap::new();
+    for player in &self.pool {
+      let Some(assigned_team) = player.team else { continue };
+      let Some(&current_vc) = current_vc_positions.get(&player.player.user_id) else { continue };
+
+      let expected_vc = match assigned_team {
+        Team::Red => red_vc,
+        Team::Blu => blu_vc,
+        Team::Unassigned => continue,
+      };
+
+      if current_vc != expected_vc {
+        // Player is in wrong VC - they switched
+        let new_team = if current_vc == red_vc { Team::Red } else { Team::Blu };
+        swapped_teams.insert(player.player.user_id, new_team);
+      }
+    }
+
+    // Valid switch requires exactly 2 players (one from each team swapping)
+    if swapped_teams.len() != 2 {
+      return false;
+    }
+
+    // Verify it's a cross-team swap (one Red->Blu, one Blu->Red)
+    let teams: Vec<_> = swapped_teams.values().collect();
+    if teams.len() == 2 && teams[0] != teams[1] {
+      debug!("Detected valid team switch: {} players swapped teams", swapped_teams.len());
+      self.pending_team_switch = Some(PendingTeamSwitch {
+        detected_at: SystemTime::now(),
+        swapped_teams,
+      });
+      return true;
+    }
+
+    false
+  }
+
+  /// Check if pending team switch has been stable for 2+ minutes and commit it
+  pub fn validate_and_commit_team_switch(&mut self, ctx: &serenity::all::Context, guild_id: serenity::all::GuildId) -> bool {
+    use tracing::{info, debug};
+
+    let Some(pending) = &self.pending_team_switch else {
+      return false;
+    };
+
+    // Check if 2 minutes have elapsed
+    let Ok(elapsed) = SystemTime::now().duration_since(pending.detected_at) else {
+      return false;
+    };
+
+    if elapsed.as_secs() < 120 {
+      return false;
+    }
+
+    // Verify the switch is still valid (players are still in swapped positions)
+    let Some(team_channels) = &self.team_channels else {
+      self.pending_team_switch = None;
+      return false;
+    };
+
+    let red_vc = team_channels.red_vc;
+    let blu_vc = team_channels.blu_vc;
+
+    let Some(guild) = ctx.cache.guild(guild_id) else {
+      return false;
+    };
+
+    // Verify each swapped player is still in their new team's VC
+    for (&user_id, &new_team) in &pending.swapped_teams {
+      let expected_vc = match new_team {
+        Team::Red => red_vc,
+        Team::Blu => blu_vc,
+        Team::Unassigned => continue,
+      };
+
+      let still_in_correct_vc = guild
+        .voice_states
+        .get(&user_id)
+        .and_then(|vs| vs.channel_id)
+        .map(|ch| ch == expected_vc)
+        .unwrap_or(false);
+
+      if !still_in_correct_vc {
+        debug!("Team switch invalidated - player {} not in expected VC", user_id);
+        self.pending_team_switch = None;
+        return false;
+      }
+    }
+
+    // Switch is still valid after 2 minutes - commit it to memory
+    for (&user_id, &new_team) in &pending.swapped_teams {
+      if let Some(player) = self.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+        let old_team = player.team;
+        player.team = Some(new_team);
+        info!("Committed team switch: {} moved from {:?} to {:?}", player.player.tag, old_team, new_team);
+      }
+    }
+
+    self.pending_team_switch = None;
+    true
+  }
+
   /// Create an empty session
   pub fn empty() -> Self {
-    Self { status: SessionStatus::Idle, pool: Vec::new(), ready_at: None, started_at: None, match_ended_at: None, team_channels: None }
+    Self { status: SessionStatus::Idle, pool: Vec::new(), ready_at: None, started_at: None, match_ended_at: None, team_channels: None, pending_team_switch: None }
   }
 
   /// Check if this Hot session has timed out (players didn't join VC in time)

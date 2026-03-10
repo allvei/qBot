@@ -208,6 +208,7 @@ impl EventHandler for Handler {
       let manager = self.manager.clone();
       let database = self.db.clone();
       let ctx_clone = ctx.clone();
+      let ctx_clone2 = ctx.clone();
 
       tokio::spawn(async move {
         use tokio::time::{interval, Duration};
@@ -217,6 +218,19 @@ impl EventHandler for Handler {
           check_interval.tick().await;
 
           let mut manager_lock = manager.lock().await;
+          
+          // Validate pending team switches (commit if stable for 2+ minutes)
+          for server in &mut manager_lock.servers {
+            for category in &mut server.categories {
+              for fmt in &mut category.formats {
+                for session in &mut fmt.sessions {
+                  if session.pending_team_switch.is_some() {
+                    session.validate_and_commit_team_switch(&ctx_clone2, server.guild_id);
+                  }
+                }
+              }
+            }
+          }
 
           // Check all categories in all servers
           for server in manager_lock.servers.iter_mut() {
@@ -565,6 +579,37 @@ impl EventHandler for Handler {
           return;
         }
 
+        // Handle disable DM notifications button
+        if itx.data.custom_id == "disable_dm_notifications" {
+          let user_id = itx.user.id;
+          match self.db.users.set_pm_hot_alert(user_id, false).await {
+            Ok(_) => {
+              let response = serenity::all::CreateInteractionResponse::UpdateMessage(
+                serenity::all::CreateInteractionResponseMessage::new()
+                  .embed(serenity::all::CreateEmbed::new()
+                    .title("DM Notifications Disabled")
+                    .description("You will no longer receive direct messages when a game is ready.\n\nYou can re-enable this in your settings using `/prefs`.")
+                    .color(0x00FF00))
+                  .components(vec![])
+              );
+              if let Err(e) = itx.create_response(&ctx.http, response).await {
+                error!("Failed to send disable DM response: {e}");
+              }
+              info!("User {} disabled DM notifications", user_id);
+            }
+            Err(e) => {
+              error!("Failed to disable DM notifications for user {}: {}", user_id, e);
+              let response = serenity::all::CreateInteractionResponse::Message(
+                serenity::all::CreateInteractionResponseMessage::new()
+                  .content("Failed to disable DM notifications. Please try again later.")
+                  .ephemeral(true)
+              );
+              let _ = itx.create_response(&ctx.http, response).await;
+            }
+          }
+          return;
+        }
+
         // Handle player settings buttons
         if itx.data.custom_id.starts_with("player_settings_") {
           let result = crate::handlers::handle_player_settings_button(&ctx, itx, &self.db).await;
@@ -707,6 +752,13 @@ impl EventHandler for Handler {
             error!("Error handling player settings modal '{}': {}", itx.data.custom_id, e);
           }
         }
+        // Handle modal submissions for score reporting
+        if itx.data.custom_id == "report_score_modal" {
+          let result = self.handle_report_score_modal(&ctx, &itx).await;
+          if let Err(e) = result {
+            error!("Error handling report score modal: {}", e);
+          }
+        }
       }
       _ => {
         // Other interaction types not handled yet
@@ -799,6 +851,21 @@ impl EventHandler for Handler {
         }
         VoiceStateUpdate::Moved => {
           let was_team_vc = category.is_team_vc(lookup_channel);
+          
+          // Check if player moved between team VCs during a live game
+          if let Some(new_channel) = new.channel_id {
+            if category.is_team_vc(new_channel) && was_team_vc {
+              // Player moved from one team VC to another - check for team switch
+              for fmt in &mut category.formats {
+                for session in &mut fmt.sessions {
+                  if session.status == SessionStatus::Live {
+                    session.detect_team_switch(&ctx, server);
+                  }
+                }
+              }
+            }
+          }
+          
           if category.channels.queue_vc == lookup_channel {
             self.handle_player_leave_vc(&ctx, category, server, user_id, &tag).await;
             category.queue_dash_update(&ctx, server).await;
@@ -967,9 +1034,27 @@ impl Handler {
 
     let quota = category.quota() as usize;
 
-    // Clone format before mutable borrow to avoid borrowing issues
-    let format = category.formats[0].clone();
     let category_id = category.ctg_id; // Capture category_id before mutable borrow
+    
+    // Extract team channel IDs before any mutable borrows
+    let team_channel_ids: Vec<_> = category.channels.teams.iter()
+      .flat_map(|t| vec![t.red_vc, t.blu_vc])
+      .collect();
+
+    // Check if player is currently in a team channel before getting session
+    let is_in_team_vc = if let Some(guild) = ctx.cache.guild(guild_id) {
+      if let Some(voice_state) = guild.voice_states.get(&user_id) {
+        if let Some(channel_id) = voice_state.channel_id {
+          team_channel_ids.contains(&channel_id)
+        } else {
+          false
+        }
+      } else {
+        false
+      }
+    } else {
+      false
+    };
 
     let should_regenerate = if let Ok(sesh) = category.get_user_sesh(user_id).await {
       if sesh.is_active() {
@@ -980,38 +1065,43 @@ impl Handler {
       let was_hot = sesh.is_hot();
 
       let should_remove_player = {
-        // Check if this is a post-game scenario (session was recently active and is now Pull or Idle)
-        // NOT when session is Live (players being moved to team channels)
-        let is_post_game = sesh.ready_at.is_none() && !sesh.is_hot() && !matches!(sesh.status, SessionStatus::Live);
+        if is_in_team_vc {
+          // Player is in a team channel, not the queue VC - don't apply post-game grace
+          false
+        } else {
+          // Check if this is a post-game scenario (match_ended_at is set after pull)
+          let is_post_game = sesh.match_ended_at.is_some();
 
-        if is_post_game {
-          // Post-game behavior: give 10-second grace period for position < quota
-          if let Some(position) = sesh.pool.iter().position(|p| p.player.user_id == user_id) {
-            if position < quota {
-              // Player has position < quota, give them 10 second grace period
-              if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
-                player.vc_leave_grace_until = Some(std::time::SystemTime::now() + std::time::Duration::from_secs(10));
-                info!("{} #{} {} left VC post-game, giving 10s grace", log_prefix_format(&gld_nm, &ctg_nm, &fmt_nm), position + 1, usr_tg);
+          if is_post_game {
+            // Post-game behavior: give 10-second grace period for position < quota
+            if let Some(position) = sesh.pool.iter().position(|p| p.player.user_id == user_id) {
+              if position < quota {
+                // Player has position < quota, give them 10 second grace period
+                if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+                  let grace_until = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
+                  player.vc_leave_grace_until = Some(grace_until);
+                  info!("{} #{} {} left VC post-game, grace until {:?}", log_prefix_format(&gld_nm, &ctg_nm, &fmt_nm), position + 1, usr_tg, grace_until);
+                }
+                false // Don't remove immediately
+              } else {
+                // Position >= quota, remove immediately using post_game_auto_leave setting
+                self.db.config.get_bool(guild_id, "post_game_auto_leave", true).await.unwrap_or(true)
               }
-              false // Don't remove immediately
             } else {
-              // Position >= quota, remove immediately using post_game_auto_leave setting
+              // Player not found in pool, use post_game_auto_leave setting
               self.db.config.get_bool(guild_id, "post_game_auto_leave", true).await.unwrap_or(true)
             }
+          } else if sesh.is_hot() {
+            // Hot game behavior: check user's vc_auto_leave preference
+            if let Ok(settings) = self.db.users.get_prefs(user_id).await {
+              settings.vc_auto_leave
+            } else {
+              false
+            }
           } else {
-            // Player not found in pool, use post_game_auto_leave setting
-            self.db.config.get_bool(guild_id, "post_game_auto_leave", true).await.unwrap_or(true)
-          }
-        } else if sesh.is_hot() {
-          // Hot game behavior: check user's vc_auto_leave preference
-          if let Ok(settings) = self.db.users.get_prefs(user_id).await {
-            settings.vc_auto_leave
-          } else {
+            // Regular idle session: don't auto-remove
             false
           }
-        } else {
-          // Regular idle session: don't auto-remove
-          false
         }
       };
 
@@ -1029,6 +1119,19 @@ impl Handler {
         sesh.remove_player(user_id);
       }
 
+      // Capture pool length and determine regeneration before dropping sesh borrow
+      let pool_len = sesh.pool.len();
+      let should_idle = was_hot && pool_len < quota;
+      if should_idle {
+        sesh.idle();
+      }
+      
+      // Drop sesh borrow before cloning format
+      drop(sesh);
+
+      // Clone format after removal so log gets updated pool count
+      let format = category.formats[0].clone();
+
       // Log after removal so pool count is accurate, but use position before removal
       // Resolve player for logging
       if let Ok(player) = self.db.get_user(user_id, ctx).await {
@@ -1037,16 +1140,11 @@ impl Handler {
         }
       }
 
-      if was_hot && sesh.pool.len() >= quota {
-        true
-      } else if was_hot && sesh.pool.len() < quota {
-        sesh.idle();
-        false
-      } else {
-        false
-      }
+      was_hot && pool_len >= quota
     } else {
       // Player not found in any session
+      let format = category.formats[0].clone();
+      
       // Resolve player for logging
       if let Ok(player) = self.db.get_user(user_id, ctx).await {
         if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left").await {
@@ -1059,6 +1157,96 @@ impl Handler {
     if should_regenerate {
       category.generate_teams(ctx, guild_id, Some(&self.db)).await;
     }
+  }
+
+  /// Handle report score modal submission
+  async fn handle_report_score_modal(&self, ctx: &Context, interaction: &serenity::all::ModalInteraction) -> Result<(), anyhow::Error> {
+    use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage, EditMessage};
+    
+    // Extract scores from modal
+    let mut blu_score = String::new();
+    let mut red_score = String::new();
+    
+    for row in &interaction.data.components {
+      if let Some(component) = row.components.first() {
+        if let serenity::all::ActionRowComponent::InputText(input) = component {
+          match input.custom_id.as_str() {
+            "blu_score" => blu_score = input.value.clone().unwrap_or_default(),
+            "red_score" => red_score = input.value.clone().unwrap_or_default(),
+            _ => {}
+          }
+        }
+      }
+    }
+    
+    // Validate scores are numbers
+    let blu_score_num: u8 = match blu_score.parse() {
+      Ok(n) => n,
+      Err(_) => {
+        let response = CreateInteractionResponse::Message(
+          CreateInteractionResponseMessage::new()
+            .content("Invalid blue team score. Please enter a number between 0-99.")
+            .ephemeral(true)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+        return Ok(());
+      }
+    };
+    
+    let red_score_num: u8 = match red_score.parse() {
+      Ok(n) => n,
+      Err(_) => {
+        let response = CreateInteractionResponse::Message(
+          CreateInteractionResponseMessage::new()
+            .content("Invalid red team score. Please enter a number between 0-99.")
+            .ephemeral(true)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+        return Ok(());
+      }
+    };
+    
+    // Update the message embed with scores
+    if let Some(message) = &interaction.message {
+      if let Some(mut embed) = message.embeds.first().cloned() {
+        // Prepend score to description
+        let score_text = format!("**BLU:** {}\n**RED:** {}\n\n", blu_score_num, red_score_num);
+        let new_description = if let Some(desc) = embed.description {
+          format!("{}{}", score_text, desc)
+        } else {
+          score_text
+        };
+        
+        embed.description = Some(new_description);
+        
+        // Update the message
+        message.channel_id.edit_message(&ctx.http, message.id, EditMessage::new().embed(embed.into())).await?;
+        
+        // Send confirmation
+        let response = CreateInteractionResponse::Message(
+          CreateInteractionResponseMessage::new()
+            .content("Score reported successfully!")
+            .ephemeral(true)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+      } else {
+        let response = CreateInteractionResponse::Message(
+          CreateInteractionResponseMessage::new()
+            .content("Failed to update score: no embed found.")
+            .ephemeral(true)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+      }
+    } else {
+      let response = CreateInteractionResponse::Message(
+        CreateInteractionResponseMessage::new()
+          .content("Failed to update score: message not found.")
+          .ephemeral(true)
+      );
+      interaction.create_response(&ctx.http, response).await?;
+    }
+    
+    Ok(())
   }
 
   /// Check if bot has necessary permissions in the guild

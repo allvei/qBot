@@ -306,14 +306,28 @@ impl UserRepository {
 
         match result {
             Some(row) => {
-                let pm_hot_alert: i64 = row.try_get("pm_hot_alert").unwrap_or(1);
+                let pm_hot_alert: i64 = row.try_get("pm_hot_alert").unwrap_or(0);
                 Ok(pm_hot_alert != 0)
             }
             None => {
-                // User doesn't exist yet, return default (enabled)
-                Ok(true)
+                // User doesn't exist yet, return default (disabled - opt-in)
+                Ok(false)
             }
         }
+    }
+
+    pub async fn set_pm_hot_alert(&self, user_id: UI, enabled: bool) -> Result<()> {
+        // Ensure user exists
+        let _ = self.check_user(user_id, None).await?;
+
+        // Update database
+        sqlx::query("UPDATE users SET pm_hot_alert = ? WHERE user_id = ?")
+            .bind(if enabled { 1 } else { 0 })
+            .bind(user_id.get() as i64)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
     }
 
     pub async fn toggle_pm_hot_alert(&self, user_id: UI) -> Result<bool> {
@@ -324,12 +338,8 @@ impl UserRepository {
         let current = self.get_pm_hot_alert(user_id).await?;
         let new_value = !current;
 
-        // Update database
-        sqlx::query("UPDATE users SET pm_hot_alert = ? WHERE user_id = ?")
-            .bind(if new_value { 1 } else { 0 })
-            .bind(user_id.get() as i64)
-            .execute(&self.pool)
-            .await?;
+        // Set new value
+        self.set_pm_hot_alert(user_id, new_value).await?;
 
         Ok(new_value)
     }
@@ -429,7 +439,7 @@ impl UserRepository {
                 }
 
                 Ok(UserSettings {
-                    pm_hot_alert:             row.try_get::<i64, _>   ("pm_hot_alert")            .unwrap_or(1) != 0,
+                    pm_hot_alert:             row.try_get::<i64, _>   ("pm_hot_alert")            .unwrap_or(0) != 0,
                     timeout:                  row.try_get::<u8, _>    ("timeout")                 .unwrap_or(DEFAULT_TIMEOUT),
                     vc_auto_join:             row.try_get::<i64, _>   ("vc_auto_join")            .unwrap_or(0) != 0,
                     join_alert_title:         row.try_get::<String, _>("join_alert_title")        .ok().filter(|s| !s.is_empty()),

@@ -29,7 +29,7 @@ pub fn init_logging() {
     use std::fs;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
-    use tracing_subscriber::filter::{EnvFilter, LevelFilter};
+    use tracing_subscriber::filter::EnvFilter;
     use tracing_subscriber::Layer;
     
     // Create logs directory if it doesn't exist
@@ -41,7 +41,16 @@ pub fn init_logging() {
         time::format_description::parse("[hour]:[minute]:[second]").unwrap()
     );
     
-    // Console layer (existing behavior) - only show INFO and above
+    // Console layer - filter out library spam
+    let console_filter = EnvFilter::new("pf_pug_bot=info")
+        .add_directive("serenity=warn".parse().unwrap())
+        .add_directive("tokio_tungstenite=warn".parse().unwrap())
+        .add_directive("tokio=warn".parse().unwrap())
+        .add_directive("hyper=warn".parse().unwrap())
+        .add_directive("h2=warn".parse().unwrap())
+        .add_directive("tower=warn".parse().unwrap())
+        .add_directive("tracing=warn".parse().unwrap());
+    
     let console_layer = tracing_subscriber::fmt::layer()
         .with_ansi(true)
         .with_target(false)
@@ -52,7 +61,7 @@ pub fn init_logging() {
         .with_line_number(true)
         .with_level(false)
         .compact()
-        .with_filter(EnvFilter::from_default_env().add_directive(LevelFilter::INFO.into()));
+        .with_filter(console_filter);
     
     // File layer with application logs only - filter out spam
     let file_filter = EnvFilter::new("pf_pug_bot=info")
@@ -120,7 +129,7 @@ impl Style {
 }
 
 /// Create a Discord timestamp for the current time
-pub fn now(style: Style) -> String {
+pub fn timestamp_now(style: Style) -> String {
     format!("<t:{}:{}>", Utc::now().timestamp(), style.as_char())
 }
 
@@ -156,8 +165,8 @@ mod tests {
     fn test_timestamp_formats() {
         let now = Utc::now().timestamp();
         
-        assert_eq!(crate::now(Style::ShortDateTime), format!("<t:{}:f>", now));
-        assert_eq!(crate::now(Style::Relative), format!("<t:{}:R>", now));
+        assert_eq!(crate::timestamp_now(Style::ShortDateTime), format!("<t:{}:f>", now));
+        assert_eq!(crate::timestamp_now(Style::Relative), format!("<t:{}:R>", now));
         assert_eq!(timestamp_from_unix(1234567890, Style::LongDateTime), "<t:1234567890:F>");
     }
 

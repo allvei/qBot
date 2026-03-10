@@ -10,7 +10,7 @@ use tokio::sync::{Mutex, oneshot};
 use tracing::{info, warn};
 
 use crate::{
-    log_prefix_category, models::{DashboardUpdateQueue, Manager}, util::{Style, now}
+    log_prefix_category, models::{DashboardUpdateQueue, Manager}, util::{Style, timestamp_now}
 };
 
 /// Handles graceful shutdown procedures
@@ -62,10 +62,10 @@ impl ShutdownHandler {
         // Wait for either signal
         tokio::select! {
             _ = sigint => {
-                info!("Received Ctrl+C, shutting down gracefully...");
+                info!("Shutting down...");
             }
             _ = sigterm => {
-                info!("Received SIGTERM, shutting down gracefully...");
+                info!("Terminating...");
             }
         }
         
@@ -143,10 +143,8 @@ impl ShutdownHandler {
                 for category in &mut server.categories {
                     let offline_embed = CreateEmbed::new()
                         .title("🔴 qBot is offline...")
-                        .color(0xFF0000) // Red color
-                        .footer(serenity::all::CreateEmbedFooter::new(format!(
-                            "Shutdown at {}", now(Style::Relative)
-                        )));
+                        .description(format!("Shutdown {}", timestamp_now(Style::Relative)))
+                        .color(0xFF0000);
                     
                     let chn_id = category.channels.dashboard;
                     let msg_id = category.dashboard_msg;

@@ -8,29 +8,6 @@ use crate::models::Ephemeral;
 use crate::player::check_adm;
 use crate::{GREEN, RED, YELLOW};
 
-/// `/toggledm` - Toggle DM notifications when a game is ready
-pub async fn cmd_toggle_dm(cc: &CC<'_>) -> Result<()> {
-  let user_id = cc.intax.user.id;
-
-  // Toggle the DM preference
-  let new_state = cc.db.users.toggle_pm_hot_alert(user_id).await?;
-
-  let (status_text, status_emoji) = if new_state { ("enabled", "🔔") } else { ("disabled", "🔕") };
-
-  let embed = CE::new()
-    .title("DM Alerts Updated")
-    .description(format!(
-      "{status_emoji} DM alerts are now **{status_text}**\n\n\
-            You will {a} receive a DM when a game is ready.\n",
-      a = if new_state { "now" } else { "no longer" }
-    ))
-    .color(if new_state { GREEN } else { YELLOW });
-
-  cc.intax.create_response(&cc.ctx.http, Ephemeral::send(embed)).await?;
-
-  Ok(())
-}
-
 /// `/prefs` - Open personal settings menu as ephemeral message in current channel
 pub async fn cmd_prefs(cc: &CC<'_>) -> Result<()> {
   let user_id = cc.intax.user.id;

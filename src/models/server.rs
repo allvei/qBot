@@ -573,10 +573,7 @@ impl Category {
   pub fn get_user_fmt_name(&self, user_id: UI) -> String {
     match self.formats.iter().find(|sg| sg.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.user_id == user_id))) {
       Some(fmt_nm) => fmt_nm.name.clone(),
-      None => {
-        warn!("User {} not found in any format", user_id);
-        "-".to_string()
-      }
+      None => "-".to_string(),
     }
   }
 
@@ -602,10 +599,10 @@ impl Category {
   }
 
   pub async fn hot(&mut self, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
-    self.hot_fmt(0, ctx, guild_id, db, manager).await
+    self.hot_fmt(0, ctx, guild_id, db, manager, false).await
   }
 
-  pub async fn hot_fmt(&mut self, fmt_id: u8, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
+  pub async fn hot_fmt(&mut self, fmt_id: u8, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>, post_game: bool) -> Result<(), Error> {
     let _ = self.get_queue_fmt(fmt_id).await?.hot();
 
     // Create team VCs if policy is OnHot
@@ -626,7 +623,7 @@ impl Category {
 
     // Notify requires guild_id for VC validation
     if let Some(gid) = guild_id {
-      self.notify(ctx, gid, db, false).await; // false = not post-game
+      self.notify_fmt(fmt_id, ctx, gid, db, post_game).await;
     } else {
       warn!("Cannot notify: guild_id not provided");
     }
@@ -757,12 +754,15 @@ impl Category {
         // First, check for expired VC leave grace periods
         for player in &session.pool {
           if let Some(grace_until) = player.vc_leave_grace_until {
-            if let Ok(_elapsed) = grace_until.duration_since(SystemTime::now()) {
-              // Grace period hasn't expired yet
-              continue;
-            } else {
-              // Grace period expired, remove the player
-              info!("VC leave grace period expired for player {}, removing from queue", player.player.tag);
+            let now = SystemTime::now();
+            if now >= grace_until {
+              // Calculate how long the grace period actually was
+              let elapsed = if let Ok(duration) = now.duration_since(grace_until) {
+                format!("{}s ago", duration.as_secs())
+              } else {
+                "unknown".to_string()
+              };
+              info!("VC leave grace period expired for {} (expired {}), removing from queue", player.player.tag, elapsed);
               players_to_remove.push(player.player.user_id);
             }
           }
@@ -1259,11 +1259,11 @@ impl Category {
 
     // Check if the queue now meets quota and transition to Hot if needed
     if self.is_quota_fmt(fmt_id) {
-      self.hot_fmt(fmt_id, ctx, Some(guild_id), Some(db), manager).await?;
+      self.hot_fmt(fmt_id, ctx, Some(guild_id), Some(db), manager, true).await?;
     } else if post_game {
       // If this is post-game but quota isn't met, still notify players who are waiting
       // This is for the case where some players finished a game but not enough to start a new one
-      self.notify(ctx, guild_id, Some(db), true).await; // true = post-game
+      self.notify_fmt(fmt_id, ctx, guild_id, Some(db), true).await; // true = post-game
     }
 
     self.queue_dash_update(ctx, guild_id).await;
@@ -1513,7 +1513,7 @@ impl Category {
     }
 
     if self.is_quota_fmt(fmt_id) {
-      self.hot_fmt(fmt_id, queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager).await?;
+      self.hot_fmt(fmt_id, queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager, false).await?;
     }
     Ok(())
   }
@@ -1627,19 +1627,31 @@ impl Category {
   ///
   /// If `post_game` is true, only pings players who are NOT in voice chat (to avoid pinging players who just finished)
   pub async fn notify(&mut self, ctx: &Context, guild_id: GI, db: Option<&DB>, post_game: bool) {
+    self.notify_fmt(0, ctx, guild_id, db, post_game).await;
+  }
+
+  /// Notify players in a specific format that the game is ready
+  /// Also sends DMs to players who have pm_hot_alert=true
+  ///
+  /// If `post_game` is true, only pings players who are NOT in voice chat (to avoid pinging players who just finished)
+  pub async fn notify_fmt(&mut self, fmt_id: u8, ctx: &Context, guild_id: GI, db: Option<&DB>, post_game: bool) {
     // Validate VC status before sending notifications to prevent desync
     self.validate_vc_status(ctx, guild_id).await;
-
-    let queue_chat = self.channels.queue_chat;
     let mut player_mentions = Vec::new();
     let mut players_to_dm = Vec::new();
-    let quota = self.formats[0].quota as usize;
+    
+    let Some(format) = self.fmt(fmt_id) else {
+      warn!("Format {} not found when trying to notify players", fmt_id);
+      return;
+    };
+    
+    let quota = format.quota as usize;
 
-    // Get the HOT or PUSH session specifically, not just Hot
-    // This ensures we notify the correct players when quota is met, even during the brief Push state
-    if let Some(active_session) = self.formats[0].sessions.iter().find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Push) {
+    // Get the HOT session specifically, not the last session
+    // This ensures we notify the correct players when quota is met
+    if let Some(hot_session) = format.sessions.iter().find(|s| s.status == SessionStatus::Hot) {
       // Ping players based on post_game flag
-      for player in active_session.pool.iter().take(quota) {
+      for player in hot_session.pool.iter().take(quota) {
         // In post-game scenarios, only ping players NOT in voice chat
         if post_game {
           // Check if player is in voice chat
@@ -1658,30 +1670,31 @@ impl Category {
         }
       }
     } else {
-      warn!("No hot session found when trying to notify players");
+      warn!("No hot session found in format {} when trying to notify players", fmt_id);
       return;
     }
 
-    // Only log notification if there are actually players to notify
+    // Only send notification if there are actually players to notify
     if !player_mentions.is_empty() {
       let guild_name = guild_name(ctx, guild_id);
-      let fmt_name = &self.formats[0].name;
+      let fmt_name = &format.name;
       let full_prefix = log_prefix_format(&guild_name, self.name.as_deref().unwrap_or("unknown"), fmt_name);
 
       info!("{} Quota met - notifying all {} players in match", full_prefix, player_mentions.len());
-    }
 
-    // Use embed for header and raw pings in message content to properly ping users
-    let embed = CreateEmbed::new().title("PUG Starting").description("Please join the queue channel!");
+      // Use embed for header and raw pings in message content to properly ping users
+      let embed = CreateEmbed::new().title("PUG Starting").description("Please join the queue channel!");
 
-    let content = player_mentions.join(" ");
-    let msg = CM::new().embed(embed).content(content);
-    if let Ok(sent) = queue_chat.send_message(&ctx.http, msg).await {
-      let http = ctx.http.clone();
-      tokio::spawn(async move {
-        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-        let _ = sent.delete(&http).await;
-      });
+      let content = player_mentions.join(" ");
+      let msg = CM::new().embed(embed).content(content);
+      let dashboard = self.channels.dashboard;
+      if let Ok(sent) = dashboard.send_message(&ctx.http, msg).await {
+        let http = ctx.http.clone();
+        tokio::spawn(async move {
+          tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+          let _ = sent.delete(&http).await;
+        });
+      }
     }
 
     // Send DMs to users who have pm_hot_alert=true
@@ -1698,10 +1711,17 @@ impl Category {
                 "A game is ready in **{}**!\nPlease join the queue channel.",
                 ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "the server".to_string())
               ))
+              .footer(serenity::all::CreateEmbedFooter::new("Don't want to be messaged directly? Press the button below"))
               .color(GREEN);
 
+            let disable_button = serenity::all::CreateButton::new("disable_dm_notifications")
+              .label("Disable DM notifications")
+              .style(serenity::all::ButtonStyle::Secondary);
+
+            let components = vec![serenity::all::CreateActionRow::Buttons(vec![disable_button])];
+
             if let Some(ref tracker) = dm_tracker {
-              if let Err(e) = tracker.send_dm(ctx, user_id, dm_embed).await {
+              if let Err(e) = tracker.send_dm(ctx, user_id, dm_embed, components).await {
                 warn!("Failed to send DM to user {}: {}", user_id, e);
               }
             } else {
@@ -1805,13 +1825,14 @@ pub struct Channels {
   pub category: CI,
   pub queue_chat: CI,
   pub queue_vc: CI,
+  pub ping_channel: CI,
   pub teams: Vec<TeamChannel>,
   pub dashboard: CI,
 }
 
 impl Channels {
-  pub fn new(category: CI, queue_chat: CI, queue_vc: CI, teams: Vec<TeamChannel>, dashboard: CI) -> Self {
-    Self { category, queue_chat, queue_vc, teams, dashboard }
+  pub fn new(category: CI, queue_chat: CI, queue_vc: CI, ping_channel: CI, teams: Vec<TeamChannel>, dashboard: CI) -> Self {
+    Self { category, queue_chat, queue_vc, ping_channel, teams, dashboard }
   }
 
   /// Pushs a red and blue channel to the vector
@@ -1821,12 +1842,12 @@ impl Channels {
   }
 
   pub fn empty() -> Self {
-    Self { category: CI::new(1), queue_chat: CI::new(1), queue_vc: CI::new(1), teams: Vec::new(), dashboard: CI::new(1) }
+    Self { category: CI::new(1), queue_chat: CI::new(1), queue_vc: CI::new(1), ping_channel: CI::new(1), teams: Vec::new(), dashboard: CI::new(1) }
   }
 
   /// Checks if this struct contains the given channel_id
   pub fn contains_channel(&self, channel_id: CI) -> bool {
-    self.queue_chat == channel_id || self.queue_vc == channel_id || self.dashboard == channel_id || self.teams.iter().any(|team| team.contains_channel(channel_id))
+    self.queue_chat == channel_id || self.queue_vc == channel_id || self.ping_channel == channel_id || self.dashboard == channel_id || self.teams.iter().any(|team| team.contains_channel(channel_id))
   }
 
   /// Returns all known static channel IDs (category, chat, queue, dashboard, team VCs)

@@ -182,7 +182,7 @@ pub async fn nav_category_list(ctx: &Context, db: &Arc<Database>, guild_id: GI) 
   let guild_name = guild_name(ctx, guild_id);
   let categories = db.categories.get_categories_for_guild(guild_id).await?;
   let display = CategoryListDisplay { guild_name, categories };
-  let embed = display.as_settings_menu().build_embed();
-  let buttons = display.as_settings_menu().build_components();
+  let embed = display.build_embed();
+  let buttons = display.build_components();
   Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
 }

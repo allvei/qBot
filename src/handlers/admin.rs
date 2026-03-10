@@ -135,7 +135,8 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
 /// Creates a category and all necessary category channels
 /// Flow: Create category -> Create dashboard -> Test message send -> Create other channels
 /// If dashboard message send fails, cleanup and abort
-pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name: &str, channel_prefix: &str, bot_only_dashboard: bool) -> Result<(CI, CI, CI, CI)> {
+/// Returns: (category_id, dashboard_id, queue_chat_id, queue_vc_id, ping_channel_id)
+pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name: &str, channel_prefix: &str, bot_only_dashboard: bool, runner_role: Option<RI>) -> Result<(CI, CI, CI, CI, CI)> {
   use serenity::all::{CreateChannel, CreateEmbed, CreateMessage, PermissionOverwrite, PermissionOverwriteType, Permissions};
 
   let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -295,9 +296,56 @@ pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name
     }
   };
 
+  // Step 5: Create ping channel with Runner-only send permissions
+  let mut ping_permissions = vec![
+    PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Member(bot_user_id) },
+  ];
+  
+  if let Some(role_id) = bot_role {
+    ping_permissions.push(PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Role(role_id) });
+  }
+  
+  // Deny @everyone from sending messages (only Runner role can send)
+  ping_permissions.push(PermissionOverwrite {
+    allow: Permissions::VIEW_CHANNEL | Permissions::READ_MESSAGE_HISTORY,
+    deny: Permissions::SEND_MESSAGES | Permissions::ADD_REACTIONS | Permissions::CREATE_PUBLIC_THREADS | Permissions::CREATE_PRIVATE_THREADS,
+    kind: PermissionOverwriteType::Role(guild_id.everyone_role()),
+  });
+  
+  // Allow Runner role to send messages
+  if let Some(runner_role_id) = runner_role {
+    ping_permissions.push(PermissionOverwrite {
+      allow: Permissions::SEND_MESSAGES | Permissions::MENTION_EVERYONE,
+      deny: Permissions::empty(),
+      kind: PermissionOverwriteType::Role(runner_role_id),
+    });
+  }
+
+  let ping_channel = match guild_id
+    .create_channel(
+      &ctx.http,
+      CreateChannel::new(format!("{channel_prefix}-ping"))
+        .kind(ChannelType::Text)
+        .category(category_id)
+        .topic("Ping channel - Only Runners can send @here messages to encourage queue participation")
+        .permissions(ping_permissions),
+    )
+    .await
+  {
+    Ok(ch) => ch,
+    Err(e) => {
+      error!("[{}] Failed to create ping channel: {}", guild_name, e);
+      let _ = queue_vc_channel.id.delete(&ctx.http).await;
+      let _ = queue_channel.id.delete(&ctx.http).await;
+      let _ = dashboard_channel.id.delete(&ctx.http).await;
+      let _ = category_id.delete(&ctx.http).await;
+      return Err(anyhow!("Failed to create ping channel: {e}"));
+    }
+  };
+
   info!("[{}] Successfully created all category channels (team VCs are dynamic)", guild_name);
 
-  Ok((category_id, dashboard_channel.id, queue_channel.id, queue_vc_channel.id))
+  Ok((category_id, dashboard_channel.id, queue_channel.id, queue_vc_channel.id, ping_channel.id))
 }
 
 /// `/dashboard`
@@ -1020,6 +1068,7 @@ async fn save_and_create_category(
     dashboard_channel_id: dashboard_channel,
     chat_channel_id: queue_channel,
     queue_vc_id: queue_vc_channel,
+    ping_channel_id: 1,
     quota: DEFAULT_QUOTA,
   };
   db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await?;
@@ -1147,6 +1196,7 @@ async fn handle_categorylink_blue_selection(
       category: category_id,
       queue_chat: queue_channel,
       queue_vc: queue_vc_channel,
+      ping_channel: CI::new(1),
       teams: vec![TeamChannel { red_vc: red_channel, blu_vc: blue_channel, set_index: 1, session_id: None }],
       dashboard: dashboard_channel,
     },
@@ -1164,6 +1214,7 @@ async fn handle_categorylink_blue_selection(
         dashboard_channel_id: dashboard_channel.get(),
         chat_channel_id: queue_channel.get(),
         queue_vc_id: queue_vc_channel.get(),
+        ping_channel_id: 1,
         quota: crate::DEFAULT_QUOTA,
       };
       match db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
@@ -1565,15 +1616,31 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
           // Remove from each targeted format
           for &fmt_idx in &target_formats {
             if let Some(sg) = category.formats.get_mut(fmt_idx) {
+              let quota = sg.quota as usize;
+              
               for session in &mut sg.sessions {
                 if !session.is_active() {
                   let initial_len = session.pool.len();
                   session.pool.retain(|p| p.player.user_id != user_id.get());
                   let removed_count = initial_len - session.pool.len();
+                  
                   if removed_count > 0 {
                     total_removed += removed_count;
                     removed_from_formats.push((fmt_idx, sg.name.clone()));
+                    
+                    // If this was a Hot session and now below quota, transition back to Idle
+                    if session.is_hot() && session.pool.len() < quota {
+                      session.idle();
+                      info!("Hot session dropped below quota after removing player, transitioning back to Idle");
+                    }
                   }
+                }
+              }
+              
+              // After removal, check if we can pull waiting players to meet quota
+              if category.is_quota_fmt(fmt_idx as u8) {
+                if let Err(e) = category.hot_fmt(fmt_idx as u8, cc.ctx, Some(guild_id), Some(&*cc.db), None, false).await {
+                  warn!("Failed to transition to hot after player removal: {}", e);
                 }
               }
             }

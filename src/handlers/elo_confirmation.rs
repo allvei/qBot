@@ -92,17 +92,26 @@ pub async fn handle_elo_change_confirmation(
     let user_tag = crate::log::get_user_tag(&ctx, target_uid, &db).await;
     info!("Updated ELO for {} from {} to {} and changed rank from {} to {}", user_tag, guild_elo.elo, new_elo, old_rank.name, new_rank.name);
 
-    // Update dashboards where this player is queued
+    // Update in-memory player data and dashboards where this player is queued
     {
       let mut manager_lock = manager.lock().await;
       if let Ok(server) = manager_lock.get_server(guild_id) {
-        for category in &server.categories {
+        for category in &mut server.categories {
+          // Update in-memory player ELO and rank for all sessions
+          for session in &mut category.formats[0].sessions {
+            if let Some(session_player) = session.pool.iter_mut().find(|p| p.player.user_id == target_uid) {
+              session_player.player.elo = new_elo;
+              session_player.player.rank = Some(new_rank.clone());
+            }
+          }
+
+          // Check if player is in any session to determine if dashboard update is needed
           let player_in_queue = category.formats[0].sessions.iter().any(|session| session.pool.iter().any(|p| p.player.user_id == target_uid));
 
           if player_in_queue {
             let prefix = crate::log::log_prefix_category(&crate::models::constants::guild_name(&ctx, guild_id), &category.display_name());
-            info!("{} Player {} ELO changed, updating dashboard", prefix, user_tag);
             category.queue_dash_update(ctx, guild_id).await;
+            info!("{} Player {} ELO changed, dashboard updated", prefix, user_tag);
           }
         }
       }

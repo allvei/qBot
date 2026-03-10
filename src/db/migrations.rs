@@ -118,7 +118,7 @@ impl DatabaseMigrations {
                     user_id                  INTEGER PRIMARY KEY,
                     steam_id                 INTEGER,
                     discord_tag              TEXT    DEFAULT NULL,
-                    pm_hot_alert             INTEGER DEFAULT 1,
+                    pm_hot_alert             INTEGER DEFAULT 0,
                     pm_queue_alert_threshold INTEGER DEFAULT NULL,
                     timeout                  INTEGER DEFAULT 30,
                     vc_auto_join             INTEGER DEFAULT 0,
@@ -149,13 +149,13 @@ impl DatabaseMigrations {
 
       // Add pm_hot_alert column if missing
       if has_user_id && !has_pm_hot_alert {
-        add_column!(self, "users", "pm_hot_alert", "INTEGER", "1");
+        add_column!(self, "users", "pm_hot_alert", "INTEGER", "0");
       }
 
       // Add new settings columns if missing
       if has_user_id {
         add_column!(self, "users", "discord_tag", "TEXT", "NULL");
-        add_column!(self, "users", "pm_hot_alert", "INTEGER", "1");
+        add_column!(self, "users", "pm_hot_alert", "INTEGER", "0");
         add_column!(self, "users", "pm_queue_alert_threshold", "INTEGER", "NULL");
         add_column!(self, "users", "timeout", "INTEGER", "30");
         add_column!(self, "users", "vc_auto_join", "INTEGER", "0");
@@ -272,6 +272,7 @@ impl DatabaseMigrations {
                     dashboard         INTEGER NOT NULL UNIQUE,
                     chat              INTEGER NOT NULL UNIQUE,
                     queue             INTEGER NOT NULL UNIQUE,
+                    ping              INTEGER NOT NULL UNIQUE,
                     dashboard_msg     INTEGER DEFAULT 0,
                     red               INTEGER NOT NULL DEFAULT 1,
                     blu               INTEGER NOT NULL DEFAULT 1,
@@ -311,6 +312,7 @@ impl DatabaseMigrations {
                         dashboard         INTEGER NOT NULL UNIQUE,
                         chat              INTEGER NOT NULL UNIQUE,
                         queue             INTEGER NOT NULL UNIQUE,
+                        ping              INTEGER NOT NULL UNIQUE,
                         dashboard_msg     INTEGER DEFAULT 0,
                         red               INTEGER NOT NULL DEFAULT 1,
                         blu               INTEGER NOT NULL DEFAULT 1,
@@ -442,6 +444,7 @@ impl DatabaseMigrations {
                                 dashboard         INTEGER NOT NULL UNIQUE,
                                 chat              INTEGER NOT NULL UNIQUE,
                                 queue             INTEGER NOT NULL UNIQUE,
+                                ping              INTEGER NOT NULL UNIQUE,
                                 dashboard_msg     INTEGER DEFAULT 0,
                                 red               INTEGER NOT NULL DEFAULT 1,
                                 blu               INTEGER NOT NULL DEFAULT 1,
@@ -570,6 +573,7 @@ impl DatabaseMigrations {
                 dashboard             INTEGER NOT NULL UNIQUE,
                 chat                  INTEGER NOT NULL UNIQUE,
                 queue                 INTEGER NOT NULL UNIQUE,
+                ping                  INTEGER NOT NULL UNIQUE,
                 dashboard_msg         INTEGER DEFAULT 0,
                 red                   INTEGER NOT NULL DEFAULT 1,
                 blu                   INTEGER NOT NULL DEFAULT 1,
@@ -631,6 +635,8 @@ impl DatabaseMigrations {
   async fn verify_categories(&self) -> Result<()> {
     // Add name column if missing
     add_column!(self, "categories", "name", "TEXT", "NULL");
+    // Add ping column if missing
+    add_column!(self, "categories", "ping", "INTEGER", "1");
 
     let required_columns = vec![
       "id",

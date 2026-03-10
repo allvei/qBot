@@ -71,9 +71,10 @@ impl TeamDisplay {
   }
 
   /// Add both team fields to an embed in a single call
+  /// Blue team is shown first, then red team
   async fn add_to_embed(self, embed: CE, db: &crate::Database, guild_id: GI) -> CE {
     let (red_header, blu_header) = self.build_headers();
-    embed.field(red_header, format_team_field(&self.red, db, guild_id).await, true).field(blu_header, format_team_field(&self.blu, db, guild_id).await, true)
+    embed.field(blu_header, format_team_field(&self.blu, db, guild_id).await, true).field(red_header, format_team_field(&self.red, db, guild_id).await, true)
   }
 }
 
@@ -92,11 +93,13 @@ async fn format_team_field(team: &[crate::models::SessionPlayer], _db: &crate::D
 }
 
 /// Helper function to split pool into teams by actual team assignments and sort by ELO descending
-fn get_sorted_teams(pool: &[crate::models::SessionPlayer], quota: usize) -> (Vec<crate::models::SessionPlayer>, Vec<crate::models::SessionPlayer>) {
+fn get_sorted_teams(pool: &[crate::models::SessionPlayer], _quota: usize) -> (Vec<crate::models::SessionPlayer>, Vec<crate::models::SessionPlayer>) {
   // Filter players by their actual team assignment (not by position!)
-  let mut team_red: Vec<_> = pool.iter().take(quota).filter(|p| p.team == Some(crate::models::Team::Red)).cloned().collect();
+  // Don't use .take(quota) here - we want all players with team assignments
+  // This ensures new players who join after someone leaves are displayed
+  let mut team_red: Vec<_> = pool.iter().filter(|p| p.team == Some(crate::models::Team::Red)).cloned().collect();
 
-  let mut team_blu: Vec<_> = pool.iter().take(quota).filter(|p| p.team == Some(crate::models::Team::Blu)).cloned().collect();
+  let mut team_blu: Vec<_> = pool.iter().filter(|p| p.team == Some(crate::models::Team::Blu)).cloned().collect();
 
   // Sort both teams by ELO descending
   let sort_by_elo = |a: &crate::models::SessionPlayer, b: &crate::models::SessionPlayer| {
@@ -146,6 +149,7 @@ pub enum ButtonType {
   DashboardShuffle,
   DashboardStart,
   DashboardEnd,
+  DashboardReportScore,
 
   // Permission confirmation button
   ConfirmPermissions,
@@ -194,6 +198,7 @@ impl ButtonType {
       "shuffle_teams" => Self::DashboardShuffle,
       "start_match" => Self::DashboardStart,
       "end_match" => Self::DashboardEnd,
+      "report_score" => Self::DashboardReportScore,
 
       // Permission confirmation
       "confirm_permissions" => Self::ConfirmPermissions,
@@ -414,6 +419,14 @@ impl Category {
         let queue_players = current_session.pool.len();
 
         if current_session.is_hot() {
+          // Validate Hot session has correct player count
+          if queue_players < quota {
+            warn!(
+              "Dashboard validation: Hot session has {} players but quota is {}. This indicates a bug - session should have been transitioned back to Idle.",
+              queue_players, quota
+            );
+          }
+          
           // Hot session - show missing players and teams
           let mut hot_info = String::new();
           let players_never_joined: Vec<_> = current_session.pool.iter().take(quota).filter(|p| !p.in_queue_vc).collect();
@@ -962,6 +975,13 @@ impl Category {
   async fn dash_shuffle(&mut self, cc: &CC<'_>, fmt_id: u8) -> Result<()> {
     let quota = self.fmt(fmt_id).map(|sg| sg.quota as usize).unwrap_or(0);
 
+    // Check if game is live
+    let is_live = self.fmt(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.status == SessionStatus::Live)).unwrap_or(false);
+    if is_live {
+      cc.reply("The game is live, can not shuffle").await?;
+      return Ok(());
+    }
+
     // Find the game to shuffle - can be Idle (if quota met) or Hot
     let has_shuffleable =
       self.fmt(fmt_id).map(|sg| sg.sessions.iter().any(|s| (s.status == SessionStatus::Idle || s.status == SessionStatus::Hot) && s.pool.len() >= quota)).unwrap_or(false);
@@ -1076,7 +1096,13 @@ impl Category {
       if secs >= 300 {
         // 5 minutes = 300 seconds
         let queue_chat = self.channels.queue_chat;
-        let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed)).await;
+        
+        // Add Report Score button for runners
+        use serenity::all::CreateActionRow;
+        let button = CB::new("report_score").label("Report Score").style(BS::Primary);
+        let components = vec![CreateActionRow::Buttons(vec![button])];
+        
+        let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed).components(components)).await;
       }
     }
 
@@ -1093,6 +1119,39 @@ impl Category {
         Ok(())
       }
     }
+  }
+
+  /// Handles the report score button - shows modal for runners to input scores
+  async fn dash_report_score(&mut self, cc: &CC<'_>) -> Result<()> {
+    use crate::handlers::player::check_component_role;
+    use crate::models::Role;
+    use serenity::all::{CreateModal, CreateInputText, InputTextStyle};
+
+    // Check if user has Runner role
+    match check_component_role(cc, &Role::Runner).await {
+      Ok(true) => {
+        // User has Runner role, show modal
+      }
+      Ok(false) => {
+        cc.reply("Only runners can report scores.").await?;
+        return Ok(());
+      }
+      Err(e) => {
+        warn!("Failed to check runner role: {e}");
+        cc.reply("Failed to verify permissions.").await?;
+        return Ok(());
+      }
+    }
+
+    // Create modal for score input
+    let modal = CreateModal::new("report_score_modal", "Report Match Score")
+      .components(vec![
+        CAR::InputText(CreateInputText::new(InputTextStyle::Short, "Blue team score", "blu_score").placeholder("0-99").required(true).min_length(1).max_length(2)),
+        CAR::InputText(CreateInputText::new(InputTextStyle::Short, "Red team score", "red_score").placeholder("0-99").required(true).min_length(1).max_length(2)),
+      ]);
+
+    cc.component.create_response(&cc.ctx.http, CIR::Modal(modal)).await?;
+    Ok(())
   }
 
   /// Handles button interaction events from the dashboard
@@ -1153,6 +1212,10 @@ impl Category {
       "end_match" => {
         info!("{} {} used End", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
         self.dash_end(cc, fmt_id).await
+      }
+      "report_score" => {
+        info!("{} {} used Report Score", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
+        self.dash_report_score(cc).await
       }
       _ => {
         cc.reply(&format!("Unknown button action: {action}")).await?;

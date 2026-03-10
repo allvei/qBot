@@ -107,6 +107,7 @@ impl Database {
             dashboard_channel_id: dashboard,
             chat_channel_id:      chat,
             queue_vc_id:          queue,
+            ping_channel_id:      1,
             quota,
         };
         self.categories.create_category(guild_id, guild_name, dashboard_msg, config).await
@@ -128,6 +129,7 @@ impl Database {
             dashboard_channel_id: dashboard,
             chat_channel_id:      chat,
             queue_vc_id:          queue_id,
+            ping_channel_id:      1,
             quota,
         };
         self.categories.update_category(guild_id, config).await

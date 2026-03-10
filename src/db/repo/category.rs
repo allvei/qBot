@@ -15,6 +15,7 @@ pub struct CategoryConfig {
     pub dashboard_channel_id: u64,
     pub chat_channel_id:      u64,
     pub queue_vc_id:          u64,
+    pub ping_channel_id:      u64,
     pub quota:                u8,
 }
 
@@ -40,8 +41,8 @@ impl CategoryRepository {
         .await?;
 
         sqlx::query(
-            "INSERT INTO categories (guild_id, guild_name, category_id, category, dashboard, chat, queue, dashboard_msg, red, blu, quota)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)"
+            "INSERT INTO categories (guild_id, guild_name, category_id, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, quota)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)"
         )
         .bind(guild_id.get()              as i64)
         .bind(guild_name)
@@ -50,6 +51,7 @@ impl CategoryRepository {
         .bind(config.dashboard_channel_id as i64)
         .bind(config.chat_channel_id      as i64)
         .bind(config.queue_vc_id          as i64)
+        .bind(config.ping_channel_id      as i64)
         .bind(dashboard_msg               as i64)
         .bind(config.quota                as i64)
         .execute(&self.pool)
@@ -79,6 +81,7 @@ impl CategoryRepository {
                 category,
                 CI::new(config.chat_channel_id),
                 CI::new(config.queue_vc_id),
+                CI::new(config.ping_channel_id),
                 vec![],
                 CI::new(config.dashboard_channel_id),
             ),
@@ -93,14 +96,15 @@ impl CategoryRepository {
         info!("Updating category with queue_id: {}", config.queue_vc_id);
 
         let result = sqlx::query("UPDATE categories
-                                  SET guild_id = ?, category = ?, dashboard = ?, chat = ?, quota = ?
+                                  SET guild_id = ?, category = ?, dashboard = ?, chat = ?, ping = ?, quota = ?
                                   WHERE queue = ?
-                                  RETURNING id, category_id, name, timeout, guild_id, category, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum"
+                                  RETURNING id, category_id, name, timeout, guild_id, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum"
         )
         .bind(guild_id.get()              as i64)
         .bind(config.category_id          as i64)
         .bind(config.dashboard_channel_id as i64)
         .bind(config.chat_channel_id      as i64)
+        .bind(config.ping_channel_id      as i64)
         .bind(config.quota                as i64)
         .bind(config.queue_vc_id          as i64)
         .fetch_one(&self.pool)
@@ -135,6 +139,7 @@ impl CategoryRepository {
         // Validate channel IDs before creating ChannelId objects
         let chat_id          = result.get::<i64, _>("chat")  as u64;
         let queue_id         = result.get::<i64, _>("queue") as u64;
+        let ping_id          = result.try_get::<i64, _>("ping").unwrap_or(1) as u64;
         let red_id           = result.get::<i64, _>("red")   as u64;
         let blu_id           = result.get::<i64, _>("blu")   as u64;
         let dashboard_id     = result.get::<i64, _>("dashboard") as u64;
@@ -143,6 +148,7 @@ impl CategoryRepository {
         let invalid_ids = [
             (chat_id          == 0, "chat"),
             (queue_id         == 0, "queue"),
+            (ping_id          == 0, "ping"),
             (dashboard_id     == 0, "dashboard"),
             (dashboard_msg_id == 0, "dashboard_msg")
         ];
@@ -152,6 +158,7 @@ impl CategoryRepository {
 
         let chat      = CI::new(chat_id);
         let queue     = CI::new(queue_id);
+        let ping      = CI::new(ping_id);
         let dashboard = CI::new(dashboard_id);
         let category_id = result.try_get::<i64, _>("category").unwrap_or(0) as u64;
         let category  = if category_id == 0 { dashboard } else { CI::new(category_id) };
@@ -186,7 +193,7 @@ impl CategoryRepository {
             result.try_get::<i64, _>("quota")  .unwrap_or(8)  as u8,
             result.try_get::<i64, _>("timeout").unwrap_or(DEFAULT_TIMEOUT as i64) as u16,
             MI::new(dashboard_msg_id),
-            Channels::new(category, chat, queue, teams, dashboard),
+            Channels::new(category, chat, queue, ping, teams, dashboard),
             Vec::new(),
         );
         category.team_balance_method = team_balance_method;
@@ -304,7 +311,7 @@ impl CategoryRepository {
 
     /// Get all categories for a guild
     pub async fn get_categories_for_guild(&self, guild_id: GI) -> Result<Vec<Category>> {
-        let rows = sqlx::query("SELECT id, category_id, name, timeout, guild_id, guild_name, category, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum
+        let rows = sqlx::query("SELECT id, category_id, name, timeout, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum
                                 FROM categories
                                 WHERE guild_id = ?"
         )
@@ -451,19 +458,21 @@ impl Repository<Category, u8> for CategoryRepository {
         let dashboard_msg = category.dashboard_msg      .get();
         let chat          = category.channels.queue_chat.get();
         let queue         = category.channels.queue_vc  .get();
+        let ping          = category.channels.ping_channel.get();
         let category_id   = category.channels.category  .get();
         let config = CategoryConfig {
             category_id,
             dashboard_channel_id: dashboard_ch,
             chat_channel_id:      chat,
             queue_vc_id:          queue,
+            ping_channel_id:      ping,
             quota:                category.quota(),
         };
         self.create_category(guild_id, category.guild_name.as_deref().unwrap_or("Unknown"), dashboard_msg, config).await
     }
 
     async fn get_by_id(&self, category_id: u8) -> Result<Category> {
-        let result = sqlx::query("SELECT id, category_id, name, timeout, guild_id, guild_name, category, dashboard, chat, queue, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum
+        let result = sqlx::query("SELECT id, category_id, name, timeout, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum
                                   FROM categories WHERE category_id = ?"
         )
         .bind(category_id as i64)
@@ -478,12 +487,14 @@ impl Repository<Category, u8> for CategoryRepository {
         let dashboard_ch = category.channels.dashboard .get();
         let chat         = category.channels.queue_chat.get();
         let queue        = category.channels.queue_vc  .get();
+        let ping         = category.channels.ping_channel.get();
         let category_id  = category.channels.category  .get();
         let config = CategoryConfig {
             category_id,
             dashboard_channel_id: dashboard_ch,
             chat_channel_id:      chat,
             queue_vc_id:          queue,
+            ping_channel_id:      ping,
             quota:                category.quota(),
         };
         self.update_category(guild_id, config).await

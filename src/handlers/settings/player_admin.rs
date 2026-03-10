@@ -131,19 +131,30 @@ pub async fn handle_player_settings_rank_select(
     }
   }
 
-  // Update dashboards where this player is queued
+  // Update in-memory player data and dashboards where this player is queued
   {
     let mut manager_lock = manager.lock().await;
     if let Ok(server) = manager_lock.get_server(gld_id) {
       let mut found_in_queue = false;
-      for category in &server.categories {
+      for category in &mut server.categories {
+        // Update in-memory player rank for all sessions
+        for session in &mut category.formats[0].sessions {
+          if let Some(session_player) = session.pool.iter_mut().find(|p| p.player.user_id == target_uid) {
+            session_player.player.rank = Some(new_rank.clone());
+            // ELO is updated based on elo_ranks_linked setting
+            if elo_ranks_linked {
+              session_player.player.elo = new_rank.elo;
+            }
+          }
+        }
+
         // Check if player is in any session in this category
         let player_in_queue = category.formats[0].sessions.iter().any(|session| session.pool.iter().any(|p| p.player.user_id == target_uid));
 
         if player_in_queue {
           found_in_queue = true;
-          info!("Player {} rank changed, updating dashboard for category {}", target_uid, category.ctg_id);
           category.queue_dash_update(ctx, gld_id).await;
+          info!("Player {} rank changed, dashboard updated for category {}", target_uid, category.ctg_id);
         }
       }
       if !found_in_queue {
@@ -345,20 +356,28 @@ pub async fn handle_player_settings_modal(
       info!("Updated ELO for {} to {} (rank unchanged: {}, ELO-Rank independent)", target_tag, elo, old_rank.name);
     }
 
-    // Update dashboards where this player is queued
+    // Update in-memory player data and dashboards where this player is queued
     {
       let mut manager_lock = manager.lock().await;
       if let Ok(server) = manager_lock.get_server(guild_id) {
         let mut found_in_queue = false;
-        for category in &server.categories {
+        for category in &mut server.categories {
+          // Update in-memory player ELO for all sessions
+          for session in &mut category.formats[0].sessions {
+            if let Some(session_player) = session.pool.iter_mut().find(|p| p.player.user_id == target_uid) {
+              session_player.player.elo = elo;
+              // Rank is updated separately based on elo_ranks_linked setting
+            }
+          }
+
           // Check if player is in any session in this category
           let player_in_queue = category.formats[0].sessions.iter().any(|session| session.pool.iter().any(|p| p.player.user_id == target_uid));
 
           if player_in_queue {
             found_in_queue = true;
             let prefix = crate::log::log_prefix_category(&crate::models::constants::guild_name(ctx, guild_id), &category.display_name());
-            info!("{} Player {} ELO changed, updating dashboard", prefix, target_tag);
             category.queue_dash_update(ctx, guild_id).await;
+            info!("{} Player {} ELO changed, dashboard updated", prefix, target_tag);
           }
         }
         if !found_in_queue {
@@ -419,17 +438,28 @@ pub async fn handle_player_settings_modal(
       }
     }
 
-    // Update dashboards where this player is queued
+    // Update in-memory player data and dashboards where this player is queued
     {
       let mut manager_lock = manager.lock().await;
       if let Ok(server) = manager_lock.get_server(guild_id) {
         let mut found_in_queue = false;
-        for category in &server.categories {
+        for category in &mut server.categories {
+          // Update in-memory player rank for all sessions
+          for session in &mut category.formats[0].sessions {
+            if let Some(session_player) = session.pool.iter_mut().find(|p| p.player.user_id == target_uid) {
+              session_player.player.rank = Some(new_rank.clone());
+              // ELO is updated based on elo_ranks_linked setting
+              if elo_ranks_linked {
+                session_player.player.elo = new_rank.elo;
+              }
+            }
+          }
+
           let player_in_queue = category.formats[0].sessions.iter().any(|session| session.pool.iter().any(|p| p.player.user_id == target_uid));
           if player_in_queue {
             found_in_queue = true;
-            info!("Player {} rank changed, updating dashboard for category {}", target_uid, category.ctg_id);
             category.queue_dash_update(ctx, guild_id).await;
+            info!("Player {} rank changed, dashboard updated for category {}", target_uid, category.ctg_id);
           }
         }
         if !found_in_queue {
