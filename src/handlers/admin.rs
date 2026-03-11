@@ -21,7 +21,7 @@ use crate::{guild_name, Database, Manager, CYAN, DEFAULT_QUOTA, GREEN, ORANGE, R
 /// * `key`   - The key to modify.
 /// * `value` - The value to set for the key.
 pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String>) -> Result<()> {
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
@@ -60,7 +60,7 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String>) -> Resu
 /// * `role` - The Discord role mention/ID to assign
 pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> Result<()> {
   // Check admin permissions
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
@@ -372,7 +372,7 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
 ///
 /// Sets up the bot for a guild using an interactive ephemeral message flow
 pub async fn cmd_setup(cc: &CC<'_>) -> Result<()> {
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
@@ -964,7 +964,7 @@ async fn handle_init_admin_selection(
 
 /// `/check_ranks` - Check and offer to create missing rank roles
 pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
@@ -1332,7 +1332,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
 /// `/enableactiveelo` - Enable automatic ELO adjustments from match results
 pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
   // Check admin permissions
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
@@ -1353,7 +1353,7 @@ pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
 /// `/disableactiveelo` - Disable automatic ELO adjustments from match results
 pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
   // Check admin permissions
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
@@ -1371,7 +1371,7 @@ pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
 /// `/activeelostatus` - Check if automatic ELO adjustments are enabled
 pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
   // Check admin permissions
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
