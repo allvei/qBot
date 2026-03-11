@@ -1485,22 +1485,21 @@ impl Handler {
         for (user_id, _tag) in &players_to_add {
           let user_id = *user_id;
 
-          let player = match resolve_player_for_queue(ctx, &self.db, guild.id, user_id).await {
-            Ok((p, _rank, rank_mismatch)) => {
-              // Log with rank mismatch if present
-              let _position = session.pool.len() + 1;
-              if let Err(e) = log_queue_toggle(ctx, &self.db, guild.id, category_id, &format, &p, "joined", rank_mismatch).await {
-                warn!("Failed to log queue toggle: {e}");
-              }
-              p
-            },
+          let (player, rank_mismatch) = match resolve_player_for_queue(ctx, &self.db, guild.id, user_id).await {
+            Ok((p, _rank, rank_mismatch)) => (p, rank_mismatch),
             Err(e) => {
               error!("Failed to resolve player {} for queue: {e}", user_id);
               continue;
             }
           };
 
-          session.add_ply(player);
+          // Add player to pool BEFORE logging so position calculation is correct
+          session.add_ply(player.clone());
+          
+          // Now log with correct position
+          if let Err(e) = log_queue_toggle(ctx, &self.db, guild.id, category_id, &format, &player, "joined", rank_mismatch).await {
+            warn!("Failed to log queue toggle: {e}");
+          }
         }
       }
 
