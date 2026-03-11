@@ -752,7 +752,7 @@ impl Category {
     let user_id = cc.component.user.id;
 
     // Get player tag from database (primary source)
-    let tag = match cc.db.get_user(user_id, cc.ctx).await {
+    let _tag = match cc.db.get_user(user_id, cc.ctx).await {
       Ok(player) => player.tag,
       Err(_) => cc.component.user.display_name().to_string(),
     };
@@ -788,83 +788,17 @@ impl Category {
     cc.defer_update().await?;
     //
 
-    // Get player rank: DB for speed, Discord roles for truth
-    use crate::handlers::player::{get_or_assign_player_rank, get_player_rank, get_user_rank_from_discord_roles};
-    use crate::Rank;
+    // Use resolve_player_for_queue for consistent player resolution
+    use crate::handlers::player::resolve_player_for_queue;
     if let Some(guild_id) = cc.component.guild_id {
-      // First, get Discord role (source of truth) - returns GuildRank with ELO
-      let role_based_guild_rank = get_user_rank_from_discord_roles(cc.ctx, &cc.db, guild_id, user_id).await;
-
-      // Convert to Rank struct and get ELO
-      let (discord_rank, _rank_min_elo) = if let Some(db_rank) = get_player_rank(&cc.db, guild_id, user_id).await {
-        // Discord role is source of truth if it exists
-        if let Some(guild_rank) = &role_based_guild_rank {
-          let role_rank = Rank::from_name(&cc.db, guild_id, &guild_rank.name).await.unwrap_or(db_rank.clone());
-          if role_rank != db_rank {
-            info!("Rank mismatch for {}: Discord='{}' DB='{}', using Discord", &tag, guild_rank.name, db_rank.name);
-          }
-          (role_rank, guild_rank.elo)
-        } else {
-          // No Discord role, keep DB rank (they may have lost role but keep earned rank)
-          let elo = db_rank.elo;
-          (db_rank, elo)
-        }
-      } else {
-        // No DB rank - check Discord roles before defaulting
-        if let Some(guild_rank) = &role_based_guild_rank {
-          let role_rank = Rank::from_name(&cc.db, guild_id, &guild_rank.name).await.unwrap_or_else(|_| Rank {
-            guild_id,
-            role_id: guild_rank.role_id,
-            name: guild_rank.name.clone(),
-            elo: guild_rank.elo,
-          });
-          (role_rank, guild_rank.elo)
-        } else {
-          // No DB rank or Discord roles, assign default
-          match get_or_assign_player_rank(&cc.db, guild_id, user_id).await {
-            Ok(rank) => {
-              info!("Assigned default rank '{}' to {}", rank.name, user_id);
-              let elo = rank.elo;
-              (rank, elo)
-            }
-            Err(e) => {
-              error!("Failed to get or assign rank for user {}: {}", user_id, e);
-              return Ok(());
-            }
-          }
+      let (mut player, discord_rank, _rank_mismatch) = match resolve_player_for_queue(cc.ctx, &cc.db, guild_id, user_id).await {
+        Ok(result) => result,
+        Err(e) => {
+          error!("Failed to resolve player for queue: {e}");
+          cc.reply("Failed to join queue. Please try again.").await?;
+          return Ok(());
         }
       };
-
-      // Get base player info
-      let mut player = match cc.db.get_user(user_id, cc.ctx).await {
-        Ok(p) => p,
-        Err(_) => cc.db.new_user(user_id, cc.ctx).await?,
-      };
-
-      // Check if ELO and ranks are linked before normalizing
-      let elo_ranks_linked = cc.db.config.get_elo_ranks_linked(guild_id).await.unwrap_or(true);
-
-      let (validated_elo, was_normalized) = if elo_ranks_linked {
-        // Linked: validate and normalize ELO based on Discord rank
-        match cc.db.elo.validate_and_normalize_elo(user_id, guild_id, &discord_rank, &cc.db).await {
-          Ok(result) => result,
-          Err(e) => {
-            warn!("Failed to validate ELO for user {}: {}", user_id, e);
-            (discord_rank.elo, false)
-          }
-        }
-      } else {
-        // Independent: keep existing ELO, don't normalize
-        let existing_elo = cc.db.elo.get_if_exists(user_id, guild_id).await.ok().flatten().map(|elo| elo.elo).unwrap_or(discord_rank.elo);
-        (existing_elo, false)
-      };
-
-      if was_normalized {
-        info!("ELO normalized for {}: {} -> {} (rank: {})", user_id, discord_rank.elo, validated_elo, discord_rank.name);
-      }
-
-      player.elo = validated_elo;
-      player.rank = Some(discord_rank.clone());
 
       // Fetch discord tag from component user for performance (avoid extra API call)
       player.tag = cc.component.user.tag();
@@ -1677,13 +1611,11 @@ impl DashboardUpdateQueue {
           let pool_size = category.formats[0].sessions.first().map(|s| s.pool.len()).unwrap_or(0);
           //
 
-          // Refresh player ranks from Discord to ensure dashboard shows current ranks
-          // This prevents desync when players are promoted while sitting in queue
-          category.reload_player_ranks(&ctx, guild_id, &database).await;
-
-          // Validate VC status to ensure accurate display of who is in voice chat
-          // This prevents desync where flags don't match Discord's actual voice states
-          category.validate_vc_status(&ctx, guild_id).await;
+          // NOTE: We don't reload_player_ranks or validate_vc_status here for performance.
+          // These expensive operations are called only when needed:
+          // - reload_player_ranks: before team generation (hot/shuffle)
+          // - validate_vc_status: before notifications
+          // Dashboard updates happen frequently (every button press, VC change) and should be fast.
 
           // Get dashboard message info
           let channel_id = category.channels.dashboard;
