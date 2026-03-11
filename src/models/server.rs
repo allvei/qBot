@@ -1575,9 +1575,9 @@ impl Category {
     let session = self.get_queue().await?;
 
     if in_vc {
-      session.add_ply_in_vc(player);
+      session.add_ply_in_vc(player)?;
     } else {
-      session.add_ply(player);
+      session.add_ply(player)?;
     }
 
     // Create team VCs on first join if policy requires it
@@ -1602,9 +1602,9 @@ impl Category {
     let session = self.get_queue_fmt(fmt_id).await?;
 
     if in_vc {
-      session.add_ply_in_vc(player);
+      session.add_ply_in_vc(player)?;
     } else {
-      session.add_ply(player);
+      session.add_ply(player)?;
     }
 
     // Create team VCs on first join if policy requires it
@@ -1691,9 +1691,10 @@ impl Category {
     }
   }
 
-  pub async fn add_player(&mut self, session: &mut Session, player: Player, _rank: Rank, ctx: &Context, guild_id: GI) {
-    session.add_ply(player);
+  pub async fn add_player(&mut self, session: &mut Session, player: Player, _rank: Rank, ctx: &Context, guild_id: GI) -> Result<()> {
+    session.add_ply(player)?;
     self.queue_dash_update(ctx, guild_id).await;
+    Ok(())
   }
 
   /// Checks if this category contains the given channel_id in any of its channels

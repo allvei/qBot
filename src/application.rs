@@ -1493,12 +1493,17 @@ impl Handler {
             }
           };
 
-          // Add player to pool BEFORE logging so position calculation is correct
-          session.add_ply(player.clone());
-          
-          // Now log with correct position
-          if let Err(e) = log_queue_toggle(ctx, &self.db, guild.id, category_id, &format, &player, "joined", rank_mismatch).await {
-            warn!("Failed to log queue toggle: {e}");
+          // Add player to pool and log only on success
+          match session.add_ply(player.clone()) {
+            Ok(_position) => {
+              // Player successfully added, now log
+              if let Err(e) = log_queue_toggle(ctx, &self.db, guild.id, category_id, &format, &player, "joined", rank_mismatch).await {
+                warn!("Failed to log queue toggle: {e}");
+              }
+            }
+            Err(e) => {
+              error!("Failed to add player {} to queue: {e}", user_id);
+            }
           }
         }
       }

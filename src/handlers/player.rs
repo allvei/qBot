@@ -458,7 +458,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
   } else {
     let queue = category.get_queue().await?;
-    queue.add_ply(player);
+    queue.add_ply(player)?;
 
     let current_queue = queue.pool.len();
     let quota_reached = current_queue >= category.quota() as usize;
