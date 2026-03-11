@@ -1224,32 +1224,72 @@ impl Category {
       _ => {} // OnLastLeave handled elsewhere
     }
 
-    // Find or create the idle session (queue) and add all players back to it
-    let sg = self.fmt_mut(fmt_id).unwrap();
-    let idle_session_idx = match sg.sessions.iter().position(|s| s.status == SessionStatus::Idle) {
-      Some(idx) => idx,
-      None => {
-        // No idle session exists (game ended from Hot without push), create one
-        info!("No idle session found, creating one for re-queuing players in format {}", fmt_id);
-        sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
-        sg.sessions.len() - 1
-      }
+    // Get quota before mutable borrows
+    let quota = {
+      let sg = self.fmt(fmt_id).unwrap();
+      sg.quota as usize
     };
-    let idle_session = &mut sg.sessions[idle_session_idx];
 
-    // Set match_ended_at to track when the match ended for confirm timer base
-    idle_session.match_ended_at = Some(std::time::SystemTime::now());
+    // Filter to only players who were successfully moved
+    let players_to_add: Vec<Player> = players_to_requeue
+      .into_iter()
+      .filter(|p| {
+        if successfully_moved.contains(&p.user_id) {
+          true
+        } else {
+          info!("Not re-queueing {} - they left voice before match ended", p.tag);
+          false
+        }
+      })
+      .collect();
 
-    // Only re-add players who were successfully moved (i.e., were still in voice)
-    for player in players_to_requeue {
-      let _rank = player.rank.clone();
-      if successfully_moved.contains(&player.user_id) {
-        // Player was successfully moved back to queue VC
+    // Find or create the idle session (queue) and get current size
+    let (idle_session_idx, current_queue_size) = {
+      let sg = self.fmt_mut(fmt_id).unwrap();
+      let idle_session_idx = match sg.sessions.iter().position(|s| s.status == SessionStatus::Idle) {
+        Some(idx) => idx,
+        None => {
+          // No idle session exists (game ended from Hot without push), create one
+          info!("No idle session found, creating one for re-queuing players in format {}", fmt_id);
+          sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
+          sg.sessions.len() - 1
+        }
+      };
+      let current_size = sg.sessions[idle_session_idx].pool.len();
+      (idle_session_idx, current_size)
+    };
+
+    // Apply fatkid immunity if re-adding all players would exceed quota
+    let total_after_readd = current_queue_size + players_to_add.len();
+
+    if total_after_readd > quota {
+      // Need to apply fatkid immunity - select who gets added
+      let available_slots = quota.saturating_sub(current_queue_size);
+      let (selected_players, fatkidded_players) = 
+          Self::select_players_with_fatkid_immunity(players_to_add, available_slots, guild_id, db).await?;
+
+      // Record fatkid events for players who were not selected
+      for player in &fatkidded_players {
+        info!("Fatkidding {} - queue would exceed quota", player.tag);
+        if let Err(e) = db.fatkids.record_fatkid(player.user_id, guild_id).await {
+          warn!("Failed to record fatkid for {}: {}", player.tag, e);
+        }
+      }
+
+      // Add selected players to queue
+      let sg = self.fmt_mut(fmt_id).unwrap();
+      let idle_session = &mut sg.sessions[idle_session_idx];
+      idle_session.match_ended_at = Some(std::time::SystemTime::now());
+      for player in selected_players {
         idle_session.add_ply_in_vc(player);
-      } else {
-        // Player was not in voice, don't re-add them
-        let tag = player.tag;
-        info!("Not re-queueing {} - they left voice before match ended", tag);
+      }
+    } else {
+      // Queue has space for everyone, add them all
+      let sg = self.fmt_mut(fmt_id).unwrap();
+      let idle_session = &mut sg.sessions[idle_session_idx];
+      idle_session.match_ended_at = Some(std::time::SystemTime::now());
+      for player in players_to_add {
+        idle_session.add_ply_in_vc(player);
       }
     }
 
@@ -1268,6 +1308,69 @@ impl Category {
 
     self.queue_dash_update(ctx, guild_id).await;
     Ok(())
+  }
+
+  /// Select players for queue with fatkid immunity consideration
+  /// Returns (selected_players, fatkidded_players)
+  async fn select_players_with_fatkid_immunity(
+      players: Vec<Player>,
+      available_slots: usize,
+      guild_id: GI,
+      db: &DB,
+  ) -> Result<(Vec<Player>, Vec<Player>)> {
+      use crate::models::fatkid_immunity;
+
+      let mut players_with_immunity: Vec<(Player, fatkid_immunity::PlayerImmunityInfo)> = Vec::new();
+      
+      for player in &players {
+          let info = fatkid_immunity::get_player_immunity_info(db, player.user_id, guild_id).await?;
+          players_with_immunity.push((player.clone(), info));
+      }
+
+      // Count immune players
+      let immune_count = players_with_immunity.iter().filter(|(_, info)| info.has_immunity).count();
+
+      let selected_players = if immune_count >= available_slots {
+          // Take first N immune players (FIFO among immune)
+          players_with_immunity
+              .iter()
+              .filter(|(_, info)| info.has_immunity)
+              .take(available_slots)
+              .map(|(p, _)| p.clone())
+              .collect::<Vec<_>>()
+      } else if immune_count == players.len() {
+          // Everyone has immunity, take first N (FIFO)
+          players.iter().take(available_slots).cloned().collect()
+      } else {
+          // Mix: all immune players + fill remaining with non-immune (lowest immunity level first)
+          let mut selected: Vec<Player> = players_with_immunity
+              .iter()
+              .filter(|(_, info)| info.has_immunity)
+              .map(|(p, _)| p.clone())
+              .collect();
+
+          let remaining_slots = available_slots.saturating_sub(selected.len());
+          
+          // Sort non-immune by immunity level (lower = less recently fatkidded)
+          let mut non_immune: Vec<(Player, u32)> = players_with_immunity
+              .iter()
+              .filter(|(_, info)| !info.has_immunity)
+              .map(|(p, info)| (p.clone(), info.immunity_level))
+              .collect();
+          non_immune.sort_by_key(|(_, level)| *level);
+
+          selected.extend(non_immune.iter().take(remaining_slots).map(|(p, _)| p.clone()));
+          selected
+      };
+
+      // Determine fatkidded players
+      let selected_ids: std::collections::HashSet<_> = selected_players.iter().map(|p| p.user_id).collect();
+      let fatkidded_players: Vec<Player> = players
+          .into_iter()
+          .filter(|p| !selected_ids.contains(&p.user_id))
+          .collect();
+
+      Ok((selected_players, fatkidded_players))
   }
 
   /// Update player ranks from Discord roles for all players in the session
