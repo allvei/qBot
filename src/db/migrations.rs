@@ -63,6 +63,9 @@ impl DatabaseMigrations {
     self.create_formats_table().await?;
     self.create_elo_table().await?;
     self.create_ranks_table().await?;
+    self.create_matches_table().await?;
+    self.create_match_players_table().await?;
+    self.create_fatkid_table().await?;
 
     // Add foreign key constraint after both tables exist
     self.add_config_foreign_key().await?;
@@ -77,6 +80,9 @@ impl DatabaseMigrations {
     self.verify_formats().await?;
     self.verify_elos().await?;
     self.verify_ranks().await?;
+    self.verify_matches().await?;
+    self.verify_match_players().await?;
+    self.verify_fatkids().await?;
     Ok(())
   }
 
@@ -889,6 +895,92 @@ impl DatabaseMigrations {
   async fn verify_ranks(&self) -> Result<()> {
     let required_columns = vec!["id", "guild_id", "name", "elo", "role_id"];
     self.verify_columns("ranks", &required_columns).await?;
+    Ok(())
+  }
+  async fn create_matches_table(&self) -> Result<()> {
+    if !self.check_table("matches").await? {
+      sqlx::query(
+        "CREATE TABLE matches (
+                    id              INTEGER PRIMARY KEY,
+                    guild_id        INTEGER NOT NULL,
+                    category_id     INTEGER NOT NULL,
+                    format_id       INTEGER NOT NULL DEFAULT 0,
+                    session_id      TEXT,
+                    started_at      INTEGER NOT NULL,
+                    ended_at        INTEGER NOT NULL,
+                    duration_secs   INTEGER NOT NULL,
+                    red_score       INTEGER,
+                    blu_score       INTEGER
+                )",
+      )
+      .execute(&self.pool)
+      .await?;
+    }
+    Ok(())
+  }
+  async fn verify_matches(&self) -> Result<()> {
+    let required_columns = vec![
+      "id",
+      "guild_id",
+      "category_id",
+      "format_id",
+      "session_id",
+      "started_at",
+      "ended_at",
+      "duration_secs",
+      "red_score",
+      "blu_score",
+    ];
+    self.verify_columns("matches", &required_columns).await?;
+    Ok(())
+  }
+  async fn create_match_players_table(&self) -> Result<()> {
+    if !self.check_table("match_players").await? {
+      sqlx::query(
+        "CREATE TABLE match_players (
+                    id          INTEGER PRIMARY KEY,
+                    match_id    INTEGER NOT NULL,
+                    user_id     INTEGER NOT NULL,
+                    team        TEXT NOT NULL CHECK(team IN ('red', 'blu')),
+                    elo_before  INTEGER NOT NULL,
+                    elo_after   INTEGER,
+                    FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                )",
+      )
+      .execute(&self.pool)
+      .await?;
+    }
+    Ok(())
+  }
+  async fn verify_match_players(&self) -> Result<()> {
+    let required_columns = vec!["id", "match_id", "user_id", "team", "elo_before", "elo_after"];
+    self.verify_columns("match_players", &required_columns).await?;
+    Ok(())
+  }
+
+  async fn create_fatkid_table(&self) -> Result<()> {
+    if !self.check_table("fatkids").await? {
+      sqlx::query(
+        "CREATE TABLE fatkids (
+          id                INTEGER PRIMARY KEY AUTOINCREMENT,
+          guild_id          INTEGER NOT NULL,
+          user_id           INTEGER NOT NULL,
+          immunity_level    INTEGER NOT NULL DEFAULT 0,
+          last_fatkidded_at INTEGER,
+          UNIQUE(guild_id, user_id),
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        )"
+      )
+      .execute(&self.pool)
+      .await?;
+    }
+    Ok(())
+  }
+
+  async fn verify_fatkids(&self) -> Result<()> {
+    let required_columns = vec!["id", "guild_id", "user_id", "immunity_level", "last_fatkidded_at"];
+    self.verify_columns("fatkids", &required_columns).await?;
     Ok(())
   }
 

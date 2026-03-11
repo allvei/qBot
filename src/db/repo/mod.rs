@@ -4,6 +4,8 @@ pub mod config;
 pub mod elo;
 pub mod rank;
 pub mod team;
+pub mod r#match;
+pub mod fatkid;
 
 pub use user::{UserRepository, UserSettings, is_valid_user_text};
 pub use category::CategoryRepository;
@@ -11,6 +13,8 @@ pub use config::ConfigRepository;
 pub use elo::{EloRepository, GuildElo};
 pub use rank::{RankRepository, GuildRank};
 pub use team::TeamRepository;
+pub use r#match::{MatchRepo, MatchPlayerInsert, MatchRecord, PlayerStats};
+pub use fatkid::FatkidRepository;
 
 use anyhow::Result;
 use async_trait::async_trait;
