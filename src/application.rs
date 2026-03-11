@@ -619,6 +619,72 @@ impl EventHandler for Handler {
           return;
         }
 
+        // Handle runner menu actions
+        if itx.data.custom_id.starts_with("runner_action_") {
+          let action = itx.data.custom_id.strip_prefix("runner_action_").unwrap_or("");
+          let result = crate::handlers::runner_menu::handle_runner_action(&ctx, itx, &self.db, &self.manager, action).await;
+          if let Err(e) = result {
+            error!("Error handling runner action '{}': {e}", action);
+          }
+          return;
+        }
+
+        // Handle runner player selection (buttons or select menu)
+        if itx.data.custom_id.starts_with("runner_player_") {
+          let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
+          let action = parts.get(2).unwrap_or(&"");
+          
+          // Extract user_id from button click or select menu
+          let user_id_str = if let serenity::all::ComponentInteractionDataKind::Button = itx.data.kind {
+            // Button variant: custom_id is "runner_player_ACTION_USERID"
+            parts.get(3).unwrap_or(&"")
+          } else if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &itx.data.kind {
+            // Select menu variant: value is the user_id
+            values.first().map(|s| s.as_str()).unwrap_or("")
+          } else {
+            ""
+          };
+
+          if !user_id_str.is_empty() {
+            let result = crate::handlers::runner_menu::handle_player_selection(&ctx, itx, &self.db, &self.manager, action, user_id_str).await;
+            if let Err(e) = result {
+              error!("Error handling runner player selection for action '{}': {e}", action);
+            }
+          }
+          return;
+        }
+
+        // Handle runner menu back button
+        if itx.data.custom_id == "runner_menu_back" {
+          let cc = crate::models::ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
+          let result = crate::handlers::runner_menu::show_runner_menu(&cc).await;
+          if let Err(e) = result {
+            error!("Error showing runner menu: {e}");
+          }
+          return;
+        }
+
+        // Handle dashboard back button (from help screen)
+        if itx.data.custom_id == "dashboard_back" {
+          // Dismiss the ephemeral message by updating it to be empty
+          let response = serenity::all::CreateInteractionResponse::UpdateMessage(
+            serenity::all::CreateInteractionResponseMessage::new().components(vec![])
+          );
+          if let Err(e) = itx.create_response(&ctx.http, response).await {
+            error!("Error dismissing help message: {e}");
+          }
+          return;
+        }
+
+        // Handle remove all action
+        if itx.data.custom_id == "runner_action_remove_all" {
+          let result = crate::handlers::runner_menu::handle_remove_all(&ctx, itx, &self.db, &self.manager).await;
+          if let Err(e) = result {
+            error!("Error handling remove all action: {e}");
+          }
+          return;
+        }
+
         let mut manager = self.manager.lock().await;
         let guild_id = itx.guild_id.unwrap();
         let channel_id = itx.channel_id;
@@ -753,7 +819,7 @@ impl EventHandler for Handler {
           }
         }
         // Handle modal submissions for score reporting
-        if itx.data.custom_id == "report_score_modal" {
+        if itx.data.custom_id.starts_with("report_score_modal") {
           let result = self.handle_report_score_modal(&ctx, &itx).await;
           if let Err(e) = result {
             error!("Error handling report score modal: {}", e);
@@ -1163,6 +1229,13 @@ impl Handler {
   async fn handle_report_score_modal(&self, ctx: &Context, interaction: &serenity::all::ModalInteraction) -> Result<(), anyhow::Error> {
     use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage, EditMessage};
     
+    // Parse category_id and format_id from modal custom_id (format: report_score_modal_CATID_FMTID)
+    let custom_id = &interaction.data.custom_id;
+    let parts: Vec<&str> = custom_id.split('_').collect();
+    let category_id = parts.get(3).and_then(|s| s.parse::<i64>().ok());
+    let _format_id = parts.get(4).and_then(|s| s.parse::<i64>().ok());
+    let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
+    
     // Extract scores from modal
     let mut blu_score = String::new();
     let mut red_score = String::new();
@@ -1205,6 +1278,15 @@ impl Handler {
         return Ok(());
       }
     };
+    
+    // Update match scores in database if we have category_id
+    if let Some(cat_id) = category_id {
+      if let Some(match_id) = self.db.matches.get_latest_match_id(guild_id, cat_id).await? {
+        if let Err(e) = self.db.matches.update_match_scores(match_id, red_score_num, blu_score_num).await {
+          error!("Failed to update match scores in database: {e}");
+        }
+      }
+    }
     
     // Update the message embed with scores
     if let Some(message) = &interaction.message {
@@ -1444,18 +1526,20 @@ impl Handler {
 
       // Create dashboard for each category's dashboard channel
       let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
+      let guild_name = guild_name(ctx, guild.id);
+      let category_name = category.name.clone().unwrap_or_else(|| "Unknown".to_string());
 
       // Create dashboard in the dashboard channel
       match category.dash_publish(ctx, channel_id, &self.db, guild.id).await {
         Ok(_) => {
-          info!("Dashboard created successfully for channel {}", channel_name);
+          info!("{} Dashboard created successfully for channel {}", log_prefix_category(&guild_name, &category_name), channel_name);
 
           // Persist the dashboard message ID to database
           let dashboard_msg_id = category.dashboard_msg.get();
           if let Err(e) = self.db.categories.update_dashboard_msg(guild.id, channel_id.get(), dashboard_msg_id).await {
-            warn!("Failed to persist dashboard message ID to database: {e}");
+            warn!("{} Failed to persist dashboard message ID to database: {e}", log_prefix_category(&guild_name, &category_name));
           } else {
-            info!("Persisted dashboard message ID {} to database", dashboard_msg_id);
+            info!("{} Persisted dashboard message ID {} to database", log_prefix_category(&guild_name, &category_name), dashboard_msg_id);
           }
         }
         Err(e) => {

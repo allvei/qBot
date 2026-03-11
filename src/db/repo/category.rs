@@ -5,7 +5,7 @@ use sqlx::{Row, SqlitePool};
 use tracing::{info, warn};
 
 use super::Repository;
-use crate::log_prefix_category;
+use crate::{log_prefix_category, log_prefix_guild};
 use crate::models::{Channels, Category, TeamBalanceMethod, TeamChannel};
 use crate::DEFAULT_TIMEOUT;
 
@@ -337,7 +337,16 @@ impl CategoryRepository {
 
     /// Update dashboard message ID for a category by its dashboard channel ID
     pub async fn update_dashboard_msg(&self, guild_id: GI, dashboard_channel_id: u64, dashboard_msg_id: u64) -> Result<()> {
-        info!("Updating dashboard message ID for guild {} dashboard channel {}", guild_id, dashboard_channel_id);
+        // Get guild name for logging
+        let guild_name = sqlx::query("SELECT guild_name FROM categories WHERE guild_id = ? AND dashboard = ? LIMIT 1")
+            .bind(guild_id.get() as i64)
+            .bind(dashboard_channel_id as i64)
+            .fetch_optional(&self.pool)
+            .await?
+            .and_then(|row| row.try_get::<Option<String>, _>("guild_name").ok().flatten())
+            .unwrap_or_else(|| guild_id.to_string());
+
+        info!("{} Updating dashboard message ID for dashboard channel {}", log_prefix_guild(&guild_name), dashboard_channel_id);
 
         sqlx::query("UPDATE categories SET dashboard_msg = ? WHERE guild_id = ? AND dashboard = ?")
         .bind(dashboard_msg_id as i64)
