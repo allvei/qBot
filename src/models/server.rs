@@ -743,8 +743,8 @@ impl Category {
     let mut changes_made = false;
 
     // Check idle sessions across all formats (not hot/push/live)
-    for sg in &mut self.formats {
-      for session in sg.sessions.iter_mut() {
+    for fmt in &mut self.formats {
+      for session in fmt.sessions.iter_mut() {
         if !session.is_idle() {
           continue;
         }
@@ -786,7 +786,7 @@ impl Category {
             if elapsed.as_secs() >= Duration::from_mins(expiry_mins as u64).as_secs() {
               let gld_nm = crate::models::constants::guild_name(ctx, guild_id);
               let ctg_nm = self.name.as_deref().unwrap_or("Unknown");
-              let fmt_nm = &sg.name;
+              let fmt_nm = &fmt.name;
               info!("{} Timeout {} after {}m", crate::log::log_prefix_format(&gld_nm, ctg_nm, fmt_nm), player.player.tag, (elapsed.as_secs() as f64 / 60.0).round());
               players_to_remove.push(player.player.user_id);
             }
@@ -1758,21 +1758,39 @@ impl Category {
     if let Some(hot_session) = format.sessions.iter().find(|s| s.status == SessionStatus::Hot) {
       // Ping players based on post_game flag
       for player in hot_session.pool.iter().take(quota) {
-        // In post-game scenarios, only ping players NOT in voice chat
+        // In post-game scenarios, only ping players NOT in queue VC
         if post_game {
-          // Check if player is in voice chat
-          let in_voice =
-            if let Some(guild) = ctx.cache.guild(guild_id) { guild.voice_states.get(&player.player.user_id).map(|vs| vs.channel_id.is_some()).unwrap_or(false) } else { false };
+          // Check if player is specifically in the queue VC
+          let in_queue_vc = if let Some(guild) = ctx.cache.guild(guild_id) {
+            guild.voice_states.get(&player.player.user_id)
+              .and_then(|vs| vs.channel_id)
+              .map(|ch_id| ch_id == self.channels.queue_vc)
+              .unwrap_or(false)
+          } else {
+            false
+          };
 
-          // Only ping if NOT in voice (i.e., they didn't just finish a game)
-          if !in_voice {
+          // Only ping if NOT in queue VC
+          if !in_queue_vc {
             player_mentions.push(format!("<@{}>", player.player.user_id));
             players_to_dm.push(player.player.user_id);
           }
         } else {
-          // Normal pre-game behavior: ping all players
-          player_mentions.push(format!("<@{}>", player.player.user_id));
-          players_to_dm.push(player.player.user_id);
+          // Normal pre-game behavior: only ping players NOT already in queue VC
+          let in_queue_vc = if let Some(guild) = ctx.cache.guild(guild_id) {
+            guild.voice_states.get(&player.player.user_id)
+              .and_then(|vs| vs.channel_id)
+              .map(|ch_id| ch_id == self.channels.queue_vc)
+              .unwrap_or(false)
+          } else {
+            false
+          };
+
+          // Only ping if NOT in queue VC
+          if !in_queue_vc {
+            player_mentions.push(format!("<@{}>", player.player.user_id));
+            players_to_dm.push(player.player.user_id);
+          }
         }
       }
     } else {
