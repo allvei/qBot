@@ -12,7 +12,7 @@ use std::{
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use crate::models::{Category, ComponentContext as CC, DashboardQueueKey, SessionStatus};
+use crate::models::{Category, ComponentContext as CC, DashboardQueueKey, Session, SessionPlayer, SessionStatus};
 
 // Helper methods to reduce code duplication
 
@@ -300,8 +300,8 @@ impl Category {
       buttons.push(CAR::Buttons(row));
     }
 
-    // Last row: Preferences (always)
-    buttons.push(CAR::Buttons(vec![Self::gen_button(("show_settings", "Preferences", BS::Secondary, true))]));
+    // Last row: Preferences, Runner Menu, and Help
+    buttons.push(Self::create_dashboard_footer_buttons());
 
     Ok(buttons)
   }
@@ -309,6 +309,80 @@ impl Category {
   fn gen_button(config: (&'static str, &'static str, BS, bool)) -> CB {
     let (action, label, style, enabled) = config;
     CB::new(action).label(label).style(style).disabled(!enabled)
+  }
+
+  /// Create the standard footer buttons for the dashboard
+  /// Includes Preferences, Runner Menu, and Help buttons
+  fn create_dashboard_footer_buttons() -> CAR {
+    CAR::Buttons(vec![
+      Self::gen_button(("show_settings", "Preferences", BS::Secondary, true)),
+      Self::gen_button(("show_runner_menu", "Runner menu", BS::Secondary, true)),
+      Self::gen_button(("show_help", "Help", BS::Secondary, true)),
+    ])
+  }
+
+  /// Record a match to the database with all player information
+  async fn record_match_to_database(
+      db: &crate::Database,
+      guild_id: GI,
+      category_id: u8,
+      format_id: u8,
+      session: &Session,
+      team_red: &[SessionPlayer],
+      team_blu: &[SessionPlayer],
+  ) -> Result<()> {
+      use crate::db::repo::MatchPlayerInsert;
+      use std::time::SystemTime;
+
+      // Only record if match was actually started (has started_at timestamp)
+      if let Some(started_at) = session.started_at {
+          let ended_at = SystemTime::now();
+          let duration_secs = ended_at
+              .duration_since(started_at)
+              .map(|d| d.as_secs())
+              .unwrap_or(0);
+          
+          // Insert match record
+          match db.matches.insert_match(
+              guild_id,
+              category_id as i64,
+              format_id as i64,
+              session.team_channels.as_ref().and_then(|tc| tc.session_id.clone()),
+              started_at,
+              ended_at,
+              duration_secs,
+          ).await {
+              Ok(match_id) => {
+                  // Insert match players
+                  let mut players = Vec::new();
+                  
+                  for player in team_red {
+                      players.push(MatchPlayerInsert {
+                          user_id: player.player.user_id,
+                          team: "red".to_string(),
+                          elo_before: player.player.elo as i64,
+                      });
+                  }
+                  
+                  for player in team_blu {
+                      players.push(MatchPlayerInsert {
+                          user_id: player.player.user_id,
+                          team: "blu".to_string(),
+                          elo_before: player.player.elo as i64,
+                      });
+                  }
+                  
+                  if let Err(e) = db.matches.insert_match_players(match_id, players).await {
+                      error!("Failed to insert match players: {e}");
+                  }
+              }
+              Err(e) => {
+                  error!("Failed to insert match record: {e}");
+              }
+          }
+      }
+      
+      Ok(())
   }
 
   pub async fn has_dash(&self, ctx: &Context) -> bool {
@@ -1076,6 +1150,17 @@ impl Category {
     let (team_red, team_blu) = get_sorted_teams(&active_session.pool, quota);
     let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
+    // Record match to database
+    Self::record_match_to_database(
+        &cc.db,
+        guild_id,
+        self.ctg_id,
+        fmt_id,
+        active_session,
+        &team_red,
+        &team_blu,
+    ).await?;
+
     // Build match summary embed
     let mut embed = CE::new().title("Match ended").color(0x5865F2);
 
@@ -1097,9 +1182,9 @@ impl Category {
         // 5 minutes = 300 seconds
         let queue_chat = self.channels.queue_chat;
         
-        // Add Report Score button for runners
+        // Add Report Score button for runners with category_id and format_id embedded
         use serenity::all::CreateActionRow;
-        let button = CB::new("report_score").label("Report Score").style(BS::Primary);
+        let button = CB::new(format!("report_score_{}_{}", self.ctg_id, fmt_id)).label("Report Score").style(BS::Primary);
         let components = vec![CreateActionRow::Buttons(vec![button])];
         
         let _ = queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed).components(components)).await;
@@ -1126,25 +1211,22 @@ impl Category {
     use crate::handlers::player::check_component_role;
     use crate::models::Role;
     use serenity::all::{CreateModal, CreateInputText, InputTextStyle};
+    use serenity::all::CreateActionRow as CAR;
 
-    // Check if user has Runner role
-    match check_component_role(cc, &Role::Runner).await {
-      Ok(true) => {
-        // User has Runner role, show modal
-      }
-      Ok(false) => {
-        cc.reply("Only runners can report scores.").await?;
-        return Ok(());
-      }
-      Err(e) => {
-        warn!("Failed to check runner role: {e}");
-        cc.reply("Failed to verify permissions.").await?;
-        return Ok(());
-      }
+    // Check if user is a runner
+    if !check_component_role(cc, &Role::Runner).await? {
+      cc.reply("Only runners can report scores.").await?;
+      return Ok(());
     }
 
-    // Create modal for score input
-    let modal = CreateModal::new("report_score_modal", "Report Match Score")
+    // Parse category_id and format_id from button custom_id (format: report_score_CATID_FMTID)
+    let custom_id = &cc.component.data.custom_id;
+    let parts: Vec<&str> = custom_id.split('_').collect();
+    let category_id = parts.get(2).and_then(|s| s.parse::<i64>().ok()).unwrap_or(self.ctg_id as i64);
+    let format_id = parts.get(3).and_then(|s| s.parse::<u8>().ok()).unwrap_or(0);
+
+    // Create modal for score input with category_id and format_id embedded
+    let modal = CreateModal::new(format!("report_score_modal_{}_{}", category_id, format_id), "Report Match Score")
       .components(vec![
         CAR::InputText(CreateInputText::new(InputTextStyle::Short, "Blue team score", "blu_score").placeholder("0-99").required(true).min_length(1).max_length(2)),
         CAR::InputText(CreateInputText::new(InputTextStyle::Short, "Red team score", "red_score").placeholder("0-99").required(true).min_length(1).max_length(2)),
@@ -1194,6 +1276,14 @@ impl Category {
         info!("{} {} requested settings", log_prefix_guild(&gld_nm), usr_tg);
         self.dash_show_settings(cc).await
       }
+      "show_runner_menu" => {
+        info!("{} {} requested runner menu", log_prefix_guild(&gld_nm), usr_tg);
+        crate::handlers::runner_menu::show_runner_menu(cc).await
+      }
+      "show_help" => {
+        info!("{} {} requested help", log_prefix_guild(&gld_nm), usr_tg);
+        crate::models::dashboard::show_help(cc).await
+      }
       "shuffle_teams" => {
         info!("{} {} used Shuffle", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
         self.dash_shuffle(cc, fmt_id).await
@@ -1213,7 +1303,7 @@ impl Category {
         info!("{} {} used End", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
         self.dash_end(cc, fmt_id).await
       }
-      "report_score" => {
+      action if action.starts_with("report_score") => {
         info!("{} {} used Report Score", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
         self.dash_report_score(cc).await
       }
@@ -1637,4 +1727,59 @@ impl DashboardUpdateQueue {
       let _ = task.await;
     }
   }
+}
+
+/// Show help information about how the queue system works
+pub async fn show_help(cc: &CC<'_>) -> Result<()> {
+  // Get user's VC auto-join setting to conditionally show that info
+  let user_id = cc.component.user.id;
+  let vc_auto_join_enabled = cc.db.users.get_prefs(user_id).await
+    .map(|prefs| prefs.vc_auto_join)
+    .unwrap_or(false);
+
+  let vc_auto_join_text = if vc_auto_join_enabled {
+    " You can also just hop into the queue voice channel and you'll be added automatically."
+  } else {
+    ""
+  };
+
+  let description = format!(
+    "**Joining and leaving the queue:**\n\
+     When you want to play, just click the **Join** button on the dashboard and pick the format you want to play.{}\n\
+     This will add you to a queue for a set period of time and you'll retain this spot in the queue until the match starts or you leave. \
+     To leave the queue, simply click the **Leave** button on the dashboard.\n\
+     **How does the queue work?**\n\
+     Think of it as a line to go on a rollercoaster at a carnival. The quota is the number of seats on the cart - it must always be full before the ride can start. \
+     Once enough people are in line to fill all the seats, those first people board the cart and the ride begins. \
+     If there are more people in queue than the cart can fit, they stay in line and wait for the next ride.\n\
+     We can also have multiple formats (like 6v6 and 4v4), each with its own queue running independently. \
+     Even within a single format, if there are enough players, multiple matches can run at the same time - the bot will create additional team channels and split players across them.\n\
+     After a match ends, those players return to the queue and the next group of players gets selected for the next match. \
+     Selection is mostly first-come-first-served, but the system ensures everyone gets a fair chance to play.\n\
+     **When do teams get made?**\n\
+     Once enough players join to fill a match, the bot generates balanced teams and shows a preview of it on the dashboard.\n\
+     **Where do we play?**\n\
+     The game starts when a runner presses the *Start* button. The bot then creates team voice channels and moves everyone to their team's channel. \
+     After the game ends, the runner ends the match via *End* and you'll be moved back to the queue channel.\n\n\
+     **What happens during a match?**\n\
+     The dashboard updates live so you can always see who's in queue and what's happening. \
+     If something goes wrong, runners (trusted players with queue management permissions) can step in to help fix issues.\n\n\
+     **That's it!** The bot handles most things so you can focus on playing.\n\n\
+     **Questions or feedback?** Contact <@257898548773912576>",
+    vc_auto_join_text
+  );
+
+  let embed = CE::new()
+    .title("How does qBot work?")
+    .description(description)
+    .color(crate::CYAN);
+
+  let response = CIR::Message(
+    CIRM::new()
+      .embed(embed)
+      .ephemeral(true)
+  );
+  cc.component.create_response(&cc.ctx.http, response).await?;
+
+  Ok(())
 }

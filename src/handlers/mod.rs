@@ -3,6 +3,7 @@ pub mod commands;
 pub mod elo_confirmation;
 pub mod player;
 pub mod response_helpers;
+pub mod runner_menu;
 pub mod settings;
 
 pub use elo_confirmation::handle_elo_change_confirmation;
