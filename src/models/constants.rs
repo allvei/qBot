@@ -18,6 +18,7 @@ pub const INACTIVITY_TIMEOUT_SECS: u64 = 600; // 10m
 pub const DEFAULT_TIMEOUT: u8 = 120; // 2h default user queue expiry
 pub const MAX_TIMEOUT: u8 = 240; // 4h max user queue expiry
 pub const MIN_TIMEOUT: u8 = 30; // 30m min user queue expiry
+pub const MAX_MATCH_SCORE: u8 = 5; // Maximum score per team in a match
 
 /// `FileManager` struct provides cross-platform file operations.
 pub struct FileManager;

@@ -1246,8 +1246,8 @@ impl Category {
     // Create modal for score input with category_id and format_id embedded
     let modal = CreateModal::new(format!("report_score_modal_{}_{}", category_id, format_id), "Report Match Score")
       .components(vec![
-        CAR::InputText(CreateInputText::new(InputTextStyle::Short, "Blue team score", "blu_score").placeholder("0-99").required(true).min_length(1).max_length(2)),
-        CAR::InputText(CreateInputText::new(InputTextStyle::Short, "Red team score", "red_score").placeholder("0-99").required(true).min_length(1).max_length(2)),
+        CAR::InputText(CreateInputText::new(InputTextStyle::Short, "Blue team score", "blu_score").placeholder(format!("0-{}", crate::models::constants::MAX_MATCH_SCORE)).required(true).min_length(1).max_length(1)),
+        CAR::InputText(CreateInputText::new(InputTextStyle::Short, "Red team score", "red_score").placeholder(format!("0-{}", crate::models::constants::MAX_MATCH_SCORE)).required(true).min_length(1).max_length(1)),
       ]);
 
     cc.component.create_response(&cc.ctx.http, CIR::Modal(modal)).await?;

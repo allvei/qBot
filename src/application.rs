@@ -1049,7 +1049,7 @@ impl EventHandler for Handler {
                   let guild_name = guild_name(&ctx, server);
                   let category_name = category.name.as_deref().unwrap_or("Unknown");
                   let pool_len: usize = category.formats[0].sessions.iter().map(|s| s.pool.len()).sum();
-                  let _fmt_name = category.formats.first().map(|sg| sg.name.as_str());
+                  let _fmt_name = category.formats.first().map(|fmt| fmt.name.as_str());
 
                   // Check if queue was already full when this player joined
                   if pool_len > category.quota() as usize {
@@ -1252,13 +1252,22 @@ impl Handler {
       }
     }
     
-    // Validate scores are numbers
+    // Validate scores are numbers and within range
     let blu_score_num: u8 = match blu_score.parse() {
-      Ok(n) => n,
+      Ok(n) if n <= crate::models::constants::MAX_MATCH_SCORE => n,
+      Ok(_) => {
+        let response = CreateInteractionResponse::Message(
+          CreateInteractionResponseMessage::new()
+            .content(format!("Invalid blue team score. Please enter a number between 0-{}.", crate::models::constants::MAX_MATCH_SCORE))
+            .ephemeral(true)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+        return Ok(());
+      }
       Err(_) => {
         let response = CreateInteractionResponse::Message(
           CreateInteractionResponseMessage::new()
-            .content("Invalid blue team score. Please enter a number between 0-99.")
+            .content(format!("Invalid blue team score. Please enter a number between 0-{}.", crate::models::constants::MAX_MATCH_SCORE))
             .ephemeral(true)
         );
         interaction.create_response(&ctx.http, response).await?;
@@ -1267,17 +1276,54 @@ impl Handler {
     };
     
     let red_score_num: u8 = match red_score.parse() {
-      Ok(n) => n,
+      Ok(n) if n <= crate::models::constants::MAX_MATCH_SCORE => n,
+      Ok(_) => {
+        let response = CreateInteractionResponse::Message(
+          CreateInteractionResponseMessage::new()
+            .content(format!("Invalid red team score. Please enter a number between 0-{}.", crate::models::constants::MAX_MATCH_SCORE))
+            .ephemeral(true)
+        );
+        interaction.create_response(&ctx.http, response).await?;
+        return Ok(());
+      }
       Err(_) => {
         let response = CreateInteractionResponse::Message(
           CreateInteractionResponseMessage::new()
-            .content("Invalid red team score. Please enter a number between 0-99.")
+            .content(format!("Invalid red team score. Please enter a number between 0-{}.", crate::models::constants::MAX_MATCH_SCORE))
             .ephemeral(true)
         );
         interaction.create_response(&ctx.http, response).await?;
         return Ok(());
       }
     };
+    
+    // Check if score was already reported for this session
+    let mut score_already_reported = false;
+    if let Some(cat_id) = category_id {
+      let mut mgr = self.manager.lock().await;
+      if let Ok(server) = mgr.get_server(guild_id) {
+        if let Some(category) = server.categories.iter_mut().find(|c| c.ctg_id == cat_id as u8) {
+          // Find the session that just ended (Pull status)
+          if let Some(session) = category.formats.iter_mut().flat_map(|f| &mut f.sessions).find(|s| matches!(s.status, crate::models::SessionStatus::Pull)) {
+            if session.score_reported {
+              score_already_reported = true;
+            } else {
+              session.score_reported = true;
+            }
+          }
+        }
+      }
+    }
+
+    if score_already_reported {
+      let response = CreateInteractionResponse::Message(
+        CreateInteractionResponseMessage::new()
+          .content("Score has already been reported for this match.")
+          .ephemeral(true)
+      );
+      interaction.create_response(&ctx.http, response).await?;
+      return Ok(());
+    }
     
     // Update match scores in database if we have category_id
     if let Some(cat_id) = category_id {
@@ -1301,8 +1347,8 @@ impl Handler {
         
         embed.description = Some(new_description);
         
-        // Update the message
-        message.channel_id.edit_message(&ctx.http, message.id, EditMessage::new().embed(embed.into())).await?;
+        // Update the message and remove the Report Score button
+        message.channel_id.edit_message(&ctx.http, message.id, EditMessage::new().embed(embed.into()).components(Vec::new())).await?;
         
         // Send confirmation
         let response = CreateInteractionResponse::Message(
@@ -1413,7 +1459,7 @@ impl Handler {
       }
 
       // Add all players to the session WITHOUT quota check
-      let _fmt_name_owned = category.formats.first().map(|sg| sg.name.clone());
+      let _fmt_name_owned = category.formats.first().map(|fmt| fmt.name.clone());
       let _category_name = category.name.as_deref().unwrap_or("Unknown").to_string();
       let format = category.formats[0].clone(); // Clone format before mutable borrow
       let category_id = category.ctg_id; // Capture category_id before mutable borrow
