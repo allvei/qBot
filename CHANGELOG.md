@@ -1,3 +1,25 @@
+# v0.11.0
+__11.03.26__
+## Users & Admins
+__Added__
+- **Fatkid immunity system** - Players who finish a match are protected from being skipped when rejoining queue. First 2 games grant automatic immunity, then 3-day cooldown or until all others have immunity. Ensures fair rotation when queue exceeds capacity.
+- **Help button** - New Help button on dashboard provides clear explanation of queue mechanics, match flow, and bot features.
+
+__Improved__
+- **Queue re-entry after matches** - When players finish a match and queue is full, bot now intelligently selects who gets added based on immunity status rather than random selection.
+- **Log clarity** - Dashboard creation and updates now show proper guild/category prefixes in logs for easier debugging.
+
+## Developers
+__Added__
+- **Fatkid immunity tracking** - Dedicated database table and repository for tracking player immunity status separately from ELO data.
+- **Player immunity info** - Combined immunity check function reduces database queries by 50% with single call returning both immunity status and level.
+
+__Refactored__
+- **Player selection logic** - Extracted 80-line fatkid immunity selection into dedicated function for better testability and maintainability.
+- **Dashboard footer buttons** - Centralized Preferences/Runner Menu/Help button generation into single reusable function.
+- **Match recording** - Extracted match database recording into standalone function, reducing dash_end from 45 lines to 8-line function call.
+- **Code organization** - Improved separation of concerns across immunity system, dashboard components, and match recording.
+
 # v0.10.0
 __11.03.26__
 ## Users & Admins
