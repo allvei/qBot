@@ -23,6 +23,8 @@ pub struct Session {
   pub team_channels: Option<TeamChannel>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub pending_team_switch: Option<PendingTeamSwitch>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub last_action_at: Option<SystemTime>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +62,7 @@ impl Session {
 
   /// Create a new session
   pub fn new(status: SessionStatus, pool: Vec<SessionPlayer>) -> Self {
-    Self { status, pool, ready_at: None, started_at: None, match_ended_at: None, team_channels: None, pending_team_switch: None }
+    Self { status, pool, ready_at: None, started_at: None, match_ended_at: None, team_channels: None, pending_team_switch: None, last_action_at: None }
   }
 
   /// Check if the session is active
@@ -255,7 +257,7 @@ impl Session {
 
   /// Create an empty session
   pub fn empty() -> Self {
-    Self { status: SessionStatus::Idle, pool: Vec::new(), ready_at: None, started_at: None, match_ended_at: None, team_channels: None, pending_team_switch: None }
+    Self { status: SessionStatus::Idle, pool: Vec::new(), ready_at: None, started_at: None, match_ended_at: None, team_channels: None, pending_team_switch: None, last_action_at: None }
   }
 
   /// Check if this Hot session has timed out (players didn't join VC in time)

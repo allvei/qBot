@@ -1085,6 +1085,7 @@ impl Category {
 
   /// Handles the start match button
   async fn dash_start(&mut self, cc: &CC<'_>, fmt_id: u8) -> Result<()> {
+    use std::time::Duration;
     // Check if user has Runner role
     use crate::handlers::player::check_component_role;
     use crate::models::Role;
@@ -1110,6 +1111,23 @@ impl Category {
     if !has_hot_game {
       cc.reply("No hot game ready to start.").await?;
       return Ok(());
+    }
+
+    // Check for duplicate action within 2 seconds on the same hot session
+    if let Some(fmt) = self.fmt_mut(fmt_id) {
+      if let Some(hot_session) = fmt.sessions.iter_mut().find(|s| s.is_hot()) {
+        if let Some(last_action) = hot_session.last_action_at {
+          if let Ok(elapsed) = SystemTime::now().duration_since(last_action) {
+            if elapsed < Duration::from_secs(2) {
+              // Duplicate action within 2 seconds - acknowledge silently
+              cc.defer_update().await?;
+              return Ok(());
+            }
+          }
+        }
+        // Update last action timestamp
+        hot_session.last_action_at = Some(SystemTime::now());
+      }
     }
 
     // Defer update now that we're going to start the match
@@ -1290,17 +1308,19 @@ impl Category {
       }
       "start_match" => {
         // Combined Start/End button: dispatch based on current format state
+        let fmt_name = self.fmt(fmt_id).map(|sg| sg.name.clone()).unwrap_or_else(|| "Unknown".to_string());
         let is_live = self.fmt(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.is_active())).unwrap_or(false);
         if is_live {
-          info!("{} {} used End", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
+          info!("{} {} used End", crate::log::log_prefix_format(&gld_nm, &ctg_nm, &fmt_name), usr_tg);
           self.dash_end(cc, fmt_id).await
         } else {
-          info!("{} {} used Start", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
+          info!("{} {} used Start", crate::log::log_prefix_format(&gld_nm, &ctg_nm, &fmt_name), usr_tg);
           self.dash_start(cc, fmt_id).await
         }
       }
       "end_match" => {
-        info!("{} {} used End", log_prefix_category(&gld_nm, &ctg_nm), usr_tg);
+        let fmt_name = self.fmt(fmt_id).map(|sg| sg.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+        info!("{} {} used End", crate::log::log_prefix_format(&gld_nm, &ctg_nm, &fmt_name), usr_tg);
         self.dash_end(cc, fmt_id).await
       }
       action if action.starts_with("report_score") => {
@@ -1744,26 +1764,26 @@ pub async fn show_help(cc: &CC<'_>) -> Result<()> {
   };
 
   let description = format!(
-    "**Joining and leaving the queue:**\n\
+    "**Joining and leaving the queue**\n\
      When you want to play, just click the **Join** button on the dashboard and pick the format you want to play.{}\n\
      This will add you to a queue for a set period of time and you'll retain this spot in the queue until the match starts or you leave. \
-     To leave the queue, simply click the **Leave** button on the dashboard.\n\
+     To leave the queue, simply click the **Leave** button on the dashboard.\n\n\
      **How does the queue work?**\n\
      Think of it as a line to go on a rollercoaster at a carnival. The quota is the number of seats on the cart - it must always be full before the ride can start. \
      Once enough people are in line to fill all the seats, those first people board the cart and the ride begins. \
-     If there are more people in queue than the cart can fit, they stay in line and wait for the next ride.\n\
+     If there are more people in queue than the cart can fit, they stay in line and wait for the next ride.\n\n\
      We can also have multiple formats (like 6v6 and 4v4), each with its own queue running independently. \
-     Even within a single format, if there are enough players, multiple matches can run at the same time - the bot will create additional team channels and split players across them.\n\
+     Even within a single format, if there are enough players, multiple matches can run at the same time - the bot will create more team channels and split players across them.\n\
      After a match ends, those players return to the queue and the next group of players gets selected for the next match. \
-     Selection is mostly first-come-first-served, but the system ensures everyone gets a fair chance to play.\n\
+     Selection is mostly first-come-first-served, but the system ensures everyone gets a fair chance to play.\n\n\
      **When do teams get made?**\n\
      Once enough players join to fill a match, the bot generates balanced teams and shows a preview of it on the dashboard.\n\
      **Where do we play?**\n\
-     The game starts when a runner presses the *Start* button. The bot then creates team voice channels and moves everyone to their team's channel. \
-     After the game ends, the runner ends the match via *End* and you'll be moved back to the queue channel.\n\n\
+     The game starts when a runner presses the **Start** button. The bot then creates team voice channels and moves everyone to their team's channel. \
+     After the game ends, the runner ends the match via **End** and you'll be moved back to the queue channel.\n\n\
      **What happens during a match?**\n\
      The dashboard updates live so you can always see who's in queue and what's happening. \
-     If something goes wrong, runners (trusted players with queue management permissions) can step in to help fix issues.\n\n\
+     If something goes wrong, runners (trusted users who can manage the queue), admins or xCape can step in to help fix issues.\n\n\
      **That's it!** The bot handles most things so you can focus on playing.\n\n\
      **Questions or feedback?** Contact <@257898548773912576>",
     vc_auto_join_text
