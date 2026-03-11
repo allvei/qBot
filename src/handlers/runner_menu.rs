@@ -13,6 +13,9 @@ use crate::models::embeds::Ephemeral as Eph;
 use crate::models::{ComponentContext as CC, Role};
 use crate::{guild_name, log_prefix_guild, Manager, CYAN};
 
+mod runner_menu_end;
+use runner_menu_end::handle_end_without_score;
+
 pub async fn show_runner_menu(cc: &CC<'_>) -> Result<()> {
   if !check_component_role(cc, &Role::Runner).await? {
     cc.reply("Only runners can access this menu.").await?;
@@ -27,16 +30,20 @@ pub async fn show_runner_menu(cc: &CC<'_>) -> Result<()> {
        • **Buffer** - Move a player to the front of queue\n\
        • **Fatkid** - Move a player to the end of queue\n\n\
        **Match control:**\n\
-       • **Accept** - Bypass VC join requirement for players who need more time",
+       • **Accept** - Bypass VC join requirement for players who need more time\n\
+       • **End without score** - End match without reporting score (backup option)",
     )
     .color(CYAN);
 
   let buttons = vec![
     CAR::Buttons(vec![
-      CB::new("runner_action_remove").label("Remove player").style(BS::Primary),
-      CB::new("runner_action_buffer").label("Buffer player").style(BS::Primary),
-      CB::new("runner_action_fatkid").label("Fatkid player").style(BS::Primary),
+      CB::new("runner_action_remove").label("Remove").style(BS::Primary),
+      CB::new("runner_action_buffer").label("Buffer").style(BS::Primary),
+      CB::new("runner_action_fatkid").label("Fatkid").style(BS::Primary),
       CB::new("runner_action_accept").label("Force accept").style(BS::Primary),
+    ]),
+    CAR::Buttons(vec![
+      CB::new("runner_action_end_no_score").label("End without score").style(BS::Danger),
     ]),
   ];
 
@@ -69,6 +76,9 @@ pub async fn handle_runner_action(
   match action {
     "accept" => {
       handle_direct_action(ctx, interaction, db, manager, guild_id, action).await
+    }
+    "end_no_score" => {
+      handle_end_without_score(ctx, interaction, db, manager, guild_id).await
     }
     "remove" | "buffer" | "fatkid" => {
       show_player_selection(ctx, interaction, db, manager, guild_id, action).await

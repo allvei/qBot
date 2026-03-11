@@ -98,7 +98,7 @@ impl CategoryRepository {
         let result = sqlx::query("UPDATE categories
                                   SET guild_id = ?, category = ?, dashboard = ?, chat = ?, ping = ?, quota = ?
                                   WHERE queue = ?
-                                  RETURNING id, category_id, name, timeout, guild_id, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum"
+                                  RETURNING id, category_id, name, timeout, guild_id, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report"
         )
         .bind(guild_id.get()              as i64)
         .bind(config.category_id          as i64)
@@ -242,6 +242,9 @@ impl CategoryRepository {
             }
         }
 
+        // Load require_score_report setting
+        category.require_score_report = result.try_get::<i64, _>("require_score_report").unwrap_or(0) != 0;
+
         Ok(category)
     }
 
@@ -311,7 +314,7 @@ impl CategoryRepository {
 
     /// Get all categories for a guild
     pub async fn get_categories_for_guild(&self, guild_id: GI) -> Result<Vec<Category>> {
-        let rows = sqlx::query("SELECT id, category_id, name, timeout, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum
+        let rows = sqlx::query("SELECT id, category_id, name, timeout, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
                                 FROM categories
                                 WHERE guild_id = ?"
         )
@@ -481,7 +484,7 @@ impl Repository<Category, u8> for CategoryRepository {
     }
 
     async fn get_by_id(&self, category_id: u8) -> Result<Category> {
-        let result = sqlx::query("SELECT id, category_id, name, timeout, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum
+        let result = sqlx::query("SELECT id, category_id, name, timeout, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
                                   FROM categories WHERE category_id = ?"
         )
         .bind(category_id as i64)
@@ -638,5 +641,32 @@ impl CategoryRepository {
         let users = serde_json::from_str(&users_json).unwrap_or_default();
 
         Ok((enabled, threshold, users))
+    }
+
+    /// Update require_score_report setting for a category
+    pub async fn update_require_score_report(&self, guild_id: GI, category_id: u8, require_score_report: bool) -> Result<()> {
+        info!("Updating require_score_report for guild {} category {}: {}", guild_id, category_id, require_score_report);
+
+        sqlx::query("UPDATE categories SET require_score_report = ? WHERE guild_id = ? AND category_id = ?")
+            .bind(require_score_report as i64)
+            .bind(guild_id.get() as i64)
+            .bind(category_id as i64)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Get require_score_report setting for a category
+    pub async fn get_require_score_report(&self, guild_id: GI, category_id: u8) -> Result<bool> {
+        let result: i64 = sqlx::query_scalar(
+            "SELECT require_score_report FROM categories WHERE guild_id = ? AND category_id = ?"
+        )
+        .bind(guild_id.get() as i64)
+        .bind(category_id as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(result != 0)
     }
 }

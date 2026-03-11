@@ -295,7 +295,8 @@ impl Category {
         row.push(CB::new(format!("start_match{fmt_suffix}")).label("Start").style(BS::Success));
         row.push(CB::new(format!("shuffle_teams{fmt_suffix}")).label("Shuffle").style(BS::Secondary));
       } else if is_live {
-        row.push(CB::new(format!("start_match{fmt_suffix}")).label("End").style(BS::Danger));
+        let end_label = if self.require_score_report { "End & log score" } else { "End" };
+        row.push(CB::new(format!("start_match{fmt_suffix}")).label(end_label).style(BS::Danger));
       }
       buttons.push(CAR::Buttons(row));
     }
@@ -1090,7 +1091,7 @@ impl Category {
     }
   }
 
-  /// Handles the end match button - directly ends the match
+  /// Handles the end match button - checks if score reporting is required
   async fn dash_end(&mut self, cc: &CC<'_>, fmt_id: u8) -> Result<()> {
     use serenity::all::CreateMessage;
     use std::time::SystemTime;
@@ -1101,6 +1102,11 @@ impl Category {
     if active_session.is_none() {
       cc.reply("No active match to end.").await?;
       return Ok(());
+    }
+
+    // If require_score_report is enabled, show the score modal instead of ending directly
+    if self.require_score_report {
+      return self.dash_report_score(cc).await;
     }
 
     // Capture match info before pulling

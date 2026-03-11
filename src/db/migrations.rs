@@ -384,6 +384,7 @@ impl DatabaseMigrations {
         "team_vc_destroy_policy": "TEXT" => "'after_pull'",
         "team_vc_keep_minimum": "INTEGER" => "1",
         "guild_name": "TEXT" => "NULL",
+        "require_score_report": "INTEGER" => "0",
       );
 
       // Check if UNIQUE constraints exist on channel columns
@@ -593,7 +594,8 @@ impl DatabaseMigrations {
                 dm_alert_users        TEXT DEFAULT '[]',
                 team_vc_create_policy  TEXT DEFAULT 'on_hot',
                 team_vc_destroy_policy TEXT DEFAULT 'after_pull',
-                team_vc_keep_minimum   INTEGER DEFAULT 1
+                team_vc_keep_minimum   INTEGER DEFAULT 1,
+                require_score_report   INTEGER DEFAULT 0
             )"
     ))
     .execute(&self.pool)

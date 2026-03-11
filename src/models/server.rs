@@ -278,6 +278,8 @@ pub struct Category {
   pub dm_alert_users: Vec<UI>,
   /// Track recently freed team channels to avoid immediate recreation
   pub recently_freed_teams: Vec<TeamChannel>,
+  /// Require score reporting when ending matches via dashboard
+  pub require_score_report: bool,
 }
 
 impl Category {
@@ -311,6 +313,7 @@ impl Category {
       dm_alert_threshold: 0,
       dm_alert_users: Vec::new(),
       recently_freed_teams: Vec::new(),
+      require_score_report: false,
     }
   }
 
