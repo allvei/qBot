@@ -784,7 +784,10 @@ impl Category {
           // Check if player has exceeded their timeout time
           if let Ok(elapsed) = SystemTime::now().duration_since(player.joined_at) {
             if elapsed.as_secs() >= Duration::from_mins(expiry_mins as u64).as_secs() {
-              info!("Timeout {} after {}m", player.player.tag, (elapsed.as_secs() as f64 / 60.0).round());
+              let gld_nm = crate::models::constants::guild_name(ctx, guild_id);
+              let ctg_nm = self.name.as_deref().unwrap_or("Unknown");
+              let fmt_nm = &sg.name;
+              info!("{} Timeout {} after {}m", crate::log::log_prefix_format(&gld_nm, ctg_nm, fmt_nm), player.player.tag, (elapsed.as_secs() as f64 / 60.0).round());
               players_to_remove.push(player.player.user_id);
             }
           }

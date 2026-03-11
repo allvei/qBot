@@ -213,10 +213,13 @@ pub async fn handle_player_selection(
         for format in &mut category.formats {
           for session in &mut format.sessions {
             if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == user_id) {
+              let player_tag = session.pool[pos].player.tag.clone();
               session.pool.remove(pos);
               found = true;
               let gld_nm = guild_name(ctx, guild_id);
-              info!("{} Runner removed player {} from queue", log_prefix_guild(&gld_nm), user_id);
+              let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
+              let fmt_nm = &format.name;
+              info!("{} Runner removed player {} from queue", crate::log::log_prefix_format(&gld_nm, ctg_nm, fmt_nm), player_tag);
             }
           }
         }
@@ -234,11 +237,14 @@ pub async fn handle_player_selection(
         for format in &mut category.formats {
           for session in &mut format.sessions {
             if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == user_id) {
+              let player_tag = session.pool[pos].player.tag.clone();
               let player = session.pool.remove(pos);
               session.pool.insert(0, player);
               found = true;
               let gld_nm = guild_name(ctx, guild_id);
-              info!("{} Runner buffered player {} to front of queue", log_prefix_guild(&gld_nm), user_id);
+              let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
+              let fmt_nm = &format.name;
+              info!("{} Runner buffered player {} to front of queue", crate::log::log_prefix_format(&gld_nm, ctg_nm, fmt_nm), player_tag);
             }
           }
         }
@@ -256,11 +262,14 @@ pub async fn handle_player_selection(
         for format in &mut category.formats {
           for session in &mut format.sessions {
             if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == user_id) {
+              let player_tag = session.pool[pos].player.tag.clone();
               let player = session.pool.remove(pos);
               session.pool.push(player);
               found = true;
               let gld_nm = guild_name(ctx, guild_id);
-              info!("{} Runner fatkidded player {} to end of queue", log_prefix_guild(&gld_nm), user_id);
+              let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
+              let fmt_nm = &format.name;
+              info!("{} Runner fatkidded player {} to end of queue", crate::log::log_prefix_format(&gld_nm, ctg_nm, fmt_nm), player_tag);
             }
           }
         }
@@ -291,8 +300,6 @@ pub async fn handle_player_selection(
   let (title, color) = if let Err(e) = result {
     (format!("Action failed: {}", e), 0xFF0000)
   } else {
-    let gld_nm = guild_name(ctx, guild_id);
-    info!("{} Runner action '{}' executed for user {}", log_prefix_guild(&gld_nm), action, user_id);
     let action_name = match action {
       "remove" => "removed from",
       "buffer" => "buffered to front of",
