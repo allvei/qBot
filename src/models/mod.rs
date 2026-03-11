@@ -5,6 +5,7 @@ pub mod constants;
 pub mod dashboard;
 pub mod dm_tracker;
 pub mod embeds;
+pub mod fatkid_immunity;
 pub mod manager;
 pub mod server;
 pub mod session;
