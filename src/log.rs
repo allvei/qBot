@@ -33,6 +33,7 @@ pub async fn log_queue_toggle(
   format: &crate::models::Format,
   player: &crate::models::Player,
   action: &str, // "joined" or "left"
+  rank_mismatch: Option<(String, String)>, // (old_rank, new_rank)
 ) -> Result<(), anyhow::Error> {
   // Get format info from database using guild_id, category_id, and format_id
   let fmt_info = sqlx::query(
@@ -96,7 +97,7 @@ pub async fn log_queue_toggle(
   };
 
   // Call the original function with extrapolated data
-  log_queue_toggle_sync(gld_nm, ctg_nm, &player.tag, queue_type, pool_size, Some(fmt_nm), position);
+  log_queue_toggle_sync(gld_nm, ctg_nm, &player.tag, queue_type, pool_size, Some(fmt_nm), position, rank_mismatch);
 
   Ok(())
 }
@@ -109,6 +110,7 @@ pub fn log_queue_toggle_sync(
   pool_size: Option<(usize, usize)>,
   fmt_name: Option<&str>,
   position: usize,
+  rank_mismatch: Option<(String, String)>,
 ) {
   let (action, source) = match queue_type {
     QTT::BJ => ("joined", None),
@@ -119,12 +121,18 @@ pub fn log_queue_toggle_sync(
 
   let pos_part = if action != "left" { format!("#{} ", position) } else { String::new() };
   let prefix = log_prefix_format(guild_name, category_name, fmt_name.unwrap_or(""));
+  
+  let rank_suffix = if let Some((old_rank, new_rank)) = rank_mismatch {
+    format!(" Corrected rank from {} to {} in database", old_rank, new_rank)
+  } else {
+    String::new()
+  };
 
   match (pool_size, source) {
-    (Some((current, quota)), Some(src)) => info!("{} {}{} {} ({}) [{}/{}]", prefix, pos_part, tag, action, src, current, quota),
-    (Some((current, quota)), None) =>      info!("{} {}{} {} [{}/{}]",      prefix, pos_part, tag, action, current, quota),
-    (None, Some(src)) =>                   info!("{} {}{} {} ({})",         prefix, pos_part, tag, action, src),
-    (None, None) =>                        info!("{} {}{} {}",              prefix, pos_part, tag, action),
+    (Some((current, quota)), Some(src)) => info!("{} {}{} {} ({}) [{}/{}]{}", prefix, pos_part, tag, action, src, current, quota, rank_suffix),
+    (Some((current, quota)), None) =>      info!("{} {}{} {} [{}/{}]{}",      prefix, pos_part, tag, action, current, quota, rank_suffix),
+    (None, Some(src)) =>                   info!("{} {}{} {} ({}){}",         prefix, pos_part, tag, action, src, rank_suffix),
+    (None, None) =>                        info!("{} {}{} {}{}",              prefix, pos_part, tag, action, rank_suffix),
   }
 }
 

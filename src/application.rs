@@ -930,6 +930,13 @@ impl EventHandler for Handler {
                 }
               }
             }
+            
+            // If moving from queue VC to team VC, don't remove from queue
+            // (they were just moved by the bot for a match)
+            if category.channels.queue_vc == lookup_channel && category.is_team_vc(new_channel) {
+              // Player moved from queue VC to team VC - this is expected, don't remove from queue
+              return;
+            }
           }
           
           if category.channels.queue_vc == lookup_channel {
@@ -1033,7 +1040,7 @@ impl EventHandler for Handler {
               {
                 use crate::handlers::player::resolve_player_for_queue;
 
-                let (player, discord_rank) = match resolve_player_for_queue(&ctx, &self.db, server, user_id).await {
+                let (player, discord_rank, rank_mismatch) = match resolve_player_for_queue(&ctx, &self.db, server, user_id).await {
                   Ok(result) => result,
                   Err(e) => {
                     error!("Failed to resolve player for queue: {e}");
@@ -1063,7 +1070,7 @@ impl EventHandler for Handler {
                   }
 
                   let _format = &category.formats[0];
-                  if let Err(e) = log_queue_toggle(&ctx, &self.db, server, category.ctg_id, &category.formats[0], &player, "joined").await {
+                  if let Err(e) = log_queue_toggle(&ctx, &self.db, server, category.ctg_id, &category.formats[0], &player, "joined", rank_mismatch).await {
                     warn!("Failed to log queue toggle: {e}");
                   }
                 }
@@ -1201,7 +1208,7 @@ impl Handler {
       // Log after removal so pool count is accurate, but use position before removal
       // Resolve player for logging
       if let Ok(player) = self.db.get_user(user_id, ctx).await {
-        if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left").await {
+        if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left", None).await {
           warn!("Failed to log queue toggle: {e}");
         }
       }
@@ -1213,7 +1220,7 @@ impl Handler {
       
       // Resolve player for logging
       if let Ok(player) = self.db.get_user(user_id, ctx).await {
-        if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left").await {
+        if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left", None).await {
           warn!("Failed to log queue toggle: {e}");
         }
       }
@@ -1334,18 +1341,24 @@ impl Handler {
       }
     }
     
-    // Update the message embed with scores
+    // Update the message embed with scores in team headers
     if let Some(message) = &interaction.message {
       if let Some(mut embed) = message.embeds.first().cloned() {
-        // Prepend score to description
-        let score_text = format!("**BLU:** {}\n**RED:** {}\n\n", blu_score_num, red_score_num);
-        let new_description = if let Some(desc) = embed.description {
-          format!("{}{}", score_text, desc)
-        } else {
-          score_text
-        };
-        
-        embed.description = Some(new_description);
+        // Update team field headers to include scores
+        // Find and update the BLU and RED team fields
+        if embed.fields.len() >= 2 {
+          for field in &mut embed.fields {
+            if field.name.contains("🔵 BLU") {
+              // Extract ELO from existing header (format: "‹**elo**› 🔵 BLU")
+              let elo_part = field.name.split("›").next().unwrap_or("‹**0**");
+              field.name = format!("{} - **{}**", field.name.replace(&format!("{}", elo_part), &format!("{}", elo_part)).trim(), blu_score_num);
+            } else if field.name.contains("🔴 RED") {
+              // Extract ELO from existing header
+              let elo_part = field.name.split("›").next().unwrap_or("‹**0**");
+              field.name = format!("{} - **{}**", field.name.replace(&format!("{}", elo_part), &format!("{}", elo_part)).trim(), red_score_num);
+            }
+          }
+        }
         
         // Update the message and remove the Report Score button
         message.channel_id.edit_message(&ctx.http, message.id, EditMessage::new().embed(embed.into()).components(Vec::new())).await?;
@@ -1473,17 +1486,20 @@ impl Handler {
           let user_id = *user_id;
 
           let player = match resolve_player_for_queue(ctx, &self.db, guild.id, user_id).await {
-            Ok((p, _rank)) => p,
+            Ok((p, _rank, rank_mismatch)) => {
+              // Log with rank mismatch if present
+              let _position = session.pool.len() + 1;
+              if let Err(e) = log_queue_toggle(ctx, &self.db, guild.id, category_id, &format, &p, "joined", rank_mismatch).await {
+                warn!("Failed to log queue toggle: {e}");
+              }
+              p
+            },
             Err(e) => {
               error!("Failed to resolve player {} for queue: {e}", user_id);
               continue;
             }
           };
 
-          let _position = session.pool.len() + 1;
-          if let Err(e) = log_queue_toggle(ctx, &self.db, guild.id, category_id, &format, &player, "joined").await {
-            warn!("Failed to log queue toggle: {e}");
-          }
           session.add_ply(player);
         }
       }

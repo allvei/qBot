@@ -65,8 +65,8 @@ impl TeamDisplay {
 
   /// Build team field headers with average ELO
   fn build_headers(&self) -> (String, String) {
-    let red_header = format!("🔴 RED ‹**{}**›", get_avg_elo(&self.red));
-    let blu_header = format!("🔵 BLU ‹**{}**›", get_avg_elo(&self.blu));
+    let red_header = format!("‹**{}**› 🔴 RED", get_avg_elo(&self.red));
+    let blu_header = format!("‹**{}**› 🔵 BLU", get_avg_elo(&self.blu));
     (red_header, blu_header)
   }
 
@@ -80,7 +80,7 @@ impl TeamDisplay {
 
 /// Helper function to calculate average ELO for a team
 fn get_avg_elo(team: &[crate::models::SessionPlayer]) -> f64 {
-  (team.iter().map(|p| p.player.elo as f64).sum::<f64>() / team.len() as f64 * 100.0).round() / 100.0
+  (team.iter().map(|p| p.player.elo as f64).sum::<f64>() / team.len() as f64 * 10.0).round() / 10.0
 }
 
 /// Helper function to format team players as a string for embed fields
@@ -886,7 +886,7 @@ impl Category {
 
       // Log BEFORE queue operation to fix race condition with quota notifications
       if let Some(format) = self.fmt(fmt_id) {
-        if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, self.ctg_id, format, &player, "joined").await {
+        if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, self.ctg_id, format, &player, "joined", None).await {
           warn!("Failed to log queue toggle: {e}");
         }
       }
@@ -928,6 +928,14 @@ impl Category {
   /// Handles the leave queue button
   async fn dash_leave_queue(&mut self, cc: &CC<'_>, fmt_id: u8) -> Result<()> {
     let user_id = cc.component.user.id;
+
+    // Check if player is in a live match - disallow leaving
+    if let Ok(session) = self.get_user_sesh_fmt(fmt_id, user_id) {
+      if session.status == SessionStatus::Live {
+        cc.reply("You cannot leave during a live match. Please find a substitute if needed.").await?;
+        return Ok(());
+      }
+    }
 
     let quota = self.fmt(fmt_id).map(|sg| sg.quota as usize).unwrap_or(0);
 
@@ -990,7 +998,7 @@ impl Category {
       // Resolve player for logging
       if let Ok(player) = cc.db.get_user(user_id, cc.ctx).await {
         if let Some(ref format) = format {
-          if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, category_id, format, &player, "left").await {
+          if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, category_id, format, &player, "left", None).await {
             warn!("Failed to log queue toggle: {e}");
           }
         }

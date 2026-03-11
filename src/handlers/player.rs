@@ -91,15 +91,16 @@ pub async fn get_or_assign_player_rank(db: &DB, guild_id: GI, user_id: UI) -> Re
 /// startup recovery flows where a `Context` is available for role inspection.
 ///
 /// Returns `(Player, Rank)` ready for queue insertion, or an error.
-pub async fn resolve_player_for_queue(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Result<(crate::models::Player, Rank)> {
+pub async fn resolve_player_for_queue(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Result<(crate::models::Player, Rank, Option<(String, String)>)> {
   // 1. Detect rank: Discord roles (source of truth) vs DB
   let role_based_guild_rank = get_user_rank_from_discord_roles(ctx, db, guild_id, user_id).await;
 
+  let mut rank_mismatch: Option<(String, String)> = None;
   let discord_rank = if let Some(db_rank) = get_player_rank(db, guild_id, user_id).await {
     if let Some(guild_rank) = &role_based_guild_rank {
       let role_rank = Rank::from_name(db, guild_id, &guild_rank.name).await.unwrap_or(db_rank.clone());
       if role_rank != db_rank {
-        info!("Rank mismatch for {}: Discord='{}' DB='{}', using Discord", user_id, guild_rank.name, db_rank.name);
+        rank_mismatch = Some((db_rank.name.clone(), guild_rank.name.clone()));
       }
       role_rank
     } else {
@@ -141,7 +142,7 @@ pub async fn resolve_player_for_queue(ctx: &Ctx, db: &DB, guild_id: GI, user_id:
   }
 
   player.rank = Some(discord_rank.clone());
-  Ok((player, discord_rank))
+  Ok((player, discord_rank, rank_mismatch))
 }
 
 /// Validate that runner and admin roles are configured
