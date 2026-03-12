@@ -1352,9 +1352,6 @@ impl Category {
 
   /// Show user settings as ephemeral embed in dashboard channel
   async fn dash_show_settings(&mut self, cc: &CC<'_>) -> Result<()> {
-    // CRITICAL: Defer immediately to prevent interaction timeout
-    cc.component.defer(&cc.ctx.http).await?;
-
     use crate::handlers::settings::{build_settings_buttons, build_settings_embed};
 
     let user_id = cc.component.user.id;
@@ -1694,9 +1691,6 @@ impl DashboardUpdateQueue {
 
 /// Show help information about how the queue system works
 pub async fn show_help(cc: &CC<'_>) -> Result<()> {
-  // CRITICAL: Defer immediately to prevent interaction timeout
-  cc.component.defer(&cc.ctx.http).await?;
-
   // Get user's VC auto-join setting to conditionally show that info
   let user_id = cc.component.user.id;
   let vc_auto_join_enabled = cc.db.users.get_prefs(user_id).await
