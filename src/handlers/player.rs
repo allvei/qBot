@@ -8,22 +8,31 @@ use tracing::{debug, error, info, warn};
 use crate::models::{CommandContext as CmC, Rank, Role, Server, SessionPlayer as SP, SessionStatus as SS, Team};
 use crate::{guild_name, ComponentContext as CC, Database as DB};
 
-/// Helper: Get member with cache-first strategy
-async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI) -> Option<Member> {
-  // Try cache first (fast path, no API call)
-  let member = if let Some(guild) = ctx.cache.guild(guild_id) { guild.members.get(&user_id).cloned() } else { None };
-
-  // Fallback to HTTP if not in cache
-  match member {
-    Some(m) => Some(m),
-    None => guild_id.member(&ctx.http, user_id).await.ok(),
+/// Helper: Get member with cache → DB → Discord API fallback strategy
+async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI, db: &DB) -> Option<Member> {
+  // 1. Try cache first (fast path, no API call)
+  if let Some(guild) = ctx.cache.guild(guild_id) {
+    if let Some(member) = guild.members.get(&user_id).cloned() {
+      return Some(member);
+    }
   }
+
+  // 2. Check if user exists in database (avoids Discord API call)
+  if db.users.get(user_id).await.is_ok() {
+    // User exists in DB, try Discord API to get full member info
+    if let Ok(member) = guild_id.member(&ctx.http, user_id).await {
+      return Some(member);
+    }
+  }
+
+  // 3. Last resort: Try Discord API anyway (for new users)
+  guild_id.member(&ctx.http, user_id).await.ok()
 }
 
 /// Get user's rank from their Discord roles (highest rank role they have)
 pub async fn get_user_rank_from_discord_roles(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<crate::db::repo::rank::GuildRank> {
   // Get the member and their roles
-  let member = match get_member_cached(ctx, guild_id, user_id).await {
+  let member = match get_member_cached(ctx, guild_id, user_id, db).await {
     Some(m) => m,
     None => return None,
   };
@@ -208,7 +217,7 @@ pub async fn check_role(cc: &CmC<'_>, role: &Role) -> Result<bool> {
   use serenity::all::Permissions;
 
   if let Some(guild_id) = cc.intax.guild_id {
-    let member = match get_member_cached(cc.ctx, guild_id, cc.intax.user.id).await {
+    let member = match get_member_cached(cc.ctx, guild_id, cc.intax.user.id, &cc.db).await {
       Some(m) => m,
       None => {
         let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
@@ -259,7 +268,7 @@ pub async fn check_component_role(cc: &CC<'_>, role: &Role) -> Result<bool> {
   use serenity::all::Permissions;
 
   if let Some(guild_id) = cc.component.guild_id {
-    let member = match get_member_cached(cc.ctx, guild_id, cc.component.user.id).await {
+    let member = match get_member_cached(cc.ctx, guild_id, cc.component.user.id, &cc.db).await {
       Some(m) => m,
       None => {
         let user_tag = crate::log::get_user_tag(&cc.ctx, cc.component.user.id, &cc.db).await;
