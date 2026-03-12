@@ -17,8 +17,14 @@ mod runner_menu_end;
 use runner_menu_end::handle_end_without_score;
 
 pub async fn show_runner_menu(cc: &CC<'_>) -> Result<()> {
+  // Defer with ephemeral response before async work
+  let response = CIR::Defer(CIRM::new().ephemeral(true));
+  cc.component.create_response(&cc.ctx.http, response).await?;
+
   if !check_component_role(cc, &Role::Runner).await? {
-    cc.reply("Only runners can access this menu.").await?;
+    use serenity::all::CreateInteractionResponseFollowup as CIRF;
+    let followup = CIRF::new().content("Only runners can access this menu.").ephemeral(true);
+    cc.component.create_followup(&cc.ctx.http, followup).await?;
     return Ok(());
   }
 
@@ -47,8 +53,10 @@ pub async fn show_runner_menu(cc: &CC<'_>) -> Result<()> {
     ]),
   ];
 
-  let response = CIR::Message(CIRM::new().embed(embed).components(buttons).ephemeral(true));
-  cc.component.create_response(&cc.ctx.http, response).await?;
+  // Use followup since we deferred
+  use serenity::all::CreateInteractionResponseFollowup as CIRF;
+  let followup = CIRF::new().embed(embed).components(buttons).ephemeral(true);
+  cc.component.create_followup(&cc.ctx.http, followup).await?;
 
   Ok(())
 }

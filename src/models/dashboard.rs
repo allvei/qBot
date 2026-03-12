@@ -1352,6 +1352,10 @@ impl Category {
 
   /// Show user settings as ephemeral embed in dashboard channel
   async fn dash_show_settings(&mut self, cc: &CC<'_>) -> Result<()> {
+    // Defer with ephemeral response before async work
+    let response = CIR::Defer(CIRM::new().ephemeral(true));
+    cc.component.create_response(&cc.ctx.http, response).await?;
+
     use crate::handlers::settings::{build_settings_buttons, build_settings_embed};
 
     let user_id = cc.component.user.id;
@@ -1360,7 +1364,9 @@ impl Category {
     let settings = match cc.db.users.get_prefs(user_id).await {
       Ok(s) => s,
       Err(e) => {
-        cc.reply(&format!("Failed to load settings: {}", e)).await?;
+        use serenity::all::CreateInteractionResponseFollowup as CIRF;
+        let followup = CIRF::new().content(format!("Failed to load settings: {}", e)).ephemeral(true);
+        cc.component.create_followup(&cc.ctx.http, followup).await?;
         return Ok(());
       }
     };
@@ -1369,10 +1375,11 @@ impl Category {
     let embed = build_settings_embed(&settings);
     let buttons = build_settings_buttons(&settings);
 
-    // Send ephemeral message with settings embed and buttons
-    let response = CIR::Message(CIRM::new().embed(embed).components(buttons).ephemeral(true));
+    // Use followup since we deferred
+    use serenity::all::CreateInteractionResponseFollowup as CIRF;
+    let followup = CIRF::new().embed(embed).components(buttons).ephemeral(true);
+    cc.component.create_followup(&cc.ctx.http, followup).await?;
 
-    cc.component.create_response(&cc.ctx.http, response).await?;
     Ok(())
   }
 
@@ -1691,6 +1698,10 @@ impl DashboardUpdateQueue {
 
 /// Show help information about how the queue system works
 pub async fn show_help(cc: &CC<'_>) -> Result<()> {
+  // Defer with ephemeral response before async work
+  let response = CIR::Defer(CIRM::new().ephemeral(true));
+  cc.component.create_response(&cc.ctx.http, response).await?;
+
   // Get user's VC auto-join setting to conditionally show that info
   let user_id = cc.component.user.id;
   let vc_auto_join_enabled = cc.db.users.get_prefs(user_id).await
@@ -1734,12 +1745,10 @@ pub async fn show_help(cc: &CC<'_>) -> Result<()> {
     .description(description)
     .color(crate::CYAN);
 
-  let response = CIR::Message(
-    CIRM::new()
-      .embed(embed)
-      .ephemeral(true)
-  );
-  cc.component.create_response(&cc.ctx.http, response).await?;
+  // Use followup since we deferred
+  use serenity::all::CreateInteractionResponseFollowup as CIRF;
+  let followup = CIRF::new().embed(embed).ephemeral(true);
+  cc.component.create_followup(&cc.ctx.http, followup).await?;
 
   Ok(())
 }
