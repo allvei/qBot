@@ -59,7 +59,7 @@ pub fn init_logging() {
         .with_thread_names(false)
         .with_file(true)
         .with_line_number(true)
-        .with_level(false)
+        .with_level(true) // Show colored log levels (ERROR=red, WARN=yellow, INFO=green, etc.)
         .compact()
         .with_filter(console_filter);
     

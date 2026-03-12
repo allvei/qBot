@@ -117,6 +117,7 @@ pub fn log_queue_toggle_sync(
 
   let pos_part = if action != "left" { format!("#{} ", position) } else { String::new() };
   let prefix = log_prefix_format(guild_name, category_name, fmt_name.unwrap_or(""));
+  let tag_colored = crate::color::user(tag);
   
   let rank_suffix = if let Some((old_rank, new_rank)) = rank_mismatch {
     format!(" Corrected rank from {} to {} in database", old_rank, new_rank)
@@ -125,27 +126,27 @@ pub fn log_queue_toggle_sync(
   };
 
   match (pool_size, source) {
-    (Some((current, quota)), Some(src)) => info!("{} {}{} {} ({}) [{}/{}]{}", prefix, pos_part, tag, action, src, current, quota, rank_suffix),
-    (Some((current, quota)), None) =>      info!("{} {}{} {} [{}/{}]{}",      prefix, pos_part, tag, action, current, quota, rank_suffix),
-    (None, Some(src)) =>                   info!("{} {}{} {} ({}){}",         prefix, pos_part, tag, action, src, rank_suffix),
-    (None, None) =>                        info!("{} {}{} {}{}",              prefix, pos_part, tag, action, rank_suffix),
+    (Some((current, quota)), Some(src)) => info!("{} {}{} {} ({}) [{}/{}]{}", prefix, pos_part, tag_colored, action, src, current, quota, rank_suffix),
+    (Some((current, quota)), None) =>      info!("{} {}{} {} [{}/{}]{}",      prefix, pos_part, tag_colored, action, current, quota, rank_suffix),
+    (None, Some(src)) =>                   info!("{} {}{} {} ({}){}",         prefix, pos_part, tag_colored, action, src, rank_suffix),
+    (None, None) =>                        info!("{} {}{} {}{}",              prefix, pos_part, tag_colored, action, rank_suffix),
   }
 }
 
 /// Generate log prefix in format [GUILD_NAME]
 pub fn log_prefix_guild(guild_name: &str) -> String {
-  format!("[{}]", guild_name)
+  format!("[{}]", crate::color::guild(guild_name))
 }
 
 /// Generate log prefix in format [GUILD_NAME/CATEGORY_NAME/FORMAT_NAME]
 pub fn log_prefix_category(guild_name: &str, category_name: &str) -> String {
-  format!("[{}/{}]", guild_name, category_name)
+  format!("[{}/{}]", crate::color::guild(guild_name), crate::color::category(category_name))
 }
 
 /// Generate log prefix in format [GUILD_NAME/CATEGORY_NAME/FORMAT_NAME]
 pub fn log_prefix_format(guild_name: &str, category_name: &str, format_name: &str) -> String {
-  let fmt_suffix = if format_name.is_empty() { "".to_string() } else { format!("/{}", format_name) };
-  format!("[{}/{}{}]", guild_name, category_name, fmt_suffix)
+  let fmt_suffix = if format_name.is_empty() { "".to_string() } else { format!("/{}", crate::color::format(format_name)) };
+  format!("[{}/{}{}", crate::color::guild(guild_name), crate::color::category(category_name), fmt_suffix)
 }
 
 /// Generate log prefix from Context and IDs
@@ -175,12 +176,12 @@ pub async fn log_command_usage(
   let guild_name = guild_name(ctx, interaction.guild_id.unwrap());
   let user_tag = get_user_tag(ctx, interaction.user.id, db).await;
 
-  let mut message = format!("[{}] {} used /{}", guild_name, user_tag, command_name);
+  let mut message = format!("[{}] {} used /{}", crate::color::guild(&guild_name), crate::color::user(&user_tag), command_name);
 
   // Add target user if specified
   if let Some(target) = target_user {
     let target_tag = get_user_tag(ctx, target, db).await;
-    message.push_str(&format!(" on {}", target_tag));
+    message.push_str(&format!(" on {}", crate::color::user(&target_tag)));
   }
 
   // Add additional parameters if specified
@@ -196,7 +197,7 @@ pub fn log_command_usage_simple(ctx: &Context, interaction: &CommandInteraction,
   let guild_name = guild_name(ctx, interaction.guild_id.unwrap());
   let user_tag = interaction.user.tag();
 
-  let mut message = format!("[{}] {} used /{}", guild_name, user_tag, command_name);
+  let mut message = format!("[{}] {} used /{}", crate::color::guild(&guild_name), crate::color::user(&user_tag), command_name);
 
   // Add additional parameters if specified
   if let Some(params) = additional_params {
