@@ -79,7 +79,7 @@ pub async fn handle_end_without_score(
       }
     }
     
-    let (cat_idx, fmt_idx, _category_id, format_id) = match found_match {
+    let (cat_idx, fmt_idx, _category_id, _format_id) = match found_match {
       Some(m) => m,
       None => {
         let embed = CE::new()

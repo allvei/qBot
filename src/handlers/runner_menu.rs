@@ -17,6 +17,9 @@ mod runner_menu_end;
 use runner_menu_end::handle_end_without_score;
 
 pub async fn show_runner_menu(cc: &CC<'_>) -> Result<()> {
+  // CRITICAL: Defer immediately to prevent interaction timeout
+  cc.component.defer(&cc.ctx.http).await?;
+
   if !check_component_role(cc, &Role::Runner).await? {
     cc.reply("Only runners can access this menu.").await?;
     return Ok(());

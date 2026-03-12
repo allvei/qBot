@@ -1,6 +1,6 @@
 use serenity::all::{CommandInteraction, Context, UserId as UI};
 use sqlx::Row;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::models::constants::guild_name;
 
@@ -10,16 +10,12 @@ pub async fn get_user_tag(ctx: &Context, user_id: UI, db: &crate::Database) -> S
   if let Ok(player) = db.get_user(user_id, ctx).await {
     if !player.tag.is_empty() {
       return player.tag;
-    } else {
-      warn!("User {} found in database but tag is empty, falling back to Discord API", user_id);
     }
-  } else {
-    warn!("User {} not found in database, falling back to Discord API", user_id);
   }
 
-  // Fallback to Discord API
-  ctx.http.get_user(user_id).await.map(|user| user.tag()).unwrap_or_else(|e| {
-    warn!("Failed to get user {} from Discord API: {}, using user ID as fallback", user_id, e);
+  // Fallback to Discord API (silently - don't spam logs)
+  ctx.http.get_user(user_id).await.map(|user| user.tag()).unwrap_or_else(|_| {
+    // Use user ID as fallback without logging - this is normal for new users
     user_id.to_string()
   })
 }

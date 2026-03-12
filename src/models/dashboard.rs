@@ -750,6 +750,9 @@ impl Category {
 
   /// Handles the join queue button
   async fn dash_join_queue(&mut self, cc: &CC<'_>, fmt_id: u8) -> Result<()> {
+    // CRITICAL: Defer immediately to prevent interaction timeout
+    cc.defer_update().await?;
+
     let user_id = cc.component.user.id;
 
     // Get player tag from database (primary source)
@@ -771,7 +774,6 @@ impl Category {
           }
         }
       }
-      cc.defer_update().await?;
       self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
       return Ok(());
     }
@@ -783,11 +785,6 @@ impl Category {
       cc.reply("Cannot join - match is in progress. Please wait.").await?;
       return Ok(());
     }
-
-    // Defer update now that we know we'll succeed
-    //
-    cc.defer_update().await?;
-    //
 
     // Use resolve_player_for_queue for consistent player resolution
     use crate::handlers::player::resolve_player_for_queue;
@@ -862,6 +859,9 @@ impl Category {
 
   /// Handles the leave queue button
   async fn dash_leave_queue(&mut self, cc: &CC<'_>, fmt_id: u8) -> Result<()> {
+    // CRITICAL: Defer immediately to prevent interaction timeout
+    cc.defer_update().await?;
+
     let user_id = cc.component.user.id;
 
     // Check if player is in a live match - disallow leaving
@@ -897,9 +897,6 @@ impl Category {
         let settings = cc.db.users.get_prefs(user_id).await.unwrap_or_default();
 
         if settings.vc_auto_leave {
-          // Acknowledge button press before disconnecting
-          cc.defer_update().await?;
-
           // User wants to be disconnected from VC
           if let Some(guild_id) = cc.component.guild_id {
             use serenity::all::EditMember;
@@ -913,9 +910,6 @@ impl Category {
       }
 
       // Player is in queue but not in VC (or wants to stay in VC), remove them manually
-      // Defer update immediately
-
-      cc.defer_update().await?;
 
       let was_hot = session.is_hot();
       let _username = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
@@ -1358,6 +1352,9 @@ impl Category {
 
   /// Show user settings as ephemeral embed in dashboard channel
   async fn dash_show_settings(&mut self, cc: &CC<'_>) -> Result<()> {
+    // CRITICAL: Defer immediately to prevent interaction timeout
+    cc.component.defer(&cc.ctx.http).await?;
+
     use crate::handlers::settings::{build_settings_buttons, build_settings_embed};
 
     let user_id = cc.component.user.id;
@@ -1697,6 +1694,9 @@ impl DashboardUpdateQueue {
 
 /// Show help information about how the queue system works
 pub async fn show_help(cc: &CC<'_>) -> Result<()> {
+  // CRITICAL: Defer immediately to prevent interaction timeout
+  cc.component.defer(&cc.ctx.http).await?;
+
   // Get user's VC auto-join setting to conditionally show that info
   let user_id = cc.component.user.id;
   let vc_auto_join_enabled = cc.db.users.get_prefs(user_id).await
