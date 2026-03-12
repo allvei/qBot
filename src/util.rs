@@ -60,7 +60,7 @@ pub fn init_logging() {
         .with_file(true)
         .with_line_number(true)
         .with_level(true) // Show colored log levels (ERROR=red, WARN=yellow, INFO=green, etc.)
-        .compact()
+        // Note: Using default format (not compact) to properly render ANSI colors in message content
         .with_filter(console_filter);
     
     // File layer with application logs only - filter out spam
