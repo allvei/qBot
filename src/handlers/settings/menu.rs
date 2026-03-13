@@ -96,7 +96,7 @@ pub enum SettingsButtonStyle {
   Danger,
 }
 
-type SBS = SettingsButtonStyle;
+type Sbs = SettingsButtonStyle;
 
 impl From<SettingsButtonStyle> for BS {
   fn from(style: SettingsButtonStyle) -> Self {
@@ -206,14 +206,14 @@ pub fn create_selection_menu(menu_id: &str, placeholder: &str, options: Vec<(Str
   // Always create a button for single option
   if options.len() == 1 {
     let (label, value) = options.into_iter().next().unwrap();
-    let button = CB::new(&format!("{}_{}", menu_id, value)).label(label).style(BS::Primary);
+    let button = CB::new(&format!("{}_{}", menu_id, value)).label(label.as_str()).style(BS::Primary);
 
     return Some(CAR::Buttons(vec![button]));
   }
 
   // Use buttons if below threshold, otherwise use select menu
   if options.len() < LIST_THRESHOLD {
-    let buttons: Vec<CB> = options.into_iter().map(|(label, value)| CB::new(&format!("{}_{}", menu_id, value)).label(label).style(BS::Secondary)).collect();
+    let buttons: Vec<CB> = options.into_iter().map(|(label, value)| CB::new(&format!("{}_{}", menu_id, value)).label(label.as_str()).style(BS::Secondary)).collect();
 
     Some(CAR::Buttons(buttons))
   } else {
@@ -244,8 +244,8 @@ impl AsSettingsMenu for crate::db::repo::UserSettings {
 
     SettingsMenu::new("qBot preferences")
       .description("Configure your queue preferences")
-      .color(self.join_alert_color as u32)
-      .row(SR::Buttons(vec![SB::edit("settings_timeout", &format!("Timeout: {}", timeout_text))]))
+      .color(self.join_alert_color)
+      .row(SR::Buttons(vec![SB::edit("settings_timeout", &format!("Timeout: {}", timeout_text.as_str()))]))
       .row(SR::Buttons(vec![SB::toggle("settings_toggle_dm", "DM alerts", self.pm_hot_alert)]))
       .row(SR::Buttons(vec![SB::toggle("settings_vc_auto_join", "VC auto-join", self.vc_auto_join), SB::toggle("settings_vc_auto_leave", "VC auto-leave", self.vc_auto_leave)]))
       .row(SR::Buttons(vec![SB::edit("settings_edit_alert", "Edit join alert"), SB::edit("settings_edit_leave_alert", "Edit leave alert")]))
@@ -286,9 +286,9 @@ impl AsSettingsMenu for ServerSettingsDisplay {
             .color(0x5865F2)
             .description("**Configuration Overview:**\n\n**Server-wide settings**\n• Roles (runner/admin permissions)\n• Team balance method\n• ELO & Rank linking\n\n**Rank management**\n• Add, remove & link ranks\n• Set default rank\n\n**Category management**\n• Queue channels & voice channels\n• Team channels & game settings")
             .row(SR::Buttons(vec![
-                SB::action("server_settings_roles",  "Server", SBS::Secondary),
-                SB::action("server_settings_ranks",  "Ranks", SBS::Secondary),
-                SB::action("server_settings_categories", "Categories", SBS::Secondary),
+                SB::action("server_settings_roles",  "Server", Sbs::Secondary),
+                SB::action("server_settings_ranks",  "Ranks", Sbs::Secondary),
+                SB::action("server_settings_categories", "Categories", Sbs::Secondary),
             ]))
             .footer("Select a category to manage:")
   }
@@ -350,9 +350,9 @@ impl AsSettingsMenu for ServerConfigDisplay {
 
     // Add action buttons
     menu = menu.row(SR::Buttons(vec![
-      SB::action("server_settings_edit_post_game_timeout", "Edit post-game timeout", SBS::Secondary),
-      SB::action("server_settings_create_roles", "Create roles", SBS::Primary),
-      SB::action("server_settings_roles_back", "Back", SBS::Secondary),
+      SB::action("server_settings_edit_post_game_timeout", "Edit post-game timeout", Sbs::Secondary),
+      SB::action("server_settings_create_roles", "Create roles", Sbs::Primary),
+      SB::action("server_settings_roles_back", "Back", Sbs::Secondary),
     ]));
 
     menu
@@ -453,7 +453,7 @@ impl AsSettingsMenu for RankConfigDisplay {
       let mut elo_categories: HashMap<u16, Vec<(String, RoleId)>> = HashMap::new();
 
       for (rank_name, elo, role_id) in &self.rank_roles {
-        elo_categories.entry(*elo).or_insert_with(Vec::new).push((rank_name.clone(), *role_id));
+        elo_categories.entry(*elo).or_default().push((rank_name.clone(), *role_id));
       }
 
       // Sort ELO values
@@ -547,9 +547,9 @@ impl AsSettingsMenu for RankConfigDisplay {
 
     // Add action buttons
     menu = menu.row(SR::Buttons(vec![
-      SB::action("server_settings_rank_add", "Add rank", SBS::Success),
-      SB::action("server_settings_rank_link", "Link ranks", SBS::Primary),
-      SB::action("server_settings_ranks_back", "Back", SBS::Secondary),
+      SB::action("server_settings_rank_add", "Add rank", Sbs::Success),
+      SB::action("server_settings_rank_link", "Link ranks", Sbs::Primary),
+      SB::action("server_settings_ranks_back", "Back", Sbs::Secondary),
     ]));
 
     menu
@@ -738,11 +738,11 @@ impl AsSettingsMenu for CategoryListDisplay {
     }
 
     // Add action buttons
-    let mut buttons = vec![SB::action("server_settings_create_category", "Create a category", SBS::Primary)];
+    let mut buttons = vec![SB::action("server_settings_create_category", "Create a category", Sbs::Primary)];
     if !self.categories.is_empty() {
-      buttons.push(SB::action("server_settings_remove_category", "Remove a category", SBS::Danger));
+      buttons.push(SB::action("server_settings_remove_category", "Remove a category", Sbs::Danger));
     }
-    buttons.push(SB::action("server_settings_categories_back", "Back", SBS::Secondary));
+    buttons.push(SB::action("server_settings_categories_back", "Back", Sbs::Secondary));
     menu = menu.row(SR::Buttons(buttons));
 
     menu
@@ -831,15 +831,15 @@ impl AsSettingsMenu for CategorySettingsDisplay {
       .row(SR::Buttons(vec![SB::category_edit("edit_name", "Name", gid), SB::category_edit("edit_quota", "Quota", gid), SB::category_edit("edit_timeout", "Confirm expiry", gid)]))
       .row(SR::Buttons(vec![
         SB::category_edit("edit_connect", "Connect info", gid),
-        SB::category_action("formats", "Formats", SBS::Primary, gid),
-        SB::category_action("link_message", "Re-link dashboard", SBS::Success, gid),
+        SB::category_action("formats", "Formats", Sbs::Primary, gid),
+        SB::category_action("link_message", "Re-link dashboard", Sbs::Success, gid),
       ]))
       .row(SR::Buttons(vec![
         SB::category_edit("edit_vc_create", "VC create", gid),
         SB::category_edit("edit_vc_destroy", "VC destroy", gid),
         SB::category_edit("edit_vc_keepmin", "Keep min VCs", gid),
       ]))
-      .row(SR::Buttons(vec![SB::category_action("elo_gate", "ELO gate", SBS::Primary, gid), SB::action("server_settings_categories", "Back", SBS::Secondary)]))
+      .row(SR::Buttons(vec![SB::category_action("elo_gate", "ELO gate", Sbs::Primary, gid), SB::action("server_settings_categories", "Back", Sbs::Secondary)]))
   }
 }
 
