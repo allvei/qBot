@@ -78,7 +78,7 @@ pub async fn build_join_alert_embed(ctx: &Context, user_id: UI, guild_id: Option
       Some(name) => format!("{display_name} joined the {name} queue"),
       None => format!("{display_name} joined the queue"),
     })
-    .color(settings.join_alert_color as u32);
+    .color(settings.join_alert_color);
 
   // Only add description if there is one
   if let Some(desc) = description {
@@ -142,7 +142,7 @@ pub async fn build_leave_alert_embed(ctx: &Context, user_id: UI, guild_id: Optio
       Some(name) => format!("{display_name} left the {name} queue"),
       None => format!("{display_name} left the queue"),
     })
-    .color(settings.join_alert_color as u32);
+    .color(settings.join_alert_color);
 
   // Only add description if there is one
   if let Some(desc) = description {

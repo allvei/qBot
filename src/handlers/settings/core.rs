@@ -45,7 +45,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
 
       let cancel_button = vec![CB::new("settings_timeout:cancel").label("Cancel").style(BS::Danger)];
 
-      let embed = CE::new().title("Set timeout length").description("Choose how long before you're automatically removed from the queue:").color(settings.join_alert_color as u32);
+      let embed = CE::new().title("Set timeout length").description("Choose how long before you're automatically removed from the queue:").color(settings.join_alert_color);
 
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(time_buttons), CAR::Buttons(cancel_button)]));
 

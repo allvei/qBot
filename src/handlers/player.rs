@@ -205,7 +205,7 @@ pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<V
 }
 
 async fn deny_command(cc: &CmC<'_>, role: &Role) -> Result<()> {
-  let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
+  let user_tag = crate::log::get_user_tag(cc.ctx, cc.intax.user.id, &cc.db).await;
   info!("[{}] User {} does not have {} role", cc.guild_name(), user_tag, role.name());
   cc.reply_ephemeral(&format!("This command is reserved for {}s", role.name().to_lowercase())).await?;
   Ok(())
@@ -220,7 +220,7 @@ pub async fn check_role(cc: &CmC<'_>, role: &Role) -> Result<bool> {
     let member = match get_member_cached(cc.ctx, guild_id, cc.intax.user.id, &cc.db).await {
       Some(m) => m,
       None => {
-        let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
+        let user_tag = crate::log::get_user_tag(cc.ctx, cc.intax.user.id, &cc.db).await;
         warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), user_tag);
         return Ok(false);
       }
@@ -271,7 +271,7 @@ pub async fn check_component_role(cc: &CC<'_>, role: &Role) -> Result<bool> {
     let member = match get_member_cached(cc.ctx, guild_id, cc.component.user.id, &cc.db).await {
       Some(m) => m,
       None => {
-        let user_tag = crate::log::get_user_tag(&cc.ctx, cc.component.user.id, &cc.db).await;
+        let user_tag = crate::log::get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
         warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), user_tag);
         return Ok(false);
       }
@@ -288,7 +288,7 @@ pub async fn check_component_role(cc: &CC<'_>, role: &Role) -> Result<bool> {
         .unwrap_or(false);
 
       if has_discord_perms {
-        let user_tag = crate::log::get_user_tag(&cc.ctx, cc.component.user.id, &cc.db).await;
+        let user_tag = crate::log::get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
         info!("User {} has Discord admin/manage permissions", user_tag);
         return Ok(true);
       }

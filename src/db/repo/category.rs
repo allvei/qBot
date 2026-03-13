@@ -170,7 +170,7 @@ impl CategoryRepository {
         let connect_info = result.try_get::<Option<String>, _>("connect_info").ok().flatten();
         let team_balance_method_str = result.try_get::<Option<String>, _>("team_balance_method").ok().flatten();
         let team_balance_method = team_balance_method_str
-            .map(|s| TeamBalanceMethod::from_str(&s))
+            .map(|s| TeamBalanceMethod::parse(&s))
             .unwrap_or_default();
 
         // Load teams from teams table; fallback to legacy red/blu columns only if they hold real IDs
@@ -203,11 +203,11 @@ impl CategoryRepository {
             use crate::models::{TeamVcCreatePolicy, TeamVcDestroyPolicy, TeamVcSettings};
             let create_policy = result.try_get::<String, _>("team_vc_create_policy")
                 .ok()
-                .map(|s| TeamVcCreatePolicy::from_str(&s))
+                .map(|s| TeamVcCreatePolicy::parse(&s))
                 .unwrap_or_default();
             let destroy_policy = result.try_get::<String, _>("team_vc_destroy_policy")
                 .ok()
-                .map(|s| TeamVcDestroyPolicy::from_str(&s))
+                .map(|s| TeamVcDestroyPolicy::parse(&s))
                 .unwrap_or_default();
             let keep_minimum = result.try_get::<i64, _>("team_vc_keep_minimum").unwrap_or(1) != 0;
             category.team_vc_settings = TeamVcSettings {

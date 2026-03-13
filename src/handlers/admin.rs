@@ -1299,7 +1299,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
     }
   };
 
-  let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+  let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
   info!("DEBUG: User {} - Guild ELO: {}, Rank: {}, Games: {}, Wins: {}", user_tag, guild_elo.elo, guild_elo.rank.name, guild_elo.games, guild_elo.wins);
 
   // Get user info - if no user provided, we can't continue
@@ -1427,13 +1427,13 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     }
   };
 
-  let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+  let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
   info!("[{}] Finding session for user {}", guild_name, user_tag);
   // Find the session containing the player
   let session = match category.get_user_sesh(user_id).await {
     Ok(s) => s,
     Err(e) => {
-      let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+      let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
       warn!("[{}] User {} not found in any session: {}", guild_name, user_tag, e);
       let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in any queue.")).color(RED);
 
@@ -1446,7 +1446,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
   let player_idx = match session.pool.iter().position(|p| p.player.user_id == user_id) {
     Some(idx) => idx,
     None => {
-      let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+      let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
       error!("[{}] Player {} not found in pool despite being in session", guild_name, user_tag);
       let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in the queue pool.")).color(RED);
 
@@ -1503,13 +1503,13 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     }
   };
 
-  let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+  let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
   info!("[{}] Finding session for user {}", guild_name, user_tag);
   // Find the session containing the player
   let session = match category.get_user_sesh(user_id).await {
     Ok(s) => s,
     Err(e) => {
-      let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+      let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
       warn!("[{}] User {} not found in any session: {}", guild_name, user_tag, e);
       let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in any queue.")).color(RED);
 
@@ -1522,7 +1522,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
   let player_idx = match session.pool.iter().position(|p| p.player.user_id == user_id) {
     Some(idx) => idx,
     None => {
-      let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+      let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
       error!("[{}] Player {} not found in pool despite being in session", guild_name, user_tag);
       let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in the queue pool.")).color(RED);
 

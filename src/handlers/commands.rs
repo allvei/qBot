@@ -18,7 +18,7 @@ pub async fn cmd_prefs(cc: &CC<'_>) -> Result<()> {
   // Send ephemeral message in the current channel
   cc.intax.create_response(&cc.ctx.http, Ephemeral::send_prefs(&prefs)).await?;
 
-  let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
+  let user_tag = crate::log::get_user_tag(cc.ctx, cc.intax.user.id, &cc.db).await;
   info!("Sent settings menu to user {} (ephemeral)", user_tag);
   Ok(())
 }
@@ -39,7 +39,7 @@ pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
   // Send ephemeral message in the current channel
   cc.intax.create_response(&cc.ctx.http, Ephemeral::send_config(&settings, &guild_name)).await?;
 
-  let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
+  let user_tag = crate::log::get_user_tag(cc.ctx, cc.intax.user.id, &cc.db).await;
   info!("Sent server settings menu to {} (ephemeral)", user_tag);
   Ok(())
 }
@@ -152,7 +152,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
 
   // First, try to get player's rank from Discord roles (source of truth)
   use crate::handlers::player::get_user_rank_from_discord_roles;
-  let discord_rank = get_user_rank_from_discord_roles(&cc.ctx, &cc.db, guild_id, target_user).await;
+  let discord_rank = get_user_rank_from_discord_roles(cc.ctx, &cc.db, guild_id, target_user).await;
 
   // Get guild ELO from database (this has the actual ELO, games, wins)
   let mut guild_elo: crate::db::repo::elo::GuildElo = match cc.db.elo.get(target_user, guild_id, &cc.db).await {
@@ -192,6 +192,6 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
   let response = CIR::Message(CIRM::new().embed(embed).components(components).ephemeral(true));
   cc.intax.create_response(&cc.ctx.http, response).await?;
 
-  crate::log::log_command_usage(&cc.ctx, &cc.intax, &cc.db, "edit", Some(target_user), None).await;
+  crate::log::log_command_usage(cc.ctx, cc.intax, &cc.db, "edit", Some(target_user), None).await;
   Ok(())
 }

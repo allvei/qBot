@@ -11,7 +11,7 @@ use tracing::{info, warn, error};
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
 use crate::Database;
-use crate::handlers::settings::utils::{send_nav_response, send_nav_response_modal, send_component_error_response, send_modal_error_response, create_input_sh, create_input_sh_cap, create_short_input_opt, create_value_input_sh, create_value_input_sh_cap, create_paragraph_input_with_value, get_role_name_with_fallback};
+use crate::handlers::settings::utils::{send_nav_response, send_nav_response_modal, send_component_error_response, send_modal_error_response, create_input_sh, create_input_sh_cap, create_value_input_sh, create_value_input_sh_cap, create_paragraph_input_with_value, get_role_name_with_fallback};
 use crate::handlers::settings::core::{parse_cid, parse_opt_cid, parse_mid};
 use crate::handlers::settings::menu::{SERVER_CONFIG_TOGGLES, RANK_CONFIG_TOGGLES, RankRoleConfigDisplay, CategoryListDisplay};
 use crate::handlers::settings::{CategorySettings, build_category_settings_buttons, build_category_settings_embed, build_server_settings_buttons, build_server_settings_embed, nav_category_list, nav_rank_config, nav_role_config, nav_server_settings};
@@ -402,18 +402,14 @@ pub async fn handle_server_settings_button(
                   }
 
                   // Red team voice channel
-                  if red_channel.is_none() && channel.kind == ChannelType::Voice {
-                    if name_lower == "red" || name_lower == "red team" || name_lower == "team red" {
+                  if red_channel.is_none() && channel.kind == ChannelType::Voice && (name_lower == "red" || name_lower == "red team" || name_lower == "team red") {
                       red_channel = Some(*channel_id);
                     }
-                  }
 
                   // Blue team voice channel
-                  if blue_channel.is_none() && channel.kind == ChannelType::Voice {
-                    if name_lower == "blue" || name_lower == "blue team" || name_lower == "team blue" || name_lower == "blu" {
+                  if blue_channel.is_none() && channel.kind == ChannelType::Voice && (name_lower == "blue" || name_lower == "blue team" || name_lower == "team blue" || name_lower == "blu") {
                       blue_channel = Some(*channel_id);
                     }
-                  }
                 }
               }
 
@@ -466,10 +462,10 @@ pub async fn handle_server_settings_button(
               if available_channels.is_empty() {
                 let response = CIR::Message(
                   CIRM::new()
-                    .content(format!(
+                    .content(
                       "No suitable channels found in this category.\n\n\
                                             Please create the required channels first."
-                    ))
+                    )
                     .ephemeral(true),
                 );
                 interaction.create_response(&ctx.http, response).await?;
@@ -735,7 +731,7 @@ pub async fn handle_server_settings_button(
           let display = CategoryListDisplay { guild_name: guild_name.clone(), categories };
 
           let response = CIR::UpdateMessage(
-            CIRM::new().content(format!("Successfully linked category to existing dashboard!")).embed(display.build_embed()).components(display.build_components()),
+            CIRM::new().content("Successfully linked category to existing dashboard!").embed(display.build_embed()).components(display.build_components()),
           );
           interaction.create_response(&ctx.http, response).await?;
         }
@@ -820,7 +816,7 @@ pub async fn handle_server_settings_button(
               let display = CategoryListDisplay { guild_name: guild_name.clone(), categories };
 
               let response =
-                CIR::UpdateMessage(CIRM::new().content(format!("Successfully linked category from category!")).embed(display.build_embed()).components(display.build_components()));
+                CIR::UpdateMessage(CIRM::new().content("Successfully linked category from category!").embed(display.build_embed()).components(display.build_components()));
               interaction.create_response(&ctx.http, response).await?;
             }
             Err(e) => {
@@ -884,14 +880,15 @@ pub async fn handle_server_settings_button(
             }
 
             // Check if all channels are now selected
-            if dashboard_channel.is_some() && queue_channel.is_some() && ping_channel.is_some() && queue_vc_channel.is_some() && red_channel.is_some() && blue_channel.is_some() {
+            if let (Some(dashboard_chan), Some(queue_chan), Some(ping_chan), Some(queue_vc_chan), Some(red_chan), Some(blue_chan)) = 
+              (dashboard_channel, queue_channel, ping_channel, queue_vc_channel, red_channel, blue_channel) {
               // All channels selected - create the category
               let guild_name = guild_name(ctx, guild_id);
 
               use crate::models::{Category, Channels, TeamChannel};
 
               // Derive category from dashboard channel's parent
-              let category_id = ctx.cache.channel(dashboard_channel.unwrap()).and_then(|ch| ch.parent_id).unwrap_or(CI::new(1));
+              let category_id = ctx.cache.channel(dashboard_chan).and_then(|ch| ch.parent_id).unwrap_or(CI::new(1));
 
               let mut temp_category = Category::new(
                 guild_id,
@@ -903,17 +900,17 @@ pub async fn handle_server_settings_button(
                 MI::new(1),
                 Channels {
                   category: category_id,
-                  queue_chat: queue_channel.unwrap(),
-                  queue_vc: queue_vc_channel.unwrap(),
-                  ping_channel: ping_channel.unwrap(),
-                  teams: vec![TeamChannel { red_vc: red_channel.unwrap(), blu_vc: blue_channel.unwrap(), set_index: 1, session_id: None }],
-                  dashboard: dashboard_channel.unwrap(),
+                  queue_chat: queue_chan,
+                  queue_vc: queue_vc_chan,
+                  ping_channel: ping_chan,
+                  teams: vec![TeamChannel { red_vc: red_chan, blu_vc: blue_chan, set_index: 1, session_id: None }],
+                  dashboard: dashboard_chan,
                 },
                 vec![],
               );
 
               // Publish the dashboard
-              match temp_category.dash_publish(ctx, dashboard_channel.unwrap(), db, guild_id).await {
+              match temp_category.dash_publish(ctx, dashboard_chan, db, guild_id).await {
                 Ok(_) => {
                   let dashboard_msg_id = temp_category.dashboard_msg.get();
                   info!("[{}] Dashboard message created with ID {} (linked category)", guild_name, dashboard_msg_id);
@@ -921,10 +918,10 @@ pub async fn handle_server_settings_button(
                   // Create the category in the database
                   let category_config = crate::db::repo::category::CategoryConfig {
                     category_id: category_id.get(),
-                    dashboard_channel_id: dashboard_channel.unwrap().get(),
-                    chat_channel_id: queue_channel.unwrap().get(),
-                    queue_vc_id: queue_vc_channel.unwrap().get(),
-                    ping_channel_id: ping_channel.unwrap().get(),
+                    dashboard_channel_id: dashboard_chan.get(),
+                    chat_channel_id: queue_chan.get(),
+                    queue_vc_id: queue_vc_chan.get(),
+                    ping_channel_id: ping_chan.get(),
                     quota: crate::DEFAULT_QUOTA,
                   };
 
@@ -1131,7 +1128,7 @@ pub async fn handle_server_settings_button(
           let display = CategoryListDisplay { guild_name: guild_name.clone(), categories };
 
           let response = CIR::UpdateMessage(
-            CIRM::new().content(format!("Removed duplicate category and linked to existing dashboard!")).embed(display.build_embed()).components(display.build_components()),
+            CIRM::new().content("Removed duplicate category and linked to existing dashboard!").embed(display.build_embed()).components(display.build_components()),
           );
           interaction.create_response(&ctx.http, response).await?;
         }
@@ -1242,7 +1239,7 @@ pub async fn handle_server_settings_button(
               let display = CategoryListDisplay { guild_name: guild_name.clone(), categories };
 
               let response = CIR::UpdateMessage(
-                CIRM::new().content(format!("Removed duplicate category and created new dashboard!")).embed(display.build_embed()).components(display.build_components()),
+                CIRM::new().content("Removed duplicate category and created new dashboard!").embed(display.build_embed()).components(display.build_components()),
               );
               interaction.create_response(&ctx.http, response).await?;
             }
@@ -1639,7 +1636,7 @@ pub async fn handle_server_settings_button(
             let embed = build_category_settings_embed(&settings);
             let buttons = build_category_settings_buttons(settings.category_id);
 
-            let response = CIR::UpdateMessage(CIRM::new().content(format!("Successfully linked dashboard message!")).embed(embed).components(buttons));
+            let response = CIR::UpdateMessage(CIRM::new().content("Successfully linked dashboard message!").embed(embed).components(buttons));
             interaction.create_response(&ctx.http, response).await?;
           }
         }
@@ -2148,7 +2145,7 @@ pub async fn handle_server_settings_balance_select(
     _ => return Err(anyhow::anyhow!("Expected string select interaction")),
   };
 
-  let method = crate::models::TeamBalanceMethod::from_str(&method_str);
+  let method = crate::models::TeamBalanceMethod::parse(&method_str);
 
   // Update all categories in-memory and persist to database
   let mut manager_lock = manager.lock().await;

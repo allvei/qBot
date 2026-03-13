@@ -186,7 +186,7 @@ impl UserRepository {
         Ok(Self::get_player(result))
     }
 
-    /// 
+    /// Extract player data from a database row
     fn get_player(result: sqlx::sqlite::SqliteRow) -> Player {
         let user_id: i64          = result.get("user_id");
         let steam_id: Option<i64> = result.try_get("steam_id").ok();

@@ -711,7 +711,7 @@ pub async fn handle_category_link_msg_modal(
   let dashboard_msg_id = if message_input.contains("discord.com/channels/") {
     // Extract message ID from Discord link
     // Format: https://discord.com/channels/{guild_id}/{channel_id}/{message_id}
-    message_input.split('/').last().and_then(|s| s.parse::<u64>().ok()).ok_or_else(|| anyhow::anyhow!("Invalid Discord message link format"))?
+    message_input.split('/').next_back().and_then(|s| s.parse::<u64>().ok()).ok_or_else(|| anyhow::anyhow!("Invalid Discord message link format"))?
   } else {
     // Parse as direct message ID
     message_input.trim().parse::<u64>().map_err(|_| anyhow::anyhow!("Invalid message ID: must be a number or Discord message link"))?
