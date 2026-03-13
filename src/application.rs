@@ -66,7 +66,7 @@ impl CmdOp for CC {
 
 // Helper functions that were in main.rs
 async fn get_server_with_error<'a>(manager: &'a mut Manager, guild_id: GuildId, _itx: &CommandInteraction, _ctx: &Context) -> Result<&'a mut Server, String> {
-  manager.get_server(guild_id).map_err(|_| format!("Server not found. Please run `/setup` first."))
+  manager.get_server(guild_id).map_err(|_| "Server not found. Please run `/setup` first.".to_string())
 }
 
 async fn extract_user_option(options: &[CommandDataOption], name: &str) -> Option<UserId> {
@@ -1199,9 +1199,6 @@ impl Handler {
         sesh.idle();
       }
       
-      // Drop sesh borrow before cloning format
-      drop(sesh);
-
       // Clone format after removal so log gets updated pool count
       let format = category.formats[0].clone();
 
@@ -1248,13 +1245,11 @@ impl Handler {
     let mut red_score = String::new();
     
     for row in &interaction.data.components {
-      if let Some(component) = row.components.first() {
-        if let serenity::all::ActionRowComponent::InputText(input) = component {
-          match input.custom_id.as_str() {
-            "blu_score" => blu_score = input.value.clone().unwrap_or_default(),
-            "red_score" => red_score = input.value.clone().unwrap_or_default(),
-            _ => {}
-          }
+      if let Some(serenity::all::ActionRowComponent::InputText(input)) = row.components.first() {
+        match input.custom_id.as_str() {
+          "blu_score" => blu_score = input.value.clone().unwrap_or_default(),
+          "red_score" => red_score = input.value.clone().unwrap_or_default(),
+          _ => {}
         }
       }
     }
@@ -1351,11 +1346,11 @@ impl Handler {
             if field.name.contains("🔵 BLU") {
               // Extract ELO from existing header (format: "‹**elo**› 🔵 BLU")
               let elo_part = field.name.split("›").next().unwrap_or("‹**0**");
-              field.name = format!("{} - **{}**", field.name.replace(&format!("{}", elo_part), &format!("{}", elo_part)).trim(), blu_score_num);
+              field.name = format!("{} - **{}**", field.name.trim(), blu_score_num);
             } else if field.name.contains("🔴 RED") {
               // Extract ELO from existing header
               let elo_part = field.name.split("›").next().unwrap_or("‹**0**");
-              field.name = format!("{} - **{}**", field.name.replace(&format!("{}", elo_part), &format!("{}", elo_part)).trim(), red_score_num);
+              field.name = format!("{} - **{}**", field.name.trim(), red_score_num);
             }
           }
         }

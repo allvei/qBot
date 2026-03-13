@@ -130,7 +130,10 @@ pub fn schedule_alert(
       let mut limiter = RATE_LIMITER.lock().await;
       let timestamps = limiter.entry(rate_key).or_insert_with(VecDeque::new);
       let cutoff = Instant::now() - std::time::Duration::from_secs(WINDOW_SECS);
-      while timestamps.front().map_or(false, |t| *t < cutoff) {
+      while let Some(front) = timestamps.front() {
+        if *front >= cutoff {
+          break;
+        }
         timestamps.pop_front();
       }
       if timestamps.len() >= MAX_ALERTS_PER_WINDOW {

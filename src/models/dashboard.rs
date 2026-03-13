@@ -1201,6 +1201,7 @@ impl Category {
   /// Processes all button interactions in a modular way
   ///
   /// * `cc` - The component context with button information
+  ///
   /// Parse format ID from button custom_id suffix (format: action:sg_id).
   /// Returns 0 if no suffix or invalid.
   fn parse_fmt_id(parts: &[&str]) -> u8 {

@@ -121,7 +121,7 @@ impl TeamBalanceMethod {
     }
   }
 
-  pub fn from_str(s: &str) -> Self {
+  pub fn parse(s: &str) -> Self {
     match s.to_lowercase().as_str() {
       "average" => Self::Average,
       _ => Self::Bch,
@@ -156,7 +156,7 @@ impl TeamVcCreatePolicy {
     }
   }
 
-  pub fn from_str(s: &str) -> Self {
+  pub fn parse(s: &str) -> Self {
     match s {
       "on_first_join" => Self::OnFirstJoin,
       "on_hot" => Self::OnHot,
@@ -201,7 +201,7 @@ impl TeamVcDestroyPolicy {
     }
   }
 
-  pub fn from_str(s: &str) -> Self {
+  pub fn parse(s: &str) -> Self {
     match s {
       "on_last_leave" => Self::OnLastLeave,
       "after_pull" => Self::AfterPull,
@@ -450,7 +450,7 @@ impl Category {
     }
 
     // Static channel IDs that should never be deleted (excludes team VCs)
-    let static_ids = vec![self.channels.category, self.channels.queue_chat, self.channels.queue_vc, self.channels.dashboard];
+    let static_ids = [self.channels.category, self.channels.queue_chat, self.channels.queue_vc, self.channels.dashboard];
 
     let guild = match ctx.cache.guild(self.guild_id) {
       Some(g) => g.clone(),
@@ -489,7 +489,7 @@ impl Category {
     }
 
     // Only delete voice channels that are tracked in the database as team channels
-    for (_id, channel) in &guild.channels {
+    for channel in guild.channels.values() {
       if channel.kind != ChannelType::Voice {
         continue;
       }
@@ -1516,7 +1516,7 @@ impl Category {
       let original_blu = blu_indices.clone();
 
       // For each ELO category with multiple players, shuffle them across teams
-      for (_elo, indices) in &mut elo_categories {
+      for indices in elo_categories.values_mut() {
         if indices.len() > 1 {
           // Count how many of this ELO are on each team (using ORIGINAL assignments)
           let red_count = indices.iter().filter(|&&i| original_red.contains(&i)).count();
