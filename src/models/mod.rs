@@ -10,6 +10,7 @@ pub mod manager;
 pub mod server;
 pub mod session;
 pub mod setup_state;
+pub mod timeout_scheduler;
 pub mod types;
 
 pub use buttons::*;
@@ -22,6 +23,7 @@ pub use manager::*;
 pub use server::*;
 pub use session::*;
 pub use setup_state::*;
+pub use timeout_scheduler::*;
 pub use types::*;
 
 // TypeMapKey for DashboardUpdateQueue (needed globally across crate)
