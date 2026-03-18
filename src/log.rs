@@ -2,6 +2,70 @@ use serenity::all::{CommandInteraction, Context, UserId as UI};
 use sqlx::Row;
 use tracing::info;
 
+// ANSI color codes for terminal output
+pub mod ansi {
+  pub const RESET: &str = "\x1b[0m";
+  pub const BOLD: &str = "\x1b[1m";
+  pub const DIM: &str = "\x1b[2m";
+  
+  // Colors
+  pub const RED: &str = "\x1b[31m";
+  pub const GREEN: &str = "\x1b[32m";
+  pub const YELLOW: &str = "\x1b[33m";
+  pub const BLUE: &str = "\x1b[34m";
+  pub const MAGENTA: &str = "\x1b[35m";
+  pub const CYAN: &str = "\x1b[36m";
+  pub const WHITE: &str = "\x1b[37m";
+  
+  // Bright colors
+  pub const BRIGHT_RED: &str = "\x1b[91m";
+  pub const BRIGHT_GREEN: &str = "\x1b[92m";
+  pub const BRIGHT_YELLOW: &str = "\x1b[93m";
+  pub const BRIGHT_BLUE: &str = "\x1b[94m";
+  pub const BRIGHT_MAGENTA: &str = "\x1b[95m";
+  pub const BRIGHT_CYAN: &str = "\x1b[96m";
+  pub const BRIGHT_WHITE: &str = "\x1b[97m";
+  
+  // Background colors
+  pub const BG_RED: &str = "\x1b[41m";
+  pub const BG_GREEN: &str = "\x1b[42m";
+  pub const BG_YELLOW: &str = "\x1b[43m";
+  pub const BG_BLUE: &str = "\x1b[44m";
+}
+
+/// Colored info log macro - supports ANSI colors in the message
+/// Usage: cinfo!("{}{} joined the queue{}", ansi::GREEN, player_name, ansi::RESET);
+#[macro_export]
+macro_rules! cinfo {
+  ($($arg:tt)*) => {
+    tracing::info!("{}", format!($($arg)*))
+  };
+}
+
+/// Colored warn log macro
+#[macro_export]
+macro_rules! cwarn {
+  ($($arg:tt)*) => {
+    tracing::warn!("{}", format!($($arg)*))
+  };
+}
+
+/// Colored error log macro
+#[macro_export]
+macro_rules! cerror {
+  ($($arg:tt)*) => {
+    tracing::error!("{}", format!($($arg)*))
+  };
+}
+
+/// Colored debug log macro
+#[macro_export]
+macro_rules! cdebug {
+  ($($arg:tt)*) => {
+    tracing::debug!("{}", format!($($arg)*))
+  };
+}
+
 use crate::models::constants::guild_name;
 
 /// Get user tag for logging purposes - tries database first, then Discord API
@@ -49,18 +113,11 @@ pub async fn log_queue_toggle(
   let fmt_nm: &str = fmt_info.get("format_name");
 
   // Get pool size and position from format's sessions
-  // Adjust count to show the state AFTER the action
+  // For joins: log is called AFTER add, so pool already contains the player
+  // For leaves: log is called AFTER remove, so pool no longer contains the player
   let pool_size =
     format.sessions.iter().find(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot)
-      .map(|s| {
-        let current = s.pool.len();
-        let adjusted_count = if action == "joined" { 
-          current + 1  // After joining, count increases
-        } else { 
-          current.saturating_sub(1)  // After leaving, count decreases
-        };
-        (adjusted_count, format.quota as usize)
-      });
+      .map(|s| (s.pool.len(), format.quota as usize));
 
   // Calculate position based on actual player position in session
   let position = if action == "joined" {

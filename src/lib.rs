@@ -12,7 +12,7 @@ pub use application::*;
 pub use db::*;
 pub use handlers::{admin, commands, player};
 pub use log::*;
-pub use log::{log_prefix_category, log_prefix_format};
+pub use log::{ansi, log_prefix_category, log_prefix_format};
 pub use models::constants::guild_name;
 pub use models::*;
 pub use shutdown::*;
