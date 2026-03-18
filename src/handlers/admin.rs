@@ -1463,6 +1463,9 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
 
   let is_hot = session.is_hot();
 
+  // Validate VC status to sync in_queue_vc flags with actual Discord state
+  category.validate_vc_status(cc.ctx, guild_id).await;
+
   // If session is hot, regenerate teams with new order
   // Note: generate_teams() already handles dashboard update
   if is_hot {
@@ -1538,6 +1541,9 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
   session.pool.push(player);
 
   let is_hot = session.is_hot();
+
+  // Validate VC status to sync in_queue_vc flags with actual Discord state
+  category.validate_vc_status(cc.ctx, guild_id).await;
 
   // If session is hot, regenerate teams with new order
   if is_hot {
@@ -1686,7 +1692,8 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
           let count = session.pool.len();
           if count > 0 {
             total_players += count;
-            session.pool.clear();
+            // Use idle() to properly reset session state (clears pool, team assignments, timestamps)
+            session.idle();
             cleared_formats.push((fmt_idx, sg.name.clone()));
           }
         }

@@ -176,7 +176,18 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     guild_elo.rank = discord_rank;
   }
 
-  let username = cc.ctx.http.get_user(target_user).await.map(|u| u.name.clone()).unwrap_or_else(|_| target_user.to_string());
+  // Use cache for username (much faster than API call)
+  let username = cc.ctx.cache.user(target_user)
+    .map(|u| u.name.clone())
+    .or_else(|| {
+      // Try getting from guild member cache
+      cc.intax.guild_id.and_then(|gid| {
+        cc.ctx.cache.guild(gid).and_then(|g| {
+          g.members.get(&target_user).map(|m| m.user.name.clone())
+        })
+      })
+    })
+    .unwrap_or_else(|| target_user.to_string());
 
   let settings = PlayerSettings {
     user_id: target_user,
