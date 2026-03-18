@@ -911,8 +911,7 @@ impl DatabaseMigrations {
                     started_at      INTEGER NOT NULL,
                     ended_at        INTEGER NOT NULL,
                     duration_secs   INTEGER NOT NULL,
-                    red_score       INTEGER,
-                    blu_score       INTEGER
+                    result          TEXT
                 )",
       )
       .execute(&self.pool)
@@ -921,6 +920,24 @@ impl DatabaseMigrations {
     Ok(())
   }
   async fn verify_matches(&self) -> Result<()> {
+    // Migrate from red_score/blu_score to result column
+    if !self.check_column("matches", "result").await? {
+      // Add result column
+      sqlx::query("ALTER TABLE matches ADD COLUMN result TEXT").execute(&self.pool).await?;
+      
+      // Convert existing scores to result
+      if self.check_column("matches", "red_score").await? {
+        sqlx::query(
+          "UPDATE matches SET result = CASE 
+            WHEN red_score > blu_score THEN 'red'
+            WHEN blu_score > red_score THEN 'blu'
+            WHEN red_score IS NOT NULL AND blu_score IS NOT NULL THEN 'draw'
+            ELSE NULL
+          END"
+        ).execute(&self.pool).await?;
+      }
+    }
+    
     let required_columns = vec![
       "id",
       "guild_id",
@@ -930,8 +947,7 @@ impl DatabaseMigrations {
       "started_at",
       "ended_at",
       "duration_secs",
-      "red_score",
-      "blu_score",
+      "result",
     ];
     self.verify_columns("matches", &required_columns).await?;
     Ok(())

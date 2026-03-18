@@ -61,11 +61,10 @@ impl MatchRepo {
     Ok(())
   }
 
-  /// Update match scores
-  pub async fn update_match_scores(&self, match_id: i64, red_score: u8, blu_score: u8) -> Result<()> {
-    sqlx::query("UPDATE matches SET red_score = ?, blu_score = ? WHERE id = ?")
-      .bind(red_score as i64)
-      .bind(blu_score as i64)
+  /// Update match result ('red', 'blu', or 'draw')
+  pub async fn update_match_result(&self, match_id: i64, result: &str) -> Result<()> {
+    sqlx::query("UPDATE matches SET result = ? WHERE id = ?")
+      .bind(result)
       .bind(match_id)
       .execute(&self.pool)
       .await?;
@@ -92,7 +91,7 @@ impl MatchRepo {
   pub async fn get_player_matches(&self, guild_id: GI, user_id: UI, limit: i64) -> Result<Vec<MatchRecord>> {
     let matches = sqlx::query_as::<_, MatchRecord>(
       "SELECT m.id, m.guild_id, m.category_id, m.format_id, m.session_id, 
-              m.started_at, m.ended_at, m.duration_secs, m.red_score, m.blu_score,
+              m.started_at, m.ended_at, m.duration_secs, m.result,
               mp.team, mp.elo_before, mp.elo_after
        FROM matches m
        JOIN match_players mp ON m.id = mp.match_id
@@ -125,9 +124,8 @@ impl MatchRepo {
       "SELECT COUNT(*) FROM match_players mp
        JOIN matches m ON mp.match_id = m.id
        WHERE m.guild_id = ? AND mp.user_id = ?
-       AND ((mp.team = 'red' AND m.red_score > m.blu_score)
-         OR (mp.team = 'blu' AND m.blu_score > m.red_score))
-       AND m.red_score IS NOT NULL AND m.blu_score IS NOT NULL",
+       AND m.result = mp.team
+       AND m.result IS NOT NULL",
     )
     .bind(guild_id.get() as i64)
     .bind(user_id.get() as i64)
@@ -159,8 +157,7 @@ pub struct MatchRecord {
   pub started_at: i64,
   pub ended_at: i64,
   pub duration_secs: i64,
-  pub red_score: Option<i64>,
-  pub blu_score: Option<i64>,
+  pub result: Option<String>,
   pub team: String,
   pub elo_before: i64,
   pub elo_after: Option<i64>,
