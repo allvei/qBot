@@ -10,7 +10,7 @@ use tokio::sync::{Mutex, oneshot};
 use tracing::{info, warn};
 
 use crate::{
-    log_prefix_category, models::{DashboardUpdateQueue, Manager}, util::{Style, timestamp_now}
+    log_prefix_category, models::{DashboardUpdateQueue, Manager}, util::{Style, timestamp_now}, Database
 };
 
 /// Handles graceful shutdown procedures
@@ -19,6 +19,7 @@ pub struct ShutdownHandler {
     dashboard_queue: Arc<Mutex<Option<DashboardUpdateQueue>>>,
     cache: Arc<Cache>,
     http: Arc<Http>,
+    db: Arc<Database>,
 }
 
 impl ShutdownHandler {
@@ -27,12 +28,14 @@ impl ShutdownHandler {
         dashboard_queue: Arc<Mutex<Option<DashboardUpdateQueue>>>,
         cache: Arc<Cache>,
         http: Arc<Http>,
+        db: Arc<Database>,
     ) -> Self {
         Self {
             manager,
             dashboard_queue,
             cache,
             http,
+            db,
         }
     }
     
@@ -97,8 +100,13 @@ impl ShutdownHandler {
     /// Clean up empty team voice channels
     async fn cleanup_team_vcs(&self) {
         if let Ok(mut manager_lock) = self.manager.try_lock() {
+            let mut deleted_count = 0;
+            
             for server in &mut manager_lock.servers {
                 let guild_id = server.guild_id;
+                let guild_name = self.cache.guild(guild_id)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string());
                 
                 // Collect voice channel members for this guild
                 let vc_members: std::collections::HashSet<u64> =
@@ -109,20 +117,31 @@ impl ShutdownHandler {
                         .unwrap_or_default();
                 
                 for category in &mut server.categories {
+                    let category_name = category.display_name();
                     let mut kept = Vec::new();
+                    
                     for tc in &category.channels.teams {
                         let red_empty = !vc_members.contains(&tc.red_vc.get());
                         let blu_empty = !vc_members.contains(&tc.blu_vc.get());
                         
                         if red_empty && blu_empty {
+                            // Delete from Discord
                             let _ = tc.red_vc.delete(&self.http).await;
                             let _ = tc.blu_vc.delete(&self.http).await;
+                            
+                            // Remove from database
+                            let _ = self.db.teams.remove_team(guild_id, tc.red_vc, tc.blu_vc, &guild_name, &category_name).await;
+                            deleted_count += 1;
                         } else {
                             kept.push(tc.clone());
                         }
                     }
                     category.channels.teams = kept;
                 }
+            }
+            
+            if deleted_count > 0 {
+                info!("Cleaned up {} empty team VC pairs on shutdown", deleted_count);
             }
         } else {
             warn!("Could not acquire manager lock for team VC cleanup");
@@ -131,16 +150,19 @@ impl ShutdownHandler {
     
     /// Mark all dashboards as offline before shutting down
     async fn mark_dashboards_offline(&self) {
-        if let Ok(mut manager_lock) = self.manager.try_lock() {
+        if let Ok(manager_lock) = self.manager.try_lock() {
             info!("Marking all dashboards as offline...");
             
-            for server in &mut manager_lock.servers {
+            // Collect all dashboard update tasks for parallel execution
+            let mut tasks = tokio::task::JoinSet::new();
+            
+            for server in &manager_lock.servers {
                 let gld_id = server.guild_id;
                 let gld_nm = self.cache.guild(gld_id)
                     .map(|g| g.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
                 
-                for category in &mut server.categories {
+                for category in &server.categories {
                     let offline_embed = CreateEmbed::new()
                         .title("🔴 qBot is offline...")
                         .description(format!("Shutdown {}", timestamp_now(Style::Relative)))
@@ -148,22 +170,30 @@ impl ShutdownHandler {
                     
                     let chn_id = category.channels.dashboard;
                     let msg_id = category.dashboard_msg;
-                    let ctg_nm = category.name.as_ref().unwrap();
+                    let ctg_nm = category.name.clone().unwrap_or_default();
+                    let gld_nm_clone = gld_nm.clone();
+                    let http = self.http.clone();
                     
-                    match chn_id.edit_message(
-                        &self.http, 
-                        msg_id, 
-                        EditMessage::new().embed(offline_embed).components(vec![])
-                    ).await {
-                        Ok(_) => {
-                            info!("{} Dashboard now offline", log_prefix_category(gld_nm.as_str(), ctg_nm.as_str()));
+                    tasks.spawn(async move {
+                        match chn_id.edit_message(
+                            &http, 
+                            msg_id, 
+                            EditMessage::new().embed(offline_embed).components(vec![])
+                        ).await {
+                            Ok(_) => {
+                                info!("{} Dashboard now offline", log_prefix_category(&gld_nm_clone, &ctg_nm));
+                            }
+                            Err(e) => {
+                                warn!("{} Failed to update dashboard: {}", log_prefix_category(&gld_nm_clone, &ctg_nm), e);
+                            }
                         }
-                        Err(e) => {
-                            warn!("{} Failed to update dashboard: {}", log_prefix_category(gld_nm.as_str(), ctg_nm.as_str()), e);
-                        }
-                    }
+                    });
                 }
             }
+            
+            // Run all updates in parallel
+            drop(manager_lock);
+            while tasks.join_next().await.is_some() {}
         } else {
             warn!("Could not acquire manager lock for graceful shutdown");
         }
