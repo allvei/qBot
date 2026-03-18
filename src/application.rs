@@ -146,7 +146,7 @@ impl Application {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
     // Spawn shutdown handler
-    let shutdown_handler = ShutdownHandler::new(self.manager.clone(), self.dashboard_queue.clone(), client.cache.clone(), client.http.clone());
+    let shutdown_handler = ShutdownHandler::new(self.manager.clone(), self.dashboard_queue.clone(), client.cache.clone(), client.http.clone(), self.db.clone());
 
     tokio::spawn(async move {
       shutdown_handler.handle_signals(shutdown_tx).await;
@@ -203,12 +203,22 @@ impl EventHandler for Handler {
       dm_tracker.start_cleanup_task(ctx.http.clone());
     }
 
-    // Start timeout background task
+    // Initialize timeout scheduler for per-player accurate timeouts
+    {
+      let scheduler = crate::models::TimeoutScheduler::new(
+        self.manager.clone(),
+        self.db.clone(),
+        ctx.clone(),
+      );
+      let scheduler_arc = Arc::new(tokio::sync::Mutex::new(scheduler));
+      ctx.data.write().await.insert::<crate::models::TimeoutSchedulerKey>(scheduler_arc);
+    }
+
+    // Start background task for team switch validation only
+    // (Timeouts are now handled by per-player scheduled tasks)
     {
       let manager = self.manager.clone();
-      let database = self.db.clone();
       let ctx_clone = ctx.clone();
-      let ctx_clone2 = ctx.clone();
 
       tokio::spawn(async move {
         use tokio::time::{interval, Duration};
@@ -225,20 +235,9 @@ impl EventHandler for Handler {
               for fmt in &mut category.formats {
                 for session in &mut fmt.sessions {
                   if session.pending_team_switch.is_some() {
-                    session.validate_and_commit_team_switch(&ctx_clone2, server.guild_id);
+                    session.validate_and_commit_team_switch(&ctx_clone, server.guild_id);
                   }
                 }
-              }
-            }
-          }
-
-          // Check all categories in all servers
-          for server in manager_lock.servers.iter_mut() {
-            let guild_id = server.guild_id;
-            for category in server.categories.iter_mut() {
-              if category.check_timeout(&database, &ctx_clone, guild_id).await {
-                // Players were removed, update dashboard
-                category.queue_dash_update(&ctx_clone, guild_id).await;
               }
             }
           }
@@ -421,6 +420,7 @@ impl EventHandler for Handler {
         }
       }
       Interaction::Component(ref itx) => {
+        debug!("Component interaction received: '{}' from user {}", itx.data.custom_id, itx.user.id);
         let button_type = ButtonType::parse(&itx.data.custom_id);
 
         if matches!(button_type, ButtonType::ConfirmPermissions) {
@@ -619,9 +619,20 @@ impl EventHandler for Handler {
           return;
         }
 
+        // Handle remove all action (must be before general runner_action_ check)
+        if itx.data.custom_id == "runner_action_remove_all" {
+          info!("Runner action 'remove_all' triggered by user {}", itx.user.id);
+          let result = crate::handlers::runner_menu::handle_remove_all(&ctx, itx, &self.db, &self.manager).await;
+          if let Err(e) = result {
+            error!("Error handling remove all action: {e}");
+          }
+          return;
+        }
+
         // Handle runner menu actions
         if itx.data.custom_id.starts_with("runner_action_") {
           let action = itx.data.custom_id.strip_prefix("runner_action_").unwrap_or("");
+          info!("Runner action '{}' triggered by user {}", action, itx.user.id);
           let result = crate::handlers::runner_menu::handle_runner_action(&ctx, itx, &self.db, &self.manager, action).await;
           if let Err(e) = result {
             error!("Error handling runner action '{}': {e}", action);
@@ -657,9 +668,9 @@ impl EventHandler for Handler {
         // Handle runner menu back button
         if itx.data.custom_id == "runner_menu_back" {
           let cc = crate::models::ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
-          let result = crate::handlers::runner_menu::show_runner_menu(&cc).await;
+          let result = crate::handlers::runner_menu::update_runner_menu(&cc).await;
           if let Err(e) = result {
-            error!("Error showing runner menu: {e}");
+            error!("Error updating runner menu: {e}");
           }
           return;
         }
@@ -676,11 +687,11 @@ impl EventHandler for Handler {
           return;
         }
 
-        // Handle remove all action
-        if itx.data.custom_id == "runner_action_remove_all" {
-          let result = crate::handlers::runner_menu::handle_remove_all(&ctx, itx, &self.db, &self.manager).await;
+        // Handle score result buttons (RED WON/DRAW/BLU WON)
+        if itx.data.custom_id.starts_with("score_red_") || itx.data.custom_id.starts_with("score_draw_") || itx.data.custom_id.starts_with("score_blu_") {
+          let result = self.handle_score_button(&ctx, itx).await;
           if let Err(e) = result {
-            error!("Error handling remove all action: {e}");
+            error!("Error handling score button: {e}");
           }
           return;
         }
@@ -1010,6 +1021,7 @@ impl EventHandler for Handler {
                 // This removes them from the "Missing players" list
                 if was_hot && was_missing {
                   info!("{} joined VC during hot session, updating dashboard", tag);
+                  category.on_player_joined_vc(&ctx, user_id).await;
                   category.queue_dash_update(&ctx, server).await;
                 }
               }
@@ -1129,7 +1141,7 @@ impl Handler {
       false
     };
 
-    let should_regenerate = if let Ok(sesh) = category.get_user_sesh(user_id).await {
+    let (should_regenerate, should_remove_player) = if let Ok(sesh) = category.get_user_sesh(user_id).await {
       if sesh.is_active() {
         // Player is in an active session (Push/Live) - bot is moving them, not a voluntary leave
         return;
@@ -1153,7 +1165,7 @@ impl Handler {
                 if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                   let grace_until = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
                   player.vc_leave_grace_until = Some(grace_until);
-                  info!("{} #{} {} left VC post-game, grace until {:?}", log_prefix_format(&gld_nm, &ctg_nm, &fmt_nm), position + 1, usr_tg, grace_until);
+                  info!("{} #{} {} left VC post-game, 10s grace period started", log_prefix_format(&gld_nm, &ctg_nm, &fmt_nm), position + 1, usr_tg);
                 }
                 false // Don't remove immediately
               } else {
@@ -1210,7 +1222,7 @@ impl Handler {
         }
       }
 
-      was_hot && pool_len >= quota
+      (was_hot && pool_len >= quota, should_remove_player)
     } else {
       // Player not found in any session
       let format = category.formats[0].clone();
@@ -1221,12 +1233,112 @@ impl Handler {
           warn!("Failed to log queue toggle: {e}");
         }
       }
-      false
+      (false, false)
     };
+
+    // Cancel timeout if player was removed (outside mutable borrow scope)
+    if should_remove_player {
+      category.cancel_player_timeout(ctx, guild_id, user_id).await;
+    }
 
     if should_regenerate {
       category.generate_teams(ctx, guild_id, Some(&self.db)).await;
     }
+  }
+
+  /// Handle score result button click (RED WON/DRAW/BLU WON)
+  async fn handle_score_button(&self, ctx: &Context, interaction: &serenity::all::ComponentInteraction) -> Result<(), anyhow::Error> {
+    use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage, EditMessage};
+    
+    // Parse result and IDs from custom_id (format: score_{result}_{category_id}_{format_id})
+    let custom_id = &interaction.data.custom_id;
+    let parts: Vec<&str> = custom_id.split('_').collect();
+    let result = parts.get(1).unwrap_or(&"");
+    let category_id = parts.get(2).and_then(|s| s.parse::<i64>().ok());
+    let _format_id = parts.get(3).and_then(|s| s.parse::<i64>().ok());
+    let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
+    
+    // Validate result
+    if !matches!(*result, "red" | "draw" | "blu") {
+      return Ok(());
+    }
+    
+    // Check if result was already reported and update database atomically
+    let mut already_reported = false;
+    if let Some(cat_id) = category_id {
+      let mut mgr = self.manager.lock().await;
+      if let Ok(server) = mgr.get_server(guild_id) {
+        if let Some(category) = server.categories.iter_mut().find(|c| c.ctg_id == cat_id as u8) {
+          if let Some(session) = category.formats.iter_mut().flat_map(|f| &mut f.sessions).find(|s| matches!(s.status, crate::models::SessionStatus::Pull)) {
+            if session.score_reported {
+              already_reported = true;
+            } else {
+              session.score_reported = true;
+              drop(mgr);
+              if let Some(match_id) = self.db.matches.get_latest_match_id(guild_id, cat_id).await? {
+                if let Err(e) = self.db.matches.update_match_result(match_id, result).await {
+                  error!("Failed to update match result in database: {e}");
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if already_reported {
+      let response = CreateInteractionResponse::Message(
+        CreateInteractionResponseMessage::new()
+          .content("Result has already been reported for this match.")
+          .ephemeral(true)
+      );
+      interaction.create_response(&ctx.http, response).await?;
+      return Ok(());
+    }
+    
+    // Update the message embed with result indicator
+    let message = &interaction.message;
+    if let Some(mut embed) = message.embeds.first().cloned() {
+      // Add result to team headers
+      if embed.fields.len() >= 2 {
+        for field in &mut embed.fields {
+          if field.name.contains("🔵 BLU") {
+            let indicator = match *result {
+              "blu" => " ✓",
+              "draw" => " ―",
+              _ => "",
+            };
+            field.name = format!("{}{}", field.name.trim(), indicator);
+          } else if field.name.contains("🔴 RED") {
+            let indicator = match *result {
+              "red" => " ✓",
+              "draw" => " ―",
+              _ => "",
+            };
+            field.name = format!("{}{}", field.name.trim(), indicator);
+          }
+        }
+      }
+      
+      // Update message and remove buttons
+      message.channel_id.edit_message(&ctx.http, message.id, EditMessage::new().embed(embed.into()).components(Vec::new())).await?;
+      
+      let result_text = match *result {
+        "red" => "RED team victory",
+        "draw" => "Draw",
+        "blu" => "BLU team victory",
+        _ => "Result",
+      };
+      
+      let response = CreateInteractionResponse::Message(
+        CreateInteractionResponseMessage::new()
+          .content(format!("{} recorded!", result_text))
+          .ephemeral(true)
+      );
+      interaction.create_response(&ctx.http, response).await?;
+    }
+    
+    Ok(())
   }
 
   /// Handle report score modal submission
@@ -1299,7 +1411,16 @@ impl Handler {
       }
     };
     
-    // Check if score was already reported for this session
+    // Derive result from scores
+    let result = if red_score_num > blu_score_num {
+      "red"
+    } else if blu_score_num > red_score_num {
+      "blu"
+    } else {
+      "draw"
+    };
+    
+    // Check if score was already reported and update database atomically within the lock
     let mut score_already_reported = false;
     if let Some(cat_id) = category_id {
       let mut mgr = self.manager.lock().await;
@@ -1311,6 +1432,14 @@ impl Handler {
               score_already_reported = true;
             } else {
               session.score_reported = true;
+              
+              // Update database immediately while holding the lock to prevent race condition
+              drop(mgr);
+              if let Some(match_id) = self.db.matches.get_latest_match_id(guild_id, cat_id).await? {
+                if let Err(e) = self.db.matches.update_match_result(match_id, result).await {
+                  error!("Failed to update match result in database: {e}");
+                }
+              }
             }
           }
         }
@@ -1325,15 +1454,6 @@ impl Handler {
       );
       interaction.create_response(&ctx.http, response).await?;
       return Ok(());
-    }
-    
-    // Update match scores in database if we have category_id
-    if let Some(cat_id) = category_id {
-      if let Some(match_id) = self.db.matches.get_latest_match_id(guild_id, cat_id).await? {
-        if let Err(e) = self.db.matches.update_match_scores(match_id, red_score_num, blu_score_num).await {
-          error!("Failed to update match scores in database: {e}");
-        }
-      }
     }
     
     // Update the message embed with scores in team headers
