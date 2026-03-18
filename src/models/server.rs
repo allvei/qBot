@@ -3,7 +3,7 @@
 //! This module defines the Server struct and its related functionality.
 //! A Server represents a Discord guild with associated categories and games.
 
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 use std::{sync::Arc, time::Duration};
 
 use crate::{
@@ -13,11 +13,11 @@ use crate::{
 };
 use anyhow::{anyhow, Error, Result};
 use serde::{Deserialize, Serialize};
-use serenity::all::{ChannelId as CI, Context, CreateEmbed, CreateMessage as CM, GuildId as GI, MessageId as MI, RoleId as RI, UserId as UI};
+use serenity::all::{ChannelId as CI, Context, CreateEmbed, CreateMessage as CM, EditMember, GuildId as GI, MessageId as MI, RoleId as RI, UserId as UI};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
-use crate::models::{Player, Session, SessionPlayer, SessionStatus, TeamChannel};
+use crate::models::{Player, Session, SessionPlayer, SessionStatus, TeamChannel, DEFAULT_TIMEOUT};
 
 /// Context parameters for queue operations
 pub struct QueueContext<'a> {
@@ -280,6 +280,15 @@ pub struct Category {
   pub recently_freed_teams: Vec<TeamChannel>,
   /// Require score reporting when ending matches via dashboard
   pub require_score_report: bool,
+  /// Last dashboard action (user_tag, action_description, timestamp)
+  #[serde(skip)]
+  pub last_action: Option<(String, String, SystemTime)>,
+  /// Pending VC notification: (message_id, list of user_ids still needing to join)
+  #[serde(skip)]
+  pub pending_vc_notification: Option<(MI, Vec<UI>)>,
+  /// Last ping time per user (for cooldown tracking)
+  #[serde(skip)]
+  pub last_ping_times: std::collections::HashMap<UI, SystemTime>,
 }
 
 impl Category {
@@ -314,6 +323,9 @@ impl Category {
       dm_alert_users: Vec::new(),
       recently_freed_teams: Vec::new(),
       require_score_report: false,
+      last_action: None,
+      pending_vc_notification: None,
+      last_ping_times: std::collections::HashMap::new(),
     }
   }
 
@@ -457,20 +469,49 @@ impl Category {
       None => return,
     };
 
-    // Delete team VCs from previous run (they are ephemeral)
-    // Only attempt deletion if the channel still exists in the cache to avoid slow API calls
-    for tc in &self.channels.teams {
-      for vc_id in [tc.red_vc, tc.blu_vc] {
-        if guild.channels.contains_key(&vc_id) {
-          if let Err(e) = vc_id.delete(&ctx.http).await {
-            warn!("[{}] Failed to delete team VC {}: {}", guild.name, vc_id, e);
+    // Delete team VCs from previous run in parallel (they are ephemeral)
+    let start_time = Instant::now();
+    let orphan_count = self.channels.teams.len() * 2; // Each pair has RED + BLU
+    let delete_tasks: Vec<_> = self.channels.teams.iter()
+      .flat_map(|tc| [tc.red_vc, tc.blu_vc])
+      .filter(|vc_id| guild.channels.contains_key(vc_id))
+      .map(|vc_id| {
+        let http = ctx.http.clone();
+        let guild_name = guild.name.clone();
+        tokio::spawn(async move {
+          if let Err(e) = vc_id.delete(&http).await {
+            warn!("[{}] Failed to delete team VC {}: {}", guild_name, vc_id, e);
           } else {
-            info!("[{}] Cleaned up orphaned team voice channel from previous run", guild.name);
+            info!("[{}] Cleaned up orphaned team voice channel from previous run", guild_name);
+          }
+        })
+      })
+      .collect();
+
+    for task in delete_tasks {
+      let _ = task.await;
+    }
+    self.channels.teams.clear();
+    if orphan_count > 0 {
+      info!("[{}] Cleaned up {} orphaned team VCs", guild.name, orphan_count);
+    }
+
+    // Clean up orphaned database entries first
+    let existing_channel_ids: Vec<CI> = guild.channels.values()
+      .filter(|c| c.kind == ChannelType::Voice)
+      .map(|c| c.id)
+      .collect();
+    
+    if let Ok(orphaned_db_teams) = db.teams.get_orphaned_teams(self.guild_id, &existing_channel_ids).await {
+      if !orphaned_db_teams.is_empty() {
+        info!("[{}] Cleaning up {} orphaned database team entries", guild.name, orphaned_db_teams.len());
+        for (red_vc, blu_vc) in orphaned_db_teams {
+          if let Err(e) = db.teams.remove_team(self.guild_id, red_vc, blu_vc, &guild.name, &self.display_name()).await {
+            warn!("Failed to remove orphaned team from database: {}", e);
           }
         }
       }
     }
-    self.channels.teams.clear();
 
     // Load tracked team channels from database
     let tracked_teams = match db.teams.get_teams_for_category(self.guild_id, self.ctg_id).await {
@@ -488,7 +529,11 @@ impl Category {
       tracked_channel_ids.insert(*blu_vc);
     }
 
-    // Only delete voice channels that are tracked in the database as team channels
+    // Collect channels to delete and users to move
+    let queue_vc_id = guild.channels.get(&self.channels.queue_vc).map(|c| c.id);
+    let mut channels_to_delete: Vec<(CI, String)> = Vec::new();
+    let mut users_to_move: Vec<(UI, CI)> = Vec::new();
+
     for channel in guild.channels.values() {
       if channel.kind != ChannelType::Voice {
         continue;
@@ -506,37 +551,72 @@ impl Category {
       }
 
       info!("[{}] Cleaning up tracked team voice channel: {}", guild.name, channel.name);
+      channels_to_delete.push((channel.id, channel.name.clone()));
 
-      // Move any users in this team VC back to queue VC before deleting
-      if let Some(queue_vc_id) = guild.channels.get(&self.channels.queue_vc) {
-        // Get all members in this team VC
-        let members_in_vc: Vec<_> =
-          guild.voice_states.iter().filter(|(_user_id, voice_state)| voice_state.channel_id == Some(channel.id)).map(|(user_id, _voice_state)| *user_id).collect();
-
-        // Move each user back to queue VC
+      // Collect users to move back to queue VC
+      if let Some(queue_vc) = queue_vc_id {
+        let members_in_vc: Vec<_> = guild.voice_states.iter()
+          .filter(|(_, vs)| vs.channel_id == Some(channel.id))
+          .map(|(uid, _)| *uid)
+          .collect();
         for user_id in members_in_vc {
-          if let Ok(_member) = guild.member(&ctx.http, user_id).await {
-            use serenity::all::EditMember;
-            if let Err(e) = ctx.http.edit_member(guild.id, user_id, &EditMember::new().voice_channel(queue_vc_id), Some("Moving user back to queue VC during cleanup")).await {
-              warn!("Failed to move user {} back to queue VC: {}", user_id, e);
-            } else {
-              info!("Moved user {} back to queue VC during team VC cleanup", user_id);
-            }
+          users_to_move.push((user_id, queue_vc));
+        }
+      }
+    }
+
+    // Move all users in parallel first
+    if !users_to_move.is_empty() {
+      let start_time = Instant::now();
+      let user_count = users_to_move.len();
+      use serenity::all::EditMember;
+      let move_tasks: Vec<_> = users_to_move.into_iter().map(|(user_id, queue_vc)| {
+        let http = ctx.http.clone();
+        let gid = guild.id;
+        tokio::spawn(async move {
+          match http.edit_member(gid, user_id, &EditMember::new().voice_channel(queue_vc), Some("Moving user back to queue VC during cleanup")).await {
+            Ok(_) => info!("Moved user {} back to queue VC during team VC cleanup", user_id),
+            Err(e) => warn!("Failed to move user {} back to queue VC: {}", user_id, e),
+          }
+        })
+      }).collect();
+
+      for task in move_tasks {
+        let _ = task.await;
+      }
+      info!("[{}] Moved {} users back to queue VC", guild.name, user_count);
+    }
+
+    // Delete all channels in parallel
+    let start_time = Instant::now();
+    let delete_count = channels_to_delete.len();
+    let delete_tasks: Vec<_> = channels_to_delete.iter().map(|(channel_id, channel_name)| {
+      let http = ctx.http.clone();
+      let cid = *channel_id;
+      let cname = channel_name.clone();
+      tokio::spawn(async move {
+        let result = cid.delete(&http).await;
+        (cid, cname, result)
+      })
+    }).collect();
+
+    for task in delete_tasks {
+      if let Ok((channel_id, channel_name, result)) = task.await {
+        if let Err(e) = result {
+          if !e.to_string().contains("Unknown Channel") {
+            warn!("Failed to delete tracked team VC {} ({}): {}", channel_name, channel_id, e);
+          }
+        } else {
+          // Remove from database after successful deletion
+          let guild_name = guild.name.clone();
+          if let Err(e) = db.teams.remove_team(self.guild_id, channel_id, CI::new(0), &guild_name, &self.display_name()).await {
+            warn!("Failed to remove team channel from database: {}", e);
           }
         }
       }
-
-      if let Err(e) = channel.id.delete(&ctx.http).await {
-        if !e.to_string().contains("Unknown Channel") {
-          warn!("Failed to delete tracked team VC {} ({}): {}", channel.name, channel.id, e);
-        }
-      } else {
-        // Remove from database after successful deletion
-        let guild_name = guild.name.clone();
-        if let Err(e) = db.teams.remove_team(self.guild_id, channel.id, CI::new(0), &guild_name, &self.display_name()).await {
-          warn!("Failed to remove team channel from database: {}", e);
-        }
-      }
+    }
+    if delete_count > 0 {
+      info!("[{}] Deleted {} tracked team VCs", guild.name, delete_count);
     }
   }
 
@@ -606,7 +686,16 @@ impl Category {
   }
 
   pub async fn hot_fmt(&mut self, fmt_id: u8, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>, post_game: bool) -> Result<(), Error> {
-    let _ = self.get_queue_fmt(fmt_id).await?.hot();
+    // Verify session has enough players before transitioning to Hot
+    let quota = self.fmt(fmt_id).ok_or_else(|| anyhow!("Format {} not found", fmt_id))?.quota as usize;
+    let session = self.get_queue_fmt(fmt_id).await?;
+    
+    if session.pool.len() < quota {
+      // Not enough players, don't transition to Hot
+      return Ok(());
+    }
+    
+    let _ = session.hot();
 
     // Create team VCs if policy is OnHot
     if self.team_vc_settings.create_policy == TeamVcCreatePolicy::OnHot {
@@ -744,6 +833,21 @@ impl Category {
   /// Returns true if any changes were made that require dashboard update
   pub async fn check_timeout(&mut self, db: &DB, ctx: &Context, guild_id: GI) -> bool {
     let mut changes_made = false;
+    
+    // Collect all active game players first (outside the format loop)
+    let mut active_game_players = std::collections::HashSet::new();
+    let mut player_tags = std::collections::HashMap::new();
+    
+    for fmt in &self.formats {
+      for session in &fmt.sessions {
+        if session.status == SessionStatus::Live || session.status == SessionStatus::Hot {
+          for player in &session.pool {
+            active_game_players.insert(player.player.user_id);
+            player_tags.insert(player.player.user_id, (player.player.tag.clone(), fmt.name.clone()));
+          }
+        }
+      }
+    }
 
     // Check idle sessions across all formats (not hot/push/live)
     for fmt in &mut self.formats {
@@ -799,27 +903,10 @@ impl Category {
         if !players_to_remove.is_empty() {
           // Remove the timed-out players
           for user_id in &players_to_remove {
-            // Check if player is in a team channel before removing
-            let mut should_remove = true;
-            if let Some(guild) = ctx.cache.guild(guild_id) {
-              if let Some(voice_state) = guild.voice_states.get(user_id) {
-                if let Some(channel_id) = voice_state.channel_id {
-                  // Check if this is a team channel (not queue VC)
-                  if channel_id != self.channels.queue_vc {
-                    // Player is in a team channel, don't remove them
-                    info!("Player {} is in team channel {}, not removing due to timeout", user_id, channel_id);
-                    should_remove = false;
-
-                    // Reset their timeout since they're actively in a team
-                    if let Some(session) = session.pool.iter_mut().find(|p| p.player.user_id == *user_id) {
-                      session.joined_at = SystemTime::now();
-                    }
-                  }
-                }
-              }
-            }
-
-            if should_remove {
+            if let Some((tag, fmt_name)) = player_tags.get(user_id) {
+              // Player is in an active game, don't remove them
+            } else {
+              // Remove the player
               session.remove_player(*user_id);
 
               // Optionally: disconnect from VC if vc_kick is enabled
@@ -834,8 +921,8 @@ impl Category {
               }
             }
           }
-          changes_made = true;
         }
+        changes_made = true;
       }
     }
 
@@ -884,12 +971,34 @@ impl Category {
       })
       .collect();
 
-    // Move users to team channels
-    for (user_id, channel_id, tag) in player_moves {
-      if let Err(e) = self.move_user(guild_id, user_id, channel_id, ctx).await {
-        warn!("Failed to move user {}: {}", tag, e);
+    // Move users to team channels in parallel
+    let start_time = Instant::now();
+    let player_count = player_moves.len();
+    let move_tasks: Vec<_> = player_moves.into_iter().map(|(user_id, channel_id, tag)| {
+      let http = ctx.http.clone();
+      tokio::spawn(async move {
+        let move_start = Instant::now();
+        let result = async {
+          let member = guild_id.member(&http, user_id).await?;
+          member.move_to_voice_channel(&http, channel_id).await
+        }.await;
+        if let Err(ref e) = result {
+          warn!("Failed to move user {}: {}", tag, e);
+        } else {
+          info!("Moved user {} to team channel", tag);
+        }
+        (tag, result)
+      })
+    }).collect();
+
+    for task in move_tasks {
+      if let Ok((tag, result)) = task.await {
+        if let Err(e) = result {
+          warn!("Failed to move user {}: {}", tag, e);
+        }
       }
     }
+    info!("Moved {} players to team channels", player_count);
 
     // Set game status to Live and extract overflow players
     let sg = self.fmt_mut(fmt_id).unwrap();
@@ -973,15 +1082,16 @@ impl Category {
 
     let pair_num = self.channels.teams.len() + 1;
 
-    let blu_ch = guild_id
-      .create_channel(&ctx.http, CreateChannel::new(format!("🔵 BLU #{}", pair_num)).kind(ChannelType::Voice).category(category))
-      .await
-      .map_err(|e| anyhow!("Failed to create BLU VC: {e}"))?;
+    // Create both team channels in parallel
+    let start_time = Instant::now();
+    let (blu_result, red_result) = tokio::join!(
+      guild_id.create_channel(&ctx.http, CreateChannel::new(format!("🔵 BLU #{}", pair_num)).kind(ChannelType::Voice).category(category)),
+      guild_id.create_channel(&ctx.http, CreateChannel::new(format!("🔴 RED #{}", pair_num)).kind(ChannelType::Voice).category(category))
+    );
 
-    let red_ch = guild_id
-      .create_channel(&ctx.http, CreateChannel::new(format!("🔴 RED #{}", pair_num)).kind(ChannelType::Voice).category(category))
-      .await
-      .map_err(|e| anyhow!("Failed to create RED VC: {e}"))?;
+    let blu_ch = blu_result.map_err(|e| anyhow!("Failed to create BLU VC: {e}"))?;
+    let red_ch = red_result.map_err(|e| anyhow!("Failed to create RED VC: {e}"))?;
+    info!("Created team channels #{}", pair_num);
 
     let pair = TeamChannel::new(red_ch.id, blu_ch.id, pair_num as u32);
     self.channels.teams.push(pair.clone());
@@ -1016,17 +1126,40 @@ impl Category {
     let to_delete_count = removable.len().saturating_sub(min_free);
     let to_delete: Vec<TeamChannel> = removable.drain(..to_delete_count).collect();
 
-    for tc in &to_delete {
-      info!("Deleting unused team VCs: RED={} BLU={}", tc.red_vc, tc.blu_vc);
-      if let Err(e) = tc.red_vc.delete(&ctx.http).await {
-        let hint = if e.to_string().contains("Missing Access") { "(Missing *Manage Channels* permissions)" } else { "" };
-        warn!("Failed to delete RED VC {}:{}{}", tc.red_vc, e, hint);
-      }
-      if let Err(e) = tc.blu_vc.delete(&ctx.http).await {
-        let hint = if e.to_string().contains("Missing Access") { "(Missing *Manage Channels* permissions)" } else { "" };
-        warn!("Failed to delete BLU VC {}:{}{}", tc.blu_vc, e, hint);
+    // Delete all team VCs in parallel
+    let start_time = Instant::now();
+    let delete_count = to_delete.len() * 2; // Each pair has RED + BLU
+    let delete_tasks: Vec<_> = to_delete.iter().flat_map(|tc| {
+      let http = ctx.http.clone();
+      let red_vc = tc.red_vc;
+      let blu_vc = tc.blu_vc;
+      info!("Deleting unused team VCs: RED={} BLU={}", red_vc, blu_vc);
+      vec![
+        tokio::spawn(async move { 
+          info!("Deleting RED team VC: {}", red_vc);
+          (red_vc, red_vc.delete(&http).await, "RED") 
+        }),
+        tokio::spawn({
+          let http = ctx.http.clone();
+          async move { 
+            info!("Deleting BLU team VC: {}", blu_vc);
+            (blu_vc, blu_vc.delete(&http).await, "BLU") 
+          }
+        }),
+      ]
+    }).collect();
+
+    for task in delete_tasks {
+      if let Ok((vc_id, result, team)) = task.await {
+        if let Err(e) = result {
+          let hint = if e.to_string().contains("Missing Access") { "(Missing *Manage Channels* permissions)" } else { "" };
+          warn!("Failed to delete {} VC {}:{}{}", team, vc_id, e, hint);
+        } else {
+          info!("Deleted {} team VC: {}", team, vc_id);
+        }
       }
     }
+    info!("Deleted {} team channels", delete_count);
 
     // Rebuild teams list: occupied + remaining free
     let mut new_teams = keep;
@@ -1141,35 +1274,96 @@ impl Category {
       players_to_requeue.shuffle(&mut rng);
     } // RNG dropped here before async operations
 
-    // Move all players back to queue voice channel and track who successfully moved
-    let mut successfully_moved = std::collections::HashSet::new();
+    // Move everyone from team VCs back to queue (not just players)
+    let guild = match ctx.cache.guild(guild_id) {
+      Some(g) => g.clone(),
+      None => return Ok(()),
+    };
+
+    // Collect all users in team VCs
+    let mut users_to_move: Vec<UI> = Vec::new();
+    
+    // Add players from the game
     for player in &players_to_requeue {
-      let tag = &player.tag;
-
-      // Check if player is already in the queue VC
-      let already_in_queue =
-        if let Some(guild) = ctx.cache.guild(guild_id) { guild.voice_states.get(&player.user_id).map(|vs| vs.channel_id == Some(queue_vc)).unwrap_or(false) } else { false };
-
-      if already_in_queue {
-        // Player is already in queue VC, consider them successfully moved
-        successfully_moved.insert(player.user_id);
-        debug!("Player {} already in queue VC, marking as successfully moved", tag);
-      } else if let Err(e) = self.move_user(guild_id, player.user_id, queue_vc, ctx).await {
-        warn!("Failed to move {} back to queue: {}", tag, e);
-      } else {
-        successfully_moved.insert(player.user_id);
+      users_to_move.push(player.user_id);
+    }
+    
+    // Add any other users in team VCs (spectators, etc.) - they get moved to VC but NOT added to queue
+    let mut spectators_to_move: Vec<UI> = Vec::new();
+    for tc in &self.channels.teams {
+      for vc_id in [tc.red_vc, tc.blu_vc] {
+        let users_in_vc: Vec<_> = guild.voice_states.iter()
+          .filter(|(_, vs)| vs.channel_id == Some(vc_id))
+          .map(|(uid, _)| *uid)
+          .collect();
+        for user_id in users_in_vc {
+          if !users_to_move.contains(&user_id) {
+            spectators_to_move.push(user_id);
+          }
+        }
       }
+    }
+    
+    // Combine players and spectators for VC move
+    users_to_move.extend(spectators_to_move.iter().cloned());
+    let player_ids: std::collections::HashSet<_> = players_to_requeue.iter().map(|p| p.user_id).collect();
+
+    // Move all users to queue VC in parallel
+    let move_tasks: Vec<_> = users_to_move.into_iter().map(|user_id| {
+      let http = ctx.http.clone();
+      let gid = guild_id;
+      let qvc = queue_vc;
+      let cache = ctx.cache.clone();
+      tokio::spawn(async move {
+        // Check if already in queue VC
+        if let Some(guild) = cache.guild(gid) {
+          if let Some(vs) = guild.voice_states.get(&user_id) {
+            if vs.channel_id == Some(qvc) {
+              info!("User {} already in queue VC", user_id);
+              return (user_id, true);
+            }
+          }
+        }
+        
+        match http.edit_member(gid, user_id, &EditMember::new().voice_channel(qvc), Some("Moving user back to queue VC after game end")).await {
+          Ok(_) => {
+            info!("Moved user {} back to queue VC after game end", user_id);
+            (user_id, true)
+          },
+          Err(e) => {
+            warn!("Failed to move user {} back to queue VC: {}", user_id, e);
+            (user_id, false)
+          }
+        }
+      })
+    }).collect();
+
+    let mut successfully_moved = std::collections::HashSet::new();
+    for task in move_tasks {
+      if let Ok((user_id, success)) = task.await {
+        if success {
+          successfully_moved.insert(user_id);
+        }
+      }
+    }
+    
+    // Log spectators moved (they go to VC but not queue)
+    let spectators_moved: Vec<_> = spectators_to_move.iter().filter(|uid| successfully_moved.contains(uid)).collect();
+    if !spectators_moved.is_empty() {
+      info!("Moved {} spectators to queue VC (not added to queue)", spectators_moved.len());
     }
 
     // Check if quota will be met after re-queuing players to avoid unnecessary VC deletion/recreation
+    // Only count actual players, not spectators
+    let players_successfully_moved = successfully_moved.iter().filter(|uid| player_ids.contains(uid)).count();
     let quota_will_be_met = {
       let mut projected_count = 0;
       if let Some(idle_idx) = self.fmt_mut(fmt_id).unwrap().sessions.iter().position(|s| s.status == SessionStatus::Idle) {
         // Count existing players in idle session
         projected_count += self.formats[fmt_id as usize].sessions[idle_idx].pool.len();
       }
-      // Add players who will be re-queued (those successfully moved)
-      projected_count += successfully_moved.len();
+      // Add players who will be re-queued (those successfully moved) - only actual players
+      projected_count += players_successfully_moved;
       projected_count >= self.quota() as usize
     };
 
@@ -1282,11 +1476,15 @@ impl Category {
         }
       }
 
-      // Add selected players to queue
+      // Add selected players to queue first, then fatkidded players at the end
       let sg = self.fmt_mut(fmt_id).unwrap();
       let idle_session = &mut sg.sessions[idle_session_idx];
       idle_session.match_ended_at = Some(std::time::SystemTime::now());
       for player in selected_players {
+        idle_session.add_ply_in_vc(player);
+      }
+      // Add fatkidded players to the end of the queue (not removed, just moved to back)
+      for player in fatkidded_players {
         idle_session.add_ply_in_vc(player);
       }
     } else {
@@ -1534,7 +1732,13 @@ impl Category {
         }
       }
 
-      // Assign teams in-place to preserve in_queue_vc and in_queue_vc flags
+      // Clear all team assignments first, then assign new ones
+      // This ensures players pushed outside quota don't keep stale team assignments
+      for player in game.pool.iter_mut() {
+        player.team = None;
+      }
+
+      // Assign teams in-place to preserve in_queue_vc flag
       // First assign red team
       for &idx in &red_indices {
         let pool_idx = players_to_balance[idx].0;
@@ -1576,11 +1780,19 @@ impl Category {
   pub async fn queue_player_with_vc_status(&mut self, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
     let was_empty = self.get_queue().await?.pool.is_empty();
     let session = self.get_queue().await?;
+    
+    let user_id = player.user_id;
+    let player_tag = player.tag.clone();
 
     if in_vc {
       session.add_ply_in_vc(player)?;
     } else {
       session.add_ply(player)?;
+    }
+    
+    // Schedule timeout for this player
+    if let Some(guild_id) = queue_ctx.guild_id {
+      self.schedule_player_timeout(queue_ctx.ctx, guild_id, user_id, DEFAULT_TIMEOUT, player_tag).await;
     }
 
     // Create team VCs on first join if policy requires it
@@ -1603,11 +1815,20 @@ impl Category {
   pub async fn queue_ply_with_vc_status_fmt(&mut self, fmt_id: u8, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
     let was_empty = self.get_queue_fmt(fmt_id).await?.pool.is_empty();
     let session = self.get_queue_fmt(fmt_id).await?;
+    let was_idle = session.is_idle();
+    
+    let user_id = player.user_id;
+    let player_tag = player.tag.clone();
 
     if in_vc {
       session.add_ply_in_vc(player)?;
     } else {
       session.add_ply(player)?;
+    }
+    
+    // Schedule timeout for this player
+    if let Some(guild_id) = queue_ctx.guild_id {
+      self.schedule_player_timeout(queue_ctx.ctx, guild_id, user_id, DEFAULT_TIMEOUT, player_tag).await;
     }
 
     // Create team VCs on first join if policy requires it
@@ -1621,7 +1842,8 @@ impl Category {
       }
     }
 
-    if self.is_quota_fmt(fmt_id) {
+    // Only check quota if session was Idle - Hot sessions already met quota
+    if was_idle && self.is_quota_fmt(fmt_id) {
       self.hot_fmt(fmt_id, queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager, false).await?;
     }
     Ok(())
@@ -1695,9 +1917,41 @@ impl Category {
   }
 
   pub async fn add_player(&mut self, session: &mut Session, player: Player, _rank: Rank, ctx: &Context, guild_id: GI) -> Result<()> {
+    let user_id = player.user_id;
+    let player_tag = player.tag.clone();
+    let timeout = DEFAULT_TIMEOUT; // Will be updated by user prefs if needed
+    
     session.add_ply(player)?;
+    
+    // Schedule timeout for this player
+    self.schedule_player_timeout(ctx, guild_id, user_id, timeout, player_tag).await;
+    
     self.queue_dash_update(ctx, guild_id).await;
     Ok(())
+  }
+  
+  /// Schedule a timeout task for a player
+  pub async fn schedule_player_timeout(&self, ctx: &Context, guild_id: GI, user_id: UI, timeout_minutes: u8, player_tag: String) {
+    use crate::models::TimeoutSchedulerKey;
+    
+    let category_name = self.name.clone().unwrap_or_else(|| "Unknown".to_string());
+    // Get first format name as default
+    let format_name = self.formats.first().map(|f| f.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+    
+    if let Some(scheduler) = ctx.data.read().await.get::<TimeoutSchedulerKey>() {
+      let mut sched = scheduler.lock().await;
+      sched.schedule_timeout(guild_id, user_id, timeout_minutes, player_tag, category_name, format_name);
+    }
+  }
+  
+  /// Cancel a player's timeout task
+  pub async fn cancel_player_timeout(&self, ctx: &Context, guild_id: GI, user_id: UI) {
+    use crate::models::TimeoutSchedulerKey;
+    
+    if let Some(scheduler) = ctx.data.read().await.get::<TimeoutSchedulerKey>() {
+      let mut sched = scheduler.lock().await;
+      sched.cancel_timeout(guild_id, user_id);
+    }
   }
 
   /// Checks if this category contains the given channel_id in any of its channels
@@ -1817,11 +2071,8 @@ impl Category {
       let msg = CM::new().embed(embed).content(content);
       let dashboard = self.channels.dashboard;
       if let Ok(sent) = dashboard.send_message(&ctx.http, msg).await {
-        let http = ctx.http.clone();
-        tokio::spawn(async move {
-          tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-          let _ = sent.delete(&http).await;
-        });
+        // Store pending notification for tracking
+        self.pending_vc_notification = Some((sent.id, players_to_dm.clone()));
       }
     }
 
@@ -1871,6 +2122,45 @@ impl Category {
     let member = guild_id.member(&ctx.http, user_id).await?;
     member.move_to_voice_channel(&ctx.http, channel_id).await?;
     Ok(())
+  }
+
+  /// Called when a player joins the queue VC. Updates/deletes the pending notification if applicable.
+  pub async fn on_player_joined_vc(&mut self, ctx: &Context, user_id: UI) {
+    if let Some((msg_id, ref mut pending_users)) = self.pending_vc_notification {
+      // Check if this user was in the pending list
+      if let Some(pos) = pending_users.iter().position(|&u| u == user_id) {
+        pending_users.remove(pos);
+        
+        let dashboard = self.channels.dashboard;
+        
+        if pending_users.is_empty() {
+          // All players have joined - delete the notification
+          if let Err(e) = dashboard.delete_message(&ctx.http, msg_id).await {
+            warn!("Failed to delete VC notification message: {}", e);
+          }
+          self.pending_vc_notification = None;
+        } else {
+          // Edit the message to show remaining players
+          let remaining_mentions: Vec<String> = pending_users.iter().map(|u| format!("<@{}>", u)).collect();
+          let embed = CreateEmbed::new()
+            .title("PUG Starting")
+            .description("Please join the queue channel!");
+          let content = remaining_mentions.join(" ");
+          
+          let edit = serenity::all::EditMessage::new().embed(embed).content(content);
+          if let Err(e) = dashboard.edit_message(&ctx.http, msg_id, edit).await {
+            warn!("Failed to edit VC notification message: {}", e);
+          }
+        }
+      }
+    }
+  }
+
+  /// Clear the pending VC notification (e.g., when game starts or ends)
+  pub async fn clear_vc_notification(&mut self, ctx: &Context) {
+    if let Some((msg_id, _)) = self.pending_vc_notification.take() {
+      let _ = self.channels.dashboard.delete_message(&ctx.http, msg_id).await;
+    }
   }
 }
 
