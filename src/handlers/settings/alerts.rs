@@ -42,7 +42,7 @@ fn sanitize_text(text: &str, replacements: &[&str]) -> String {
 }
 
 /// Build a join announcement embed (used for both actual announcements and previews)
-pub async fn build_join_alert_embed(ctx: &Context, user_id: UI, guild_id: Option<GI>, settings: &crate::db::repo::UserSettings, rank_name: &str, fmt_name: Option<&str>) -> CE {
+pub async fn build_join_alert_embed(ctx: &Context, user_id: UI, guild_id: Option<GI>, settings: &crate::db::repo::UserPreferences, rank_name: &str, fmt_name: Option<&str>) -> CE {
   // Get display name - try member nickname first, then user name, then user ID
   let display_name = if let Some(gid) = guild_id {
     // With guild context - try to get member for nickname
@@ -106,7 +106,7 @@ pub async fn build_join_alert_embed(ctx: &Context, user_id: UI, guild_id: Option
 }
 
 /// Build a leave announcement embed (used for both actual announcements and previews)
-pub async fn build_leave_alert_embed(ctx: &Context, user_id: UI, guild_id: Option<GI>, settings: &crate::db::repo::UserSettings, fmt_name: Option<&str>) -> CE {
+pub async fn build_leave_alert_embed(ctx: &Context, user_id: UI, guild_id: Option<GI>, settings: &crate::db::repo::UserPreferences, fmt_name: Option<&str>) -> CE {
   // Get display name - try member nickname first, then user name, then user ID
   let display_name = if let Some(gid) = guild_id {
     // With guild context - try to get member for nickname

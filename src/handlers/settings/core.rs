@@ -76,7 +76,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
         // Update user settings
         let mut settings = db.users.get_prefs(user_id).await?;
         settings.timeout = minutes;
-        db.users.update_settings(user_id, &settings).await?;
+        db.users.update_prefs(user_id, &settings).await?;
 
         // Update the settings menu directly (no confirmation popup)
         let embed = build_settings_embed(&settings);
@@ -90,7 +90,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
       // Toggle VC disconnect preference
       let mut settings = db.users.get_prefs(user_id).await?;
       settings.vc_auto_leave = !settings.vc_auto_leave;
-      db.users.update_settings(user_id, &settings).await?;
+      db.users.update_prefs(user_id, &settings).await?;
 
       // Acknowledge and update the settings menu directly (no popup)
       let embed = build_settings_embed(&settings);
@@ -103,7 +103,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
       // Toggle VC auto-queue preference
       let mut settings = db.users.get_prefs(user_id).await?;
       settings.vc_auto_join = !settings.vc_auto_join;
-      db.users.update_settings(user_id, &settings).await?;
+      db.users.update_prefs(user_id, &settings).await?;
 
       // Acknowledge and update the settings menu directly (no popup)
       let embed = build_settings_embed(&settings);
@@ -201,7 +201,7 @@ pub async fn handle_settings_modal(ctx: &Context, interaction: &MI, db: &Arc<Dat
       }
 
       // Update settings in database
-      db.users.update_settings(user_id, &settings).await?;
+      db.users.update_prefs(user_id, &settings).await?;
 
       // Build preview embed
       let preview_embed = build_join_alert_embed(ctx, user_id, None, &settings, "Journeyman", None).await;
@@ -255,7 +255,7 @@ pub async fn handle_settings_modal(ctx: &Context, interaction: &MI, db: &Arc<Dat
       }
 
       // Update settings in database
-      db.users.update_settings(user_id, &settings).await?;
+      db.users.update_prefs(user_id, &settings).await?;
 
       // Build preview embed
       let preview_embed = build_leave_alert_embed(ctx, user_id, None, &settings, None).await;

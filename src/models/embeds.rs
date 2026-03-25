@@ -1,6 +1,6 @@
 use crate::handlers::settings::{build_server_settings_buttons, build_server_settings_embed, ServerSettings};
 use crate::handlers::{build_settings_buttons, build_settings_embed};
-use crate::repo::UserSettings;
+use crate::repo::UserPreferences;
 use serenity::all::{ButtonStyle as BS, CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
 
 pub struct Ephemeral {}
@@ -10,7 +10,7 @@ impl Ephemeral {
     CIR::Message(CIRM::new().embed(embed).ephemeral(true))
   }
 
-  pub fn send_prefs(prefs: &UserSettings) -> CIR {
+  pub fn send_prefs(prefs: &UserPreferences) -> CIR {
     let embed = build_settings_embed(prefs);
     let buttons = build_settings_buttons(prefs);
     CIR::Message(CIRM::new().embed(embed).components(buttons).ephemeral(true))

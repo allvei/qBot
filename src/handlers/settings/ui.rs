@@ -13,13 +13,13 @@ use anyhow::Result;
 use std::sync::Arc;
 
 /// Build settings embed
-pub fn build_settings_embed(settings: &crate::db::repo::UserSettings) -> CE {
+pub fn build_settings_embed(settings: &crate::db::repo::UserPreferences) -> CE {
   use AsSettingsMenu;
   settings.as_settings_menu().build_embed()
 }
 
 /// Build settings buttons
-pub fn build_settings_buttons(settings: &crate::db::repo::UserSettings) -> Vec<CAR> {
+pub fn build_settings_buttons(settings: &crate::db::repo::UserPreferences) -> Vec<CAR> {
   use AsSettingsMenu;
   settings.as_settings_menu().build_components()
 }

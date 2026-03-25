@@ -113,7 +113,7 @@ impl ComponentContext<'_> {
   }
 
   /// Reply with an ephemeral message
-  pub async fn reply(&self, message: &str) -> Result<(), anyhow::Error> {
+  pub async fn reply_ephemeral(&self, message: &str) -> Result<(), anyhow::Error> {
     let response = CIR::Message(CIRM::new().content(message).ephemeral(true));
     self.create_response(response).await
   }
@@ -133,11 +133,6 @@ impl ComponentContext<'_> {
   /// Create a standardized error embed
   pub fn create_error_embed(&self, title: &str, description: &str) -> serenity::all::CreateEmbed {
     serenity::all::CreateEmbed::new().title(title).description(description).color(RED)
-  }
-
-  /// Acknowledge the component interaction
-  pub async fn acknowledge(&self) -> Result<(), anyhow::Error> {
-    self.create_response(CIR::Acknowledge).await
   }
 
   /// Get guild ID with error handling
@@ -168,8 +163,17 @@ impl ComponentContext<'_> {
     }
   }
 
-  /// Defer the component update
-  pub async fn defer_update(&self) -> Result<(), anyhow::Error> {
+  /// Acknowledge the component interaction
+  pub async fn reply_acknowledge(&self) -> Result<(), anyhow::Error> {
+    self.create_response(CIR::Acknowledge).await
+  }
+
+  pub async fn reply_defer(&self) -> Result<(), anyhow::Error> {
+    let response = CIR::Defer(CIRM::new());
+    self.create_response(response).await
+  }
+
+  pub async fn reply_update_message(&self) -> Result<(), anyhow::Error> {
     let response = CIR::UpdateMessage(CIRM::new());
     self.create_response(response).await
   }
@@ -188,6 +192,7 @@ pub type Elo = u16;
 pub struct Player {
   pub user_id: UI,
   pub tag: String,
+  pub timeout: u8,
   pub steam_id: Option<u64>,
   pub rank: Option<Rank>,
   pub elo: Elo,
@@ -195,9 +200,9 @@ pub struct Player {
 }
 
 impl Player {
-  pub fn add(user_id: UI, tag: String, steam_id: Option<u64>, rank: Option<Rank>) -> Player {
+  pub fn add(user_id: UI, tag: String, timeout: u8, steam_id: Option<u64>, rank: Option<Rank>) -> Player {
     let elo = rank.as_ref().map_or(50, |r| r.elo); // Default ELO if no rank
-    Player { user_id, tag, steam_id, rank, elo, role: None }
+    Player { user_id, tag, timeout, steam_id, rank, elo, role: None }
   }
 
   pub fn set_steam(&mut self, steam_id: Option<u64>) {

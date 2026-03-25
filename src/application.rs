@@ -696,6 +696,33 @@ impl EventHandler for Handler {
           return;
         }
 
+        // Handle runner menu end match buttons (runner_end_red/draw/blu_{category_id}_{format_id})
+        if itx.data.custom_id.starts_with("runner_end_") {
+          let result = crate::handlers::runner_menu::handle_end_match_result(&ctx, itx, &self.db, &self.manager).await;
+          if let Err(e) = result {
+            error!("Error handling runner end match: {e}");
+          }
+          return;
+        }
+
+        // Handle ping format selection buttons (ping_format_{category_id}_{format_id})
+        if itx.data.custom_id.starts_with("ping_format_") {
+          let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
+          if let (Some(cat_id), Some(fmt_id)) = (parts.get(2).and_then(|s| s.parse::<u8>().ok()), parts.get(3).and_then(|s| s.parse::<u8>().ok())) {
+            let guild_id = itx.guild_id.unwrap();
+            let mut manager = self.manager.lock().await;
+            if let Ok(server) = manager.get_server(guild_id) {
+              if let Some(category) = server.categories.iter_mut().find(|c| c.ctg_id == cat_id) {
+                let cc = crate::models::ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
+                if let Err(e) = category.handle_ping_format(&cc, fmt_id).await {
+                  error!("Error handling ping format: {e}");
+                }
+              }
+            }
+          }
+          return;
+        }
+
         let mut manager = self.manager.lock().await;
         let guild_id = itx.guild_id.unwrap();
         let channel_id = itx.channel_id;
@@ -744,12 +771,12 @@ impl EventHandler for Handler {
                     manager.get_category_by_channel(guild_id, channel_id).unwrap()
                   } else {
                     error!("[{}] Could not get server from manager", guild_name);
-                    InteractionHelpers::send_component_error_embed(itx, &ctx, "Dashboard state was lost. Please run `/setup` to reconfigure.").await;
+                    InteractionHelpers::send_component_error_embed(itx, &ctx, "Dashboard state was lost.").await;
                     return;
                   }
                 } else {
                   error!("[{}] No category found in database for #{}", guild_name, channel_name);
-                  InteractionHelpers::send_component_error_embed(itx, &ctx, "Dashboard configuration not found. Please run `/config` to configure this server.").await;
+                  InteractionHelpers::send_component_error_embed(itx, &ctx, "Dashboard configuration not found.").await;
                   return;
                 }
               }
@@ -1017,6 +1044,9 @@ impl EventHandler for Handler {
                   player.vc_leave_grace_until = None;
                 }
 
+                // Cancel timeout since player is now in VC
+                category.cancel_player_timeout(&ctx, server, user_id).await;
+
                 // Update dashboard if player was missing in a hot session
                 // This removes them from the "Missing players" list
                 if was_hot && was_missing {
@@ -1112,11 +1142,16 @@ impl Handler {
   /// Handle a player leaving the queue VC (disconnect or move away).
   /// Checks auto-leave preference, removes or resets timeout, and regenerates teams if needed.
   async fn handle_player_leave_vc(&self, ctx: &Context, category: &mut Category, guild_id: GuildId, user_id: UserId, _tag: &str) {
-    let gld_nm = guild_name(ctx, guild_id);
+    let queue_ctx = QueueContext {
+      ctx: &ctx,
+      guild_id: Some(guild_id),
+      db: Some(&self.db),
+      manager: Some(self.manager.clone())
+    };
+    let guild_name = guild_name(ctx, guild_id);
     let ctg_nm = category.name.as_deref().unwrap_or("Unknown").to_string();
     let fmt_nm = category.get_user_fmt_name(user_id);
     let usr_tg = get_user_tag(ctx, user_id, &self.db).await;
-
     let quota = category.quota() as usize;
 
     let category_id = category.ctg_id; // Capture category_id before mutable borrow
@@ -1141,7 +1176,7 @@ impl Handler {
       false
     };
 
-    let (should_regenerate, should_remove_player) = if let Ok(sesh) = category.get_user_sesh(user_id).await {
+    let (should_regenerate, should_remove_player, should_schedule_timeout) = if let Ok(sesh) = category.get_user_sesh(user_id).await {
       if sesh.is_active() {
         // Player is in an active session (Push/Live) - bot is moving them, not a voluntary leave
         return;
@@ -1165,7 +1200,7 @@ impl Handler {
                 if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                   let grace_until = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
                   player.vc_leave_grace_until = Some(grace_until);
-                  info!("{} #{} {} left VC post-game, 10s grace period started", log_prefix_format(&gld_nm, &ctg_nm, &fmt_nm), position + 1, usr_tg);
+                  info!("{} #{} {} left VC post-game, 10s grace period started", log_prefix_format(&guild_name, &ctg_nm, &fmt_nm), position + 1, usr_tg);
                 }
                 false // Don't remove immediately
               } else {
@@ -1190,12 +1225,18 @@ impl Handler {
         }
       };
 
-      if !should_remove_player {
+      // Track if we need to schedule timeout (player staying in queue but left VC)
+      let should_schedule_timeout = if !should_remove_player {
         if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
           player.joined_at = std::time::SystemTime::now();
           player.in_queue_vc = false;
+          true // Player is still in queue but left VC - schedule timeout
+        } else {
+          false
         }
-      }
+      } else {
+        false
+      };
 
       // Capture position before removal for logging
       let _position_before_removal = sesh.pool.iter().position(|p| p.player.user_id == user_id).map(|p| p + 1);
@@ -1222,7 +1263,7 @@ impl Handler {
         }
       }
 
-      (was_hot && pool_len >= quota, should_remove_player)
+      (was_hot && pool_len >= quota, should_remove_player, should_schedule_timeout)
     } else {
       // Player not found in any session
       let format = category.formats[0].clone();
@@ -1233,12 +1274,16 @@ impl Handler {
           warn!("Failed to log queue toggle: {e}");
         }
       }
-      (false, false)
+      (false, false, false)
     };
 
-    // Cancel timeout if player was removed (outside mutable borrow scope)
+    // Cancel timeout if player was removed, or schedule new timeout if they left VC but stayed in queue
     if should_remove_player {
       category.cancel_player_timeout(ctx, guild_id, user_id).await;
+    } else if should_schedule_timeout {
+      // Player left VC but is still in queue - schedule timeout
+      let timeout = queue_ctx.db.unwrap().users.get_prefs(user_id).await.unwrap().timeout;
+      category.schedule_player_timeout(ctx, guild_id, user_id, timeout, usr_tg.clone()).await;
     }
 
     if should_regenerate {

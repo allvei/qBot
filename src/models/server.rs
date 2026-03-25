@@ -17,7 +17,7 @@ use serenity::all::{ChannelId as CI, Context, CreateEmbed, CreateMessage as CM, 
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
-use crate::models::{Player, Session, SessionPlayer, SessionStatus, TeamChannel, DEFAULT_TIMEOUT};
+use crate::models::{Player, Session, SessionPlayer, SessionStatus, TeamChannel};
 
 /// Context parameters for queue operations
 pub struct QueueContext<'a> {
@@ -257,6 +257,10 @@ impl Format {
 
   pub fn display_name(&self) -> &str {
     &self.name
+  }
+
+  pub fn contains_user(&self, user_id: UI) -> bool {
+    self.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.user_id == user_id))
   }
 }
 
@@ -667,7 +671,11 @@ impl Category {
 
   /// Check if user is in a specific format's sessions
   pub fn is_user_in_fmt(&self, fmt_id: u8, user_id: UI) -> bool {
-    self.fmt(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.user_id == user_id))).unwrap_or(false)
+    self.fmt(fmt_id).unwrap().contains_user(user_id)
+  }
+
+  pub fn is_user_in_other_fmts(&self, fmt_id: u8, user_id: UI) -> bool {
+    self.formats.iter().any(|f| f.id != fmt_id && f.contains_user(user_id))
   }
 
   pub fn get_player(&mut self, user_id: UI) -> Result<&mut SessionPlayer> {
@@ -891,10 +899,10 @@ impl Category {
           // Check if player has exceeded their timeout time
           if let Ok(elapsed) = SystemTime::now().duration_since(player.joined_at) {
             if elapsed.as_secs() >= Duration::from_mins(expiry_mins as u64).as_secs() {
-              let gld_nm = crate::models::constants::guild_name(ctx, guild_id);
+              let guild_name = crate::models::constants::guild_name(ctx, guild_id);
               let ctg_nm = self.name.as_deref().unwrap_or("Unknown");
               let fmt_nm = &fmt.name;
-              info!("{} Timeout {} after {}m", crate::log::log_prefix_format(&gld_nm, ctg_nm, fmt_nm), player.player.tag, (elapsed.as_secs() as f64 / 60.0).round());
+              info!("{} Timeout {} after {}m", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player.player.tag, (elapsed.as_secs() as f64 / 60.0).round());
               players_to_remove.push(player.player.user_id);
             }
           }
@@ -946,7 +954,19 @@ impl Category {
     let red_vc = team_pair.red_vc;
     let blu_vc = team_pair.blu_vc;
 
-    // Get the hot game in the target format
+    // Get the hot game in the target format and collect player IDs for timeout cancellation
+    let player_ids_for_timeout: Vec<UI> = {
+      let sg = self.fmt(fmt_id).ok_or_else(|| anyhow!("Format {} not found for push", fmt_id))?;
+      let game = sg.sessions.iter().find(|s| s.status == SessionStatus::Hot).ok_or(anyhow!("No hot session found for push in format {}", fmt_id))?;
+      game.pool.iter().map(|p| p.player.user_id).collect()
+    };
+    
+    // Cancel timeouts for all players in this game (game is starting)
+    for user_id in player_ids_for_timeout {
+      self.cancel_player_timeout(ctx, guild_id, user_id).await;
+    }
+    
+    // Now get mutable reference for the rest of the operation
     let sg = self.fmt_mut(fmt_id).ok_or_else(|| anyhow!("Format {} not found for push", fmt_id))?;
     let game = sg.sessions.iter_mut().find(|s| s.status == SessionStatus::Hot).ok_or(anyhow!("No hot session found for push in format {}", fmt_id))?;
 
@@ -955,6 +975,7 @@ impl Category {
 
     // Set status to Push and extract player moves
     game.push();
+    
     let player_moves: Vec<(UI, CI, String)> = game
       .pool
       .iter()
@@ -992,10 +1013,8 @@ impl Category {
     }).collect();
 
     for task in move_tasks {
-      if let Ok((tag, result)) = task.await {
-        if let Err(e) = result {
-          warn!("Failed to move user {}: {}", tag, e);
-        }
+      if let Ok((tag, Err(e))) = task.await {
+        warn!("Failed to move user {}: {}", tag, e);
       }
     }
     info!("Moved {} players to team channels", player_count);
@@ -1782,7 +1801,10 @@ impl Category {
     let session = self.get_queue().await?;
     
     let user_id = player.user_id;
-    let player_tag = player.tag.clone();
+    let ply_tg = player.tag.clone();
+    let ply_timeout = player.timeout;
+    let db = queue_ctx.db.unwrap();
+    let usr_prefs = db.users.get_prefs(user_id).await?;
 
     if in_vc {
       session.add_ply_in_vc(player)?;
@@ -1792,7 +1814,7 @@ impl Category {
     
     // Schedule timeout for this player
     if let Some(guild_id) = queue_ctx.guild_id {
-      self.schedule_player_timeout(queue_ctx.ctx, guild_id, user_id, DEFAULT_TIMEOUT, player_tag).await;
+      self.schedule_player_timeout(queue_ctx.ctx, guild_id, user_id, ply_timeout, ply_tg).await;
     }
 
     // Create team VCs on first join if policy requires it
@@ -1819,6 +1841,9 @@ impl Category {
     
     let user_id = player.user_id;
     let player_tag = player.tag.clone();
+    let ply_timeout = player.timeout;
+    let db = queue_ctx.db.unwrap();
+    let user_prefs = db.users.get_prefs(user_id).await?;
 
     if in_vc {
       session.add_ply_in_vc(player)?;
@@ -1828,7 +1853,7 @@ impl Category {
     
     // Schedule timeout for this player
     if let Some(guild_id) = queue_ctx.guild_id {
-      self.schedule_player_timeout(queue_ctx.ctx, guild_id, user_id, DEFAULT_TIMEOUT, player_tag).await;
+      self.schedule_player_timeout(queue_ctx.ctx, guild_id, user_id, ply_timeout, player_tag).await;
     }
 
     // Create team VCs on first join if policy requires it
@@ -1916,17 +1941,19 @@ impl Category {
     }
   }
 
-  pub async fn add_player(&mut self, session: &mut Session, player: Player, _rank: Rank, ctx: &Context, guild_id: GI) -> Result<()> {
+  pub async fn add_player(&mut self, session: &mut Session, player: Player, _rank: Rank, queue_ctx: &QueueContext<'_>, guild_id: GI) -> Result<()> {
     let user_id = player.user_id;
     let player_tag = player.tag.clone();
-    let timeout = DEFAULT_TIMEOUT; // Will be updated by user prefs if needed
+    let ply_timeout = player.timeout;
     
     session.add_ply(player)?;
+    let db = queue_ctx.db.unwrap();
+    let user_prefs = db.users.get_prefs(user_id).await?;
     
     // Schedule timeout for this player
-    self.schedule_player_timeout(ctx, guild_id, user_id, timeout, player_tag).await;
+    self.schedule_player_timeout(queue_ctx.ctx, guild_id, user_id, ply_timeout, player_tag).await;
     
-    self.queue_dash_update(ctx, guild_id).await;
+    self.queue_dash_update(queue_ctx.ctx, guild_id).await;
     Ok(())
   }
   

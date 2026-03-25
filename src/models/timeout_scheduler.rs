@@ -18,13 +18,9 @@ pub struct TimeoutKey {
 
 /// Manages per-player timeout tasks for accurate queue expiry
 pub struct TimeoutScheduler {
-  /// Active timeout tasks, keyed by (guild_id, user_id)
   tasks: HashMap<TimeoutKey, JoinHandle<()>>,
-  /// Reference to manager for removing players
   manager: Arc<Mutex<Manager>>,
-  /// Reference to database
   db: Arc<Database>,
-  /// Serenity context for API calls
   ctx: Context,
 }
 
@@ -84,10 +80,10 @@ impl TimeoutScheduler {
                 removed = true;
                 should_update_dashboard = true;
                 
-                let gld_nm = crate::models::constants::guild_name(&ctx, guild_id);
+                let guild_name = crate::models::constants::guild_name(&ctx, guild_id);
                 info!(
                   "{} Timeout {} after {}m",
-                  crate::log::log_prefix_format(&gld_nm, &category_name, &format_name),
+                  crate::log::log_prefix_format(&guild_name, &category_name, &format_name),
                   player_tag,
                   timeout_minutes
                 );
@@ -97,7 +93,7 @@ impl TimeoutScheduler {
                   session.idle();
                   info!(
                     "{} Hot session dropped below quota after timeout, transitioning back to Idle",
-                    crate::log::log_prefix_format(&gld_nm, &category_name, &format_name)
+                    crate::log::log_prefix_format(&guild_name, &category_name, &format_name)
                   );
                 }
                 break;

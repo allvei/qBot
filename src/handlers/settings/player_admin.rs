@@ -51,8 +51,8 @@ pub async fn handle_player_settings_rank_select(
   let target_user_id: u64 = custom_id.rsplit('_').next().and_then(|s| s.parse().ok()).ok_or_else(|| anyhow::anyhow!("Invalid select ID format: {}", custom_id))?;
 
   let target_uid = UI::new(target_user_id);
-  let gld_id = interaction.guild_id.expect("Guild ID not found");
-  let gld_nm = guild_name(ctx, gld_id);
+  let guild_id = interaction.guild_id.expect("Guild ID not found");
+  let guild_name = guild_name(ctx, guild_id);
   // Get the selected role ID from the select menu
   let selected_role_id_str = match &interaction.data.kind {
     CIDK::StringSelect { values } => values.first().ok_or_else(|| anyhow::anyhow!("No rank selected"))?.clone(),
@@ -64,11 +64,11 @@ pub async fn handle_player_settings_rank_select(
 
   // Get current player data
   let player = db.users.check_user(target_uid, None).await?;
-  let guild_elo = db.elo.get(target_uid, gld_id, db).await?;
+  let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
 
   // Get the new rank from the selected role ID
-  let new_rank = match db.ranks.rank_from_role_id(gld_id, role_id).await {
-    Ok(rank) => crate::models::types::Rank { guild_id: gld_id, role_id: rank.role_id, name: rank.name, elo: rank.elo },
+  let new_rank = match db.ranks.rank_from_role_id(guild_id, role_id).await {
+    Ok(rank) => crate::models::types::Rank { guild_id: guild_id, role_id: rank.role_id, name: rank.name, elo: rank.elo },
     Err(e) => {
       warn!("Failed to find rank for role ID {}: {}", selected_role_id, e);
 
@@ -83,19 +83,19 @@ pub async fn handle_player_settings_rank_select(
     }
   };
 
-  let elo_ranks_linked = db.config.get_elo_ranks_linked(gld_id).await?;
+  let elo_ranks_linked = db.config.get_elo_ranks_linked(guild_id).await?;
 
   if elo_ranks_linked {
     // Linked: update both rank and ELO
-    db.elo.set(target_uid, gld_id, new_rank.elo, new_rank.clone()).await?;
+    db.elo.set(target_uid, guild_id, new_rank.elo, new_rank.clone()).await?;
 
     // Validate ELO against player's Discord rank (if they have one)
     use crate::handlers::player::get_user_rank_from_discord_roles;
-    if let Some(discord_rank_info) = get_user_rank_from_discord_roles(ctx, db, gld_id, target_uid).await {
-      let discord_rank = crate::models::types::Rank { guild_id: gld_id, role_id: discord_rank_info.role_id, name: discord_rank_info.name.clone(), elo: discord_rank_info.elo };
+    if let Some(discord_rank_info) = get_user_rank_from_discord_roles(ctx, db, guild_id, target_uid).await {
+      let discord_rank = crate::models::types::Rank { guild_id: guild_id, role_id: discord_rank_info.role_id, name: discord_rank_info.name.clone(), elo: discord_rank_info.elo };
 
       // Validate and normalize the manually set rank's ELO
-      if let Ok((normalized_elo, was_normalized)) = db.elo.validate_and_normalize_elo(target_uid, gld_id, &discord_rank, db).await {
+      if let Ok((normalized_elo, was_normalized)) = db.elo.validate_and_normalize_elo(target_uid, guild_id, &discord_rank, db).await {
         if was_normalized {
           info!("Admin set rank {} (ELO {}) for {}, but normalized to {} based on Discord rank {}", new_rank.name, new_rank.elo, target_uid, normalized_elo, discord_rank.name);
         }
@@ -103,15 +103,15 @@ pub async fn handle_player_settings_rank_select(
     }
   } else {
     // Independent: update rank only, keep existing ELO
-    db.elo.set(target_uid, gld_id, guild_elo.elo, new_rank.clone()).await?;
+    db.elo.set(target_uid, guild_id, guild_elo.elo, new_rank.clone()).await?;
   }
 
   if guild_elo.rank.name != new_rank.name {
-    info!("{} Updated rank for {}: {} -> {}{}", log_prefix_guild(&gld_nm), usr_tg, guild_elo.rank.name, new_rank.name, if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" });
+    info!("{} Updated rank for {}: {} -> {}{}", log_prefix_guild(&guild_name), usr_tg, guild_elo.rank.name, new_rank.name, if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" });
   }
 
   // Update Discord roles
-  if let Ok(member) = gld_id.member(&ctx.http, target_uid).await {
+  if let Ok(member) = guild_id.member(&ctx.http, target_uid).await {
     // Remove old rank role
     if member.roles.contains(&guild_elo.rank.role_id) {
       if let Err(e) = member.remove_role(&ctx.http, guild_elo.rank.role_id).await {
@@ -134,7 +134,7 @@ pub async fn handle_player_settings_rank_select(
   // Update in-memory player data and dashboards where this player is queued
   {
     let mut manager_lock = manager.lock().await;
-    if let Ok(server) = manager_lock.get_server(gld_id) {
+    if let Ok(server) = manager_lock.get_server(guild_id) {
       let mut found_in_queue = false;
       for category in &mut server.categories {
         // Update in-memory player rank for all sessions
@@ -153,7 +153,7 @@ pub async fn handle_player_settings_rank_select(
 
         if player_in_queue {
           found_in_queue = true;
-          category.queue_dash_update(ctx, gld_id).await;
+          category.queue_dash_update(ctx, guild_id).await;
           info!("Player {} rank changed, dashboard updated for category {}", target_uid, category.ctg_id);
         }
       }
@@ -161,7 +161,7 @@ pub async fn handle_player_settings_rank_select(
         info!("Player {} rank changed but not found in any queue, no dashboard update needed", target_uid);
       }
     } else {
-      warn!("Failed to get server for guild {} when checking if player {} is queued", gld_id, target_uid);
+      warn!("Failed to get server for guild {} when checking if player {} is queued", guild_id, target_uid);
     }
   }
 
@@ -171,7 +171,7 @@ pub async fn handle_player_settings_rank_select(
     Err(_) => target_user_id.to_string(),
   };
 
-  let updated_guild_elo = db.elo.get(target_uid, gld_id, db).await?;
+  let updated_guild_elo = db.elo.get(target_uid, guild_id, db).await?;
   let settings = PlayerSettings {
     user_id: target_uid,
     username,
@@ -182,7 +182,7 @@ pub async fn handle_player_settings_rank_select(
     wins: updated_guild_elo.wins,
   };
 
-  let (embed, components) = nav_player_settings(&settings, db, gld_id).await;
+  let (embed, components) = nav_player_settings(&settings, db, guild_id).await;
   let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
   interaction.create_response(&ctx.http, response).await?;
   Ok(())
@@ -506,7 +506,7 @@ pub async fn handle_player_settings_modal(
     }
 
     // Update target user's settings
-    db.users.update_settings(target_uid, &user_settings).await?;
+    db.users.update_prefs(target_uid, &user_settings).await?;
 
     // Refresh the settings menu
     let settings = get_player_settings!(db, ctx, target_uid, guild_id, target_user_id);

@@ -7,7 +7,7 @@ pub mod team;
 pub mod r#match;
 pub mod fatkid;
 
-pub use user::{UserRepository, UserSettings, is_valid_user_text};
+pub use user::{UserRepository, UserPreferences, is_valid_user_text};
 pub use category::CategoryRepository;
 pub use config::ConfigRepository;
 pub use elo::{EloRepository, GuildElo};

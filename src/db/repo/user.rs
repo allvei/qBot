@@ -1,10 +1,10 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use serenity::all::{Context as Ctx, UserId as UI, GuildId as GI};
+use serenity::all::{Context, UserId, GuildId};
 use sqlx::{Row, SqlitePool};
 use tracing::{error, info, warn};
 
-use crate::{DEFAULT_ALERT_COLOR, Database, DEFAULT_TIMEOUT, Rank};
+use crate::{DEFAULT_ALERT_COLOR, Database, Rank};
 use crate::models::Player;
 use super::Repository;
 
@@ -91,15 +91,15 @@ impl UserRepository {
         Self { pool }
     }
 
-    pub async fn get(&self, user_id: UI) -> Result<Player> {
-        match sqlx::query("SELECT user_id, steam_id, discord_tag FROM users WHERE user_id = ?").bind(user_id.get() as i64).fetch_one(&self.pool).await {
+    pub async fn get(&self, user_id: UserId) -> Result<Player> {
+        match sqlx::query("SELECT user_id, steam_id, discord_tag, timeout FROM users WHERE user_id = ?").bind(user_id.get() as i64).fetch_one(&self.pool).await {
             Ok(result) => Ok(Self::get_player(result)),
             Err(e) => Err(e.into()),
         }
     }
 
-    pub async fn get_with_tag(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
-        let result = sqlx::query("SELECT user_id, steam_id, discord_tag FROM users WHERE user_id = ?")
+    pub async fn get_with_tag(&self, user_id: UserId, ctx: &Context) -> Result<Player> {
+        let result = sqlx::query("SELECT user_id, steam_id, discord_tag, timeout FROM users WHERE user_id = ?")
         .bind(user_id.get() as i64)
         .fetch_one(&self.pool)
         .await?;
@@ -119,7 +119,7 @@ impl UserRepository {
     }
 
     /// Get player with tag and try to get display name from guild context
-    pub async fn get_with_nick(&self, user_id: UI, ctx: &Ctx, guild_id: Option<serenity::all::GuildId>) -> Result<Player> {
+    pub async fn get_with_nick(&self, user_id: UserId, ctx: &Context, guild_id: Option<serenity::all::GuildId>) -> Result<Player> {
         let mut player = self.get_with_tag(user_id, ctx).await?;
 
         // Try to get display name (nickname) if guild context is available
@@ -131,12 +131,12 @@ impl UserRepository {
     }
 
     /// Ensure user exists without fetching tag (for internal operations)
-    pub async fn check_user(&self, user_id: UI, steam_id: Option<u64>) -> Result<Player> {
+    pub async fn check_user(&self, user_id: UserId, steam_id: Option<u64>) -> Result<Player> {
         let result = sqlx::query(
             "INSERT INTO users (user_id, steam_id)
              VALUES (?, ?)
              ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id
-             RETURNING user_id, steam_id, discord_tag"
+             RETURNING user_id, steam_id, discord_tag, timeout"
         )
         .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
@@ -147,7 +147,7 @@ impl UserRepository {
     }
 
     /// Batch ensure multiple users exist in the database (single transaction)
-    pub async fn batch_ensure(&self, user_ids: &[UI]) -> Result<()> {
+    pub async fn batch_ensure(&self, user_ids: &[UserId]) -> Result<()> {
         if user_ids.is_empty() { return Ok(()); }
 
         let mut tx = self.pool.begin().await?;
@@ -171,12 +171,12 @@ impl UserRepository {
         Ok(())
     }
 
-    pub async fn upsert(&self, user_id: UI, steam_id: Option<u64>) -> Result<Player> {
+    pub async fn upsert(&self, user_id: UserId, steam_id: Option<u64>) -> Result<Player> {
         let result = sqlx::query(
             "INSERT INTO users (user_id, steam_id)
              VALUES (?, ?)
              ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id
-             RETURNING user_id, steam_id, discord_tag"
+             RETURNING user_id, steam_id, discord_tag, timeout"
         )
         .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
@@ -188,9 +188,10 @@ impl UserRepository {
 
     /// Extract player data from a database row
     fn get_player(result: sqlx::sqlite::SqliteRow) -> Player {
-        let user_id: i64          = result.get("user_id");
-        let steam_id: Option<i64> = result.try_get("steam_id").ok();
+        let user_id: i64                = result.get("user_id");
+        let steam_id: Option<i64>       = result.try_get("steam_id").ok();
         let discord_tag: Option<String> = result.try_get("discord_tag").ok().flatten();
+        let timeout: i64                = result.get("timeout");
         
         // Use stored discord_tag if available, otherwise empty string
         let tag = discord_tag.unwrap_or_default();
@@ -199,17 +200,18 @@ impl UserRepository {
         Player::add(
             (user_id as u64).into(),
             tag,
+            timeout as u8,
             steam_id.map(|id| id as u64),
-            None // No rank available without guild context
+            None, // No rank available without guild context
         )
     }
 
     /// Get player with rank determined from guild-specific ELO and Discord roles
-    pub async fn get_with_guild_rank(&self, user_id: UI, _ctx: &Ctx, guild_id: GI, db: &Database) -> Result<Player> {
+    pub async fn get_with_guild_rank(&self, user_id: UserId, _ctx: &Context, guild_id: GuildId, db: &Database) -> Result<Player> {
         info!("DEBUG: get_player_with_guild_rank called for user {} in guild {}", user_id, guild_id);
         
         // Get base player data from users table
-        let result = sqlx::query("SELECT user_id, steam_id, discord_tag FROM users WHERE user_id = ?")
+        let result = sqlx::query("SELECT user_id, steam_id, discord_tag, timeout FROM users WHERE user_id = ?")
             .bind(user_id.get() as i64)
             .fetch_one(&self.pool)
             .await?;
@@ -256,7 +258,7 @@ impl UserRepository {
     }
 
 
-    pub async fn update_steam_id(&self, user_id: &UI, steam_id: Option<u64>) -> Result<Player> {
+    pub async fn update_steam_id(&self, user_id: &UserId, steam_id: Option<u64>) -> Result<Player> {
         info!("Updating user steam_id for user_id: {}", user_id);
 
         sqlx::query("UPDATE users SET steam_id = ? WHERE user_id = ?")
@@ -268,7 +270,7 @@ impl UserRepository {
     }
 
     /// Update user's discord tag in database
-    pub async fn update_discord_tag(&self, user_id: UI, discord_tag: &str) -> Result<()> {
+    pub async fn update_discord_tag(&self, user_id: UserId, discord_tag: &str) -> Result<()> {
         sqlx::query("UPDATE users SET discord_tag = ? WHERE user_id = ?")
             .bind(discord_tag)
             .bind(user_id.get() as i64)
@@ -278,7 +280,7 @@ impl UserRepository {
     }
 
     /// Get user tag - retrieves from database or fetches from Discord API
-    pub async fn get_tag(&self, user_id: UI, ctx: &Ctx) -> String {
+    pub async fn get_tag(&self, user_id: UserId, ctx: &Context) -> String {
         // Try to get from database first
         if let Ok(player) = self.get(user_id).await {
             if !player.tag.is_empty() {
@@ -298,7 +300,7 @@ impl UserRepository {
         user_id.to_string()
     }
 
-    pub async fn get_pm_hot_alert(&self, user_id: UI) -> Result<bool> {
+    pub async fn get_pm_hot_alert(&self, user_id: UserId) -> Result<bool> {
         let result = sqlx::query("SELECT pm_hot_alert FROM users WHERE user_id = ?")
             .bind(user_id.get() as i64)
             .fetch_optional(&self.pool)
@@ -316,7 +318,7 @@ impl UserRepository {
         }
     }
 
-    pub async fn set_pm_hot_alert(&self, user_id: UI, enabled: bool) -> Result<()> {
+    pub async fn set_pm_hot_alert(&self, user_id: UserId, enabled: bool) -> Result<()> {
         // Ensure user exists
         let _ = self.check_user(user_id, None).await?;
 
@@ -330,7 +332,7 @@ impl UserRepository {
         Ok(())
     }
 
-    pub async fn toggle_pm_hot_alert(&self, user_id: UI) -> Result<bool> {
+    pub async fn toggle_pm_hot_alert(&self, user_id: UserId) -> Result<bool> {
         // Ensure user exists
         let _ = self.check_user(user_id, None).await?;
 
@@ -345,7 +347,7 @@ impl UserRepository {
     }
 
     /// Get user settings
-    pub async fn get_prefs(&self, user_id: UI) -> Result<UserSettings> {
+    pub async fn get_prefs(&self, user_id: UserId) -> Result<UserPreferences> {
         let result = sqlx::query(
             "SELECT timeout, vc_auto_leave, vc_auto_join,
                     join_alert_color, pm_hot_alert, pm_queue_alert_threshold,
@@ -438,9 +440,9 @@ impl UserRepository {
                         .await;
                 }
 
-                Ok(UserSettings {
+                Ok(UserPreferences {
                     pm_hot_alert:             row.try_get::<i64, _>   ("pm_hot_alert")            .unwrap_or(0) != 0,
-                    timeout:                  row.try_get::<u8, _>    ("timeout")                 .unwrap_or(DEFAULT_TIMEOUT),
+                    timeout:                  row.try_get::<u8, _>    ("timeout")                 .unwrap_or(crate::DEFAULT_TIMEOUT),
                     vc_auto_join:             row.try_get::<i64, _>   ("vc_auto_join")            .unwrap_or(0) != 0,
                     join_alert_title:         row.try_get::<String, _>("join_alert_title")        .ok().filter(|s| !s.is_empty()),
                     join_alert_desc:          join_alert.clone(),
@@ -459,13 +461,33 @@ impl UserRepository {
             }
             None => {
                 // User doesn't exist, return defaults
-                Ok(UserSettings::default())
+                warn!("Can't find user_id {} in DB, using default preferences", user_id.get());
+                Ok(UserPreferences::default())
+            }
+        }
+    }
+
+    pub async fn get_pref(&self, column: &str, user_id: UserId) -> Result<String>  {
+        let result = sqlx::query(
+            "SELECT ?
+            FROM users WHERE user_id = ?"
+        )
+        .bind(column)
+        .bind(user_id.get() as i64)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match result {
+            Some(row) => { Ok(row.try_get::<String, _>(column).ok().filter(|s| !s.is_empty()).unwrap()) }
+            None => {
+                warn!("Can't find user_id {} in DB, using default preferences", user_id.get());
+                Ok("".to_string())
             }
         }
     }
 
     /// Update user settings
-    pub async fn update_settings(&self, user_id: UI, settings: &UserSettings) -> Result<()> {
+    pub async fn update_prefs(&self, user_id: UserId, prefs: &UserPreferences) -> Result<()> {
         // Ensure user exists
         let _ = self.check_user(user_id, None).await?;
 
@@ -489,22 +511,22 @@ impl UserRepository {
                 leave_alert_footer_img = ?
                 WHERE user_id          = ?"
         )
-        .bind(settings.pm_hot_alert)
-        .bind(settings.timeout)
-        .bind(settings.vc_auto_join)
-        .bind(&settings.join_alert_title)
-        .bind(&settings.join_alert_desc)
-        .bind(settings.join_alert_color)
-        .bind(&settings.join_alert_img)
-        .bind(&settings.join_alert_footer)
-        .bind(&settings.join_alert_footer_img)
-        .bind(settings.vc_auto_leave)
-        .bind(&settings.leave_alert_title)
-        .bind(&settings.leave_alert_desc)
-        .bind(settings.leave_alert_color)
-        .bind(&settings.leave_alert_img)
-        .bind(&settings.leave_alert_footer)
-        .bind(&settings.leave_alert_footer_img)
+        .bind(prefs.pm_hot_alert)
+        .bind(prefs.timeout)
+        .bind(prefs.vc_auto_join)
+        .bind(&prefs.join_alert_title)
+        .bind(&prefs.join_alert_desc)
+        .bind(prefs.join_alert_color)
+        .bind(&prefs.join_alert_img)
+        .bind(&prefs.join_alert_footer)
+        .bind(&prefs.join_alert_footer_img)
+        .bind(prefs.vc_auto_leave)
+        .bind(&prefs.leave_alert_title)
+        .bind(&prefs.leave_alert_desc)
+        .bind(prefs.leave_alert_color)
+        .bind(&prefs.leave_alert_img)
+        .bind(&prefs.leave_alert_footer)
+        .bind(&prefs.leave_alert_footer_img)
         .bind(user_id.get() as i64)
         .execute(&self.pool)
         .await?;
@@ -513,7 +535,7 @@ impl UserRepository {
     }
 
     /// Update a single setting field
-    pub async fn update_setting_field(&self, user_id: UI, field: &str, value: i64) -> Result<()> {
+    pub async fn update_prefs_field(&self, user_id: UserId, field: &str, value: i64) -> Result<()> {
         // Ensure user exists
         let _ = self.check_user(user_id, None).await?;
 
@@ -536,7 +558,7 @@ impl UserRepository {
 
 /// User settings structure
 #[derive(Debug, Clone)]
-pub struct UserSettings {
+pub struct UserPreferences {
     pub pm_hot_alert:             bool,
     pub timeout:                  u8,
     pub vc_auto_join:             bool,
@@ -555,11 +577,11 @@ pub struct UserSettings {
     pub leave_alert_footer_img:   Option<String>,
 }
 
-impl Default for UserSettings {
+impl Default for UserPreferences {
     fn default() -> Self {
         Self {
             pm_hot_alert:             false,
-            timeout:                  DEFAULT_TIMEOUT,
+            timeout:                  crate::DEFAULT_TIMEOUT,
             vc_auto_join:             false,
             join_alert_title:         None,
             join_alert_desc:          None,
@@ -579,12 +601,12 @@ impl Default for UserSettings {
 }
 
 #[async_trait]
-impl Repository<Player, UI> for UserRepository {
+impl Repository<Player, UserId> for UserRepository {
     async fn create(&self, player: &Player) -> Result<Player> {
         self.check_user(player.user_id, player.steam_id).await
     }
 
-    async fn get_by_id(&self, user_id: UI) -> Result<Player> {
+    async fn get_by_id(&self, user_id: UserId) -> Result<Player> {
         self.get(user_id).await
     }
 
@@ -593,7 +615,7 @@ impl Repository<Player, UI> for UserRepository {
         Ok(player.clone())
     }
 
-    async fn delete(&self, user_id: UI) -> Result<()> {
+    async fn delete(&self, user_id: UserId) -> Result<()> {
         sqlx::query("DELETE FROM users WHERE user_id = ?")
             .bind(user_id.get() as i64)
             .execute(&self.pool)

@@ -108,7 +108,7 @@ pub async fn log_queue_toggle(
   .fetch_one(&db.pool)
   .await?;
 
-  let gld_nm: &str = fmt_info.get("guild_name");
+  let guild_name: &str = fmt_info.get("guild_name");
   let ctg_nm: &str = fmt_info.get("category_name");
   let fmt_nm: &str = fmt_info.get("format_name");
 
@@ -150,7 +150,7 @@ pub async fn log_queue_toggle(
   };
 
   // Call the original function with extrapolated data
-  log_queue_toggle_sync(gld_nm, ctg_nm, &player.tag, queue_type, pool_size, Some(fmt_nm), position, rank_mismatch);
+  log_queue_toggle_sync(guild_name, ctg_nm, &player.tag, queue_type, pool_size, Some(fmt_nm), position, rank_mismatch);
 
   Ok(())
 }

@@ -7,7 +7,6 @@ use tracing::{info, warn};
 use super::Repository;
 use crate::{log_prefix_category, log_prefix_guild};
 use crate::models::{Channels, Category, TeamBalanceMethod, TeamChannel};
-use crate::DEFAULT_TIMEOUT;
 
 /// Configuration for creating or updating a category
 pub struct CategoryConfig {
@@ -75,7 +74,7 @@ impl CategoryRepository {
             category_id,
             None,
             config.quota,
-            DEFAULT_TIMEOUT as u16, // default timeout
+            crate::DEFAULT_TIMEOUT as u16, // default timeout
             MI::new(dashboard_msg),
             Channels::new(
                 category,
@@ -191,7 +190,7 @@ impl CategoryRepository {
             category_id,
             name,
             result.try_get::<i64, _>("quota")  .unwrap_or(8)  as u8,
-            result.try_get::<i64, _>("timeout").unwrap_or(DEFAULT_TIMEOUT as i64) as u16,
+            result.try_get::<i64, _>("timeout").unwrap_or(crate::DEFAULT_TIMEOUT as i64) as u16,
             MI::new(dashboard_msg_id),
             Channels::new(category, chat, queue, ping, teams, dashboard),
             Vec::new(),

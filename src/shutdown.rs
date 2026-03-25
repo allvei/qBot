@@ -157,8 +157,8 @@ impl ShutdownHandler {
             let mut tasks = tokio::task::JoinSet::new();
             
             for server in &manager_lock.servers {
-                let gld_id = server.guild_id;
-                let gld_nm = self.cache.guild(gld_id)
+                let guild_id = server.guild_id;
+                let guild_name = self.cache.guild(guild_id)
                     .map(|g| g.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
                 
@@ -171,7 +171,7 @@ impl ShutdownHandler {
                     let chn_id = category.channels.dashboard;
                     let msg_id = category.dashboard_msg;
                     let ctg_nm = category.name.clone().unwrap_or_default();
-                    let gld_nm_clone = gld_nm.clone();
+                    let guild_name_clone = guild_name.clone();
                     let http = self.http.clone();
                     
                     tasks.spawn(async move {
@@ -181,10 +181,10 @@ impl ShutdownHandler {
                             EditMessage::new().embed(offline_embed).components(vec![])
                         ).await {
                             Ok(_) => {
-                                info!("{} Dashboard now offline", log_prefix_category(&gld_nm_clone, &ctg_nm));
+                                info!("{} Dashboard now offline", log_prefix_category(&guild_name_clone, &ctg_nm));
                             }
                             Err(e) => {
-                                warn!("{} Failed to update dashboard: {}", log_prefix_category(&gld_nm_clone, &ctg_nm), e);
+                                warn!("{} Failed to update dashboard: {}", log_prefix_category(&guild_name_clone, &ctg_nm), e);
                             }
                         }
                     });

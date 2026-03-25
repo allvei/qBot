@@ -229,10 +229,10 @@ pub trait AsSettingsMenu {
 }
 
 // ============================================================================
-// UserSettings implementation
+// UserPreferences implementation
 // ============================================================================
 
-impl AsSettingsMenu for crate::db::repo::UserSettings {
+impl AsSettingsMenu for crate::db::repo::UserPreferences {
   fn as_settings_menu(&self) -> SettingsMenu {
     // Format timeout: hours for full hours, minutes for partial
     let timeout_text = if self.timeout >= 60 && self.timeout % 60 == 0 {

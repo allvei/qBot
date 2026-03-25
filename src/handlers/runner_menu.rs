@@ -14,7 +14,7 @@ use crate::models::{ComponentContext as CC, Role};
 use crate::{guild_name, log_prefix_guild, Manager, CYAN};
 
 mod runner_menu_end;
-use runner_menu_end::handle_end_without_score;
+pub use runner_menu_end::{handle_end_without_score, show_end_match_selection, handle_end_match_result};
 
 /// Build the runner menu embed and buttons (shared by show and update)
 fn build_runner_menu() -> (CE, Vec<CAR>) {
@@ -28,6 +28,7 @@ fn build_runner_menu() -> (CE, Vec<CAR>) {
        • **Fatkid** - Move a player to the end of queue\n\n\
        **Match control:**\n\
        • **Accept** - Bypass VC join requirement for players who need more time\n\
+       • **End match** - End match and report the winning team\n\
        • **End without score** - End match without reporting score (backup option)",
     )
     .color(CYAN);
@@ -41,6 +42,7 @@ fn build_runner_menu() -> (CE, Vec<CAR>) {
     ]),
     CAR::Buttons(vec![
       CB::new("runner_action_accept").label("Force accept").style(BS::Primary),
+      CB::new("runner_action_end_match").label("End match").style(BS::Success),
       CB::new("runner_action_end_no_score").label("End without score").style(BS::Danger),
     ]),
   ];
@@ -110,6 +112,9 @@ pub async fn handle_runner_action(
   match action {
     "accept" => {
       handle_direct_action(ctx, interaction, db, manager, guild_id, action).await
+    }
+    "end_match" => {
+      show_end_match_selection(ctx, interaction, db, manager, guild_id).await
     }
     "end_no_score" => {
       handle_end_without_score(ctx, interaction, db, manager, guild_id).await
@@ -265,16 +270,16 @@ pub async fn handle_player_selection(
               session.pool.remove(pos);
               found = true;
               should_cancel_timeout = true;
-              let gld_nm = guild_name(ctx, guild_id);
+              let guild_name = guild_name(ctx, guild_id);
               let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
               let fmt_nm = &format.name;
-              info!("{} Runner removed player {} from queue", crate::log::log_prefix_format(&gld_nm, ctg_nm, fmt_nm), player_tag);
+              info!("{} Runner removed player {} from queue", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player_tag);
               last_action_info = Some((cat_idx, format!("removed {}", player_tag)));
               
               // If this was a Hot session and now below quota, transition back to Idle
               if session.is_hot() && session.pool.len() < quota {
                 session.idle();
-                info!("{} Hot session dropped below quota after removing player, transitioning back to Idle", crate::log::log_prefix_format(&gld_nm, ctg_nm, fmt_nm));
+                info!("{} Hot session dropped below quota after removing player, transitioning back to Idle", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm));
               }
             }
           }
@@ -297,10 +302,10 @@ pub async fn handle_player_selection(
               let player = session.pool.remove(pos);
               session.pool.insert(0, player);
               found = true;
-              let gld_nm = guild_name(ctx, guild_id);
+              let guild_name = guild_name(ctx, guild_id);
               let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
               let fmt_nm = &format.name;
-              info!("{} Runner buffered player {} to front of queue", crate::log::log_prefix_format(&gld_nm, ctg_nm, fmt_nm), player_tag);
+              info!("{} Runner buffered player {} to front of queue", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player_tag);
               last_action_info = Some((cat_idx, format!("buffered {}", player_tag)));
             }
           }
@@ -323,10 +328,10 @@ pub async fn handle_player_selection(
               let player = session.pool.remove(pos);
               session.pool.push(player);
               found = true;
-              let gld_nm = guild_name(ctx, guild_id);
+              let guild_name = guild_name(ctx, guild_id);
               let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
               let fmt_nm = &format.name;
-              info!("{} Runner fatkidded player {} to end of queue", crate::log::log_prefix_format(&gld_nm, ctg_nm, fmt_nm), player_tag);
+              info!("{} Runner fatkidded player {} to end of queue", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player_tag);
               last_action_info = Some((cat_idx, format!("fatkidded {}", player_tag)));
             }
           }
@@ -467,8 +472,8 @@ async fn handle_clear_queue(
     drop(mgr);
   }
 
-  let gld_nm = guild_name(ctx, guild_id);
-  info!("{} Runner cleared queue ({} players)", log_prefix_guild(&gld_nm), removed_count);
+  let guild_name = guild_name(ctx, guild_id);
+  info!("{} Runner cleared queue ({} players)", log_prefix_guild(&guild_name), removed_count);
 
   let title = if removed_count > 0 {
     format!("Cleared queue: removed {} player{}", removed_count, if removed_count == 1 { "" } else { "s" })
@@ -531,8 +536,8 @@ pub async fn handle_remove_all(
     drop(mgr);
   }
 
-  let gld_nm = guild_name(ctx, guild_id);
-  info!("{} Runner removed all players from queue ({} players)", log_prefix_guild(&gld_nm), removed_count);
+  let guild_name = guild_name(ctx, guild_id);
+  info!("{} Runner removed all players from queue ({} players)", log_prefix_guild(&guild_name), removed_count);
 
   let title = if removed_count > 0 {
     format!("Removed all {} player{} from queue", removed_count, if removed_count == 1 { "" } else { "s" })
