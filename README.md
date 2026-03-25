@@ -1,18 +1,18 @@
-# Passtime.tf PUG Bot
+# qBot
 
-A comprehensive Discord bot for managing PUGs for passtime.tf, built in Rust using the Serenity Discord library.
+A comprehensive Discord bot for managing PUGs, built with Rust using the Serenity Discord library.
 
-## Why was this made over Pugbot?
+## Why was this made over existing PUG bots?
 
 - **To make it more efficient.**
-  Current Pugbot requires Discord commands that are very clunky and inconvenient to use, I look to minimize the use of them by using interactive components such as buttons, or automatic common actions like generating teams, or automatically queueing players when they join a voice channel.
+  Other bots need Discord commands that are very clunky and inconvenient to use, I look to minimize the use of them by using interactive components such as buttons, or automatic common actions like generating teams, or automatically queueing players when they join a voice channel.
 - **To make information compact and easy to access.**
-  Current Pugbot requires commands to access information or spreads information it across multiple channels.
+  Other bots require commands to display info that could be spread information across multiple channels.
   I solved this by creating a dashboard that consolidates all information into one place.
 - **To make it more personal for passtime.tf**
-  Current PUGbot was made to be more general for all types of games, I aimed to make ours more specific for passtime.tf.
+  Other bots were made to be more general for all types of games, I aimed to make ours more specific for passtime.tf.
 - **To give room for more features.**
-  We don't have control over the PUGbot code. This would help us expand the bot with more features in the future. Check out the planned features below.
+  We don't have control over the code of other bots. This would help us expand the bot with more features in the future. Check out the planned features below.
 
 ## Features
 
@@ -25,15 +25,21 @@ A comprehensive Discord bot for managing PUGs for passtime.tf, built in Rust usi
 
 ## Planned Features
 
+### Major
+
 - Integration with the TF2 game server.
   - Automatically assign players to the right teams.
   - Track server and player statistics.
   - Automatically move players back to the queue when a team wins.
-  - Send non-generated players automatically to spectator.
+- ELO
+  - Dynamic elo based on Win/Loss or other metrics.
+  - Class and region specific elo ratings.
+- Schedule based player queueing.
+
+### Minor
+
 - Map voting and rotation.
 - Methods for requesting substitutions when a player becomes unavailable.
 - Pre-game class selection.
-- Class specific elo ratings.
-- Schedule based player queueing.
 - Captain mode for manual team creation.
 - Show the queue status in the voice channels name.
