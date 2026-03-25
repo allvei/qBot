@@ -456,14 +456,14 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
 
   // Check if player is already in game
   if category.get_user_sesh(user).await.is_ok() {
-    // Already in queue - refresh timeout
+    // Already in queue - refresh queue time
     if let Ok(session) = category.get_user_sesh(user).await {
       if let Some(sp) = session.pool.iter_mut().find(|p| p.player.user_id == user) {
         sp.joined_at = std::time::SystemTime::now();
       }
     }
     let current_queue = category.get_queue().await.map(|s| s.pool.len()).unwrap_or(0);
-    cc.reply(&format!("Refreshed your timeout! ({current_queue}/{} players)", category.quota())).await?;
+    cc.reply(&format!("Refreshed your queue time! ({current_queue}/{} players)", category.quota())).await?;
     category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
   } else {
     let queue = category.get_queue().await?;

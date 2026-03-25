@@ -11,20 +11,20 @@ use crate::Database;
 
 /// Key for identifying a player's timeout task
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct TimeoutKey {
+pub struct QueueExpirationKey {
   pub guild_id: GI,
   pub user_id: UI,
 }
 
 /// Manages per-player timeout tasks for accurate queue expiry
-pub struct TimeoutScheduler {
-  tasks: HashMap<TimeoutKey, JoinHandle<()>>,
+pub struct QueueExpirationScheduler {
+  tasks: HashMap<QueueExpirationKey, JoinHandle<()>>,
   manager: Arc<Mutex<Manager>>,
   db: Arc<Database>,
   ctx: Context,
 }
 
-impl TimeoutScheduler {
+impl QueueExpirationScheduler {
   pub fn new(manager: Arc<Mutex<Manager>>, db: Arc<Database>, ctx: Context) -> Self {
     Self {
       tasks: HashMap::new(),
@@ -35,16 +35,16 @@ impl TimeoutScheduler {
   }
 
   /// Schedule a timeout for a player. Cancels any existing timeout for this player.
-  pub fn schedule_timeout(
+  pub fn schedule_queue_expiration(
     &mut self,
     guild_id: GI,
     user_id: UI,
-    timeout_minutes: u8,
+    queue_expiration_minutes: u8,
     player_tag: String,
     category_name: String,
     format_name: String,
   ) {
-    let key = TimeoutKey { guild_id, user_id };
+    let key = QueueExpirationKey { guild_id, user_id };
     
     // Cancel existing timeout if any
     if let Some(handle) = self.tasks.remove(&key) {
@@ -52,11 +52,11 @@ impl TimeoutScheduler {
     }
 
     // Don't schedule if timeout is 0 or below minimum
-    if timeout_minutes < crate::models::constants::MIN_TIMEOUT {
+    if queue_expiration_minutes < crate::models::constants::MIN_QUEUE_EXPIRATION {
       return;
     }
 
-    let duration = Duration::from_secs(timeout_minutes as u64 * 60);
+    let duration = Duration::from_secs(queue_expiration_minutes as u64 * 60);
     let manager = self.manager.clone();
     let db = self.db.clone();
     let ctx = self.ctx.clone();
@@ -85,7 +85,7 @@ impl TimeoutScheduler {
                   "{} Timeout {} after {}m",
                   crate::log::log_prefix_format(&guild_name, &category_name, &format_name),
                   player_tag,
-                  timeout_minutes
+                  queue_expiration_minutes
                 );
                 
                 // Check if hot session dropped below quota
@@ -117,8 +117,8 @@ impl TimeoutScheduler {
   }
 
   /// Cancel a player's timeout (e.g., when they leave the queue or game starts)
-  pub fn cancel_timeout(&mut self, guild_id: GI, user_id: UI) {
-    let key = TimeoutKey { guild_id, user_id };
+  pub fn cancel_queue_expiration(&mut self, guild_id: GI, user_id: UI) {
+    let key = QueueExpirationKey { guild_id, user_id };
     if let Some(handle) = self.tasks.remove(&key) {
       handle.abort();
     }
@@ -139,21 +139,21 @@ impl TimeoutScheduler {
   }
 
   /// Reschedule a timeout with a new duration (e.g., when player changes their timeout setting)
-  pub fn reschedule_timeout(
+  pub fn reschedule_queue_expiration(
     &mut self,
     guild_id: GI,
     user_id: UI,
-    new_timeout_minutes: u8,
+    new_expiration_duration_minutes: u8,
     player_tag: String,
     category_name: String,
     format_name: String,
   ) {
-    self.schedule_timeout(guild_id, user_id, new_timeout_minutes, player_tag, category_name, format_name);
+    self.schedule_queue_expiration(guild_id, user_id, new_expiration_duration_minutes, player_tag, category_name, format_name);
   }
 }
 
 /// TypeMapKey for TimeoutScheduler
-pub struct TimeoutSchedulerKey;
-impl serenity::prelude::TypeMapKey for TimeoutSchedulerKey {
-  type Value = Arc<Mutex<TimeoutScheduler>>;
+pub struct QueueExpirationSchedulerKey;
+impl serenity::prelude::TypeMapKey for QueueExpirationSchedulerKey {
+  type Value = Arc<Mutex<QueueExpirationScheduler>>;
 }

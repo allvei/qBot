@@ -92,14 +92,14 @@ impl UserRepository {
     }
 
     pub async fn get(&self, user_id: UserId) -> Result<Player> {
-        match sqlx::query("SELECT user_id, steam_id, discord_tag, timeout FROM users WHERE user_id = ?").bind(user_id.get() as i64).fetch_one(&self.pool).await {
+        match sqlx::query("SELECT user_id, steam_id, discord_tag, queue_expiration FROM users WHERE user_id = ?").bind(user_id.get() as i64).fetch_one(&self.pool).await {
             Ok(result) => Ok(Self::get_player(result)),
             Err(e) => Err(e.into()),
         }
     }
 
     pub async fn get_with_tag(&self, user_id: UserId, ctx: &Context) -> Result<Player> {
-        let result = sqlx::query("SELECT user_id, steam_id, discord_tag, timeout FROM users WHERE user_id = ?")
+        let result = sqlx::query("SELECT user_id, steam_id, discord_tag, queue_expiration FROM users WHERE user_id = ?")
         .bind(user_id.get() as i64)
         .fetch_one(&self.pool)
         .await?;
@@ -136,7 +136,7 @@ impl UserRepository {
             "INSERT INTO users (user_id, steam_id)
              VALUES (?, ?)
              ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id
-             RETURNING user_id, steam_id, discord_tag, timeout"
+             RETURNING user_id, steam_id, discord_tag, queue_expiration"
         )
         .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
@@ -176,7 +176,7 @@ impl UserRepository {
             "INSERT INTO users (user_id, steam_id)
              VALUES (?, ?)
              ON CONFLICT(user_id) DO UPDATE SET steam_id=excluded.steam_id
-             RETURNING user_id, steam_id, discord_tag, timeout"
+             RETURNING user_id, steam_id, discord_tag, queue_expiration"
         )
         .bind(user_id.get() as i64)
         .bind(steam_id.map(|id| id as i64).unwrap_or(0))
@@ -191,7 +191,7 @@ impl UserRepository {
         let user_id: i64                = result.get("user_id");
         let steam_id: Option<i64>       = result.try_get("steam_id").ok();
         let discord_tag: Option<String> = result.try_get("discord_tag").ok().flatten();
-        let timeout: i64                = result.get("timeout");
+        let queue_expiration: i64                = result.get("queue_expiration");
         
         // Use stored discord_tag if available, otherwise empty string
         let tag = discord_tag.unwrap_or_default();
@@ -200,7 +200,7 @@ impl UserRepository {
         Player::add(
             (user_id as u64).into(),
             tag,
-            timeout as u8,
+            queue_expiration as u8,
             steam_id.map(|id| id as u64),
             None, // No rank available without guild context
         )
@@ -211,7 +211,7 @@ impl UserRepository {
         info!("DEBUG: get_player_with_guild_rank called for user {} in guild {}", user_id, guild_id);
         
         // Get base player data from users table
-        let result = sqlx::query("SELECT user_id, steam_id, discord_tag, timeout FROM users WHERE user_id = ?")
+        let result = sqlx::query("SELECT user_id, steam_id, discord_tag, queue_expiration FROM users WHERE user_id = ?")
             .bind(user_id.get() as i64)
             .fetch_one(&self.pool)
             .await?;
@@ -349,7 +349,7 @@ impl UserRepository {
     /// Get user settings
     pub async fn get_prefs(&self, user_id: UserId) -> Result<UserPreferences> {
         let result = sqlx::query(
-            "SELECT timeout, vc_auto_leave, vc_auto_join,
+            "SELECT queue_expiration, vc_auto_leave, vc_auto_join,
                     join_alert_color, pm_hot_alert, pm_queue_alert_threshold,
                     join_alert_title, join_alert, join_alert_footer,
                     join_alert_footer_img, join_alert_img,
@@ -442,7 +442,7 @@ impl UserRepository {
 
                 Ok(UserPreferences {
                     pm_hot_alert:             row.try_get::<i64, _>   ("pm_hot_alert")            .unwrap_or(0) != 0,
-                    timeout:                  row.try_get::<u8, _>    ("timeout")                 .unwrap_or(crate::DEFAULT_TIMEOUT),
+                    queue_expiration:                  row.try_get::<u8, _>    ("queue_expiration")                 .unwrap_or(crate::DEFAULT_QUEUE_EXPIRATION),
                     vc_auto_join:             row.try_get::<i64, _>   ("vc_auto_join")            .unwrap_or(0) != 0,
                     join_alert_title:         row.try_get::<String, _>("join_alert_title")        .ok().filter(|s| !s.is_empty()),
                     join_alert_desc:          join_alert.clone(),
@@ -494,7 +494,7 @@ impl UserRepository {
         sqlx::query(
             "UPDATE users SET
                 pm_hot_alert           = ?,
-                timeout                = ?,
+                queue_expiration                = ?,
                 vc_auto_join           = ?,
                 join_alert_title       = ?,
                 join_alert             = ?,
@@ -512,7 +512,7 @@ impl UserRepository {
                 WHERE user_id          = ?"
         )
         .bind(prefs.pm_hot_alert)
-        .bind(prefs.timeout)
+        .bind(prefs.queue_expiration)
         .bind(prefs.vc_auto_join)
         .bind(&prefs.join_alert_title)
         .bind(&prefs.join_alert_desc)
@@ -540,7 +540,7 @@ impl UserRepository {
         let _ = self.check_user(user_id, None).await?;
 
         // Validate field name to prevent SQL injection
-        let allowed_fields = ["timeout", "join_alert", "vc_auto_leave", "join_alert_color", "pm_hot_alert"];
+        let allowed_fields = ["queue_expiration", "join_alert", "vc_auto_leave", "join_alert_color", "pm_hot_alert"];
         if !allowed_fields.contains(&field) {
             return Err(anyhow::anyhow!("Invalid setting field: {}", field));
         }
@@ -560,7 +560,7 @@ impl UserRepository {
 #[derive(Debug, Clone)]
 pub struct UserPreferences {
     pub pm_hot_alert:             bool,
-    pub timeout:                  u8,
+    pub queue_expiration:                  u8,
     pub vc_auto_join:             bool,
     pub join_alert_title:         Option<String>,
     pub join_alert_desc:          Option<String>,
@@ -581,7 +581,7 @@ impl Default for UserPreferences {
     fn default() -> Self {
         Self {
             pm_hot_alert:             false,
-            timeout:                  crate::DEFAULT_TIMEOUT,
+            queue_expiration:                  crate::DEFAULT_QUEUE_EXPIRATION,
             vc_auto_join:             false,
             join_alert_title:         None,
             join_alert_desc:          None,

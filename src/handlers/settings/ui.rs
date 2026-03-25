@@ -33,7 +33,7 @@ pub fn build_server_settings_embed(settings: &ServerSettings, guild_name: &str) 
     admin_role: settings.admin_role.clone(),
     toggle_states: settings.toggle_states.clone(),
     balance_method: settings.balance_method.clone(),
-    post_game_timeout: settings.post_game_timeout,
+    post_game_confirm_time: settings.post_game_confirm_time,
   };
   display.as_settings_menu().build_embed()
 }
@@ -47,7 +47,7 @@ pub fn build_server_settings_buttons(settings: &ServerSettings, guild_name: &str
     admin_role: settings.admin_role.clone(),
     toggle_states: settings.toggle_states.clone(),
     balance_method: settings.balance_method.clone(),
-    post_game_timeout: settings.post_game_timeout,
+    post_game_confirm_time: settings.post_game_confirm_time,
   };
   display.as_settings_menu().build_components()
 }
@@ -59,7 +59,7 @@ pub fn build_category_settings_embed(settings: &CategorySettings) -> CE {
     category_id: settings.category_id,
     name: settings.name.clone(),
     quota: settings.quota,
-    timeout: settings.timeout,
+    confirm_time: settings.confirm_time,
     connect_info: settings.connect_info.clone(),
     format_names: settings.format_names.clone(),
     vc_create: settings.vc_create.clone(),
@@ -76,7 +76,7 @@ pub fn build_category_settings_buttons(category_id: u8) -> Vec<CAR> {
     category_id,
     name: None,
     quota: 0,
-    timeout: 0,
+    confirm_time: 0,
     connect_info: None,
     format_names: Vec::new(),
     vc_create: String::new(),
@@ -159,7 +159,7 @@ pub async fn nav_role_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) ->
     admin_role: settings.admin_role.clone(),
     toggle_states: settings.toggle_states.clone(),
     balance_method: settings.balance_method.clone(),
-    post_game_timeout: settings.post_game_timeout,
+    post_game_confirm_time: settings.post_game_confirm_time,
   };
   let embed = display.as_settings_menu().build_embed();
   let buttons = display.as_settings_menu().build_components();

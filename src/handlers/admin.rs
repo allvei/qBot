@@ -1190,7 +1190,7 @@ async fn handle_categorylink_blue_selection(
     0,
     None,
     crate::DEFAULT_QUOTA,
-    crate::DEFAULT_HOT_JOIN_TIMEOUT,
+    crate::DEFAULT_CONFIRM_TIME,
     MessageId::new(1),
     Channels {
       category: category_id,

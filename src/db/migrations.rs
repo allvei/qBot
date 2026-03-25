@@ -4,7 +4,7 @@ use sqlx::{Row, SqlitePool};
 use tracing::info;
 
 use crate::db::helpers::MigrationHelpers;
-use crate::{add_columns, DEFAULT_HOT_JOIN_TIMEOUT};
+use crate::{add_columns, DEFAULT_CONFIRM_TIME};
 
 macro_rules! add_column {
   ($self:ident, $table:literal, $name:literal, $type:literal, $default:literal) => {
@@ -110,10 +110,10 @@ impl DatabaseMigrations {
     Ok(())
   }
   async fn verify_config(&self) -> Result<()> {
-    let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank", "elo_ranks_linked", "post_game_auto_leave", "post_game_timeout"];
+    let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank", "elo_ranks_linked", "post_game_auto_leave", "post_game_confirm_time"];
     add_column!(self, "config", "elo_ranks_linked", "INTEGER", "1");
     add_column!(self, "config", "post_game_auto_leave", "INTEGER", "1");
-    add_column!(self, "config", "post_game_timeout", "INTEGER", "120");
+    add_column!(self, "config", "post_game_confirm_time", "INTEGER", "120");
     self.verify_columns("config", &required_columns).await?;
     Ok(())
   }
@@ -126,7 +126,7 @@ impl DatabaseMigrations {
                     discord_tag              TEXT    DEFAULT NULL,
                     pm_hot_alert             INTEGER DEFAULT 0,
                     pm_queue_alert_threshold INTEGER DEFAULT NULL,
-                    timeout                  INTEGER DEFAULT 30,
+                    queue_expiration                  INTEGER DEFAULT 30,
                     vc_auto_join             INTEGER DEFAULT 0,
                     join_alert_title         TEXT    DEFAULT NULL,
                     join_alert               TEXT    DEFAULT NULL,
@@ -163,7 +163,7 @@ impl DatabaseMigrations {
         add_column!(self, "users", "discord_tag", "TEXT", "NULL");
         add_column!(self, "users", "pm_hot_alert", "INTEGER", "0");
         add_column!(self, "users", "pm_queue_alert_threshold", "INTEGER", "NULL");
-        add_column!(self, "users", "timeout", "INTEGER", "30");
+        add_column!(self, "users", "queue_expiration", "INTEGER", "30");
         add_column!(self, "users", "vc_auto_join", "INTEGER", "0");
         add_column!(self, "users", "join_alert_title", "TEXT", "NULL");
         add_column!(self, "users", "join_alert", "TEXT", "NULL");
@@ -200,7 +200,7 @@ impl DatabaseMigrations {
                         discord_tag              TEXT    DEFAULT NULL,
                         pm_hot_alert             INTEGER DEFAULT 1,
                         pm_queue_alert_threshold INTEGER DEFAULT NULL,
-                        timeout                  INTEGER DEFAULT 30,
+                        queue_expiration                  INTEGER DEFAULT 30,
                         vc_auto_join             INTEGER DEFAULT 0,
                         join_alert_title         TEXT    DEFAULT NULL,
                         join_alert               TEXT    DEFAULT NULL,
@@ -244,7 +244,7 @@ impl DatabaseMigrations {
       "steam_id",
       "pm_hot_alert",
       "pm_queue_alert_threshold",
-      "timeout",
+      "queue_expiration",
       "vc_auto_join",
       "join_alert_title",
       "join_alert",
@@ -272,7 +272,7 @@ impl DatabaseMigrations {
                     id                INTEGER PRIMARY KEY,
                     category_id          INTEGER DEFAULT 0,
                     name              TEXT,
-                    timeout           INTEGER DEFAULT {DEFAULT_HOT_JOIN_TIMEOUT},
+                    confirm_time           INTEGER DEFAULT {DEFAULT_CONFIRM_TIME},
                     guild_id          INTEGER NOT NULL,
                     category          INTEGER DEFAULT 0,
                     dashboard         INTEGER NOT NULL UNIQUE,
@@ -299,7 +299,7 @@ impl DatabaseMigrations {
       if !has_id || !has_guild_id {
         // Backup existing data before dropping table
         let backup_data = if has_guild_id {
-          sqlx::query("SELECT category_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment, quota, connect_info FROM categories")
+          sqlx::query("SELECT category_id, name, confirm_time, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment, quota, connect_info FROM categories")
             .fetch_all(&self.pool)
             .await
             .unwrap_or_default()
@@ -313,7 +313,7 @@ impl DatabaseMigrations {
                         id                INTEGER PRIMARY KEY,
                         category_id          INTEGER DEFAULT 0,
                         name              TEXT,
-                        timeout           INTEGER DEFAULT {DEFAULT_HOT_JOIN_TIMEOUT},
+                        confirm_time           INTEGER DEFAULT {DEFAULT_CONFIRM_TIME},
                         guild_id          INTEGER NOT NULL,
                         dashboard         INTEGER NOT NULL UNIQUE,
                         chat              INTEGER NOT NULL UNIQUE,
@@ -335,7 +335,7 @@ impl DatabaseMigrations {
         for row in backup_data {
           let category_id: i64 = row.try_get("category_id").unwrap_or(0);
           let name: Option<String> = row.try_get("name").ok();
-          let timeout: i64 = row.try_get("timeout").unwrap_or(DEFAULT_HOT_JOIN_TIMEOUT as i64);
+          let confirm_time: i64 = row.try_get("confirm_time").unwrap_or(DEFAULT_CONFIRM_TIME as i64);
           let guild_id: i64 = row.get("guild_id");
           let dashboard: i64 = row.get("dashboard");
           let chat: i64 = row.get("chat");
@@ -349,12 +349,12 @@ impl DatabaseMigrations {
           let connect_info: Option<String> = row.try_get("connect_info").ok();
 
           sqlx::query(
-            "INSERT INTO categories (category_id, name, timeout, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment, quota, connect_info)
+            "INSERT INTO categories (category_id, name, confirm_time, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment, quota, connect_info)
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .bind(category_id)
           .bind(name)
-          .bind(timeout)
+          .bind(confirm_time)
           .bind(guild_id)
           .bind(dashboard)
           .bind(chat)
@@ -430,7 +430,7 @@ impl DatabaseMigrations {
 
             // Backup all data
             let backup_data = sqlx::query(
-              "SELECT id, category_id, name, timeout, guild_id, category, dashboard, chat, queue, 
+              "SELECT id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue, 
                              dashboard_msg, red, blu, game, game_increment, quota, connect_info,
                              team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users
                              FROM categories",
@@ -445,7 +445,7 @@ impl DatabaseMigrations {
                                 id                INTEGER PRIMARY KEY,
                                 category_id          INTEGER DEFAULT 0,
                                 name              TEXT,
-                                timeout           INTEGER DEFAULT {DEFAULT_HOT_JOIN_TIMEOUT},
+                                confirm_time           INTEGER DEFAULT {DEFAULT_CONFIRM_TIME},
                                 guild_id          INTEGER NOT NULL,
                                 category          INTEGER DEFAULT 0,
                                 dashboard         INTEGER NOT NULL UNIQUE,
@@ -473,7 +473,7 @@ impl DatabaseMigrations {
               let id: i64 = row.get("id");
               let category_id: i64 = row.try_get("category_id").unwrap_or(0);
               let name: Option<String> = row.try_get("name").ok();
-              let timeout: i64 = row.try_get("timeout").unwrap_or(DEFAULT_HOT_JOIN_TIMEOUT as i64);
+              let confirm_time: i64 = row.try_get("confirm_time").unwrap_or(DEFAULT_CONFIRM_TIME as i64);
               let guild_id: i64 = row.get("guild_id");
               let dashboard: i64 = row.get("dashboard");
               let chat: i64 = row.get("chat");
@@ -492,7 +492,7 @@ impl DatabaseMigrations {
               let dm_alert_users: String = row.try_get("dm_alert_users").unwrap_or_else(|_| "[]".to_string());
 
               sqlx::query(
-                "INSERT INTO categories (id, category_id, name, timeout, guild_id, category, dashboard, chat, queue, 
+                "INSERT INTO categories (id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue, 
                                  dashboard_msg, red, blu, game, game_increment, quota, connect_info,
                                  team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users)
                                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -500,7 +500,7 @@ impl DatabaseMigrations {
               .bind(id)
               .bind(category_id)
               .bind(name)
-              .bind(timeout)
+              .bind(confirm_time)
               .bind(guild_id)
               .bind(category)
               .bind(dashboard)
@@ -559,7 +559,7 @@ impl DatabaseMigrations {
     info!("Dropping UNIQUE constraints from legacy red/blu columns...");
 
     let backup_data = sqlx::query(
-      "SELECT id, category_id, name, timeout, guild_id, category, dashboard, chat, queue,
+      "SELECT id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue,
              dashboard_msg, red, blu, game, game_increment, quota, connect_info,
              team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users,
              team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum
@@ -572,9 +572,9 @@ impl DatabaseMigrations {
     sqlx::query(&format!(
       "CREATE TABLE categories (
                 id                    INTEGER PRIMARY KEY,
-                category_id              INTEGER DEFAULT 0,
+                confirm_time              INTEGER DEFAULT 0,
                 name                  TEXT,
-                timeout               INTEGER DEFAULT {DEFAULT_HOT_JOIN_TIMEOUT},
+                queue_expiration               INTEGER DEFAULT {DEFAULT_CONFIRM_TIME},
                 guild_id              INTEGER NOT NULL,
                 category              INTEGER DEFAULT 0,
                 dashboard             INTEGER NOT NULL UNIQUE,
@@ -603,7 +603,7 @@ impl DatabaseMigrations {
 
     for row in backup_data {
       sqlx::query(
-        "INSERT INTO categories (id, category_id, name, timeout, guild_id, category,
+        "INSERT INTO categories (id, category_id, name, confirm_time, guild_id, category,
                  dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment,
                  quota, connect_info, team_balance_method, dm_alert_enabled,
                  dm_alert_threshold, dm_alert_users,
@@ -613,7 +613,7 @@ impl DatabaseMigrations {
       .bind(row.get::<i64, _>("id"))
       .bind(row.try_get::<i64, _>("category_id").unwrap_or(0))
       .bind(row.try_get::<Option<String>, _>("name").ok().flatten())
-      .bind(row.try_get::<i64, _>("timeout").unwrap_or(DEFAULT_HOT_JOIN_TIMEOUT as i64))
+      .bind(row.try_get::<i64, _>("confirm_time").unwrap_or(DEFAULT_CONFIRM_TIME as i64))
       .bind(row.get::<i64, _>("guild_id"))
       .bind(row.try_get::<i64, _>("category").unwrap_or(0))
       .bind(row.get::<i64, _>("dashboard"))
@@ -649,7 +649,7 @@ impl DatabaseMigrations {
     let required_columns = vec![
       "id",
       "category_id",
-      "timeout",
+      "confirm_time",
       "guild_id",
       "category",
       "dashboard",

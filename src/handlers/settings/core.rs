@@ -30,28 +30,28 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
       interaction.create_response(&ctx.http, response).await?;
     }
-    "settings_timeout" => {
+    "settings_queue_expiration" => {
       // Show time selection buttons inline (replace current message temporarily)
       let settings = db.users.get_prefs(user_id).await?;
-      let current_minutes = settings.timeout;
+      let current_minutes = settings.queue_expiration;
 
       let time_buttons = vec![
-        CB::new("settings_timeout:30m").label("30 min").style(if current_minutes == 30 { BS::Success } else { BS::Secondary }),
-        CB::new("settings_timeout:1h").label("1 hour").style(if current_minutes == 60 { BS::Success } else { BS::Secondary }),
-        CB::new("settings_timeout:2h").label("2 hours").style(if current_minutes == 120 { BS::Success } else { BS::Secondary }),
-        CB::new("settings_timeout:3h").label("3 hours").style(if current_minutes == 180 { BS::Success } else { BS::Secondary }),
-        CB::new("settings_timeout:4h").label("4 hours").style(if current_minutes == 240 { BS::Success } else { BS::Secondary }),
+        CB::new("settings_queue_expiration:30m").label("30 min").style(if current_minutes == 30 { BS::Success } else { BS::Secondary }),
+        CB::new("settings_queue_expiration:1h").label("1 hour").style(if current_minutes == 60 { BS::Success } else { BS::Secondary }),
+        CB::new("settings_queue_expiration:2h").label("2 hours").style(if current_minutes == 120 { BS::Success } else { BS::Secondary }),
+        CB::new("settings_queue_expiration:3h").label("3 hours").style(if current_minutes == 180 { BS::Success } else { BS::Secondary }),
+        CB::new("settings_queue_expiration:4h").label("4 hours").style(if current_minutes == 240 { BS::Success } else { BS::Secondary }),
       ];
 
-      let cancel_button = vec![CB::new("settings_timeout:cancel").label("Cancel").style(BS::Danger)];
+      let cancel_button = vec![CB::new("settings_queue_expiration:cancel").label("Cancel").style(BS::Danger)];
 
-      let embed = CE::new().title("Set timeout length").description("Choose how long before you're automatically removed from the queue:").color(settings.join_alert_color);
+      let embed = CE::new().title("Set expiration duration").description("Choose how long before you're automatically removed from the queue:").color(settings.join_alert_color);
 
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(time_buttons), CAR::Buttons(cancel_button)]));
 
       interaction.create_response(&ctx.http, response).await?;
     }
-    button_id if button_id.starts_with("settings_timeout:") => {
+    button_id if button_id.starts_with("settings_queue_expiration:") => {
       // Handle auto-leave time selection or cancel
       let time_str = button_id.split(':').nth(1).unwrap_or("30m");
 
@@ -75,7 +75,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
 
         // Update user settings
         let mut settings = db.users.get_prefs(user_id).await?;
-        settings.timeout = minutes;
+        settings.queue_expiration = minutes;
         db.users.update_prefs(user_id, &settings).await?;
 
         // Update the settings menu directly (no confirmation popup)

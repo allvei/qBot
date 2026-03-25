@@ -234,18 +234,18 @@ pub trait AsSettingsMenu {
 
 impl AsSettingsMenu for crate::db::repo::UserPreferences {
   fn as_settings_menu(&self) -> SettingsMenu {
-    // Format timeout: hours for full hours, minutes for partial
-    let timeout_text = if self.timeout >= 60 && self.timeout % 60 == 0 {
-      let hours = self.timeout / 60;
+    // Format expiration: hours for full hours, minutes for partial
+    let queue_expiration_text = if self.queue_expiration >= 60 && self.queue_expiration % 60 == 0 {
+      let hours = self.queue_expiration / 60;
       format!("{}h", hours)
     } else {
-      format!("{}m", self.timeout)
+      format!("{}m", self.queue_expiration)
     };
 
     SettingsMenu::new("qBot preferences")
       .description("Configure your queue preferences")
       .color(self.join_alert_color)
-      .row(SR::Buttons(vec![SB::edit("settings_timeout", &format!("Timeout: {}", timeout_text.as_str()))]))
+      .row(SR::Buttons(vec![SB::edit("settings_queue_expiration", &format!("Timeout: {}", queue_expiration_text.as_str()))]))
       .row(SR::Buttons(vec![SB::toggle("settings_toggle_dm", "DM alerts", self.pm_hot_alert)]))
       .row(SR::Buttons(vec![SB::toggle("settings_vc_auto_join", "VC auto-join", self.vc_auto_join), SB::toggle("settings_vc_auto_leave", "VC auto-leave", self.vc_auto_leave)]))
       .row(SR::Buttons(vec![SB::edit("settings_edit_alert", "Edit join alert"), SB::edit("settings_edit_leave_alert", "Edit leave alert")]))
@@ -277,7 +277,7 @@ pub struct ServerSettingsDisplay {
   pub admin_role: Option<String>,
   pub toggle_states: Vec<bool>,
   pub balance_method: String,
-  pub post_game_timeout: u16,
+  pub post_game_confirm_time: u16,
 }
 
 impl AsSettingsMenu for ServerSettingsDisplay {
@@ -301,7 +301,7 @@ pub struct ServerConfigDisplay {
   pub admin_role: Option<String>,
   pub toggle_states: Vec<bool>,
   pub balance_method: String,
-  pub post_game_timeout: u16,
+  pub post_game_confirm_time: u16,
 }
 
 impl AsSettingsMenu for ServerConfigDisplay {
@@ -311,7 +311,7 @@ impl AsSettingsMenu for ServerConfigDisplay {
 
     let mut menu = SettingsMenu::new(format!("{} - Server Settings", self.guild_name))
       .description("Configure server-wide settings including roles, team balance method, and ELO settings")
-      .field(SF::new("Post-game confirm time", format!("{} seconds", self.post_game_timeout)))
+      .field(SF::new("Post-game confirm time", format!("{} seconds", self.post_game_confirm_time)))
       .color(0x5865F2)
       .footer("Configure server-wide settings below");
 
@@ -350,7 +350,7 @@ impl AsSettingsMenu for ServerConfigDisplay {
 
     // Add action buttons
     menu = menu.row(SR::Buttons(vec![
-      SB::action("server_settings_edit_post_game_timeout", "Edit post-game timeout", Sbs::Secondary),
+      SB::action("server_settings_edit_post_game_confirm_time", "Edit post-game timeout", Sbs::Secondary),
       SB::action("server_settings_create_roles", "Create roles", Sbs::Primary),
       SB::action("server_settings_roles_back", "Back", Sbs::Secondary),
     ]));
@@ -400,7 +400,7 @@ impl ServerConfigDisplay {
 
     // Add action buttons
     components.push(CAR::Buttons(vec![
-      CB::new("server_settings_edit_post_game_timeout").label("Edit post-game timeout").style(BS::Secondary),
+      CB::new("server_settings_edit_post_game_confirm_time").label("Edit post-game timeout").style(BS::Secondary),
       CB::new("server_settings_create_roles").label("Create roles").style(BS::Primary),
       Eph::back("server_settings_roles_back"),
     ]));
@@ -800,7 +800,7 @@ pub struct CategorySettingsDisplay {
   pub category_id: u8,
   pub name: Option<String>,
   pub quota: u8,
-  pub timeout: u16,
+  pub confirm_time: u16,
   pub connect_info: Option<String>,
   pub format_names: Vec<String>,
   pub vc_create: String,
@@ -818,7 +818,7 @@ impl AsSettingsMenu for CategorySettingsDisplay {
     SettingsMenu::new(format!("{name_display} Settings"))
       .field(SF::new("Name", name_display.clone()))
       .field(SF::new("Quota", format!("{} players", self.quota)))
-      .field(SF::new("Confirm expiry", format!("{} seconds", self.timeout)))
+      .field(SF::new("Confirm expiry", format!("{} seconds", self.confirm_time)))
       .field(SF::new("Connect info", connect_display).inline(false))
       .field(
         SF::new("Formats", if self.format_names.is_empty() { "None".to_string() } else { self.format_names.iter().map(|n| format!("- {n}")).collect::<Vec<_>>().join("\n") })
@@ -828,7 +828,7 @@ impl AsSettingsMenu for CategorySettingsDisplay {
       .field(SF::new("Team VC destroy", &self.vc_destroy))
       .field(SF::new("Keep minimum VCs", if self.vc_keep_min { "Yes" } else { "No" }))
       .color(0x5865F2)
-      .row(SR::Buttons(vec![SB::category_edit("edit_name", "Name", gid), SB::category_edit("edit_quota", "Quota", gid), SB::category_edit("edit_timeout", "Confirm expiry", gid)]))
+      .row(SR::Buttons(vec![SB::category_edit("edit_name", "Name", gid), SB::category_edit("edit_quota", "Quota", gid), SB::category_edit("edit_confirm_time", "Confirm expiry", gid)]))
       .row(SR::Buttons(vec![
         SB::category_edit("edit_connect", "Connect info", gid),
         SB::category_action("formats", "Formats", Sbs::Primary, gid),

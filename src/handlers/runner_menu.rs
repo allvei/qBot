@@ -254,8 +254,8 @@ pub async fn handle_player_selection(
   // Execute the action directly on the server
   // Track which category index and what action description to set
   let mut last_action_info: Option<(usize, String)> = None;
-  // Track if we need to cancel a timeout (for remove action)
-  let mut should_cancel_timeout = false;
+  // Track if we need to cancel a queue expiration (for remove action)
+  let mut should_cancel_queue_expiration = false;
   
   let result = match action {
     "remove" => {
@@ -269,7 +269,7 @@ pub async fn handle_player_selection(
               let player_tag = session.pool[pos].player.tag.clone();
               session.pool.remove(pos);
               found = true;
-              should_cancel_timeout = true;
+              should_cancel_queue_expiration = true;
               let guild_name = guild_name(ctx, guild_id);
               let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
               let fmt_nm = &format.name;
@@ -357,12 +357,12 @@ pub async fn handle_player_selection(
   let success = result.is_ok();
   drop(mgr);
 
-  // Cancel timeout if player was removed
-  if should_cancel_timeout {
-    use crate::models::TimeoutSchedulerKey;
-    if let Some(scheduler) = ctx.data.read().await.get::<TimeoutSchedulerKey>() {
+  // Cancel queue expiration if player was removed
+  if should_cancel_queue_expiration {
+    use crate::models::QueueExpirationSchedulerKey;
+    if let Some(scheduler) = ctx.data.read().await.get::<QueueExpirationSchedulerKey>() {
       let mut sched = scheduler.lock().await;
-      sched.cancel_timeout(guild_id, user_id);
+      sched.cancel_queue_expiration(guild_id, user_id);
     }
   }
 

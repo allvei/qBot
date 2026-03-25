@@ -203,19 +203,18 @@ impl EventHandler for Handler {
       dm_tracker.start_cleanup_task(ctx.http.clone());
     }
 
-    // Initialize timeout scheduler for per-player accurate timeouts
+    // Initialize player queue expiration scheduler
     {
-      let scheduler = crate::models::TimeoutScheduler::new(
+      let scheduler = crate::models::QueueExpirationScheduler::new(
         self.manager.clone(),
         self.db.clone(),
         ctx.clone(),
       );
       let scheduler_arc = Arc::new(tokio::sync::Mutex::new(scheduler));
-      ctx.data.write().await.insert::<crate::models::TimeoutSchedulerKey>(scheduler_arc);
+      ctx.data.write().await.insert::<crate::models::QueueExpirationSchedulerKey>(scheduler_arc);
     }
 
     // Start background task for team switch validation only
-    // (Timeouts are now handled by per-player scheduled tasks)
     {
       let manager = self.manager.clone();
       let ctx_clone = ctx.clone();
@@ -1044,8 +1043,8 @@ impl EventHandler for Handler {
                   player.vc_leave_grace_until = None;
                 }
 
-                // Cancel timeout since player is now in VC
-                category.cancel_player_timeout(&ctx, server, user_id).await;
+                // Cancel expiration since player is now in VC
+                category.cancel_player_rejoin_expiration(&ctx, server, user_id).await;
 
                 // Update dashboard if player was missing in a hot session
                 // This removes them from the "Missing players" list
@@ -1121,11 +1120,11 @@ impl EventHandler for Handler {
               }
             }
 
-            // Get post-game timeout from database
-            let post_game_timeout = self.db.config.get_post_game_timeout(server).await.ok();
+            // Get post-game confirm time window from database
+            let post_game_confirm_time = self.db.config.get_post_game_confirm_time(server).await.ok();
 
-            if category.check_hot_timeout(&ctx, server, post_game_timeout).await {
-              info!("Hot session timeout detected, updating dashboard");
+            if category.check_hot_confirm_time(&ctx, server, post_game_confirm_time).await {
+              info!("Hot session confirm time detected, updating dashboard");
               category.queue_dash_update(&ctx, server).await;
             }
           }
@@ -1140,7 +1139,7 @@ impl EventHandler for Handler {
 
 impl Handler {
   /// Handle a player leaving the queue VC (disconnect or move away).
-  /// Checks auto-leave preference, removes or resets timeout, and regenerates teams if needed.
+  /// Checks auto-leave preference, removes or resets queue expiration time, and regenerates teams if needed.
   async fn handle_player_leave_vc(&self, ctx: &Context, category: &mut Category, guild_id: GuildId, user_id: UserId, _tag: &str) {
     let queue_ctx = QueueContext {
       ctx: &ctx,
@@ -1151,7 +1150,7 @@ impl Handler {
     let guild_name = guild_name(ctx, guild_id);
     let ctg_nm = category.name.as_deref().unwrap_or("Unknown").to_string();
     let fmt_nm = category.get_user_fmt_name(user_id);
-    let usr_tg = get_user_tag(ctx, user_id, &self.db).await;
+    let user_tag = get_user_tag(ctx, user_id, &self.db).await;
     let quota = category.quota() as usize;
 
     let category_id = category.ctg_id; // Capture category_id before mutable borrow
@@ -1176,7 +1175,7 @@ impl Handler {
       false
     };
 
-    let (should_regenerate, should_remove_player, should_schedule_timeout) = if let Ok(sesh) = category.get_user_sesh(user_id).await {
+    let (should_regenerate, should_remove_player, should_schedule_queue_expiration) = if let Ok(sesh) = category.get_user_sesh(user_id).await {
       if sesh.is_active() {
         // Player is in an active session (Push/Live) - bot is moving them, not a voluntary leave
         return;
@@ -1200,7 +1199,7 @@ impl Handler {
                 if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                   let grace_until = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
                   player.vc_leave_grace_until = Some(grace_until);
-                  info!("{} #{} {} left VC post-game, 10s grace period started", log_prefix_format(&guild_name, &ctg_nm, &fmt_nm), position + 1, usr_tg);
+                  info!("{} #{} {} left VC post-game, 10s grace period started", log_prefix_format(&guild_name, &ctg_nm, &fmt_nm), position + 1, user_tag);
                 }
                 false // Don't remove immediately
               } else {
@@ -1225,12 +1224,12 @@ impl Handler {
         }
       };
 
-      // Track if we need to schedule timeout (player staying in queue but left VC)
-      let should_schedule_timeout = if !should_remove_player {
+      // Track if we need to schedule rejoin expiration (player left VC but in queue)
+      let should_schedule_rejoin_expiration = if !should_remove_player {
         if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
           player.joined_at = std::time::SystemTime::now();
           player.in_queue_vc = false;
-          true // Player is still in queue but left VC - schedule timeout
+          true // player left VC but in queue - schedule expiration
         } else {
           false
         }
@@ -1263,7 +1262,7 @@ impl Handler {
         }
       }
 
-      (was_hot && pool_len >= quota, should_remove_player, should_schedule_timeout)
+      (was_hot && pool_len >= quota, should_remove_player, should_schedule_rejoin_expiration)
     } else {
       // Player not found in any session
       let format = category.formats[0].clone();
@@ -1277,13 +1276,13 @@ impl Handler {
       (false, false, false)
     };
 
-    // Cancel timeout if player was removed, or schedule new timeout if they left VC but stayed in queue
+    // Cancel expiration if player was removed, or schedule new one if they left VC but stayed in queue
     if should_remove_player {
-      category.cancel_player_timeout(ctx, guild_id, user_id).await;
-    } else if should_schedule_timeout {
-      // Player left VC but is still in queue - schedule timeout
-      let timeout = queue_ctx.db.unwrap().users.get_prefs(user_id).await.unwrap().timeout;
-      category.schedule_player_timeout(ctx, guild_id, user_id, timeout, usr_tg.clone()).await;
+      category.cancel_player_rejoin_expiration(ctx, guild_id, user_id).await;
+    } else if should_schedule_queue_expiration {
+      // Player left VC but is still in queue - schedule expiration
+      let duration = queue_ctx.db.unwrap().users.get_prefs(user_id).await.unwrap().queue_expiration;
+      category.schedule_player_rejoin_expiration(ctx, guild_id, user_id, duration, user_tag.clone()).await;
     }
 
     if should_regenerate {

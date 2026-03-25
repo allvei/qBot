@@ -267,7 +267,7 @@ impl Session {
   }
 
   /// Check if this Hot session has timed out (players didn't join VC in time)
-  pub fn is_hot_timeout(&self, timeout_seconds: u64) -> bool {
+  pub fn is_hot_confirm_time(&self, confirm_time_seconds: u64) -> bool {
     if !self.is_hot() {
       return false;
     }
@@ -277,14 +277,14 @@ impl Session {
 
     if let Some(base_time) = base_time {
       if let Ok(elapsed) = SystemTime::now().duration_since(base_time) {
-        return elapsed.as_secs() >= timeout_seconds;
+        return elapsed.as_secs() >= confirm_time_seconds;
       }
     }
     false
   }
 
   /// Get seconds remaining until timeout (returns 0 if timed out or not hot)
-  pub fn seconds_until_timeout(&self, timeout_seconds: u64) -> u64 {
+  pub fn seconds_until_confirm_expiration(&self, confirm_time_seconds: u64) -> u64 {
     if !self.is_hot() {
       return 0;
     }
@@ -295,8 +295,8 @@ impl Session {
     if let Some(base_time) = base_time {
       if let Ok(elapsed) = SystemTime::now().duration_since(base_time) {
         let elapsed_secs = elapsed.as_secs();
-        if elapsed_secs < timeout_seconds {
-          return timeout_seconds - elapsed_secs;
+        if elapsed_secs < confirm_time_seconds {
+          return confirm_time_seconds - elapsed_secs;
         }
       }
     }
@@ -320,7 +320,7 @@ pub struct SessionPlayer {
   pub in_queue_vc: bool,
   pub in_queue_cmd: bool,
   pub joined_at: SystemTime,
-  pub timeout: u8,
+  pub queue_expiration: u8,
   pub vc_leave_grace_until: Option<SystemTime>,
 }
 
@@ -331,7 +331,7 @@ impl SessionPlayer {
       in_queue_vc: false,
       in_queue_cmd: false,
       joined_at: SystemTime::now(),
-      timeout: crate::DEFAULT_TIMEOUT,
+      queue_expiration: crate::DEFAULT_QUEUE_EXPIRATION,
       vc_leave_grace_until: None }
   }
 

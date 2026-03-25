@@ -46,7 +46,7 @@ pub async fn handle_player_settings_rank_select(
   manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
 ) -> Result<()> {
   let custom_id = &interaction.data.custom_id;
-  let usr_tg = get_user_tag(ctx, interaction.user.id, db).await;
+  let user_tag = get_user_tag(ctx, interaction.user.id, db).await;
   // Extract user_id from custom_id (format: player_settings_rank_select_<user_id>)
   let target_user_id: u64 = custom_id.rsplit('_').next().and_then(|s| s.parse().ok()).ok_or_else(|| anyhow::anyhow!("Invalid select ID format: {}", custom_id))?;
 
@@ -107,7 +107,7 @@ pub async fn handle_player_settings_rank_select(
   }
 
   if guild_elo.rank.name != new_rank.name {
-    info!("{} Updated rank for {}: {} -> {}{}", log_prefix_guild(&guild_name), usr_tg, guild_elo.rank.name, new_rank.name, if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" });
+    info!("{} Updated rank for {}: {} -> {}{}", log_prefix_guild(&guild_name), user_tag, guild_elo.rank.name, new_rank.name, if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" });
   }
 
   // Update Discord roles

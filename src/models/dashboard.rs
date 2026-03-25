@@ -411,8 +411,8 @@ impl Category {
   /// All content for a format is rendered together (header, players, teams)
   /// before moving to the next format.
   pub async fn build_dashboard_content(&self, db: &crate::Database, guild_id: GI, in_game_players: &HashMap<UI, (GI, String)>) -> Result<(CE, Vec<CAR>)> {
-    let timeout_seconds = self.timeout as u64;
-    let post_game_timeout = db.config.get_post_game_timeout(guild_id).await.unwrap_or(120) as u64;
+    let confirm_time_seconds = self.confirm_time as u64;
+    let post_game_confirm_time = db.config.get_post_game_confirm_time(guild_id).await.unwrap_or(120) as u64;
     let has_multiple = self.formats.len() > 1;
 
     let mut embed = CE::new().title(self.display_name());
@@ -454,10 +454,10 @@ impl Category {
               let base_time = session.match_ended_at.or(session.ready_at);
               if let Some(base_time) = base_time {
                 // Use appropriate timeout based on scenario
-                let deadline_timeout = if session.match_ended_at.is_some() { post_game_timeout } else { timeout_seconds };
+                let confirm_time_deadline = if session.match_ended_at.is_some() { post_game_confirm_time } else { confirm_time_seconds };
 
                 if let Ok(d) = base_time.duration_since(SystemTime::UNIX_EPOCH) {
-                  let deadline = d.as_secs() + deadline_timeout;
+                  let deadline = d.as_secs() + confirm_time_deadline;
                   match_info.push_str(&format!("Join deadline: {}\n", crate::timestamp_from_unix(deadline as i64, crate::Style::Relative)));
                   match_info.push_str("Missing players will be removed.\n\n");
                 }
@@ -512,10 +512,10 @@ impl Category {
             let base_time = current_session.match_ended_at.or(current_session.ready_at);
             if let Some(base_time) = base_time {
               // Use appropriate timeout based on scenario
-              let deadline_timeout = if current_session.match_ended_at.is_some() { post_game_timeout } else { timeout_seconds };
+              let confirm_time_deadline = if current_session.match_ended_at.is_some() { post_game_confirm_time } else { confirm_time_seconds };
 
               if let Ok(d) = base_time.duration_since(SystemTime::UNIX_EPOCH) {
-                let deadline = d.as_secs() + deadline_timeout;
+                let deadline = d.as_secs() + confirm_time_deadline;
                 hot_info.push_str(&format!("Join deadline: {}\n", crate::timestamp_from_unix(deadline as i64, crate::Style::Relative)));
                 hot_info.push_str("Missing players will be removed.\n\n");
               }
@@ -561,11 +561,11 @@ impl Category {
             } else if player.in_queue_vc {
               timers_field.push_str("VC\n");
             } else {
-              let timeout = if let Ok(settings) = db.users.get_prefs(player.player.user_id).await { settings.timeout } else { player.timeout };
+              let queue_expiration = if let Ok(settings) = db.users.get_prefs(player.player.user_id).await { settings.queue_expiration } else { player.queue_expiration };
 
-              if timeout > 0 {
+              if queue_expiration > 0 {
                 if let Ok(join_time) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
-                  let expiry_timestamp = join_time.as_secs() + (timeout as u64 * 60);
+                  let expiry_timestamp = join_time.as_secs() + (queue_expiration as u64 * 60);
                   timers_field.push_str(&format!("Timeout {}\n", crate::timestamp_from_unix(expiry_timestamp as i64, crate::Style::Relative)));
                 } else {
                   timers_field.push_str("-\n");
@@ -982,7 +982,7 @@ impl Category {
 
     // Cancel the player's timeout task (outside the mutable borrow scope)
     if let Some(guild_id) = cc.component.guild_id {
-      self.cancel_player_timeout(cc.ctx, guild_id, user_id).await;
+      self.cancel_player_rejoin_expiration(cc.ctx, guild_id, user_id).await;
     }
 
     // Regenerate teams if needed (outside the session borrow scope)
@@ -1240,7 +1240,7 @@ impl Category {
     let guild_name = guild_name(cc.ctx, guild_id);
     let ctg_nm = self.name.as_deref().unwrap_or("Unknown").to_string();
     let fmt_id = Self::parse_fmt_id(&parts);
-    let usr_tg = get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
+    let user_tag = get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
 
     match action {
       "join_queue" => self.dash_join_queue(cc, fmt_id).await,
@@ -1248,48 +1248,48 @@ impl Category {
       "ping_players" => {
         let result = self.dash_ping(cc).await;
         match &result {
-          Ok(_) => info!("{} {} used Ping", log_prefix_category(&guild_name, &ctg_nm), usr_tg),
-          Err(e) => warn!("{} {} failed to ping: {}", log_prefix_category(&guild_name, &ctg_nm), usr_tg, e),
+          Ok(_) => info!("{} {} used Ping", log_prefix_category(&guild_name, &ctg_nm), user_tag),
+          Err(e) => warn!("{} {} failed to ping: {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, e),
         }
         result
       }
       "change_expiry" => {
         let result = self.dash_change_expiry(cc, fmt_id).await;
         match &result {
-          Ok(_) => info!("{} {} requested expiry time change", log_prefix_category(&guild_name, &ctg_nm), usr_tg),
-          Err(e) => warn!("{} {} failed to request expiry change: {}", log_prefix_category(&guild_name, &ctg_nm), usr_tg, e),
+          Ok(_) => info!("{} {} requested expiry time change", log_prefix_category(&guild_name, &ctg_nm), user_tag),
+          Err(e) => warn!("{} {} failed to request expiry change: {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, e),
         }
         result
       }
       "set_expiry" => {
         let result = self.dash_set_expiry(cc, parts.get(1).copied()).await;
         match &result {
-          Ok(_) => info!("{} {} changed expiry time", log_prefix_category(&guild_name, &ctg_nm), usr_tg),
-          Err(e) => warn!("{} {} failed to change expiry time: {}", log_prefix_category(&guild_name, &ctg_nm), usr_tg, e),
+          Ok(_) => info!("{} {} changed expiry time", log_prefix_category(&guild_name, &ctg_nm), user_tag),
+          Err(e) => warn!("{} {} failed to change expiry time: {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, e),
         }
         result
       }
       "show_settings" => {
         let result = self.dash_show_settings(cc).await;
         match &result {
-          Ok(_) => info!("{} {} requested settings", log_prefix_guild(&guild_name), usr_tg),
-          Err(e) => warn!("{} {} failed to show settings: {}", log_prefix_guild(&guild_name), usr_tg, e),
+          Ok(_) => info!("{} {} requested settings", log_prefix_guild(&guild_name), user_tag),
+          Err(e) => warn!("{} {} failed to show settings: {}", log_prefix_guild(&guild_name), user_tag, e),
         }
         result
       }
       "show_runner_menu" => {
         let result = crate::handlers::runner_menu::show_runner_menu(cc).await;
         match &result {
-          Ok(_) => info!("{} {} requested runner menu", log_prefix_guild(&guild_name), usr_tg),
-          Err(e) => warn!("{} {} failed to show runner menu: {}", log_prefix_guild(&guild_name), usr_tg, e),
+          Ok(_) => info!("{} {} requested runner menu", log_prefix_guild(&guild_name), user_tag),
+          Err(e) => warn!("{} {} failed to show runner menu: {}", log_prefix_guild(&guild_name), user_tag, e),
         }
         result
       }
       "show_help" => {
         let result = crate::models::dashboard::show_help(cc).await;
         match &result {
-          Ok(_) => info!("{} {} requested help", log_prefix_guild(&guild_name), usr_tg),
-          Err(e) => warn!("{} {} failed to show help: {}", log_prefix_guild(&guild_name), usr_tg, e),
+          Ok(_) => info!("{} {} requested help", log_prefix_guild(&guild_name), user_tag),
+          Err(e) => warn!("{} {} failed to show help: {}", log_prefix_guild(&guild_name), user_tag, e),
         }
         result
       }
@@ -1297,10 +1297,10 @@ impl Category {
         let result = self.dash_shuffle(cc, fmt_id).await;
         match &result {
           Ok(_) => {
-            info!("{} {} used Shuffle", log_prefix_category(&guild_name, &ctg_nm), usr_tg);
-            self.set_last_action(usr_tg.clone(), "shuffled teams");
+            info!("{} {} used Shuffle", log_prefix_category(&guild_name, &ctg_nm), user_tag);
+            self.set_last_action(user_tag.clone(), "shuffled teams");
           }
-          Err(e) => warn!("{} {} failed to shuffle teams: {}", log_prefix_category(&guild_name, &ctg_nm), usr_tg, e),
+          Err(e) => warn!("{} {} failed to shuffle teams: {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, e),
         }
         result
       }
@@ -1313,10 +1313,10 @@ impl Category {
         let result = self.dash_start(cc, fmt_id).await;
         match &result {
           Ok(_) => {
-            info!("{} {} used Start", crate::log::log_prefix_format(&guild_name, &ctg_nm, &fmt_name), usr_tg);
-            self.set_last_action(usr_tg.clone(), "started the game");
+            info!("{} {} used Start", crate::log::log_prefix_format(&guild_name, &ctg_nm, &fmt_name), user_tag);
+            self.set_last_action(user_tag.clone(), "started the game");
           }
-          Err(e) => warn!("{} {} failed to start game: {}", crate::log::log_prefix_format(&guild_name, &ctg_nm, &fmt_name), usr_tg, e),
+          Err(e) => warn!("{} {} failed to start game: {}", crate::log::log_prefix_format(&guild_name, &ctg_nm, &fmt_name), user_tag, e),
         }
         result
       }
@@ -1327,18 +1327,18 @@ impl Category {
         let result = self.dash_end(cc, fmt_id).await;
         match &result {
           Ok(_) => {
-            info!("{} {} used End", crate::log::log_prefix_format(&guild_name, &ctg_nm, &fmt_name), usr_tg);
-            self.set_last_action(usr_tg.clone(), "ended the game");
+            info!("{} {} used End", crate::log::log_prefix_format(&guild_name, &ctg_nm, &fmt_name), user_tag);
+            self.set_last_action(user_tag.clone(), "ended the game");
           }
-          Err(e) => warn!("{} {} failed to end game: {}", crate::log::log_prefix_format(&guild_name, &ctg_nm, &fmt_name), usr_tg, e),
+          Err(e) => warn!("{} {} failed to end game: {}", crate::log::log_prefix_format(&guild_name, &ctg_nm, &fmt_name), user_tag, e),
         }
         result
       }
       action if action.starts_with("report_score") => {
         let result = self.dash_report_score(cc).await;
         match &result {
-          Ok(_) => info!("{} {} used Report Score", log_prefix_category(&guild_name, &ctg_nm), usr_tg),
-          Err(e) => warn!("{} {} failed to report score: {}", log_prefix_category(&guild_name, &ctg_nm), usr_tg, e),
+          Ok(_) => info!("{} {} used Report Score", log_prefix_category(&guild_name, &ctg_nm), user_tag),
+          Err(e) => warn!("{} {} failed to report score: {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, e),
         }
         result
       }
@@ -1399,7 +1399,7 @@ impl Category {
     'outer: for sg in self.formats.iter_mut() {
       for session in sg.sessions.iter_mut() {
         if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
-          player.timeout = duration;
+          player.queue_expiration = duration;
           found = true;
           break 'outer;
         }

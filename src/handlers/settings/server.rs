@@ -26,7 +26,7 @@ pub struct ServerSettings {
   pub admin_role: Option<String>,
   pub toggle_states: Vec<bool>,
   pub balance_method: String,
-  pub post_game_timeout: u16,
+  pub post_game_confirm_time: u16,
 }
 
 /// Handle server settings button interactions
@@ -226,16 +226,16 @@ pub async fn handle_server_settings_button(
     "server_settings_categories_back" => {
       send_nav!(interaction, ctx, db, nav_server_settings, guild_id)?;
     }
-    "server_settings_edit_post_game_timeout" => {
+    "server_settings_edit_post_game_confirm_time" => {
       // Show modal to edit post-game timeout
 
-      let current_timeout = db.config.get_post_game_timeout(guild_id).await.unwrap_or(120);
+      let current_confirm_time = db.config.get_post_game_confirm_time(guild_id).await.unwrap_or(120);
 
-      let modal = CM::new("server_settings_post_game_timeout_modal", "Edit Post-Game Timeout").components(vec![create_value_input_sh_cap(
-        "Post-game timeout (seconds)",
-        "post_game_timeout_input",
-        "Enter timeout in seconds (30-300)",
-        &current_timeout.to_string(),
+      let modal = CM::new("server_settings_post_game_confirm_time_modal", "Edit post-game confirm time").components(vec![create_value_input_sh_cap(
+        "Post-game confirm time (seconds)",
+        "post_game_confirm_time_input",
+        "Enter time in seconds (30-300)",
+        &current_confirm_time.to_string(),
         1,
         3,
       )]);
@@ -768,7 +768,7 @@ pub async fn handle_server_settings_button(
         0,
         None,
         crate::DEFAULT_QUOTA,
-        crate::DEFAULT_HOT_JOIN_TIMEOUT,
+        crate::DEFAULT_CONFIRM_TIME,
         MI::new(1),
         Channels {
           category: category_id,
@@ -896,7 +896,7 @@ pub async fn handle_server_settings_button(
                 0,
                 None,
                 crate::DEFAULT_QUOTA,
-                crate::DEFAULT_HOT_JOIN_TIMEOUT,
+                crate::DEFAULT_CONFIRM_TIME,
                 MI::new(1),
                 Channels {
                   category: category_id,
@@ -1197,7 +1197,7 @@ pub async fn handle_server_settings_button(
         0,
         None,
         crate::DEFAULT_QUOTA,
-        crate::DEFAULT_HOT_JOIN_TIMEOUT,
+        crate::DEFAULT_CONFIRM_TIME,
         MI::new(1),
         Channels {
           category: category_id,
@@ -1880,7 +1880,7 @@ pub async fn handle_server_settings_modal(
     // Extract all values from the modal
     let mut name_value = String::new();
     let mut quota_value = String::new();
-    let mut timeout_value = String::new();
+    let mut confirm_time_value = String::new();
     let mut connect_value = String::new();
 
     for row in &interaction.data.components {
@@ -1889,7 +1889,7 @@ pub async fn handle_server_settings_modal(
           match input.custom_id.as_str() {
             "name" => name_value = input.value.clone().unwrap_or_default(),
             "quota" => quota_value = input.value.clone().unwrap_or_default(),
-            "timeout" => timeout_value = input.value.clone().unwrap_or_default(),
+            "confirm_time" => confirm_time_value = input.value.clone().unwrap_or_default(),
             "connect" => connect_value = input.value.clone().unwrap_or_default(),
             _ => {}
           }
@@ -1907,10 +1907,10 @@ pub async fn handle_server_settings_modal(
     };
 
     // Parse and validate timeout
-    let timeout: u16 = match timeout_value.trim().parse() {
+    let confirm_time: u16 = match confirm_time_value.trim().parse() {
       Ok(t) if t > 0 => t,
       _ => {
-        send_modal_error_response(interaction, ctx, "Invalid timeout. Must be a positive number.").await;
+        send_modal_error_response(interaction, ctx, "Invalid time. Must be a positive number.").await;
         return Ok(());
       }
     };
@@ -1921,7 +1921,7 @@ pub async fn handle_server_settings_modal(
     // Update in database
     db.categories.update_name(guild_id, category_id, name.as_deref()).await?;
     db.categories.update_quota(guild_id, category_id, quota).await?;
-    db.categories.update_timeout(guild_id, category_id, timeout).await?;
+    db.categories.update_confirm_time(guild_id, category_id, confirm_time).await?;
     if connect_info.is_some() || connect_value.trim().is_empty() {
       db.categories.update_connect_info(guild_id, category_id, connect_info.as_deref()).await?;
     }
@@ -1932,7 +1932,7 @@ pub async fn handle_server_settings_modal(
       if let Ok(server) = manager_lock.get_server(guild_id) {
         if let Some(category) = server.categories.iter_mut().find(|g| g.ctg_id == category_id) {
           category.name = name.clone();
-          category.timeout = timeout;
+          category.confirm_time = confirm_time;
           category.set_quota(quota);
           category.set_connect_info(connect_info.clone());
 
@@ -2015,7 +2015,7 @@ pub async fn handle_server_settings_modal(
           0,
           Some(category_name.clone()),
           quota,
-          crate::DEFAULT_HOT_JOIN_TIMEOUT,
+          crate::DEFAULT_CONFIRM_TIME,
           MI::new(1),
           Channels { category: category_id, queue_chat: queue_channel, queue_vc: queue_vc_channel, ping_channel, teams: vec![], dashboard: dashboard_channel },
           vec![],
@@ -2091,33 +2091,33 @@ pub async fn handle_server_settings_modal(
         interaction.create_followup(&ctx.http, followup).await?;
       }
     }
-  } else if modal_id == "server_settings_post_game_timeout_modal" {
+  } else if modal_id == "server_settings_post_game_confirm_time_modal" {
     // Handle post-game timeout modal
-    let mut timeout_value = String::new();
+    let mut post_game_confirm_time_value = String::new();
 
     for row in &interaction.data.components {
       for component in &row.components {
         if let ARC::InputText(input) = component {
-          if input.custom_id == "post_game_timeout_input" {
-            timeout_value = input.value.clone().unwrap_or_default();
+          if input.custom_id == "post_game_confirm_time_input" {
+            post_game_confirm_time_value = input.value.clone().unwrap_or_default();
           }
         }
       }
     }
 
     // Parse and validate timeout
-    let timeout: u16 = match timeout_value.trim().parse() {
+    let post_game_confirm_time: u16 = match post_game_confirm_time_value.trim().parse() {
       Ok(t) if (30..=300).contains(&t) => t,
       _ => {
-        send_modal_error_response(interaction, ctx, "Invalid timeout. Must be between 30 and 300 seconds.").await;
+        send_modal_error_response(interaction, ctx, "Invalid time. Must be between 30 and 300 seconds.").await;
         return Ok(());
       }
     };
 
     // Update database
-    db.config.set_post_game_timeout(guild_id, timeout).await?;
+    db.config.set_post_game_confirm_time(guild_id, post_game_confirm_time).await?;
     let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
-    info!("{} set post-game timeout to {} seconds", user_tag, timeout);
+    info!("{} set post-game confirm time to {} seconds", user_tag, post_game_confirm_time);
 
     send_nav_modal!(interaction, ctx, db, nav_role_config, guild_id)?;
   } else {
@@ -2186,7 +2186,7 @@ pub async fn get_server_settings(db: &Arc<Database>, guild_id: GI) -> Result<Ser
     toggle_states.push(db.config.get_bool(guild_id, toggle.column, toggle.default).await?);
   }
 
-  let post_game_timeout = db.config.get_post_game_timeout(guild_id).await.unwrap_or(120);
+  let post_game_confirm_time = db.config.get_post_game_confirm_time(guild_id).await.unwrap_or(120);
 
-  Ok(ServerSettings { runner_role, admin_role, toggle_states, balance_method, post_game_timeout })
+  Ok(ServerSettings { runner_role, admin_role, toggle_states, balance_method, post_game_confirm_time })
 }

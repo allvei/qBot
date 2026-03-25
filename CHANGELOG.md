@@ -6,7 +6,6 @@ __Added__
 - **Ping button** - Dashboard button to ping all players in queue voice channel for immediate attention.
 - **VC join notifications** - Real-time alerts when players join queue voice channel during active sessions.
 - **Forced score reporting** - Optional per-category setting to require score submission before ending matches. End button becomes 'End & log score' with backup 'End without score' option in runner menu.
-- **Per-player timeout system** - Individual scheduled timeouts for each player with automatic cleanup and queue removal.
 
 __Improved__
 - **Dashboard interactions** - Duplicate button presses now prevented with 2-second cooldown per session. Start/End actions include format name in logs for clarity.

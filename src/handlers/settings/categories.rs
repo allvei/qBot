@@ -42,7 +42,7 @@ pub struct CategorySettings {
   pub category_id: u8,
   pub name: Option<String>,
   pub quota: u8,
-  pub timeout: u16,
+  pub confirm_time: u16,
   pub connect_info: Option<String>,
   pub format_names: Vec<String>,
   pub vc_create: String,
@@ -56,7 +56,7 @@ impl CategorySettings {
       category_id: category.ctg_id,
       name: category.name.clone(),
       quota: category.quota(),
-      timeout: category.timeout,
+      confirm_time: category.confirm_time,
       connect_info: category.connect_info().map(|s| s.to_string()),
       format_names: category.formats.iter().map(|sg| sg.name.clone()).collect(),
       vc_create: category.team_vc_settings.create_policy.to_string(),
@@ -373,12 +373,12 @@ pub async fn handle_category_settings_button(
 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
-  } else if button_id.starts_with("category_settings_edit_timeout_") {
-    let modal = CM::new(format!("category_settings_modal_timeout_{category_id}"), "Set ready check duration").components(vec![create_value_input_sh_cap(
-      "Timeout (seconds)",
-      "timeout",
+  } else if button_id.starts_with("category_settings_edit_confirm_time_") {
+    let modal = CM::new(format!("category_settings_modal_confirm_time_{category_id}"), "Set ready check duration").components(vec![create_value_input_sh_cap(
+      "Confirm time (seconds)",
+      "confirm_time",
       "Seconds for missing players to join VC when queue goes hot",
-      &settings.timeout.to_string(),
+      &settings.confirm_time.to_string(),
       1,
       3,
     )]);
@@ -421,8 +421,8 @@ pub async fn handle_category_settings_button(
       if let Some(category) = server.categories.iter_mut().find(|g| g.ctg_id == category_id) {
         let next = match category.team_vc_settings.destroy_policy {
           TeamVcDestroyPolicy::OnLastLeave => TeamVcDestroyPolicy::AfterPull,
-          TeamVcDestroyPolicy::AfterPull => TeamVcDestroyPolicy::AfterTimeout,
-          TeamVcDestroyPolicy::AfterTimeout => TeamVcDestroyPolicy::OnLastLeave,
+          TeamVcDestroyPolicy::AfterPull => TeamVcDestroyPolicy::AfterExpiration,
+          TeamVcDestroyPolicy::AfterExpiration => TeamVcDestroyPolicy::OnLastLeave,
         };
         category.team_vc_settings.destroy_policy = next;
         let _ = db.categories.update_team_vc_settings(guild_id, category_id, &category.team_vc_settings).await;
@@ -858,21 +858,20 @@ pub async fn handle_category_settings_modal(
 
     // Get updated settings and refresh the menu
     refresh_category_settings_modal!(interaction, ctx, category)?;
-  } else if modal_id.starts_with("category_settings_modal_timeout_") {
-    // Extract timeout value
-    let timeout_str = get_modal_input!(interaction);
+  } else if modal_id.starts_with("category_settings_modal_confirm_time_") {
+    let confirm_time_str = get_modal_input!(interaction);
 
-    let timeout: u16 = match timeout_str.trim().parse() {
+    let confirm_time: u16 = match confirm_time_str.trim().parse() {
       Ok(t) if t > 0 => t,
       _ => {
-        send_modal_error_response(interaction, ctx, "Invalid timeout. Must be a positive number.").await;
+        send_modal_error_response(interaction, ctx, "Invalid time. Must be a positive number.").await;
         return Ok(());
       }
     };
 
     // Update in-memory and persist to database
-    category.timeout = timeout;
-    db.categories.update_timeout(guild_id, category_id, timeout).await?;
+    category.confirm_time = confirm_time;
+    db.categories.update_confirm_time(guild_id, category_id, confirm_time).await?;
 
     // Get updated settings and refresh the menu
     refresh_category_settings_modal!(interaction, ctx, category)?;

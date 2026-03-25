@@ -5,8 +5,6 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use crate::{CLEANUP_INTERVAL_SECS, INACTIVITY_TIMEOUT_SECS};
-
 /// Tracks DM messages for automatic cleanup
 #[derive(Debug)]
 struct UserDmSession {
@@ -120,7 +118,7 @@ impl DmMessageTracker {
   /// Start the cleanup background task
   pub fn start_cleanup_task(self: Arc<Self>, http: Arc<Http>) {
     tokio::spawn(async move {
-      let mut interval = tokio::time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
+      let mut interval = tokio::time::interval(Duration::from_secs(crate::CLEANUP_INTERVAL_SECS));
 
       loop {
         interval.tick().await;
@@ -137,7 +135,7 @@ impl DmMessageTracker {
 
     for (user_id, session) in sessions.iter() {
       if let Ok(elapsed) = now.duration_since(session.last_activity) {
-        if elapsed.as_secs() >= INACTIVITY_TIMEOUT_SECS {
+        if elapsed.as_secs() >= crate::INACTIVITY_TIMEOUT_SECS {
           // Delete all tracked messages
           for message_id in &session.message_ids {
             match http.delete_message(session.channel_id, *message_id, None).await {

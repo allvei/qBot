@@ -8,7 +8,7 @@ use std::{sync::Arc, time::Duration};
 
 use crate::{
   guild_name, log_prefix_format,
-  models::constants::{DEFAULT_ACTIVE_ELO, MAX_TIMEOUT, MIN_TIMEOUT},
+  models::constants::{DEFAULT_ACTIVE_ELO, MAX_QUEUE_EXPIRATION, MIN_QUEUE_EXPIRATION},
   Database as DB, Manager, Rank, GREEN,
 };
 use anyhow::{anyhow, Error, Result};
@@ -189,7 +189,7 @@ pub enum TeamVcDestroyPolicy {
   #[default]
   AfterPull,
   /// Destroy after a timeout post-game if no new game starts
-  AfterTimeout,
+  AfterExpiration,
 }
 
 impl TeamVcDestroyPolicy {
@@ -197,7 +197,7 @@ impl TeamVcDestroyPolicy {
     match self {
       Self::OnLastLeave => "Last player leaves",
       Self::AfterPull => "After game ends",
-      Self::AfterTimeout => "After post-game timeout",
+      Self::AfterExpiration => "After post-game expiration",
     }
   }
 
@@ -205,7 +205,7 @@ impl TeamVcDestroyPolicy {
     match s {
       "on_last_leave" => Self::OnLastLeave,
       "after_pull" => Self::AfterPull,
-      "after_timeout" => Self::AfterTimeout,
+      "after_expiration" => Self::AfterExpiration,
       _ => Self::default(),
     }
   }
@@ -214,7 +214,7 @@ impl TeamVcDestroyPolicy {
     match self {
       Self::OnLastLeave => "on_last_leave",
       Self::AfterPull => "after_pull",
-      Self::AfterTimeout => "after_timeout",
+      Self::AfterExpiration => "after_expiration",
     }
   }
 }
@@ -271,7 +271,7 @@ pub struct Category {
   pub guild_name: Option<String>,
   pub ctg_id: u8,
   pub name: Option<String>,
-  pub timeout: u16,
+  pub confirm_time: u16,
   pub dashboard_msg: MI,
   pub channels: Channels,
   pub formats: Vec<Format>,
@@ -302,7 +302,7 @@ impl Category {
     category_id: u8,
     name: Option<String>,
     quota: u8,
-    timeout: u16,
+    confirm_time: u16,
     dashboard_msg: MI,
     channels: Channels,
     games: Vec<Session>,
@@ -316,7 +316,7 @@ impl Category {
       guild_name,
       ctg_id: category_id,
       name,
-      timeout,
+      confirm_time,
       dashboard_msg,
       channels,
       formats: vec![sg],
@@ -738,23 +738,23 @@ impl Category {
     // Spawn a targeted deadline timer for this hot session
     if let (Some(guild_id), Some(mgr)) = (guild_id, manager) {
       let category_id = self.ctg_id;
-      let timeout = self.timeout;
+      let confirm_time = self.confirm_time;
       let ctx_clone = ctx.clone();
 
       // Get post-game timeout before spawning task
-      let post_game_timeout = if let Some(database) = db { database.config.get_post_game_timeout(guild_id).await.ok() } else { None };
+      let post_game_confirm_time = if let Some(database) = db { database.config.get_post_game_confirm_time(guild_id).await.ok() } else { None };
 
       tokio::spawn(async move {
         use tokio::time::{sleep, Duration};
 
         // Wait for the deadline (use category's configured timeout)
-        sleep(Duration::from_secs(timeout as u64)).await;
+        sleep(Duration::from_secs(confirm_time as u64)).await;
 
         // Check if players have joined, remove those who haven't
         let mut manager_lock = mgr.lock().await;
         if let Ok(server) = manager_lock.get_server(guild_id) {
           if let Some(category) = server.categories.iter_mut().find(|g| g.ctg_id == category_id) {
-            if category.check_hot_timeout(&ctx_clone, guild_id, post_game_timeout).await {
+            if category.check_hot_confirm_time(&ctx_clone, guild_id, post_game_confirm_time).await {
               info!("Deadline timer fired: removed timed-out players from category {}", category_id);
               category.queue_dash_update(&ctx_clone, guild_id).await;
             }
@@ -768,7 +768,7 @@ impl Category {
 
   /// Check hot sessions for timeout and handle accordingly
   /// Returns true if any changes were made that require dashboard update
-  pub async fn check_hot_timeout(&mut self, ctx: &Context, guild_id: GI, post_game_timeout: Option<u16>) -> bool {
+  pub async fn check_hot_confirm_time(&mut self, ctx: &Context, guild_id: GI, post_game_confirm_time: Option<u16>) -> bool {
     let mut changes_made = false;
 
     // Check hot sessions across all formats
@@ -781,10 +781,10 @@ impl Category {
         .iter()
         .enumerate()
         .filter_map(|(idx, s)| {
-          // Use post-game timeout if this is a post-game scenario and post_game_timeout is provided
-          let timeout_seconds = if s.match_ended_at.is_some() { post_game_timeout.map(|t| t as u64).unwrap_or(self.timeout as u64) } else { self.timeout as u64 };
+          // Use post-game timeout if this is a post-game scenario and post_game_confirm_time is provided
+          let confirm_time_seconds = if s.match_ended_at.is_some() { post_game_confirm_time.map(|t| t as u64).unwrap_or(self.confirm_time as u64) } else { self.confirm_time as u64 };
 
-          if s.is_hot_timeout(timeout_seconds) {
+          if s.is_hot_confirm_time(confirm_time_seconds) {
             Some(idx)
           } else {
             None
@@ -816,10 +816,10 @@ impl Category {
 
         // Check if we still have enough players after removals
         if session.pool.len() >= quota {
-          info!("{} Regenerating teams after timeout with {} players", full_prefix, session.pool.len());
+          info!("{} Regenerating teams after confirm time with {} players", full_prefix, session.pool.len());
           changes_made = true;
         } else {
-          info!("{} Not enough players after timeout, reverting to idle", full_prefix);
+          info!("{} Not enough players after confirm time, reverting to idle", full_prefix);
           session.idle();
           changes_made = true;
         }
@@ -839,7 +839,7 @@ impl Category {
 
   /// Check idle sessions for timeout timeouts and handle accordingly
   /// Returns true if any changes were made that require dashboard update
-  pub async fn check_timeout(&mut self, db: &DB, ctx: &Context, guild_id: GI) -> bool {
+  pub async fn check_confirm_time(&mut self, db: &DB, ctx: &Context, guild_id: GI) -> bool {
     let mut changes_made = false;
     
     // Collect all active game players first (outside the format loop)
@@ -886,13 +886,13 @@ impl Category {
         // Then check regular timeouts
 
         for player in &session.pool {
-          let timeout = player.timeout;
+          let queue_expiration = player.queue_expiration;
 
           // Clamp to valid range (EXPIRY_MIN to EXPIRY_MAX)
-          let expiry_mins = timeout.clamp(MIN_TIMEOUT, MAX_TIMEOUT);
+          let expiry_mins = queue_expiration.clamp(MIN_QUEUE_EXPIRATION, MAX_QUEUE_EXPIRATION);
 
           // Skip if timeout is disabled (below EXPIRY_MIN)
-          if expiry_mins < MIN_TIMEOUT {
+          if expiry_mins < MIN_QUEUE_EXPIRATION {
             continue;
           }
 
@@ -955,15 +955,15 @@ impl Category {
     let blu_vc = team_pair.blu_vc;
 
     // Get the hot game in the target format and collect player IDs for timeout cancellation
-    let player_ids_for_timeout: Vec<UI> = {
+    let player_ids_for_queue_expiration: Vec<UI> = {
       let sg = self.fmt(fmt_id).ok_or_else(|| anyhow!("Format {} not found for push", fmt_id))?;
       let game = sg.sessions.iter().find(|s| s.status == SessionStatus::Hot).ok_or(anyhow!("No hot session found for push in format {}", fmt_id))?;
       game.pool.iter().map(|p| p.player.user_id).collect()
     };
     
     // Cancel timeouts for all players in this game (game is starting)
-    for user_id in player_ids_for_timeout {
-      self.cancel_player_timeout(ctx, guild_id, user_id).await;
+    for user_id in player_ids_for_queue_expiration {
+      self.cancel_player_rejoin_expiration(ctx, guild_id, user_id).await;
     }
     
     // Now get mutable reference for the rest of the operation
@@ -1416,16 +1416,16 @@ impl Category {
           debug!("Skipping team VC cleanup - quota will be met again, avoiding unnecessary delete/recreate");
         }
       }
-      TeamVcDestroyPolicy::AfterTimeout => {
+      TeamVcDestroyPolicy::AfterExpiration => {
         // Spawn a timer that cleans up team VCs if no new game starts
         if let Some(mgr) = manager.clone() {
           let category_id = self.ctg_id;
-          let timeout_secs = self.timeout as u64;
+          let post_game_timeout_secs = self.confirm_time as u64;
           let ctx_clone = ctx.clone();
 
           tokio::spawn(async move {
             use tokio::time::{sleep, Duration};
-            sleep(Duration::from_secs(timeout_secs)).await;
+            sleep(Duration::from_secs(post_game_timeout_secs)).await;
 
             let mut manager_lock = mgr.lock().await;
             if let Ok(server) = manager_lock.get_server(guild_id) {
@@ -1802,7 +1802,7 @@ impl Category {
     
     let user_id = player.user_id;
     let ply_tg = player.tag.clone();
-    let ply_timeout = player.timeout;
+    let player_queue_expiration = player.queue_expiration;
     let db = queue_ctx.db.unwrap();
     let usr_prefs = db.users.get_prefs(user_id).await?;
 
@@ -1814,7 +1814,7 @@ impl Category {
     
     // Schedule timeout for this player
     if let Some(guild_id) = queue_ctx.guild_id {
-      self.schedule_player_timeout(queue_ctx.ctx, guild_id, user_id, ply_timeout, ply_tg).await;
+      self.schedule_player_rejoin_expiration(queue_ctx.ctx, guild_id, user_id, player_queue_expiration, ply_tg).await;
     }
 
     // Create team VCs on first join if policy requires it
@@ -1841,7 +1841,7 @@ impl Category {
     
     let user_id = player.user_id;
     let player_tag = player.tag.clone();
-    let ply_timeout = player.timeout;
+    let player_queue_expiration = player.queue_expiration;
     let db = queue_ctx.db.unwrap();
     let user_prefs = db.users.get_prefs(user_id).await?;
 
@@ -1853,7 +1853,7 @@ impl Category {
     
     // Schedule timeout for this player
     if let Some(guild_id) = queue_ctx.guild_id {
-      self.schedule_player_timeout(queue_ctx.ctx, guild_id, user_id, ply_timeout, player_tag).await;
+      self.schedule_player_rejoin_expiration(queue_ctx.ctx, guild_id, user_id, player_queue_expiration, player_tag).await;
     }
 
     // Create team VCs on first join if policy requires it
@@ -1944,40 +1944,40 @@ impl Category {
   pub async fn add_player(&mut self, session: &mut Session, player: Player, _rank: Rank, queue_ctx: &QueueContext<'_>, guild_id: GI) -> Result<()> {
     let user_id = player.user_id;
     let player_tag = player.tag.clone();
-    let ply_timeout = player.timeout;
+    let player_queue_expiration = player.queue_expiration;
     
     session.add_ply(player)?;
     let db = queue_ctx.db.unwrap();
     let user_prefs = db.users.get_prefs(user_id).await?;
     
     // Schedule timeout for this player
-    self.schedule_player_timeout(queue_ctx.ctx, guild_id, user_id, ply_timeout, player_tag).await;
+    self.schedule_player_rejoin_expiration(queue_ctx.ctx, guild_id, user_id, player_queue_expiration, player_tag).await;
     
     self.queue_dash_update(queue_ctx.ctx, guild_id).await;
     Ok(())
   }
   
   /// Schedule a timeout task for a player
-  pub async fn schedule_player_timeout(&self, ctx: &Context, guild_id: GI, user_id: UI, timeout_minutes: u8, player_tag: String) {
-    use crate::models::TimeoutSchedulerKey;
+  pub async fn schedule_player_rejoin_expiration(&self, ctx: &Context, guild_id: GI, user_id: UI, rejoin_expiration_minutes: u8, player_tag: String) {
+    use crate::models::QueueExpirationSchedulerKey;
     
     let category_name = self.name.clone().unwrap_or_else(|| "Unknown".to_string());
     // Get first format name as default
     let format_name = self.formats.first().map(|f| f.name.clone()).unwrap_or_else(|| "Unknown".to_string());
     
-    if let Some(scheduler) = ctx.data.read().await.get::<TimeoutSchedulerKey>() {
+    if let Some(scheduler) = ctx.data.read().await.get::<QueueExpirationSchedulerKey>() {
       let mut sched = scheduler.lock().await;
-      sched.schedule_timeout(guild_id, user_id, timeout_minutes, player_tag, category_name, format_name);
+      sched.schedule_queue_expiration(guild_id, user_id, rejoin_expiration_minutes, player_tag, category_name, format_name);
     }
   }
   
   /// Cancel a player's timeout task
-  pub async fn cancel_player_timeout(&self, ctx: &Context, guild_id: GI, user_id: UI) {
-    use crate::models::TimeoutSchedulerKey;
+  pub async fn cancel_player_rejoin_expiration(&self, ctx: &Context, guild_id: GI, user_id: UI) {
+    use crate::models::QueueExpirationSchedulerKey;
     
-    if let Some(scheduler) = ctx.data.read().await.get::<TimeoutSchedulerKey>() {
+    if let Some(scheduler) = ctx.data.read().await.get::<QueueExpirationSchedulerKey>() {
       let mut sched = scheduler.lock().await;
-      sched.cancel_timeout(guild_id, user_id);
+      sched.cancel_queue_expiration(guild_id, user_id);
     }
   }
 
@@ -2100,6 +2100,16 @@ impl Category {
       if let Ok(sent) = dashboard.send_message(&ctx.http, msg).await {
         // Store pending notification for tracking
         self.pending_vc_notification = Some((sent.id, players_to_dm.clone()));
+
+        // Delete the message after confirm expiry duration
+        let http = ctx.http.clone();
+        let channel_id = dashboard;
+        let message_id = sent.id;
+        let confirm_time = self.confirm_time;
+        tokio::spawn(async move {
+          tokio::time::sleep(tokio::time::Duration::from_secs(confirm_time as u64)).await;
+          let _ = channel_id.delete_message(&http, message_id).await;
+        });
       }
     }
 

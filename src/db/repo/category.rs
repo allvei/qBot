@@ -74,7 +74,7 @@ impl CategoryRepository {
             category_id,
             None,
             config.quota,
-            crate::DEFAULT_TIMEOUT as u16, // default timeout
+            crate::DEFAULT_CONFIRM_TIME, // default confirm_time
             MI::new(dashboard_msg),
             Channels::new(
                 category,
@@ -97,7 +97,7 @@ impl CategoryRepository {
         let result = sqlx::query("UPDATE categories
                                   SET guild_id = ?, category = ?, dashboard = ?, chat = ?, ping = ?, quota = ?
                                   WHERE queue = ?
-                                  RETURNING id, category_id, name, timeout, guild_id, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report"
+                                  RETURNING id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report"
         )
         .bind(guild_id.get()              as i64)
         .bind(config.category_id          as i64)
@@ -190,7 +190,7 @@ impl CategoryRepository {
             category_id,
             name,
             result.try_get::<i64, _>("quota")  .unwrap_or(8)  as u8,
-            result.try_get::<i64, _>("timeout").unwrap_or(crate::DEFAULT_TIMEOUT as i64) as u16,
+            result.try_get::<i64, _>("confirm_time").unwrap_or(crate::DEFAULT_CONFIRM_TIME as i64) as u16,
             MI::new(dashboard_msg_id),
             Channels::new(category, chat, queue, ping, teams, dashboard),
             Vec::new(),
@@ -313,7 +313,7 @@ impl CategoryRepository {
 
     /// Get all categories for a guild
     pub async fn get_categories_for_guild(&self, guild_id: GI) -> Result<Vec<Category>> {
-        let rows = sqlx::query("SELECT id, category_id, name, timeout, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
+        let rows = sqlx::query("SELECT id, category_id, name, confirm_time, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
                                 FROM categories
                                 WHERE guild_id = ?"
         )
@@ -402,12 +402,12 @@ impl CategoryRepository {
         Ok(())
     }
 
-    /// Update category timeout
-    pub async fn update_timeout(&self, guild_id: GI, category_id: u8, timeout: u16) -> Result<()> {
-        info!("Updating timeout for guild {} category {}: {}", guild_id, category_id, timeout);
+    /// Update category confirm_time
+    pub async fn update_confirm_time(&self, guild_id: GI, category_id: u8, confirm_time: u16) -> Result<()> {
+        info!("Updating confirm_time for guild {} category {}: {}", guild_id, category_id, confirm_time);
 
-        sqlx::query("UPDATE categories SET timeout = ? WHERE guild_id = ? AND category_id = ?")
-        .bind(timeout as i64)
+        sqlx::query("UPDATE categories SET confirm_time = ? WHERE guild_id = ? AND category_id = ?")
+        .bind(confirm_time as i64)
         .bind(guild_id.get() as i64)
         .bind(category_id as i64)
         .execute(&self.pool)
@@ -483,7 +483,7 @@ impl Repository<Category, u8> for CategoryRepository {
     }
 
     async fn get_by_id(&self, category_id: u8) -> Result<Category> {
-        let result = sqlx::query("SELECT id, category_id, name, timeout, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
+        let result = sqlx::query("SELECT id, category_id, name, confirm_time, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
                                   FROM categories WHERE category_id = ?"
         )
         .bind(category_id as i64)
