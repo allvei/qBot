@@ -5,10 +5,12 @@ pub mod constants;
 pub mod dashboard;
 pub mod dm_tracker;
 pub mod embeds;
+pub mod fatkid_immunity;
 pub mod manager;
 pub mod server;
 pub mod session;
 pub mod setup_state;
+pub mod timeout_scheduler;
 pub mod types;
 
 pub use buttons::*;
@@ -21,6 +23,7 @@ pub use manager::*;
 pub use server::*;
 pub use session::*;
 pub use setup_state::*;
+pub use timeout_scheduler::*;
 pub use types::*;
 
 // TypeMapKey for DashboardUpdateQueue (needed globally across crate)
@@ -31,11 +34,6 @@ use tokio::sync::Mutex;
 pub struct DashboardQueueKey;
 impl TypeMapKey for DashboardQueueKey {
   type Value = Arc<Mutex<DashboardUpdateQueue>>;
-}
-
-pub struct GuildKey;
-impl TypeMapKey for GuildKey {
-  type Value = Arc<Mutex<crate::models::Manager>>;
 }
 
 pub struct DmTrackerKey;

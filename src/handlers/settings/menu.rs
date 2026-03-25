@@ -5,9 +5,16 @@ use serenity::all::{
 
 use crate::Ephemeral as Eph;
 
+// ============================================================================
+// Core Types and Constants
+// ============================================================================
+
 const LIST_THRESHOLD: usize = 5;
 
-type SF = SettingsField;
+// ============================================================================
+// Settings Menu Components
+// ============================================================================
+
 /// A field displayed in the settings embed
 pub struct SettingsField {
   pub name: String,
@@ -15,7 +22,9 @@ pub struct SettingsField {
   pub inline: bool,
 }
 
-impl SF {
+type SF = SettingsField;
+
+impl SettingsField {
   pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
     Self { name: name.into(), value: value.into(), inline: true }
   }
@@ -26,39 +35,40 @@ impl SF {
   }
 }
 
-type SR = SettingsRow;
 /// A row of components (buttons or select menu)
 pub enum SettingsRow {
-  Buttons(Vec<SB>),
+  Buttons(Vec<SettingsButton>),
   RoleSelect { id: String, placeholder: String, default: Option<RoleId> },
   StringSelect { id: String, placeholder: String, options: Vec<(String, String)> },
 }
 
-type SB = SettingsButton;
+type SR = SettingsRow;
+
 /// A button in the settings menu
 pub struct SettingsButton {
   pub id: String,
   pub label: String,
-  pub style: SBS,
+  pub style: SettingsButtonStyle,
   pub disabled: bool,
 }
 
-impl SB {
+type SB = SettingsButton;
+
+impl SettingsButton {
   pub fn toggle(id: impl Into<String>, label: impl Into<String>, enabled: bool) -> Self {
-    let label_str = label.into();
     Self {
       id: id.into(),
-      label: if enabled { format!("{label_str} enabled") } else { format!("{label_str} disabled") },
-      style: if enabled { SBS::Success } else { SBS::Danger },
+      label: label.into(),
+      style: if enabled { SettingsButtonStyle::Success } else { SettingsButtonStyle::Danger },
       disabled: false,
     }
   }
 
   pub fn edit(id: impl Into<String>, label: impl Into<String>) -> Self {
-    Self { id: id.into(), label: label.into(), style: SBS::Primary, disabled: false }
+    Self { id: id.into(), label: label.into(), style: SettingsButtonStyle::Primary, disabled: false }
   }
 
-  pub fn action(id: impl Into<String>, label: impl Into<String>, style: SBS) -> Self {
+  pub fn action(id: impl Into<String>, label: impl Into<String>, style: SettingsButtonStyle) -> Self {
     Self { id: id.into(), label: label.into(), style, disabled: false }
   }
 
@@ -73,12 +83,11 @@ impl SB {
   }
 
   /// Create an action button scoped to a category: `category_settings_{action}_{category_id}`
-  pub fn category_action(action: &str, label: impl Into<String>, style: SBS, category_id: u8) -> Self {
+  pub fn category_action(action: &str, label: impl Into<String>, style: SettingsButtonStyle, category_id: u8) -> Self {
     Self::action(format!("category_settings_{action}_{category_id}"), label, style)
   }
 }
 
-type SBS = SettingsButtonStyle;
 #[derive(Clone, Copy)]
 pub enum SettingsButtonStyle {
   Primary,
@@ -87,13 +96,15 @@ pub enum SettingsButtonStyle {
   Danger,
 }
 
-impl From<SBS> for BS {
-  fn from(style: SBS) -> Self {
+type Sbs = SettingsButtonStyle;
+
+impl From<SettingsButtonStyle> for BS {
+  fn from(style: SettingsButtonStyle) -> Self {
     match style {
-      SBS::Primary => BS::Primary,
-      SBS::Secondary => BS::Secondary,
-      SBS::Success => BS::Success,
-      SBS::Danger => BS::Danger,
+      SettingsButtonStyle::Primary => BS::Primary,
+      SettingsButtonStyle::Secondary => BS::Secondary,
+      SettingsButtonStyle::Success => BS::Success,
+      SettingsButtonStyle::Danger => BS::Danger,
     }
   }
 }
@@ -195,14 +206,14 @@ pub fn create_selection_menu(menu_id: &str, placeholder: &str, options: Vec<(Str
   // Always create a button for single option
   if options.len() == 1 {
     let (label, value) = options.into_iter().next().unwrap();
-    let button = CB::new(&format!("{}_{}", menu_id, value)).label(label).style(BS::Primary);
+    let button = CB::new(&format!("{}_{}", menu_id, value)).label(label.as_str()).style(BS::Primary);
 
     return Some(CAR::Buttons(vec![button]));
   }
 
   // Use buttons if below threshold, otherwise use select menu
   if options.len() < LIST_THRESHOLD {
-    let buttons: Vec<CB> = options.into_iter().map(|(label, value)| CB::new(&format!("{}_{}", menu_id, value)).label(label).style(BS::Secondary)).collect();
+    let buttons: Vec<CB> = options.into_iter().map(|(label, value)| CB::new(&format!("{}_{}", menu_id, value)).label(label.as_str()).style(BS::Secondary)).collect();
 
     Some(CAR::Buttons(buttons))
   } else {
@@ -218,10 +229,10 @@ pub trait AsSettingsMenu {
 }
 
 // ============================================================================
-// UserSettings implementation
+// UserPreferences implementation
 // ============================================================================
 
-impl AsSettingsMenu for crate::db::repo::UserSettings {
+impl AsSettingsMenu for crate::db::repo::UserPreferences {
   fn as_settings_menu(&self) -> SettingsMenu {
     // Format timeout: hours for full hours, minutes for partial
     let timeout_text = if self.timeout >= 60 && self.timeout % 60 == 0 {
@@ -233,8 +244,8 @@ impl AsSettingsMenu for crate::db::repo::UserSettings {
 
     SettingsMenu::new("qBot preferences")
       .description("Configure your queue preferences")
-      .color(self.join_alert_color as u32)
-      .row(SR::Buttons(vec![SB::edit("settings_timeout", &format!("Timeout: {}", timeout_text))]))
+      .color(self.join_alert_color)
+      .row(SR::Buttons(vec![SB::edit("settings_timeout", &format!("Timeout: {}", timeout_text.as_str()))]))
       .row(SR::Buttons(vec![SB::toggle("settings_toggle_dm", "DM alerts", self.pm_hot_alert)]))
       .row(SR::Buttons(vec![SB::toggle("settings_vc_auto_join", "VC auto-join", self.vc_auto_join), SB::toggle("settings_vc_auto_leave", "VC auto-leave", self.vc_auto_leave)]))
       .row(SR::Buttons(vec![SB::edit("settings_edit_alert", "Edit join alert"), SB::edit("settings_edit_leave_alert", "Edit leave alert")]))
@@ -271,26 +282,15 @@ pub struct ServerSettingsDisplay {
 
 impl AsSettingsMenu for ServerSettingsDisplay {
   fn as_settings_menu(&self) -> SettingsMenu {
-    let _runner_display =
-      self.runner_role.as_ref().map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", ")).unwrap_or_else(|| "*Not configured*".to_string());
-
-    let _admin_display =
-      self.admin_role.as_ref().map(|ids| ids.split(',').map(|id| format!("<@&{id}>")).collect::<Vec<_>>().join(", ")).unwrap_or_else(|| "*Not configured*".to_string());
-
-    let _runner_default = self.runner_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
-    let _admin_default = self.admin_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
-
-    let menu = SettingsMenu::new(format!("{} - Server settings", self.guild_name))
+    SettingsMenu::new(format!("{} - Server settings", self.guild_name))
             .color(0x5865F2)
             .description("**Configuration Overview:**\n\n**Server-wide settings**\n• Roles (runner/admin permissions)\n• Team balance method\n• ELO & Rank linking\n\n**Rank management**\n• Add, remove & link ranks\n• Set default rank\n\n**Category management**\n• Queue channels & voice channels\n• Team channels & game settings")
             .row(SR::Buttons(vec![
-                SB::action("server_settings_roles",  "Server", SBS::Secondary),
-                SB::action("server_settings_ranks",  "Ranks", SBS::Secondary),
-                SB::action("server_settings_categories", "Categories", SBS::Secondary),
+                SB::action("server_settings_roles",  "Server", Sbs::Secondary),
+                SB::action("server_settings_ranks",  "Ranks", Sbs::Secondary),
+                SB::action("server_settings_categories", "Categories", Sbs::Secondary),
             ]))
-            .footer("Select a category to manage:");
-
-    menu
+            .footer("Select a category to manage:")
   }
 }
 
@@ -304,13 +304,64 @@ pub struct ServerConfigDisplay {
   pub post_game_timeout: u16,
 }
 
+impl AsSettingsMenu for ServerConfigDisplay {
+  fn as_settings_menu(&self) -> SettingsMenu {
+    let runner_default = self.runner_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
+    let admin_default = self.admin_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
+
+    let mut menu = SettingsMenu::new(format!("{} - Server Settings", self.guild_name))
+      .description("Configure server-wide settings including roles, team balance method, and ELO settings")
+      .field(SF::new("Post-game confirm time", format!("{} seconds", self.post_game_timeout)))
+      .color(0x5865F2)
+      .footer("Configure server-wide settings below");
+
+    // Add role selects
+    menu = menu.row(SR::RoleSelect {
+      id: "server_settings_runner_role".to_string(),
+      placeholder: "Select runner role".to_string(),
+      default: runner_default,
+    });
+
+    menu = menu.row(SR::RoleSelect {
+      id: "server_settings_admin_role".to_string(),
+      placeholder: "Select admin role".to_string(),
+      default: admin_default,
+    });
+
+    // Add balance method select
+    menu = menu.row(SR::StringSelect {
+      id: "server_settings_balance".to_string(),
+      placeholder: "Team balance method...".to_string(),
+      options: vec![
+        ("Custom distribution algorithm".to_string(), "bch".to_string()),
+        ("Average distribution".to_string(), "average".to_string()),
+      ],
+    });
+
+    // Add ELO toggles
+    if !self.toggle_states.is_empty() {
+      let toggle_buttons: Vec<SB> = SERVER_CONFIG_TOGGLES
+        .iter()
+        .zip(self.toggle_states.iter())
+        .map(|(toggle, &state)| SB::toggle(toggle.button_id, toggle.label_on, state))
+        .collect();
+      menu = menu.row(SR::Buttons(toggle_buttons));
+    }
+
+    // Add action buttons
+    menu = menu.row(SR::Buttons(vec![
+      SB::action("server_settings_edit_post_game_timeout", "Edit post-game timeout", Sbs::Secondary),
+      SB::action("server_settings_create_roles", "Create roles", Sbs::Primary),
+      SB::action("server_settings_roles_back", "Back", Sbs::Secondary),
+    ]));
+
+    menu
+  }
+}
+
 impl ServerConfigDisplay {
   pub fn build_embed(&self) -> CE {
-    CE::new()
-      .title(format!("{} - Server Settings", self.guild_name))
-      .field("Post-game confirm time", format!("{} seconds", self.post_game_timeout), true)
-      .color(0x5865F2)
-      .footer(CreateEmbedFooter::new("Configure server-wide settings below"))
+    self.as_settings_menu().build_embed()
   }
 
   pub fn build_components(&self) -> Vec<CAR> {
@@ -391,8 +442,8 @@ pub struct RankConfigDisplay {
   pub default_rank_role: Option<RoleId>, // Discord role ID of default rank
 }
 
-impl RankConfigDisplay {
-  pub fn build_embed(&self) -> CE {
+impl AsSettingsMenu for RankConfigDisplay {
+  fn as_settings_menu(&self) -> SettingsMenu {
     // Build compact rank list: ELO rank1, rank2, rank3 <@&role_id1>, <@&role_id2>, <@&role_id3> (default)
     let description = if self.rank_roles.is_empty() {
       "No ranks configured yet. Click 'Add Rank' to create your first rank.".to_string()
@@ -402,7 +453,7 @@ impl RankConfigDisplay {
       let mut elo_categories: HashMap<u16, Vec<(String, RoleId)>> = HashMap::new();
 
       for (rank_name, elo, role_id) in &self.rank_roles {
-        elo_categories.entry(*elo).or_insert_with(Vec::new).push((rank_name.clone(), *role_id));
+        elo_categories.entry(*elo).or_default().push((rank_name.clone(), *role_id));
       }
 
       // Sort ELO values
@@ -424,11 +475,90 @@ impl RankConfigDisplay {
       desc
     };
 
-    CE::new().title(format!("{} - Manage Ranks", self.guild_name)).description(description).color(0x5865F2).footer(CreateEmbedFooter::new(if self.rank_roles.is_empty() {
-      "Configure ranks by adding new ones below"
-    } else {
-      "Select a rank below to edit its name, ELO, or linked role"
-    }))
+    let mut menu = SettingsMenu::new(format!("{} - Manage Ranks", self.guild_name))
+      .description(description)
+      .color(0x5865F2)
+      .footer(if self.rank_roles.is_empty() {
+        "Configure ranks by adding new ones below"
+      } else {
+        "Select a rank below to edit its name, ELO, or linked role"
+      });
+
+    // Add toggle buttons if any
+    if !self.toggle_states.is_empty() {
+      let toggle_buttons: Vec<SB> = RANK_CONFIG_TOGGLES
+        .iter()
+        .zip(self.toggle_states.iter())
+        .map(|(toggle, &state)| SB::toggle(toggle.button_id, toggle.label_on, state))
+        .collect();
+      menu = menu.row(SR::Buttons(toggle_buttons));
+    }
+
+    // Add rank selection if there are ranks
+    if !self.rank_roles.is_empty() {
+      // Detect duplicate rank names for default rank select
+      let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+      for (name, _, _) in &self.rank_roles {
+        *name_counts.entry(name.as_str()).or_insert(0) += 1;
+      }
+
+      let default_options: Vec<(String, String)> = self
+        .rank_roles
+        .iter()
+        .map(|(name, _, role_id)| {
+          let is_default = self.default_rank_role.map(|r| r == *role_id).unwrap_or(false);
+          let has_duplicate = name_counts.get(name.as_str()).copied().unwrap_or(0) > 1;
+          let label = match (is_default, has_duplicate) {
+            (true, true) => format!("{} (ID {}, current default)", name, role_id.get()),
+            (true, false) => format!("{} (current default)", name),
+            (false, true) => format!("{} (ID {})", name, role_id.get()),
+            (false, false) => name.clone(),
+          };
+          (label, role_id.to_string())
+        })
+        .collect();
+
+      menu = menu.row(SR::StringSelect {
+        id: "server_settings_default_rank_select".to_string(),
+        placeholder: "Set default rank".to_string(),
+        options: default_options,
+      });
+
+      // Add rank edit select
+      let edit_options: Vec<(String, String)> = self
+        .rank_roles
+        .iter()
+        .map(|(name, _, role_id)| {
+          let label = if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
+            format!("{} (ID {})", name, role_id.get())
+          } else {
+            name.clone()
+          };
+          (label, role_id.to_string())
+        })
+        .collect();
+
+      menu = menu.row(SR::StringSelect {
+        id: "server_settings_rank_select".to_string(),
+        placeholder: "Select rank to configure".to_string(),
+        options: edit_options,
+      });
+    }
+
+    // Add action buttons
+    menu = menu.row(SR::Buttons(vec![
+      SB::action("server_settings_rank_add", "Add rank", Sbs::Success),
+      SB::action("server_settings_rank_link", "Link ranks", Sbs::Primary),
+      SB::action("server_settings_ranks_back", "Back", Sbs::Secondary),
+    ]));
+
+    menu
+  }
+}
+
+impl RankConfigDisplay {
+  pub fn build_embed(&self) -> CE {
+    self.as_settings_menu().build_embed()
   }
 
   pub fn build_components(&self) -> Vec<CAR> {
@@ -495,7 +625,11 @@ impl RankConfigDisplay {
                 .rank_roles
                 .iter()
                 .map(|(name, _, role_id)| {
-                  let label = if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 { format!("{} (ID {})", name, role_id.get()) } else { name.clone() };
+                  let label = if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
+                    format!("{} (ID {})", name, role_id.get())
+                  } else {
+                    name.clone()
+                  };
                   CSMO::new(label, role_id.to_string())
                 })
                 .collect(),
@@ -565,8 +699,8 @@ pub struct CategoryListDisplay {
   pub categories: Vec<crate::models::Category>,
 }
 
-impl CategoryListDisplay {
-  pub fn build_embed(&self) -> CE {
+impl AsSettingsMenu for CategoryListDisplay {
+  fn as_settings_menu(&self) -> SettingsMenu {
     let mut description = String::new();
     description.push_str("**Active categories:**\n");
 
@@ -579,7 +713,45 @@ impl CategoryListDisplay {
       }
     }
 
-    CE::new().title(format!("{} - Manage Categories", self.guild_name)).description(description).color(0x5865F2).footer(CreateEmbedFooter::new("Select a category below to edit"))
+    let mut menu = SettingsMenu::new(format!("{} - Manage Categories", self.guild_name))
+      .description(description)
+      .color(0x5865F2)
+      .footer("Select a category below to edit");
+
+    // Add category selector if there are categories
+    if !self.categories.is_empty() {
+      let options: Vec<(String, String)> = self
+        .categories
+        .iter()
+        .map(|g| {
+          let label = g.display_name();
+          let value = format!("{}_{}", g.ctg_id, g.channels.queue_vc.get());
+          (label, value)
+        })
+        .collect();
+
+      menu = menu.row(SR::StringSelect {
+        id: "server_settings_category_select".to_string(),
+        placeholder: "Select category to configure".to_string(),
+        options,
+      });
+    }
+
+    // Add action buttons
+    let mut buttons = vec![SB::action("server_settings_create_category", "Create a category", Sbs::Primary)];
+    if !self.categories.is_empty() {
+      buttons.push(SB::action("server_settings_remove_category", "Remove a category", Sbs::Danger));
+    }
+    buttons.push(SB::action("server_settings_categories_back", "Back", Sbs::Secondary));
+    menu = menu.row(SR::Buttons(buttons));
+
+    menu
+  }
+}
+
+impl CategoryListDisplay {
+  pub fn build_embed(&self) -> CE {
+    self.as_settings_menu().build_embed()
   }
 
   pub fn build_components(&self) -> Vec<CAR> {
@@ -594,7 +766,7 @@ impl CategoryListDisplay {
         .map(|g| {
           let label = g.display_name();
           // Use format "categoryid_queueid" to ensure uniqueness (each category has unique queue channel)
-          let value = format!("{}_{}", g.category_id, g.channels.queue_vc.get());
+          let value = format!("{}_{}", g.ctg_id, g.channels.queue_vc.get());
           (label, value)
         })
         .collect();
@@ -659,15 +831,15 @@ impl AsSettingsMenu for CategorySettingsDisplay {
       .row(SR::Buttons(vec![SB::category_edit("edit_name", "Name", gid), SB::category_edit("edit_quota", "Quota", gid), SB::category_edit("edit_timeout", "Confirm expiry", gid)]))
       .row(SR::Buttons(vec![
         SB::category_edit("edit_connect", "Connect info", gid),
-        SB::category_action("formats", "Formats", SBS::Primary, gid),
-        SB::category_action("link_message", "Re-link dashboard", SBS::Success, gid),
+        SB::category_action("formats", "Formats", Sbs::Primary, gid),
+        SB::category_action("link_message", "Re-link dashboard", Sbs::Success, gid),
       ]))
       .row(SR::Buttons(vec![
         SB::category_edit("edit_vc_create", "VC create", gid),
         SB::category_edit("edit_vc_destroy", "VC destroy", gid),
         SB::category_edit("edit_vc_keepmin", "Keep min VCs", gid),
       ]))
-      .row(SR::Buttons(vec![SB::category_action("elo_gate", "ELO gate", SBS::Primary, gid), SB::action("server_settings_categories", "Back", SBS::Secondary)]))
+      .row(SR::Buttons(vec![SB::category_action("elo_gate", "ELO gate", Sbs::Primary, gid), SB::action("server_settings_categories", "Back", Sbs::Secondary)]))
   }
 }
 
@@ -704,14 +876,14 @@ impl FormatListDisplay {
     let mut buttons = Vec::new();
 
     if can_add {
-      buttons.push(CB::new(format!("category_sg_add_{gid}")).label("Add format").style(BS::Primary));
+      buttons.push(CB::new(format!("category_fmt_add_{gid}")).label("Add format").style(BS::Primary));
     }
 
     if self.formats.len() > 1 {
-      buttons.push(CB::new(format!("category_sg_remove_{gid}")).label("Remove format").style(BS::Danger));
+      buttons.push(CB::new(format!("category_fmt_remove_{gid}")).label("Remove format").style(BS::Danger));
     }
 
-    buttons.push(Eph::back(format!("category_sg_back_{gid}")));
+    buttons.push(Eph::back(format!("category_fmt_back_{gid}")));
 
     let mut components = vec![CAR::Buttons(buttons)];
 
@@ -719,7 +891,7 @@ impl FormatListDisplay {
     if !self.formats.is_empty() {
       let options: Vec<(String, String)> = self.formats.iter().map(|(id, name, quota)| (format!("{} (quota: {})", name, quota), format!("{}_{}", gid, id))).collect();
 
-      if let Some(menu) = create_selection_menu("category_sg_edit", "Select format to edit", options) {
+      if let Some(menu) = create_selection_menu("category_fmt_edit", "Select format to edit", options) {
         components.push(menu);
       }
     }

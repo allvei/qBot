@@ -65,14 +65,14 @@ impl DmMessageTracker {
   /// Send a DM to a user, deleting any previously tracked DMs first.
   /// Also cleans up old untracked bot messages in the DM channel.
   /// Returns Ok(()) on success, Err if the DM could not be sent.
-  pub async fn send_dm(&self, ctx: &Context, user_id: UserId, embed: CreateEmbed) -> Result<(), serenity::Error> {
+  pub async fn send_dm(&self, ctx: &Context, user_id: UserId, embed: CreateEmbed, components: Vec<serenity::all::CreateActionRow>) -> Result<(), serenity::Error> {
     let user = ctx.http.get_user(user_id).await?;
     let dm_channel = user.create_dm_channel(&ctx.http).await?;
     let username = user.name.clone();
 
     self.delete_tracked(user_id, &ctx.http).await;
     self.cleanup_old_bot_dms(ctx, dm_channel.id).await;
-    let sent = dm_channel.send_message(&ctx.http, CreateMessage::new().embed(embed)).await?;
+    let sent = dm_channel.send_message(&ctx.http, CreateMessage::new().embed(embed).components(components)).await?;
     self.track_message(user_id, dm_channel.id, sent.id, username.clone()).await;
 
     info!("[DM/{}] Sent and tracked DM", username);
@@ -141,9 +141,7 @@ impl DmMessageTracker {
           // Delete all tracked messages
           for message_id in &session.message_ids {
             match http.delete_message(session.channel_id, *message_id, None).await {
-              Ok(_) => {
-                info!("[DM/{}] Deleted message", session.username);
-              }
+              Ok(_) => (),
               Err(e) => {
                 warn!("[DM/{}] Failed to delete message ID {}: {e}", session.username, message_id);
               }

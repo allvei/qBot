@@ -8,29 +8,6 @@ use crate::models::Ephemeral;
 use crate::player::check_adm;
 use crate::{GREEN, RED, YELLOW};
 
-/// `/toggledm` - Toggle DM notifications when a game is ready
-pub async fn cmd_toggle_dm(cc: &CC<'_>) -> Result<()> {
-  let user_id = cc.intax.user.id;
-
-  // Toggle the DM preference
-  let new_state = cc.db.users.toggle_pm_hot_alert(user_id).await?;
-
-  let (status_text, status_emoji) = if new_state { ("enabled", "🔔") } else { ("disabled", "🔕") };
-
-  let embed = CE::new()
-    .title("DM Alerts Updated")
-    .description(format!(
-      "{status_emoji} DM alerts are now **{status_text}**\n\n\
-            You will {a} receive a DM when a game is ready.\n",
-      a = if new_state { "now" } else { "no longer" }
-    ))
-    .color(if new_state { GREEN } else { YELLOW });
-
-  cc.intax.create_response(&cc.ctx.http, Ephemeral::send(embed)).await?;
-
-  Ok(())
-}
-
 /// `/prefs` - Open personal settings menu as ephemeral message in current channel
 pub async fn cmd_prefs(cc: &CC<'_>) -> Result<()> {
   let user_id = cc.intax.user.id;
@@ -41,7 +18,7 @@ pub async fn cmd_prefs(cc: &CC<'_>) -> Result<()> {
   // Send ephemeral message in the current channel
   cc.intax.create_response(&cc.ctx.http, Ephemeral::send_prefs(&prefs)).await?;
 
-  let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
+  let user_tag = crate::log::get_user_tag(cc.ctx, cc.intax.user.id, &cc.db).await;
   info!("Sent settings menu to user {} (ephemeral)", user_tag);
   Ok(())
 }
@@ -62,7 +39,7 @@ pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
   // Send ephemeral message in the current channel
   cc.intax.create_response(&cc.ctx.http, Ephemeral::send_config(&settings, &guild_name)).await?;
 
-  let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
+  let user_tag = crate::log::get_user_tag(cc.ctx, cc.intax.user.id, &cc.db).await;
   info!("Sent server settings menu to {} (ephemeral)", user_tag);
   Ok(())
 }
@@ -175,7 +152,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
 
   // First, try to get player's rank from Discord roles (source of truth)
   use crate::handlers::player::get_user_rank_from_discord_roles;
-  let discord_rank = get_user_rank_from_discord_roles(&cc.ctx, &cc.db, guild_id, target_user).await;
+  let discord_rank = get_user_rank_from_discord_roles(cc.ctx, &cc.db, guild_id, target_user).await;
 
   // Get guild ELO from database (this has the actual ELO, games, wins)
   let mut guild_elo: crate::db::repo::elo::GuildElo = match cc.db.elo.get(target_user, guild_id, &cc.db).await {
@@ -199,7 +176,18 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     guild_elo.rank = discord_rank;
   }
 
-  let username = cc.ctx.http.get_user(target_user).await.map(|u| u.name.clone()).unwrap_or_else(|_| target_user.to_string());
+  // Use cache for username (much faster than API call)
+  let username = cc.ctx.cache.user(target_user)
+    .map(|u| u.name.clone())
+    .or_else(|| {
+      // Try getting from guild member cache
+      cc.intax.guild_id.and_then(|gid| {
+        cc.ctx.cache.guild(gid).and_then(|g| {
+          g.members.get(&target_user).map(|m| m.user.name.clone())
+        })
+      })
+    })
+    .unwrap_or_else(|| target_user.to_string());
 
   let settings = PlayerSettings {
     user_id: target_user,
@@ -215,6 +203,6 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
   let response = CIR::Message(CIRM::new().embed(embed).components(components).ephemeral(true));
   cc.intax.create_response(&cc.ctx.http, response).await?;
 
-  crate::log::log_command_usage(&cc.ctx, &cc.intax, &cc.db, "edit", Some(target_user), None).await;
+  crate::log::log_command_usage(cc.ctx, cc.intax, &cc.db, "edit", Some(target_user), None).await;
   Ok(())
 }

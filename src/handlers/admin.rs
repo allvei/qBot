@@ -21,7 +21,7 @@ use crate::{guild_name, Database, Manager, CYAN, DEFAULT_QUOTA, GREEN, ORANGE, R
 /// * `key`   - The key to modify.
 /// * `value` - The value to set for the key.
 pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String>) -> Result<()> {
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
@@ -60,7 +60,7 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String>) -> Resu
 /// * `role` - The Discord role mention/ID to assign
 pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> Result<()> {
   // Check admin permissions
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
@@ -135,7 +135,8 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
 /// Creates a category and all necessary category channels
 /// Flow: Create category -> Create dashboard -> Test message send -> Create other channels
 /// If dashboard message send fails, cleanup and abort
-pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name: &str, channel_prefix: &str, bot_only_dashboard: bool) -> Result<(CI, CI, CI, CI)> {
+/// Returns: (category_id, dashboard_id, queue_chat_id, queue_vc_id, ping_channel_id)
+pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name: &str, channel_prefix: &str, bot_only_dashboard: bool, runner_role: Option<RI>) -> Result<(CI, CI, CI, CI, CI)> {
   use serenity::all::{CreateChannel, CreateEmbed, CreateMessage, PermissionOverwrite, PermissionOverwriteType, Permissions};
 
   let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -295,9 +296,56 @@ pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name
     }
   };
 
+  // Step 5: Create ping channel with Runner-only send permissions
+  let mut ping_permissions = vec![
+    PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Member(bot_user_id) },
+  ];
+  
+  if let Some(role_id) = bot_role {
+    ping_permissions.push(PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Role(role_id) });
+  }
+  
+  // Deny @everyone from sending messages (only Runner role can send)
+  ping_permissions.push(PermissionOverwrite {
+    allow: Permissions::VIEW_CHANNEL | Permissions::READ_MESSAGE_HISTORY,
+    deny: Permissions::SEND_MESSAGES | Permissions::ADD_REACTIONS | Permissions::CREATE_PUBLIC_THREADS | Permissions::CREATE_PRIVATE_THREADS,
+    kind: PermissionOverwriteType::Role(guild_id.everyone_role()),
+  });
+  
+  // Allow Runner role to send messages
+  if let Some(runner_role_id) = runner_role {
+    ping_permissions.push(PermissionOverwrite {
+      allow: Permissions::SEND_MESSAGES | Permissions::MENTION_EVERYONE,
+      deny: Permissions::empty(),
+      kind: PermissionOverwriteType::Role(runner_role_id),
+    });
+  }
+
+  let ping_channel = match guild_id
+    .create_channel(
+      &ctx.http,
+      CreateChannel::new(format!("{channel_prefix}-ping"))
+        .kind(ChannelType::Text)
+        .category(category_id)
+        .topic("Ping channel - Only Runners can send @here messages to encourage queue participation")
+        .permissions(ping_permissions),
+    )
+    .await
+  {
+    Ok(ch) => ch,
+    Err(e) => {
+      error!("[{}] Failed to create ping channel: {}", guild_name, e);
+      let _ = queue_vc_channel.id.delete(&ctx.http).await;
+      let _ = queue_channel.id.delete(&ctx.http).await;
+      let _ = dashboard_channel.id.delete(&ctx.http).await;
+      let _ = category_id.delete(&ctx.http).await;
+      return Err(anyhow!("Failed to create ping channel: {e}"));
+    }
+  };
+
   info!("[{}] Successfully created all category channels (team VCs are dynamic)", guild_name);
 
-  Ok((category_id, dashboard_channel.id, queue_channel.id, queue_vc_channel.id))
+  Ok((category_id, dashboard_channel.id, queue_channel.id, queue_vc_channel.id, ping_channel.id))
 }
 
 /// `/dashboard`
@@ -324,7 +372,7 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
 ///
 /// Sets up the bot for a guild using an interactive ephemeral message flow
 pub async fn cmd_setup(cc: &CC<'_>) -> Result<()> {
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
@@ -916,7 +964,7 @@ async fn handle_init_admin_selection(
 
 /// `/check_ranks` - Check and offer to create missing rank roles
 pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
@@ -1020,6 +1068,7 @@ async fn save_and_create_category(
     dashboard_channel_id: dashboard_channel,
     chat_channel_id: queue_channel,
     queue_vc_id: queue_vc_channel,
+    ping_channel_id: 1,
     quota: DEFAULT_QUOTA,
   };
   db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await?;
@@ -1113,7 +1162,7 @@ async fn handle_categorylink_blue_selection(
         || category.channels.queue_vc == queue_vc_channel
         || category.channels.teams.iter().any(|t| t.red_vc == red_channel || t.blu_vc == blue_channel)
       {
-        categories_to_remove.push((idx, category.category_id));
+        categories_to_remove.push((idx, category.ctg_id));
       }
     }
 
@@ -1147,6 +1196,7 @@ async fn handle_categorylink_blue_selection(
       category: category_id,
       queue_chat: queue_channel,
       queue_vc: queue_vc_channel,
+      ping_channel: CI::new(1),
       teams: vec![TeamChannel { red_vc: red_channel, blu_vc: blue_channel, set_index: 1, session_id: None }],
       dashboard: dashboard_channel,
     },
@@ -1164,11 +1214,12 @@ async fn handle_categorylink_blue_selection(
         dashboard_channel_id: dashboard_channel.get(),
         chat_channel_id: queue_channel.get(),
         queue_vc_id: queue_vc_channel.get(),
+        ping_channel_id: 1,
         quota: crate::DEFAULT_QUOTA,
       };
       match db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
         Ok(db_category) => {
-          info!("[{}] Category {} created via categorylink", guild_name, db_category.category_id);
+          info!("[{}] Category {} created via categorylink", guild_name, db_category.ctg_id);
 
           // Add to manager
           let mut mgr = manager.lock().await;
@@ -1248,7 +1299,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
     }
   };
 
-  let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+  let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
   info!("DEBUG: User {} - Guild ELO: {}, Rank: {}, Games: {}, Wins: {}", user_tag, guild_elo.elo, guild_elo.rank.name, guild_elo.games, guild_elo.wins);
 
   // Get user info - if no user provided, we can't continue
@@ -1281,7 +1332,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
 /// `/enableactiveelo` - Enable automatic ELO adjustments from match results
 pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
   // Check admin permissions
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
@@ -1302,7 +1353,7 @@ pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
 /// `/disableactiveelo` - Disable automatic ELO adjustments from match results
 pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
   // Check admin permissions
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
@@ -1320,7 +1371,7 @@ pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
 /// `/activeelostatus` - Check if automatic ELO adjustments are enabled
 pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
   // Check admin permissions
-  if !check_run(cc).await? {
+  if !check_adm(cc).await? {
     return Ok(());
   }
 
@@ -1376,13 +1427,13 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     }
   };
 
-  let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+  let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
   info!("[{}] Finding session for user {}", guild_name, user_tag);
   // Find the session containing the player
-  let session = match category.get_user_session(user_id).await {
+  let session = match category.get_user_sesh(user_id).await {
     Ok(s) => s,
     Err(e) => {
-      let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+      let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
       warn!("[{}] User {} not found in any session: {}", guild_name, user_tag, e);
       let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in any queue.")).color(RED);
 
@@ -1395,7 +1446,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
   let player_idx = match session.pool.iter().position(|p| p.player.user_id == user_id) {
     Some(idx) => idx,
     None => {
-      let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+      let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
       error!("[{}] Player {} not found in pool despite being in session", guild_name, user_tag);
       let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in the queue pool.")).color(RED);
 
@@ -1411,6 +1462,9 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
   session.pool.insert(0, player);
 
   let is_hot = session.is_hot();
+
+  // Validate VC status to sync in_queue_vc flags with actual Discord state
+  category.validate_vc_status(cc.ctx, guild_id).await;
 
   // If session is hot, regenerate teams with new order
   // Note: generate_teams() already handles dashboard update
@@ -1452,13 +1506,13 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
     }
   };
 
-  let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+  let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
   info!("[{}] Finding session for user {}", guild_name, user_tag);
   // Find the session containing the player
-  let session = match category.get_user_session(user_id).await {
+  let session = match category.get_user_sesh(user_id).await {
     Ok(s) => s,
     Err(e) => {
-      let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+      let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
       warn!("[{}] User {} not found in any session: {}", guild_name, user_tag, e);
       let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in any queue.")).color(RED);
 
@@ -1471,7 +1525,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
   let player_idx = match session.pool.iter().position(|p| p.player.user_id == user_id) {
     Some(idx) => idx,
     None => {
-      let user_tag = crate::log::get_user_tag(&cc.ctx, user_id, &cc.db).await;
+      let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
       error!("[{}] Player {} not found in pool despite being in session", guild_name, user_tag);
       let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in the queue pool.")).color(RED);
 
@@ -1487,6 +1541,9 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
   session.pool.push(player);
 
   let is_hot = session.is_hot();
+
+  // Validate VC status to sync in_queue_vc flags with actual Discord state
+  category.validate_vc_status(cc.ctx, guild_id).await;
 
   // If session is hot, regenerate teams with new order
   if is_hot {
@@ -1526,22 +1583,22 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
   let target_formats = if let Some(user_opt) = user_option {
     // For specific user removal, search all formats for that user
     if let Some(user_id) = user_opt.value.as_user_id() {
-      let mut target_sg_ids = Vec::new();
-      for (sg_idx, sg) in category.formats.iter().enumerate() {
+      let mut target_fmt_ids = Vec::new();
+      for (fmt_idx, sg) in category.formats.iter().enumerate() {
         // Check if user is in any session of this format
         for session in &sg.sessions {
           if session.pool.iter().any(|p| p.player.user_id == user_id.get()) {
-            target_sg_ids.push(sg_idx);
+            target_fmt_ids.push(fmt_idx);
             break;
           }
         }
       }
 
-      if target_sg_ids.is_empty() {
+      if target_fmt_ids.is_empty() {
         // User not found in any format, default to first format
         vec![0]
       } else {
-        target_sg_ids
+        target_fmt_ids
       }
     } else {
       vec![0] // Default to first format if user parsing fails
@@ -1563,17 +1620,33 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
           let mut removed_from_formats = Vec::new();
 
           // Remove from each targeted format
-          for &sg_idx in &target_formats {
-            if let Some(sg) = category.formats.get_mut(sg_idx) {
+          for &fmt_idx in &target_formats {
+            if let Some(sg) = category.formats.get_mut(fmt_idx) {
+              let quota = sg.quota as usize;
+              
               for session in &mut sg.sessions {
                 if !session.is_active() {
                   let initial_len = session.pool.len();
                   session.pool.retain(|p| p.player.user_id != user_id.get());
                   let removed_count = initial_len - session.pool.len();
+                  
                   if removed_count > 0 {
                     total_removed += removed_count;
-                    removed_from_formats.push((sg_idx, sg.name.clone()));
+                    removed_from_formats.push((fmt_idx, sg.name.clone()));
+                    
+                    // If this was a Hot session and now below quota, transition back to Idle
+                    if session.is_hot() && session.pool.len() < quota {
+                      session.idle();
+                      info!("Hot session dropped below quota after removing player, transitioning back to Idle");
+                    }
                   }
+                }
+              }
+              
+              // After removal, check if we can pull waiting players to meet quota
+              if category.is_quota_fmt(fmt_idx as u8) {
+                if let Err(e) = category.hot_fmt(fmt_idx as u8, cc.ctx, Some(guild_id), Some(&*cc.db), None, false).await {
+                  warn!("Failed to transition to hot after player removal: {}", e);
                 }
               }
             }
@@ -1583,14 +1656,14 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
           category.queue_dash_update(cc.ctx, guild_id).await;
 
           if total_removed > 0 {
-            let sg_names: Vec<String> = removed_from_formats.iter().map(|(_, name)| format!("**{}**", name)).collect();
+            let fmt_names: Vec<String> = removed_from_formats.iter().map(|(_, name)| format!("**{}**", name)).collect();
 
             let success_embed = CE::new()
               .title("Player removed")
               .description(format!(
                 "Removed **{}** from the queue{}.",
                 target_user.name,
-                if removed_from_formats.len() > 1 { format!(" from formats: {}", sg_names.join(", ")) } else { String::new() }
+                if removed_from_formats.len() > 1 { format!(" from formats: {}", fmt_names.join(", ")) } else { String::new() }
               ))
               .color(GREEN);
             cc.intax.create_response(&cc.ctx.http, Ephemeral::send(success_embed)).await?;
@@ -1613,14 +1686,15 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
     let mut total_players = 0;
     let mut cleared_formats = Vec::new();
 
-    for (sg_idx, sg) in category.formats.iter_mut().enumerate() {
+    for (fmt_idx, sg) in category.formats.iter_mut().enumerate() {
       for session in &mut sg.sessions {
         if !session.is_active() {
           let count = session.pool.len();
           if count > 0 {
             total_players += count;
-            session.pool.clear();
-            cleared_formats.push((sg_idx, sg.name.clone()));
+            // Use idle() to properly reset session state (clears pool, team assignments, timestamps)
+            session.idle();
+            cleared_formats.push((fmt_idx, sg.name.clone()));
           }
         }
       }
@@ -1634,8 +1708,8 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Opt
       .description(format!(
         "Removed {total_players} player(s) from the queue{}.",
         if cleared_formats.len() > 1 {
-          let sg_names: Vec<String> = cleared_formats.iter().map(|(_, name)| format!("**{}**", name)).collect();
-          format!(" from formats: {}", sg_names.join(", "))
+          let fmt_names: Vec<String> = cleared_formats.iter().map(|(_, name)| format!("**{}**", name)).collect();
+          format!(" from formats: {}", fmt_names.join(", "))
         } else {
           String::new()
         }

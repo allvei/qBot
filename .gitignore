@@ -13,3 +13,5 @@ trends_api.md
 Cargo.lock
 /.windsurf
 rustfmt.toml
+CHANGELOG_TEMPLATE.md
+/logs/

@@ -29,8 +29,6 @@ impl TeamRepository {
         .execute(&self.pool)
         .await?;
 
-        info!("Added team channel pair to database: SET={} RED={} BLU={} for guild {} category {}", 
-              set_index, red_vc.get(), blu_vc.get(), guild_id.get(), category_id);
         Ok(())
     }
 
@@ -165,13 +163,18 @@ impl TeamRepository {
             .collect();
         let in_clause = placeholders.join(",");
 
+        // Use OR: if either red OR blu channel doesn't exist, the team entry is orphaned
         let query = format!(
-            "SELECT red, blu FROM teams WHERE guild_id = ? AND red NOT IN ({}) AND blu NOT IN ({})",
+            "SELECT red, blu FROM teams WHERE guild_id = ? AND (red NOT IN ({}) OR blu NOT IN ({}))",
             in_clause, in_clause
         );
 
         let mut query_builder = sqlx::query(&query).bind(guild_id.get() as i64);
         
+        // Bind channel IDs twice (once for red check, once for blu check)
+        for channel_id in existing_channel_ids {
+            query_builder = query_builder.bind(channel_id.get() as i64);
+        }
         for channel_id in existing_channel_ids {
             query_builder = query_builder.bind(channel_id.get() as i64);
         }

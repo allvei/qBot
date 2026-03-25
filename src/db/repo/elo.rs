@@ -1,8 +1,8 @@
 use anyhow::Result;
 use serenity::all::{UserId as UI, GuildId as GI};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 
-use crate::Rank;
+use crate::{Rank, db::helpers::RowHelpers};
 
 /// Guild-specific ELO data for a player
 #[derive(Debug, Clone)]
@@ -11,6 +11,22 @@ pub struct GuildElo {
     pub rank:     Rank,
     pub games:    u32,
     pub wins:     u32,
+}
+
+impl GuildElo {
+    /// Create GuildElo from a SQL row with proper error handling
+    pub fn from_row(row: &SqliteRow, guild_id: GI) -> Result<Option<Self>> {
+        // Extract ELO stats
+        let (elo, games, wins) = RowHelpers::extract_elo_stats(row)?;
+        
+        // Extract rank data
+        let rank = match RowHelpers::extract_rank_data(row, guild_id)? {
+            Some(rank) => rank,
+            None => return Ok(None), // Incomplete rank data
+        };
+        
+        Ok(Some(GuildElo { elo, rank, games, wins }))
+    }
 }
 
 #[derive(Clone)]
@@ -37,33 +53,7 @@ impl EloRepository {
         .await?;
 
         match result {
-            Some(row) => {
-                let elo:     i64    = row.get("elo");
-                let games:   i64    = row.get("games");
-                let wins:    i64    = row.get("wins");
-                let name:    Option<String> = row.get("name");
-                let rank_elo: Option<i64> = row.get("rank_elo");
-                let role_id: Option<i64> = row.get("role_id");
-
-                let rank = if let (Some(name), Some(rank_elo), Some(role_id)) = (name, rank_elo, role_id) {
-                    Rank {
-                        guild_id,
-                        role_id: serenity::all::RoleId::new(role_id as u64),
-                        name,
-                        elo: rank_elo as u16,
-                    }
-                } else {
-                    // Return None if join failed - no valid rank data available
-                    return Ok(None);
-                };
-
-                Ok(Some(GuildElo {
-                    elo:   elo   as u16,
-                    rank:  rank,
-                    games: games as u32,
-                    wins:  wins  as u32,
-                }))
-            }
+            Some(row) => GuildElo::from_row(&row, guild_id),
             None => Ok(None),
         }
     }
@@ -133,15 +123,14 @@ impl EloRepository {
         let mut success = 0u32;
 
         for chunk in user_ids.chunks(500) {
-            let mut query = String::from(
-                "INSERT INTO elo (guild_id, user_id, elo, rank) VALUES "
-            );
             let placeholders: Vec<String> = chunk.iter()
                 .map(|_| "(?, ?, ?, ?)".to_string())
                 .collect();
-            query.push_str(&placeholders.join(", "));
-            query.push_str(" ON CONFLICT(guild_id, user_id) DO UPDATE SET elo = excluded.elo, rank = excluded.rank");
-
+            let query = format!(
+                "INSERT INTO elo (guild_id, user_id, elo, rank) VALUES {} ON CONFLICT(guild_id, user_id) DO UPDATE SET elo = excluded.elo, rank = excluded.rank",
+                placeholders.join(", ")
+            );
+            
             let mut q = sqlx::query(&query);
             for uid in chunk {
                 q = q.bind(guild_id.get() as i64)
@@ -214,35 +203,12 @@ impl EloRepository {
 
         let mut results = Vec::new();
         for row in rows {
-            let guild_id:     i64    = row.get("guild_id");
-            let elo:          i64    = row.get("elo");
-            let games:        i64    = row.get("games");
-            let wins:         i64    = row.get("wins");
-            let name:         Option<String> = row.get("name");
-            let rank_elo:     Option<i64> = row.get("rank_elo");
-            let role_id:      Option<i64> = row.get("role_id");
-
-            let rank = if let (Some(name), Some(rank_elo), Some(role_id)) = (name, rank_elo, role_id) {
-                Rank {
-                    guild_id: GI::new(guild_id as u64),
-                    role_id: serenity::all::RoleId::new(role_id as u64),
-                    name,
-                    elo: rank_elo as u16,
-                }
-            } else {
-                // Skip records with invalid rank data
-                continue;
-            };
-
-            results.push((
-                guild_id as u64,
-                GuildElo {
-                    elo:      elo as u16,
-                    rank,
-                    games:    games as u32,
-                    wins:     wins as u32,
-                },
-            ));
+            let guild_id: i64 = row.get("guild_id");
+            let guild_gi = GI::new(guild_id as u64);
+            
+            if let Some(guild_elo) = GuildElo::from_row(&row, guild_gi)? {
+                results.push((guild_id as u64, guild_elo));
+            }
         }
 
         Ok(results)
@@ -265,35 +231,11 @@ impl EloRepository {
 
         let mut results = Vec::new();
         for row in rows {
-            let user_id:      i64    = row.get("user_id");
-            let elo:          i64    = row.get("elo");
-            let games:        i64    = row.get("games");
-            let wins:         i64    = row.get("wins");
-            let name:         Option<String> = row.get("name");
-            let rank_elo:     Option<i64> = row.get("rank_elo");
-            let role_id:      Option<i64> = row.get("role_id");
-
-            let rank = if let (Some(name), Some(rank_elo), Some(role_id)) = (name, rank_elo, role_id) {
-                Rank {
-                    guild_id,
-                    role_id: serenity::all::RoleId::new(role_id as u64),
-                    name,
-                    elo: rank_elo as u16,
-                }
-            } else {
-                // Skip records with invalid rank data
-                continue;
-            };
-
-            results.push((
-                UI::new(user_id as u64),
-                GuildElo {
-                    elo:      elo as u16,
-                    rank,
-                    games:    games as u32,
-                    wins:     wins as u32,
-                },
-            ));
+            let user_id: i64 = row.get("user_id");
+            
+            if let Some(guild_elo) = GuildElo::from_row(&row, guild_id)? {
+                results.push((UI::new(user_id as u64), guild_elo));
+            }
         }
 
         Ok(results)

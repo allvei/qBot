@@ -1,6 +1,6 @@
 [package]
 name    = "pf_pug_bot"
-version = "0.9.0"
+version = "0.12.0"
 edition = "2021"
 
 [[bin]]
@@ -18,7 +18,8 @@ sqlx               = { version = "0.8.6",                            features = 
 chrono             = { version = "0.4",                              features = ["serde"] }                                                
 serde              = { version = "1.0",                              features = ["derive"] }                                               
 uuid               = { version = "1.0",                              features = ["v4"] }                                                   
-tracing-subscriber = { version = "0.3",                              features = ["time", "local-time", "ansi"] }                           
+tracing-subscriber = { version = "0.3",                              features = ["time", "local-time", "ansi", "json", "env-filter"] }     
+tracing-appender   = "0.2"                                                                                                                 
 time               = { version = "0.3",                              features = ["macros"] }                                               
 serde_json         = "1.0"   
 anyhow             = "1.0"   
@@ -35,11 +36,16 @@ rustyline          = "17.0.2"
 # missing_docs_in_private_items = "warn"
 # arbitrary_source_item_ordering = "warn"
 # unused_imports     = "allow"
-# dead_code          = "allow"
-# unused_must_use    = "allow"
-# unused_variables   = "allow"
-deprecated = "allow"
+dead_code          = "allow"
+unused_must_use    = "allow"
+unused_variables   = "allow"
+deprecated =         "allow"
+async_fn_in_trait =  "allow"
 
 [lints.clippy]
 # pedantic = "warn"
 # uninlined_format_args = "warn"
+unused_imports =     "allow"
+unused_variables =   "allow"
+unused_must_use =    "allow"
+too_many_arguments = "allow"

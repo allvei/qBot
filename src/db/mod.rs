@@ -1,6 +1,7 @@
 pub mod migrations;
 pub mod repo;
 pub mod validator;
+pub mod helpers;
 
 use anyhow::Result;
 use serenity::all::{Context as Ctx, UserId as UI, GuildId as GI};
@@ -9,7 +10,7 @@ use tracing::info;
 
 use crate::models::{FileManager, Category, Player, Server};
 use migrations::DatabaseMigrations;
-use repo::{ConfigRepository, EloRepository, CategoryRepository, RankRepository, UserRepository, TeamRepository};
+use repo::{ConfigRepository, EloRepository, CategoryRepository, RankRepository, UserRepository, TeamRepository, MatchRepo, FatkidRepository};
 
 /// Main database interface that orchestrates all repositories
 #[derive(Clone)]
@@ -21,6 +22,8 @@ pub struct Database {
     pub elo:    EloRepository,
     pub ranks:  RankRepository,
     pub teams:  TeamRepository,
+    pub matches: MatchRepo,
+    pub fatkids: FatkidRepository,
 }
 
 impl Database {
@@ -57,8 +60,23 @@ impl Database {
         let elos   = EloRepository   ::new(pool.clone());
         let ranks  = RankRepository  ::new(pool.clone());
         let teams  = TeamRepository  ::new(pool.clone());
+        let matches = MatchRepo      ::new(&pool);
+        let fatkids = FatkidRepository::new(pool.clone());
 
-        Ok(Database { pool, users, categories, config, elo: elos, ranks, teams })
+        // Verify schemas after all repositories are created
+        migrations.verify_schemas().await?;
+
+        Ok(Self {
+            pool,
+            users,
+            categories,
+            config,
+            elo: elos,
+            ranks,
+            teams,
+            matches,
+            fatkids,
+        })
     }
 
     /// Get the underlying connection pool for advanced operations
@@ -106,6 +124,7 @@ impl Database {
             dashboard_channel_id: dashboard,
             chat_channel_id:      chat,
             queue_vc_id:          queue,
+            ping_channel_id:      1,
             quota,
         };
         self.categories.create_category(guild_id, guild_name, dashboard_msg, config).await
@@ -127,6 +146,7 @@ impl Database {
             dashboard_channel_id: dashboard,
             chat_channel_id:      chat,
             queue_vc_id:          queue_id,
+            ping_channel_id:      1,
             quota,
         };
         self.categories.update_category(guild_id, config).await

@@ -7,6 +7,49 @@
   - Prevent multiple fatkids, count +1 on a player for each time
 - Config bool for role management (auto fix, auto assign to new players, etc)
 
+## Dashboard Update Pattern
+
+**Critical Rule:** Any operation that modifies the queue (add/remove/reorder players) MUST call `category.queue_dash_update(ctx, guild_id).await` immediately after.
+
+### When to Update Dashboard
+
+✅ **Always update after:**
+- Adding player to queue
+- Removing player from queue
+- Moving player position (buffer/fatkid)
+- Clearing queue
+- Player rank/ELO changes (if in queue)
+- Quota changes
+- Format changes
+- Team generation
+- Match start/end
+- Session state changes (Idle → Hot → Live)
+
+### Implementation Pattern
+
+```rust
+// Modify queue state
+session.pool.push(player);
+
+// IMMEDIATELY update dashboard
+category.queue_dash_update(ctx, guild_id).await;
+```
+
+### Common Locations
+
+- `handlers/player.rs` - Join/leave queue commands
+- `handlers/admin.rs` - Admin queue management (/buffer, /fatkid, /clear)
+- `handlers/runner_menu.rs` - Runner menu actions
+- `handlers/settings/` - Settings that affect queue display
+- `application.rs` - VC join/leave, timeout checks
+- `models/server.rs` - Team generation, match flow
+
+### Notes
+
+- Dashboard updates are batched and non-blocking via `DashboardQueueKey`
+- Multiple rapid updates collapse into single actual update
+- Always safe to call - no performance penalty for redundant calls
+
 ## Secondary
 
 - logs.tf API data

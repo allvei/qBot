@@ -8,22 +8,31 @@ use tracing::{debug, error, info, warn};
 use crate::models::{CommandContext as CmC, Rank, Role, Server, SessionPlayer as SP, SessionStatus as SS, Team};
 use crate::{guild_name, ComponentContext as CC, Database as DB};
 
-/// Helper: Get member with cache-first strategy
-async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI) -> Option<Member> {
-  // Try cache first (fast path, no API call)
-  let member = if let Some(guild) = ctx.cache.guild(guild_id) { guild.members.get(&user_id).cloned() } else { None };
-
-  // Fallback to HTTP if not in cache
-  match member {
-    Some(m) => Some(m),
-    None => guild_id.member(&ctx.http, user_id).await.ok(),
+/// Helper: Get member with cache → DB → Discord API fallback strategy
+async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI, db: &DB) -> Option<Member> {
+  // 1. Try cache first (fast path, no API call)
+  if let Some(guild) = ctx.cache.guild(guild_id) {
+    if let Some(member) = guild.members.get(&user_id).cloned() {
+      return Some(member);
+    }
   }
+
+  // 2. Check if user exists in database (avoids Discord API call)
+  if db.users.get(user_id).await.is_ok() {
+    // User exists in DB, try Discord API to get full member info
+    if let Ok(member) = guild_id.member(&ctx.http, user_id).await {
+      return Some(member);
+    }
+  }
+
+  // 3. Last resort: Try Discord API anyway (for new users)
+  guild_id.member(&ctx.http, user_id).await.ok()
 }
 
 /// Get user's rank from their Discord roles (highest rank role they have)
 pub async fn get_user_rank_from_discord_roles(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<crate::db::repo::rank::GuildRank> {
   // Get the member and their roles
-  let member = match get_member_cached(ctx, guild_id, user_id).await {
+  let member = match get_member_cached(ctx, guild_id, user_id, db).await {
     Some(m) => m,
     None => return None,
   };
@@ -91,15 +100,16 @@ pub async fn get_or_assign_player_rank(db: &DB, guild_id: GI, user_id: UI) -> Re
 /// startup recovery flows where a `Context` is available for role inspection.
 ///
 /// Returns `(Player, Rank)` ready for queue insertion, or an error.
-pub async fn resolve_player_for_queue(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Result<(crate::models::Player, Rank)> {
+pub async fn resolve_player_for_queue(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Result<(crate::models::Player, Rank, Option<(String, String)>)> {
   // 1. Detect rank: Discord roles (source of truth) vs DB
   let role_based_guild_rank = get_user_rank_from_discord_roles(ctx, db, guild_id, user_id).await;
 
+  let mut rank_mismatch: Option<(String, String)> = None;
   let discord_rank = if let Some(db_rank) = get_player_rank(db, guild_id, user_id).await {
     if let Some(guild_rank) = &role_based_guild_rank {
       let role_rank = Rank::from_name(db, guild_id, &guild_rank.name).await.unwrap_or(db_rank.clone());
       if role_rank != db_rank {
-        info!("Rank mismatch for {}: Discord='{}' DB='{}', using Discord", user_id, guild_rank.name, db_rank.name);
+        rank_mismatch = Some((db_rank.name.clone(), guild_rank.name.clone()));
       }
       role_rank
     } else {
@@ -141,7 +151,7 @@ pub async fn resolve_player_for_queue(ctx: &Ctx, db: &DB, guild_id: GI, user_id:
   }
 
   player.rank = Some(discord_rank.clone());
-  Ok((player, discord_rank))
+  Ok((player, discord_rank, rank_mismatch))
 }
 
 /// Validate that runner and admin roles are configured
@@ -195,7 +205,7 @@ pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<V
 }
 
 async fn deny_command(cc: &CmC<'_>, role: &Role) -> Result<()> {
-  let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
+  let user_tag = crate::log::get_user_tag(cc.ctx, cc.intax.user.id, &cc.db).await;
   info!("[{}] User {} does not have {} role", cc.guild_name(), user_tag, role.name());
   cc.reply_ephemeral(&format!("This command is reserved for {}s", role.name().to_lowercase())).await?;
   Ok(())
@@ -207,10 +217,10 @@ pub async fn check_role(cc: &CmC<'_>, role: &Role) -> Result<bool> {
   use serenity::all::Permissions;
 
   if let Some(guild_id) = cc.intax.guild_id {
-    let member = match get_member_cached(cc.ctx, guild_id, cc.intax.user.id).await {
+    let member = match get_member_cached(cc.ctx, guild_id, cc.intax.user.id, &cc.db).await {
       Some(m) => m,
       None => {
-        let user_tag = crate::log::get_user_tag(&cc.ctx, cc.intax.user.id, &cc.db).await;
+        let user_tag = crate::log::get_user_tag(cc.ctx, cc.intax.user.id, &cc.db).await;
         warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), user_tag);
         return Ok(false);
       }
@@ -258,10 +268,10 @@ pub async fn check_component_role(cc: &CC<'_>, role: &Role) -> Result<bool> {
   use serenity::all::Permissions;
 
   if let Some(guild_id) = cc.component.guild_id {
-    let member = match get_member_cached(cc.ctx, guild_id, cc.component.user.id).await {
+    let member = match get_member_cached(cc.ctx, guild_id, cc.component.user.id, &cc.db).await {
       Some(m) => m,
       None => {
-        let user_tag = crate::log::get_user_tag(&cc.ctx, cc.component.user.id, &cc.db).await;
+        let user_tag = crate::log::get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
         warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), user_tag);
         return Ok(false);
       }
@@ -278,7 +288,7 @@ pub async fn check_component_role(cc: &CC<'_>, role: &Role) -> Result<bool> {
         .unwrap_or(false);
 
       if has_discord_perms {
-        let user_tag = crate::log::get_user_tag(&cc.ctx, cc.component.user.id, &cc.db).await;
+        let user_tag = crate::log::get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
         info!("User {} has Discord admin/manage permissions", user_tag);
         return Ok(true);
       }
@@ -436,7 +446,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
   let category = guild.get_category(channel)?;
 
   // Check if we have an idle session
-  let idle_sessions = category.get_sessions_by_status(&SS::Idle);
+  let idle_sessions = category.get_seshs_by_status(&SS::Idle);
   if idle_sessions.is_empty() {
     cc.reply("No queue available. A match is currently in progress.").await?;
     return Ok(());
@@ -445,9 +455,9 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
   }
 
   // Check if player is already in game
-  if category.get_user_session(user).await.is_ok() {
+  if category.get_user_sesh(user).await.is_ok() {
     // Already in queue - refresh timeout
-    if let Ok(session) = category.get_user_session(user).await {
+    if let Ok(session) = category.get_user_sesh(user).await {
       if let Some(sp) = session.pool.iter_mut().find(|p| p.player.user_id == user) {
         sp.joined_at = std::time::SystemTime::now();
       }
@@ -457,7 +467,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
     category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
   } else {
     let queue = category.get_queue().await?;
-    queue.add_player(player);
+    queue.add_ply(player)?;
 
     let current_queue = queue.pool.len();
     let quota_reached = current_queue >= category.quota() as usize;
@@ -480,7 +490,7 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
   let (queue_count, queue_list, quota) = {
     let category = guild.get_category(channel)?;
 
-    let idle_games = category.get_sessions_by_status(&SS::Idle);
+    let idle_games = category.get_seshs_by_status(&SS::Idle);
 
     if idle_games.is_empty() {
       (0, "No active queue found.".to_string(), category.quota())
@@ -517,13 +527,13 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 
   // Find the first format with an active game
   let mut target_game = None;
-  let mut target_sg_name = String::new();
+  let mut target_fmt_name = String::new();
 
   for sg in &category.formats {
     if let Some(game) = sg.sessions.last() {
       if game.pool.len() >= quota {
         target_game = Some(game);
-        target_sg_name = sg.name.clone();
+        target_fmt_name = sg.name.clone();
         break;
       }
     }
@@ -557,7 +567,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
   // Update pool with new team assignments
   // Find the same format and session we found earlier
   for sg in &mut updated_category.formats {
-    if sg.name == target_sg_name {
+    if sg.name == target_fmt_name {
       if let Some(last_session) = sg.sessions.last_mut() {
         last_session.pool.clear();
         last_session.pool.extend(red_team.into_iter().chain(blu_team.into_iter()));
@@ -568,7 +578,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 
   // Find the session again for the rest of the logic
   let last_session =
-    updated_category.formats.iter_mut().find(|sg| sg.name == target_sg_name).and_then(|sg| sg.sessions.last_mut()).ok_or_else(|| anyhow!("No session available after update"))?;
+    updated_category.formats.iter_mut().find(|sg| sg.name == target_fmt_name).and_then(|sg| sg.sessions.last_mut()).ok_or_else(|| anyhow!("No session available after update"))?;
 
   let red_team_names: Vec<String> = last_session.pool.iter().filter(|sp| sp.team == Some(Team::Red)).map(|sp| format!("<@{}>", sp.player.user_id)).collect();
   let blu_team_names: Vec<String> = last_session.pool.iter().filter(|sp| sp.team == Some(Team::Blu)).map(|sp| format!("<@{}>", sp.player.user_id)).collect();
