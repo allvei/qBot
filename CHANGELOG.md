@@ -1,3 +1,23 @@
+# v0.12.0
+__25.03.26__
+## Users & Admins
+__Added__
+- **Runner menu enhancements** - Comprehensive runner controls with dedicated menu for match management, player administration, and queue operations.
+- **Ping button** - Dashboard button to ping all players in queue voice channel for immediate attention.
+- **VC join notifications** - Real-time alerts when players join queue voice channel during active sessions.
+- **Forced score reporting** - Optional per-category setting to require score submission before ending matches. End button becomes 'End & log score' with backup 'End without score' option in runner menu.
+- **Per-player timeout system** - Individual scheduled timeouts for each player with automatic cleanup and queue removal.
+
+__Improved__
+- **Dashboard interactions** - Duplicate button presses now prevented with 2-second cooldown per session. Start/End actions include format name in logs for clarity.
+- **Member lookup performance** - Three-tier fallback pattern: Cache (fastest) → Database → Discord API (slowest). Reduces API calls and improves reliability during Discord outages.
+- **Match notifications** - Queue-full pings now only sent to players not already in queue voice channel, eliminating redundant notifications for players already present.
+- **Parallel user movement** - Moving users between voice channels now happens in parallel making it instant.
+
+__Fixed__
+- **Queue leave during matches** - Players can no longer leave queue during live matches via Leave button. Must find substitutes manually.
+- **Team voice channel handling** - Players moved by bot from queue VC to team VC no longer incorrectly removed from queue. Prevents premature player ejection after match start.
+
 # v0.11.0
 __11.03.26__
 ## Users & Admins
