@@ -1647,7 +1647,7 @@ impl Category {
 
     // Send the ping message to ping channel (or dashboard if not set)
     let ping_channel = if self.channels.ping_channel.get() > 1 { self.channels.ping_channel } else { self.channels.dashboard };
-    let content = format!("@here +{} for {}", players_needed, format.name);
+    let content = format!("@here +{} for {}\n**Pinged by <@{}>**", players_needed, format.name, user_id.get());
     
     if let Ok(sent) = ping_channel.send_message(&cc.ctx.http, CM::new().content(content)).await {
       // Delete the message after 15 minutes
@@ -1670,7 +1670,7 @@ impl Category {
     } else {
       let response = CreateInteractionResponse::UpdateMessage(
         CreateInteractionResponseMessage::new()
-          .content("Failed to send ping message. Check bot permissions.")
+          .content("Failed to ping. Check bot permissions.")
           .embeds(vec![])
           .components(vec![])
       );
