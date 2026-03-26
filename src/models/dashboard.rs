@@ -1169,7 +1169,11 @@ impl Category {
         warn!("Match summary not posted: match too short ({}s < 60s minimum)", secs);
       }
     } else {
-      warn!("Match summary not posted: match time not available (session may have been Hot only)");
+      warn!(
+        "Match summary not posted: match time not available. Session started_at: {:?}, Current time: {:?}", 
+        active_session.started_at, 
+        SystemTime::now()
+      );
     }
 
     // Move players back to queue channel (Hot/Live → Pull → Idle)
@@ -1305,8 +1309,6 @@ impl Category {
         result
       }
       "start_match" => {
-        cc.reply_defer().await?;
-        
         let fmt_name = self.fmt(fmt_id).map(|sg| sg.name.clone()).unwrap_or_else(|| "Unknown".to_string());
         let is_hot = self.fmt(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.is_hot())).unwrap_or(false);
         if !is_hot { return Ok(()) }
@@ -1321,8 +1323,6 @@ impl Category {
         result
       }
       "end_match" => {
-        cc.reply_defer().await?;
-
         let fmt_name = self.fmt(fmt_id).map(|sg| sg.name.clone()).unwrap_or_else(|| "Unknown".to_string());
         let result = self.dash_end(cc, fmt_id).await;
         match &result {
