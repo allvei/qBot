@@ -13,7 +13,7 @@ use crate::db::repo::Repository;
 use crate::handlers::player::validate_system_roles;
 use crate::models::embeds::Ephemeral;
 use crate::models::{CommandContext as CC, Server, SETUP_STATE};
-use crate::player::{check_adm, check_run};
+use crate::player::{is_admin, is_runner};
 use crate::{guild_name, Database, Manager, CYAN, DEFAULT_QUOTA, GREEN, ORANGE, RED};
 
 /// `/config`
@@ -21,7 +21,7 @@ use crate::{guild_name, Database, Manager, CYAN, DEFAULT_QUOTA, GREEN, ORANGE, R
 /// * `key`   - The key to modify.
 /// * `value` - The value to set for the key.
 pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String>) -> Result<()> {
-  if !check_adm(cc).await? {
+  if !is_admin(cc).await? {
     return Ok(());
   }
 
@@ -60,7 +60,7 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String>) -> Resu
 /// * `role` - The Discord role mention/ID to assign
 pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> Result<()> {
   // Check admin permissions
-  if !check_adm(cc).await? {
+  if !is_admin(cc).await? {
     return Ok(());
   }
 
@@ -352,7 +352,7 @@ pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name
 ///
 /// Creates or updates the dashboard in the current channel
 pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
-  if !check_run(cc).await? && !check_adm(cc).await? {
+  if !is_runner(cc).await? && !is_admin(cc).await? {
     return Ok(());
   }
 
@@ -372,7 +372,7 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
 ///
 /// Sets up the bot for a guild using an interactive ephemeral message flow
 pub async fn cmd_setup(cc: &CC<'_>) -> Result<()> {
-  if !check_adm(cc).await? {
+  if !is_admin(cc).await? {
     return Ok(());
   }
 
@@ -964,7 +964,7 @@ async fn handle_init_admin_selection(
 
 /// `/check_ranks` - Check and offer to create missing rank roles
 pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
-  if !check_adm(cc).await? {
+  if !is_admin(cc).await? {
     return Ok(());
   }
 
@@ -1064,7 +1064,7 @@ async fn save_and_create_category(
 
   // Create category in database
   let category_config = crate::db::repo::category::CategoryConfig {
-    category_id: category,
+    channel_category_id: category,
     dashboard_channel_id: dashboard_channel,
     chat_channel_id: queue_channel,
     queue_vc_id: queue_vc_channel,
@@ -1162,7 +1162,7 @@ async fn handle_categorylink_blue_selection(
         || category.channels.queue_vc == queue_vc_channel
         || category.channels.teams.iter().any(|t| t.red_vc == red_channel || t.blu_vc == blue_channel)
       {
-        categories_to_remove.push((idx, category.ctg_id));
+        categories_to_remove.push((idx, category.id));
       }
     }
 
@@ -1210,7 +1210,7 @@ async fn handle_categorylink_blue_selection(
 
       // Save to database
       let category_config = crate::db::repo::category::CategoryConfig {
-        category_id: category_id.get(),
+        channel_category_id: category_id.get(),
         dashboard_channel_id: dashboard_channel.get(),
         chat_channel_id: queue_channel.get(),
         queue_vc_id: queue_vc_channel.get(),
@@ -1219,7 +1219,7 @@ async fn handle_categorylink_blue_selection(
       };
       match db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
         Ok(db_category) => {
-          info!("[{}] Category {} created via categorylink", guild_name, db_category.ctg_id);
+          info!("[{}] Category {} created via categorylink", guild_name, db_category.id);
 
           // Add to manager
           let mut mgr = manager.lock().await;
@@ -1282,7 +1282,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
   let user_id = user.as_ref().map(|u| u.id).unwrap_or(cc.intax.user.id);
   let is_self = user_id == cc.intax.user.id;
 
-  if !is_self && !check_adm(cc).await? {
+  if !is_self && !is_admin(cc).await? {
     return Ok(());
   }
 
@@ -1332,7 +1332,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
 /// `/enableactiveelo` - Enable automatic ELO adjustments from match results
 pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
   // Check admin permissions
-  if !check_adm(cc).await? {
+  if !is_admin(cc).await? {
     return Ok(());
   }
 
@@ -1353,7 +1353,7 @@ pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
 /// `/disableactiveelo` - Disable automatic ELO adjustments from match results
 pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
   // Check admin permissions
-  if !check_adm(cc).await? {
+  if !is_admin(cc).await? {
     return Ok(());
   }
 
@@ -1371,7 +1371,7 @@ pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
 /// `/activeelostatus` - Check if automatic ELO adjustments are enabled
 pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
   // Check admin permissions
-  if !check_adm(cc).await? {
+  if !is_admin(cc).await? {
     return Ok(());
   }
 
@@ -1407,7 +1407,7 @@ pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
 /// * `user_id` - The user ID to buffer.
 /// * `server` - The server (already has manager lock held by caller)
 pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result<()> {
-  if !check_run(cc).await? {
+  if !is_runner(cc).await? {
     return Ok(());
   }
 
@@ -1486,7 +1486,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
 /// * `user_id` - The user ID to fatkid (move to end of queue).
 /// * `server` - The server (already has manager lock held by caller)
 pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result<()> {
-  if !check_run(cc).await? {
+  if !is_runner(cc).await? {
     return Ok(());
   }
 
@@ -1562,7 +1562,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
 /// Works in any category channel (queue chat, dashboard, team VCs, etc.)
 /// Handles all formats, not just the first one
 pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Option<&CommandDataOption>) -> Result<()> {
-  if !check_run(cc).await? {
+  if !is_runner(cc).await? {
     return Ok(());
   }
 

@@ -206,14 +206,14 @@ pub fn create_selection_menu(menu_id: &str, placeholder: &str, options: Vec<(Str
   // Always create a button for single option
   if options.len() == 1 {
     let (label, value) = options.into_iter().next().unwrap();
-    let button = CB::new(&format!("{}_{}", menu_id, value)).label(label.as_str()).style(BS::Primary);
+    let button = CB::new(format!("{}_{}", menu_id, value)).label(label.as_str()).style(BS::Primary);
 
     return Some(CAR::Buttons(vec![button]));
   }
 
   // Use buttons if below threshold, otherwise use select menu
   if options.len() < LIST_THRESHOLD {
-    let buttons: Vec<CB> = options.into_iter().map(|(label, value)| CB::new(&format!("{}_{}", menu_id, value)).label(label.as_str()).style(BS::Secondary)).collect();
+    let buttons: Vec<CB> = options.into_iter().map(|(label, value)| CB::new(format!("{}_{}", menu_id, value)).label(label.as_str()).style(BS::Secondary)).collect();
 
     Some(CAR::Buttons(buttons))
   } else {
@@ -235,7 +235,7 @@ pub trait AsSettingsMenu {
 impl AsSettingsMenu for crate::db::repo::UserPreferences {
   fn as_settings_menu(&self) -> SettingsMenu {
     // Format expiration: hours for full hours, minutes for partial
-    let queue_expiration_text = if self.queue_expiration >= 60 && self.queue_expiration % 60 == 0 {
+    let queue_expiration_text = if self.queue_expiration >= 60 && self.queue_expiration.is_multiple_of(60) {
       let hours = self.queue_expiration / 60;
       format!("{}h", hours)
     } else {
@@ -245,7 +245,7 @@ impl AsSettingsMenu for crate::db::repo::UserPreferences {
     SettingsMenu::new("qBot preferences")
       .description("Configure your queue preferences")
       .color(self.join_alert_color)
-      .row(SR::Buttons(vec![SB::edit("settings_queue_expiration", &format!("Timeout: {}", queue_expiration_text.as_str()))]))
+      .row(SR::Buttons(vec![SB::edit("settings_queue_expiration", format!("Timeout: {}", queue_expiration_text.as_str()))]))
       .row(SR::Buttons(vec![SB::toggle("settings_toggle_dm", "DM alerts", self.pm_hot_alert)]))
       .row(SR::Buttons(vec![SB::toggle("settings_vc_auto_join", "VC auto-join", self.vc_auto_join), SB::toggle("settings_vc_auto_leave", "VC auto-leave", self.vc_auto_leave)]))
       .row(SR::Buttons(vec![SB::edit("settings_edit_alert", "Edit join alert"), SB::edit("settings_edit_leave_alert", "Edit leave alert")]))
@@ -706,7 +706,7 @@ impl AsSettingsMenu for CategoryListDisplay {
 
     if !self.categories.is_empty() {
       for category in &self.categories {
-        let name = category.display_name();
+        let name = category.name();
         let _quota = category.quota();
         let _sessions = category.formats[0].sessions.len();
         description.push_str(&format!("- {}\n", name));
@@ -724,8 +724,8 @@ impl AsSettingsMenu for CategoryListDisplay {
         .categories
         .iter()
         .map(|g| {
-          let label = g.display_name();
-          let value = format!("{}_{}", g.ctg_id, g.channels.queue_vc.get());
+          let label = g.name();
+          let value = format!("{}_{}", g.id, g.channels.queue_vc.get());
           (label, value)
         })
         .collect();
@@ -764,9 +764,9 @@ impl CategoryListDisplay {
         .categories
         .iter()
         .map(|g| {
-          let label = g.display_name();
+          let label = g.name();
           // Use format "categoryid_queueid" to ensure uniqueness (each category has unique queue channel)
-          let value = format!("{}_{}", g.ctg_id, g.channels.queue_vc.get());
+          let value = format!("{}_{}", g.id, g.channels.queue_vc.get());
           (label, value)
         })
         .collect();

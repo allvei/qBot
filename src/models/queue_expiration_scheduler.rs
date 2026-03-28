@@ -13,6 +13,8 @@ use crate::Database;
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct QueueExpirationKey {
   pub guild_id: GI,
+  pub category_id: u8,
+  pub format_id: u8,
   pub user_id: UI,
 }
 
@@ -38,13 +40,13 @@ impl QueueExpirationScheduler {
   pub fn schedule_queue_expiration(
     &mut self,
     guild_id: GI,
+    category_id: u8,
+    format_id: u8,
     user_id: UI,
-    queue_expiration_minutes: u8,
     player_tag: String,
-    category_name: String,
-    format_name: String,
+    queue_expiration_minutes: u8,
   ) {
-    let key = QueueExpirationKey { guild_id, user_id };
+    let key = QueueExpirationKey { guild_id, category_id, format_id, user_id };
     
     // Cancel existing timeout if any
     if let Some(handle) = self.tasks.remove(&key) {
@@ -73,7 +75,9 @@ impl QueueExpirationScheduler {
         let mut should_update_dashboard = false;
         
         for category in &mut server.categories {
+          let category_clone = category.clone();
           for format in &mut category.formats {
+            let format_clone = format.clone();
             for session in &mut format.sessions {
               if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == user_id) {
                 session.pool.remove(pos);
@@ -83,7 +87,7 @@ impl QueueExpirationScheduler {
                 let guild_name = crate::models::constants::guild_name(&ctx, guild_id);
                 info!(
                   "{} Timeout {} after {}m",
-                  crate::log::log_prefix_format(&guild_name, &category_name, &format_name),
+                  crate::log::log_prefix_format(&guild_name, category_clone.name().as_str(), format_clone.name()),
                   player_tag,
                   queue_expiration_minutes
                 );
@@ -93,7 +97,7 @@ impl QueueExpirationScheduler {
                   session.idle();
                   info!(
                     "{} Hot session dropped below quota after timeout, transitioning back to Idle",
-                    crate::log::log_prefix_format(&guild_name, &category_name, &format_name)
+                    crate::log::log_prefix_format(&guild_name, &category_clone.name(), format.name())
                   );
                 }
                 break;
@@ -117,8 +121,8 @@ impl QueueExpirationScheduler {
   }
 
   /// Cancel a player's timeout (e.g., when they leave the queue or game starts)
-  pub fn cancel_queue_expiration(&mut self, guild_id: GI, user_id: UI) {
-    let key = QueueExpirationKey { guild_id, user_id };
+  pub fn cancel_queue_expiration(&mut self, guild_id: GI, category_id: u8, format_id: u8, user_id: UI) {
+    let key = QueueExpirationKey { guild_id, category_id, format_id, user_id };
     if let Some(handle) = self.tasks.remove(&key) {
       handle.abort();
     }
@@ -142,13 +146,13 @@ impl QueueExpirationScheduler {
   pub fn reschedule_queue_expiration(
     &mut self,
     guild_id: GI,
+    category_id: u8,
+    format_id: u8,
     user_id: UI,
-    new_expiration_duration_minutes: u8,
     player_tag: String,
-    category_name: String,
-    format_name: String,
+    new_expiration_duration_minutes: u8,
   ) {
-    self.schedule_queue_expiration(guild_id, user_id, new_expiration_duration_minutes, player_tag, category_name, format_name);
+    self.schedule_queue_expiration(guild_id, category_id, format_id, user_id, player_tag, new_expiration_duration_minutes);
   }
 }
 

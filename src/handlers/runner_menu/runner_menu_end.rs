@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tracing::{error, info};
 
 use crate::db::Database;
-use crate::handlers::player::check_component_role;
+use crate::handlers::player::is_role_component;
 use crate::models::embeds::Ephemeral as Eph;
 use crate::models::{ComponentContext as CC, Role};
 use crate::{guild_name, log_prefix_category, Manager, RED, BLUE};
@@ -23,7 +23,7 @@ pub async fn handle_end_without_score(
 ) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
 
-  if !check_component_role(&cc, &Role::Runner).await? {
+  if !is_role_component(&cc, &Role::Runner).await? {
     let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
       CAR::Buttons(vec![Eph::back("runner_menu_back")])
@@ -47,7 +47,7 @@ pub async fn handle_end_without_score(
       for (fmt_idx, format) in category.formats.iter().enumerate() {
         for session in &format.sessions {
           if session.is_active() {
-            active_matches.push((cat_idx, fmt_idx, category.ctg_id, format.id));
+            active_matches.push((cat_idx, fmt_idx, category.id, format.id));
           }
         }
       }
@@ -67,7 +67,7 @@ pub async fn handle_end_without_score(
                 // Found the category - now find the active session
                 for (fmt_idx, format) in category.formats.iter().enumerate() {
                   if format.sessions.iter().any(|s| s.is_active()) {
-                    found_match = Some((cat_idx, fmt_idx, category.ctg_id, format.id));
+                    found_match = Some((cat_idx, fmt_idx, category.id, format.id));
                     break;
                   }
                 }
@@ -158,7 +158,7 @@ pub async fn show_end_match_selection(
 ) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
 
-  if !check_component_role(&cc, &Role::Runner).await? {
+  if !is_role_component(&cc, &Role::Runner).await? {
     let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
       CAR::Buttons(vec![Eph::back("runner_menu_back")])
@@ -182,7 +182,7 @@ pub async fn show_end_match_selection(
       for (fmt_idx, format) in category.formats.iter().enumerate() {
         for session in &format.sessions {
           if session.is_active() {
-            active_matches.push((cat_idx, fmt_idx, category.ctg_id, format.id));
+            active_matches.push((cat_idx, fmt_idx, category.id, format.id));
           }
         }
       }
@@ -199,7 +199,7 @@ pub async fn show_end_match_selection(
               if category.channels.teams.iter().any(|tc| tc.red_vc == channel_id || tc.blu_vc == channel_id) {
                 for (fmt_idx, format) in category.formats.iter().enumerate() {
                   if format.sessions.iter().any(|s| s.is_active()) {
-                    found_match = Some((cat_idx, fmt_idx, category.ctg_id, format.id));
+                    found_match = Some((cat_idx, fmt_idx, category.id, format.id));
                     break;
                   }
                 }
@@ -268,7 +268,7 @@ pub async fn handle_end_match_result(
 ) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
 
-  if !check_component_role(&cc, &Role::Runner).await? {
+  if !is_role_component(&cc, &Role::Runner).await? {
     let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
       CAR::Buttons(vec![Eph::back("runner_menu_back")])
@@ -301,7 +301,7 @@ pub async fn handle_end_match_result(
   let (guild_name_str, category_name, format_name) = {
     let mut mgr = manager.lock().await;
     let server = mgr.get_server(guild_id)?;
-    let category = server.categories.iter().find(|c| c.ctg_id == category_id)
+    let category = server.categories.iter().find(|c| c.id == category_id)
       .ok_or_else(|| anyhow::anyhow!("Category not found"))?;
     let format = category.formats.iter().find(|f| f.id == format_id)
       .ok_or_else(|| anyhow::anyhow!("Format not found"))?;
@@ -328,7 +328,7 @@ pub async fn handle_end_match_result(
   {
     let mut mgr = manager.lock().await;
     let server = mgr.get_server(guild_id)?;
-    let category = server.categories.iter_mut().find(|c| c.ctg_id == category_id)
+    let category = server.categories.iter_mut().find(|c| c.id == category_id)
       .ok_or_else(|| anyhow::anyhow!("Category not found"))?;
     
     // Mark score as reported and save to database

@@ -288,8 +288,8 @@ impl EventHandler for Handler {
               for mut category in categories {
                 // Update guild name in database if it's missing
                 if category.guild_name.is_none() {
-                  if let Err(e) = self.db.categories.update_guild_name(guild_id, category.ctg_id, &guild.name).await {
-                    error!("Failed to update guild name for category {}: {}", category.ctg_id, e);
+                  if let Err(e) = self.db.categories.update_guild_name(guild_id, category.id, &guild.name).await {
+                    error!("Failed to update guild name for category {}: {}", category.id, e);
                   } else {
                     category.guild_name = Some(guild.name.clone());
                   }
@@ -711,7 +711,7 @@ impl EventHandler for Handler {
             let guild_id = itx.guild_id.unwrap();
             let mut manager = self.manager.lock().await;
             if let Ok(server) = manager.get_server(guild_id) {
-              if let Some(category) = server.categories.iter_mut().find(|c| c.ctg_id == cat_id) {
+              if let Some(category) = server.categories.iter_mut().find(|c| c.id == cat_id) {
                 let cc = crate::models::ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
                 if let Err(e) = category.handle_ping_format(&cc, fmt_id).await {
                   error!("Error handling ping format: {e}");
@@ -881,7 +881,7 @@ impl EventHandler for Handler {
       }
     };
 
-    let server = match new.guild_id {
+    let guild_id = match new.guild_id {
       Some(s) => s,
       None => {
         return;
@@ -931,7 +931,7 @@ impl EventHandler for Handler {
         VoiceStateUpdate::Reconnected => return,
       };
 
-      let category = match manager.get_category_by_channel(server, lookup_channel) {
+      let category = match manager.get_category_by_channel(guild_id, lookup_channel) {
         Ok(g) => g,
         Err(_) => return,
       };
@@ -939,14 +939,14 @@ impl EventHandler for Handler {
       match state {
         VoiceStateUpdate::Disconnected => {
           let was_team_vc = category.is_team_vc(lookup_channel);
-          self.handle_player_leave_vc(&ctx, category, server, user_id, &tag).await;
+          self.handle_player_leave_vc(&ctx, category, guild_id, user_id, &tag).await;
           category.check_team_vc_cleanup_on_leave(&ctx).await;
-          category.queue_dash_update(&ctx, server).await;
+          category.queue_dash_update(&ctx, guild_id).await;
           was_team_vc
         }
         VoiceStateUpdate::Connected => {
           if category.get_inactives().is_empty() {
-            if let Err(e) = category.create_sesh() {
+            if let Err(e) = category.create_session() {
               warn!("Failed to create session on VC connect: {e}");
             }
           }
@@ -962,7 +962,7 @@ impl EventHandler for Handler {
               for fmt in &mut category.formats {
                 for session in &mut fmt.sessions {
                   if session.status == SessionStatus::Live {
-                    session.detect_team_switch(&ctx, server);
+                    session.detect_team_switch(&ctx, guild_id);
                   }
                 }
               }
@@ -977,8 +977,8 @@ impl EventHandler for Handler {
           }
           
           if category.channels.queue_vc == lookup_channel {
-            self.handle_player_leave_vc(&ctx, category, server, user_id, &tag).await;
-            category.queue_dash_update(&ctx, server).await;
+            self.handle_player_leave_vc(&ctx, category, guild_id, user_id, &tag).await;
+            category.queue_dash_update(&ctx, guild_id).await;
           }
           was_team_vc
         }
@@ -993,13 +993,13 @@ impl EventHandler for Handler {
     // pull needs the manager Arc.
     if left_team_vc {
       let mut manager = self.manager.lock().await;
-      if let Ok(category) = manager.get_category_by_channel(server, {
+      if let Ok(category) = manager.get_category_by_channel(guild_id, {
         match &old {
           Some(s) => s.channel_id.unwrap(),
           None => return,
         }
       }) {
-        category.check_team_vc_empty_auto_end(&ctx, server, &self.db, Some(self.manager.clone())).await;
+        category.check_team_vc_empty_auto_end(&ctx, guild_id, &self.db, Some(self.manager.clone())).await;
       }
     }
 
@@ -1027,7 +1027,7 @@ impl EventHandler for Handler {
       let mut manager = self.manager.lock().await;
 
       // Find the guild by ID and check if the new channel is a queue voice channel in any category
-      match manager.get_category_by_channel(server, new.channel_id.unwrap()) {
+      match manager.get_category_by_channel(guild_id, new.channel_id.unwrap()) {
         Ok(category) => {
           if category.channels.queue_vc == new.channel_id.unwrap() {
             // Check if player is already in any session and mark them as in VC
@@ -1044,14 +1044,16 @@ impl EventHandler for Handler {
                 }
 
                 // Cancel expiration since player is now in VC
-                category.cancel_player_rejoin_expiration(&ctx, server, user_id).await;
+                for format in &category.formats {
+                  category.cancel_player_rejoin_expiration(&ctx, guild_id, format.id, user_id).await;
+                }
 
                 // Update dashboard if player was missing in a hot session
                 // This removes them from the "Missing players" list
                 if was_hot && was_missing {
                   info!("{} joined VC during hot session, updating dashboard", tag);
                   category.on_player_joined_vc(&ctx, user_id).await;
-                  category.queue_dash_update(&ctx, server).await;
+                  category.queue_dash_update(&ctx, guild_id).await;
                 }
               }
             } else {
@@ -1059,7 +1061,7 @@ impl EventHandler for Handler {
               let user_prefs = self.db.users.get_prefs(user_id).await.unwrap_or_default();
               if !user_prefs.vc_auto_join {
                 // User has disabled VC auto-queue, log that they joined VC but didn't join queue
-                let guild_name = guild_name(&ctx, server);
+                let guild_name = guild_name(&ctx, guild_id);
                 let category_name = category.name.as_deref().unwrap_or("Unknown");
                 info!("{} {} joined VC (spec)", log_prefix_category(&guild_name, category_name), tag);
                 return;
@@ -1068,9 +1070,9 @@ impl EventHandler for Handler {
               // Ensure a session exists before trying to add player
               if category.get_inactives().is_empty() {
                 warn!("No idle sessions present when player {} joined VC, creating one", tag);
-                if let Err(e) = category.create_sesh() {
+                if let Err(e) = category.create_session() {
                   error!("Failed to create session for player {}: {}", tag, e);
-                  let guild_name = guild_name(&ctx, server);
+                  let guild_name = guild_name(&ctx, guild_id);
                   let category_name = category.name.as_deref().unwrap_or("Unknown");
                   error!("{} {} joined VC but could not be added to queue (failed to create session)", log_prefix_category(&guild_name, category_name), tag);
                   return;
@@ -1081,7 +1083,7 @@ impl EventHandler for Handler {
               {
                 use crate::handlers::player::resolve_player_for_queue;
 
-                let (player, discord_rank, rank_mismatch) = match resolve_player_for_queue(&ctx, &self.db, server, user_id).await {
+                let (player, discord_rank, rank_mismatch) = match resolve_player_for_queue(&ctx, &self.db, guild_id, user_id).await {
                   Ok(result) => result,
                   Err(e) => {
                     error!("Failed to resolve player for queue: {e}");
@@ -1090,11 +1092,11 @@ impl EventHandler for Handler {
                 };
 
                 // Use queue_player_with_vc_status to set in_queue_vc BEFORE quota check/notification
-                let queue_ctx = QueueContext { ctx: &ctx, guild_id: Some(server), db: Some(&self.db), manager: Some(self.manager.clone()) };
+                let queue_ctx = QueueContext { ctx: &ctx, guild_id: Some(guild_id), db: Some(&self.db), manager: Some(self.manager.clone()) };
                 if let Err(e) = category.queue_player_with_vc_status(player.clone(), discord_rank, queue_ctx, true).await {
                   error!("Failed to add player to queue: {e}");
                 } else {
-                  let guild_name = guild_name(&ctx, server);
+                  let guild_name = guild_name(&ctx, guild_id);
                   let category_name = category.name.as_deref().unwrap_or("Unknown");
                   let pool_len: usize = category.formats[0].sessions.iter().map(|s| s.pool.len()).sum();
                   let _fmt_name = category.formats.first().map(|fmt| fmt.name.as_str());
@@ -1111,21 +1113,21 @@ impl EventHandler for Handler {
                   }
 
                   let _format = &category.formats[0];
-                  if let Err(e) = log_queue_toggle(&ctx, &self.db, server, category.ctg_id, &category.formats[0], &player, "joined", rank_mismatch).await {
+                  if let Err(e) = log_queue_toggle(&ctx, &self.db, guild_id, category.id, &category.formats[0], &player, "joined", rank_mismatch).await {
                     warn!("Failed to log queue toggle: {e}");
                   }
                 }
 
-                category.queue_dash_update(&ctx, server).await;
+                category.queue_dash_update(&ctx, guild_id).await;
               }
             }
 
             // Get post-game confirm time window from database
-            let post_game_confirm_time = self.db.config.get_post_game_confirm_time(server).await.ok();
+            let post_game_confirm_time = self.db.config.get_post_game_confirm_time(guild_id).await.ok();
 
-            if category.check_hot_confirm_time(&ctx, server, post_game_confirm_time).await {
+            if category.check_hot_confirm_time(&ctx, guild_id, post_game_confirm_time).await {
               info!("Hot session confirm time detected, updating dashboard");
-              category.queue_dash_update(&ctx, server).await;
+              category.queue_dash_update(&ctx, guild_id).await;
             }
           }
         }
@@ -1142,7 +1144,7 @@ impl Handler {
   /// Checks auto-leave preference, removes or resets queue expiration time, and regenerates teams if needed.
   async fn handle_player_leave_vc(&self, ctx: &Context, category: &mut Category, guild_id: GuildId, user_id: UserId, _tag: &str) {
     let queue_ctx = QueueContext {
-      ctx: &ctx,
+      ctx,
       guild_id: Some(guild_id),
       db: Some(&self.db),
       manager: Some(self.manager.clone())
@@ -1153,7 +1155,7 @@ impl Handler {
     let user_tag = get_user_tag(ctx, user_id, &self.db).await;
     let quota = category.quota() as usize;
 
-    let category_id = category.ctg_id; // Capture category_id before mutable borrow
+    let category_id = category.id; // Capture category_id before mutable borrow
     
     // Extract team channel IDs before any mutable borrows
     let team_channel_ids: Vec<_> = category.channels.teams.iter()
@@ -1278,7 +1280,9 @@ impl Handler {
 
     // Cancel expiration if player was removed, or schedule new one if they left VC but stayed in queue
     if should_remove_player {
-      category.cancel_player_rejoin_expiration(ctx, guild_id, user_id).await;
+      for format in &category.formats {
+        category.cancel_player_rejoin_expiration(ctx, guild_id, format.id, user_id).await;
+      }
     } else if should_schedule_queue_expiration {
       // Player left VC but is still in queue - schedule expiration
       let duration = queue_ctx.db.unwrap().users.get_prefs(user_id).await.unwrap().queue_expiration;
@@ -1312,7 +1316,7 @@ impl Handler {
     if let Some(cat_id) = category_id {
       let mut mgr = self.manager.lock().await;
       if let Ok(server) = mgr.get_server(guild_id) {
-        if let Some(category) = server.categories.iter_mut().find(|c| c.ctg_id == cat_id as u8) {
+        if let Some(category) = server.categories.iter_mut().find(|c| c.id == cat_id as u8) {
           if let Some(session) = category.formats.iter_mut().flat_map(|f| &mut f.sessions).find(|s| matches!(s.status, crate::models::SessionStatus::Pull)) {
             if session.score_reported {
               already_reported = true;
@@ -1469,7 +1473,7 @@ impl Handler {
     if let Some(cat_id) = category_id {
       let mut mgr = self.manager.lock().await;
       if let Ok(server) = mgr.get_server(guild_id) {
-        if let Some(category) = server.categories.iter_mut().find(|c| c.ctg_id == cat_id as u8) {
+        if let Some(category) = server.categories.iter_mut().find(|c| c.id == cat_id as u8) {
           // Find the session that just ended (Pull status)
           if let Some(session) = category.formats.iter_mut().flat_map(|f| &mut f.sessions).find(|s| matches!(s.status, crate::models::SessionStatus::Pull)) {
             if session.score_reported {
@@ -1634,7 +1638,7 @@ impl Handler {
       let _fmt_name_owned = category.formats.first().map(|fmt| fmt.name.clone());
       let _category_name = category.name.as_deref().unwrap_or("Unknown").to_string();
       let format = category.formats[0].clone(); // Clone format before mutable borrow
-      let category_id = category.ctg_id; // Capture category_id before mutable borrow
+      let category_id = category.id; // Capture category_id before mutable borrow
       if let Ok(session) = category.get_queue().await {
         // Get server and category names for logging
         let _guild_name = guild.name.clone();

@@ -213,7 +213,7 @@ async fn deny_command(cc: &CmC<'_>, role: &Role) -> Result<()> {
 
 /// Checks if a user has the specified role.
 /// Prioritizes Discord permissions (Administrator or Manage Server) over configured role.
-pub async fn check_role(cc: &CmC<'_>, role: &Role) -> Result<bool> {
+pub async fn is_role(cc: &CmC<'_>, role: &Role) -> Result<bool> {
   use serenity::all::Permissions;
 
   if let Some(guild_id) = cc.intax.guild_id {
@@ -254,17 +254,17 @@ pub async fn check_role(cc: &CmC<'_>, role: &Role) -> Result<bool> {
   Ok(false)
 }
 
-pub async fn check_adm(cc: &CmC<'_>) -> Result<bool> {
-  check_role(cc, &Role::Admin).await
+pub async fn is_admin(cc: &CmC<'_>) -> Result<bool> {
+  is_role(cc, &Role::Admin).await
 }
 
-pub async fn check_run(cc: &CmC<'_>) -> Result<bool> {
-  check_role(cc, &Role::Runner).await
+pub async fn is_runner(cc: &CmC<'_>) -> Result<bool> {
+  is_role(cc, &Role::Runner).await
 }
 
 /// Checks if a user has the specified role (for component interactions).
 /// Prioritizes Discord permissions (Administrator or Manage Server) over configured role.
-pub async fn check_component_role(cc: &CC<'_>, role: &Role) -> Result<bool> {
+pub async fn is_role_component(cc: &CC<'_>, role: &Role) -> Result<bool> {
   use serenity::all::Permissions;
 
   if let Some(guild_id) = cc.component.guild_id {
@@ -517,7 +517,7 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
 
 /// `/shuffle`
 pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
-  if !check_run(cc).await? {
+  if !is_runner(cc).await? {
     return Ok(());
   }
 
@@ -594,7 +594,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 
 /// `/accept`
 pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
-  if !check_run(cc).await? {
+  if !is_runner(cc).await? {
     return Ok(());
   }
 
@@ -631,7 +631,7 @@ pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 }
 
 pub async fn end(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
-  if !check_run(cc).await? {
+  if !is_runner(cc).await? {
     return Ok(());
   }
 

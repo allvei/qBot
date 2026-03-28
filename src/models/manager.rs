@@ -66,7 +66,7 @@ impl Manager {
 
   pub fn get_category_by_id(&mut self, guild_id: GI, category_id: u8) -> Result<&mut Category> {
     let server = self.get_server(guild_id)?;
-    let category = server.categories.iter_mut().find(|g| g.ctg_id == category_id);
+    let category = server.categories.iter_mut().find(|g| g.id == category_id);
     if let Some(category) = category {
       Ok(category)
     } else {

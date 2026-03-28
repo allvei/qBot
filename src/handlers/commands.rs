@@ -5,7 +5,7 @@ use tracing::info;
 use super::settings::get_server_settings;
 use crate::models::CommandContext as CC;
 use crate::models::Ephemeral;
-use crate::player::check_adm;
+use crate::player::is_admin;
 use crate::{GREEN, RED, YELLOW};
 
 /// `/prefs` - Open personal settings menu as ephemeral message in current channel
@@ -26,7 +26,7 @@ pub async fn cmd_prefs(cc: &CC<'_>) -> Result<()> {
 /// `/config` - Open server settings menu as ephemeral message (admin only)
 pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
   // Check admin permissions
-  if !check_adm(cc).await? {
+  if !is_admin(cc).await? {
     return Ok(());
   }
 
@@ -46,7 +46,7 @@ pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
 
 /// `/migrate` - Bulk-assign ELO to all members with a given role (admin only)
 pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
-  if !check_adm(cc).await? {
+  if !is_admin(cc).await? {
     return Ok(());
   }
 
@@ -138,7 +138,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
   use crate::handlers::settings::PlayerSettings;
 
   // Check admin permissions
-  if !check_adm(cc).await? {
+  if !is_admin(cc).await? {
     return Ok(());
   }
 

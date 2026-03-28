@@ -117,7 +117,7 @@ impl ShutdownHandler {
                         .unwrap_or_default();
                 
                 for category in &mut server.categories {
-                    let category_name = category.display_name();
+                    let category_name = category.name();
                     let mut kept = Vec::new();
                     
                     for tc in &category.channels.teams {

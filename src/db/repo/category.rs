@@ -10,12 +10,12 @@ use crate::models::{Channels, Category, TeamBalanceMethod, TeamChannel};
 
 /// Configuration for creating or updating a category
 pub struct CategoryConfig {
-    pub category_id:          u64,
+    pub channel_category_id: u64,
     pub dashboard_channel_id: u64,
-    pub chat_channel_id:      u64,
-    pub queue_vc_id:          u64,
-    pub ping_channel_id:      u64,
-    pub quota:                u8,
+    pub chat_channel_id: u64,
+    pub queue_vc_id: u64,
+    pub ping_channel_id: u64,
+    pub quota: u8,
 }
 
 #[derive(Clone)]
@@ -46,7 +46,7 @@ impl CategoryRepository {
         .bind(guild_id.get()              as i64)
         .bind(guild_name)
         .bind(next_category_id)
-        .bind(config.category_id          as i64)
+        .bind(config.channel_category_id  as i64)
         .bind(config.dashboard_channel_id as i64)
         .bind(config.chat_channel_id      as i64)
         .bind(config.queue_vc_id          as i64)
@@ -62,10 +62,10 @@ impl CategoryRepository {
         // add risk of reading stale/wrong data (e.g. category_id defaulting to 0
         // via try_get fallback, which loads another category's formats).
         let category_id = next_category_id as u8;
-        let category = if config.category_id == 0 {
+        let category = if config.channel_category_id == 0 {
             CI::new(config.dashboard_channel_id)
         } else {
-            CI::new(config.category_id)
+            CI::new(config.channel_category_id)
         };
 
         let category = Category::new(
@@ -100,7 +100,7 @@ impl CategoryRepository {
                                   RETURNING id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report"
         )
         .bind(guild_id.get()              as i64)
-        .bind(config.category_id          as i64)
+        .bind(config.channel_category_id          as i64)
         .bind(config.dashboard_channel_id as i64)
         .bind(config.chat_channel_id      as i64)
         .bind(config.ping_channel_id      as i64)
@@ -464,20 +464,20 @@ impl CategoryRepository {
 impl Repository<Category, u8> for CategoryRepository {
     async fn create(&self, category: &Category) -> Result<Category> {
         // Extract values from the category struct
-        let guild_id      = category.guild_id;
-        let dashboard_ch  = category.channels.dashboard .get();
-        let dashboard_msg = category.dashboard_msg      .get();
-        let chat          = category.channels.queue_chat.get();
-        let queue         = category.channels.queue_vc  .get();
-        let ping          = category.channels.ping_channel.get();
-        let category_id   = category.channels.category  .get();
+        let guild_id             = category.guild_id;
+        let dashboard_channel_id = category.channels.dashboard   .get();
+        let dashboard_msg        = category.dashboard_msg        .get();
+        let chat_channel_id      = category.channels.queue_chat  .get();
+        let queue_vc_id          = category.channels.queue_vc    .get();
+        let ping_channel_id      = category.channels.ping_channel.get();
+        let channel_category_id  = category.channels.category    .get();
         let config = CategoryConfig {
-            category_id,
-            dashboard_channel_id: dashboard_ch,
-            chat_channel_id:      chat,
-            queue_vc_id:          queue,
-            ping_channel_id:      ping,
-            quota:                category.quota(),
+            channel_category_id,
+            dashboard_channel_id,
+            chat_channel_id,
+            queue_vc_id,
+            ping_channel_id,
+            quota: category.quota(),
         };
         self.create_category(guild_id, category.guild_name.as_deref().unwrap_or("Unknown"), dashboard_msg, config).await
     }
@@ -495,18 +495,18 @@ impl Repository<Category, u8> for CategoryRepository {
 
     async fn update(&self, category: &Category) -> Result<Category> {
         let guild_id     = category.guild_id;
-        let dashboard_ch = category.channels.dashboard .get();
-        let chat         = category.channels.queue_chat.get();
-        let queue        = category.channels.queue_vc  .get();
-        let ping         = category.channels.ping_channel.get();
-        let category_id  = category.channels.category  .get();
+        let dashboard_channel_id = category.channels.dashboard .get();
+        let chat_channel_id         = category.channels.queue_chat.get();
+        let queue_vc_id        = category.channels.queue_vc  .get();
+        let ping_channel_id         = category.channels.ping_channel.get();
+        let channel_category_id  = category.channels.category  .get();
         let config = CategoryConfig {
-            category_id,
-            dashboard_channel_id: dashboard_ch,
-            chat_channel_id:      chat,
-            queue_vc_id:          queue,
-            ping_channel_id:      ping,
-            quota:                category.quota(),
+            channel_category_id,
+            dashboard_channel_id,
+            chat_channel_id,
+            queue_vc_id,
+            ping_channel_id,
+            quota: category.quota(),
         };
         self.update_category(guild_id, config).await
     }

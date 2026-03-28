@@ -91,8 +91,8 @@ pub fn build_category_selector(categories: &[crate::models::Category]) -> CAR {
   let options: Vec<CSMO> = categories
     .iter()
     .map(|g| {
-      let label = g.display_name();
-      let value = g.ctg_id.to_string();
+      let label = g.name();
+      let value = g.id.to_string();
       CSMO::new(label, value)
     })
     .collect();

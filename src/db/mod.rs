@@ -120,7 +120,7 @@ impl Database {
         quota:         u8,
     ) -> Result<Category> {
         let config = repo::category::CategoryConfig {
-            category_id:          category,
+            channel_category_id:  category,
             dashboard_channel_id: dashboard,
             chat_channel_id:      chat,
             queue_vc_id:          queue,
@@ -134,15 +134,15 @@ impl Database {
     #[allow(clippy::too_many_arguments)]
     pub async fn set_category(
         &self,
-        guild_id:      GI,
-        category:      u64,
-        queue_id:      u64,
-        dashboard:     u64,
-        chat:          u64,
-        quota:         u8,
+        guild_id:  GI,
+        category:  u64,
+        queue_id:  u64,
+        dashboard: u64,
+        chat:      u64,
+        quota:     u8,
     ) -> Result<Category> {
         let config = repo::category::CategoryConfig {
-            category_id:          category,
+            channel_category_id:  category,
             dashboard_channel_id: dashboard,
             chat_channel_id:      chat,
             queue_vc_id:          queue_id,

@@ -53,7 +53,7 @@ pub struct CategorySettings {
 impl CategorySettings {
   pub fn from_category(category: &crate::models::Category) -> Self {
     Self {
-      category_id: category.ctg_id,
+      category_id: category.id,
       name: category.name.clone(),
       quota: category.quota(),
       confirm_time: category.confirm_time,
@@ -99,10 +99,10 @@ pub async fn handle_category_settings_button(
     let mut manager_lock = manager.lock().await;
     let category = {
       let server = manager_lock.get_server(guild_id)?;
-      server.categories.iter_mut().find(|g| g.ctg_id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?
+      server.categories.iter_mut().find(|g| g.id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?
     };
 
-    match category.rem_fmt(fmt_id) {
+    match category.remove_format(fmt_id) {
       Ok(_) => {
         // Persist to DB
         db.categories.save_all_formats(guild_id, category_id, &category.formats).await?;
@@ -111,7 +111,7 @@ pub async fn handle_category_settings_button(
         category.queue_dash_update(ctx, guild_id).await;
 
         let display =
-          FormatListDisplay { category_id, category_name: category.display_name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
+          FormatListDisplay { category_id, category_name: category.name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
         drop(manager_lock);
         let response = CIR::UpdateMessage(CIRM::new().embed(display.build_embed()).components(display.build_components()));
         interaction.create_response(&ctx.http, response).await?;
@@ -150,7 +150,7 @@ pub async fn handle_category_settings_button(
     let fmt_quota;
     {
       let server = manager_lock.get_server(guild_id)?;
-      let category = server.categories.iter().find(|g| g.ctg_id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?;
+      let category = server.categories.iter().find(|g| g.id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?;
       let sg = category.formats.iter().find(|s| s.id == fmt_id).ok_or_else(|| anyhow::anyhow!("Format {} not found", fmt_id))?;
       fmt_name = sg.name.clone();
       fmt_quota = sg.quota.to_string();
@@ -267,7 +267,7 @@ pub async fn handle_category_settings_button(
       let category_id = {
         let mut manager_lock = manager.lock().await;
         let server = manager_lock.get_server(guild_id)?;
-        let category = server.categories.iter().find(|g| g.ctg_id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?;
+        let category = server.categories.iter().find(|g| g.id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?;
         category.channels.category
       };
 
@@ -311,7 +311,7 @@ pub async fn handle_category_settings_button(
       let category_id = {
         let mut manager_lock = manager.lock().await;
         let server = manager_lock.get_server(guild_id)?;
-        let category = server.categories.iter().find(|g| g.ctg_id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?;
+        let category = server.categories.iter().find(|g| g.id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?;
         category.channels.category
       };
 
@@ -345,7 +345,7 @@ pub async fn handle_category_settings_button(
   let mut manager_lock = manager.lock().await;
   let category = {
     let server = manager_lock.get_server(guild_id)?;
-    server.categories.iter().find(|g| g.ctg_id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?.clone()
+    server.categories.iter().find(|g| g.id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?.clone()
   };
   let settings = CategorySettings::from_category(&category);
   drop(manager_lock);
@@ -400,7 +400,7 @@ pub async fn handle_category_settings_button(
     use crate::models::TeamVcCreatePolicy;
     let mut manager_lock = manager.lock().await;
     if let Ok(server) = manager_lock.get_server(guild_id) {
-      if let Some(category) = server.categories.iter_mut().find(|g| g.ctg_id == category_id) {
+      if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
         let next = match category.team_vc_settings.create_policy {
           TeamVcCreatePolicy::OnFirstJoin => TeamVcCreatePolicy::OnHot,
           TeamVcCreatePolicy::OnHot => TeamVcCreatePolicy::OnGameStart,
@@ -418,7 +418,7 @@ pub async fn handle_category_settings_button(
     use crate::models::TeamVcDestroyPolicy;
     let mut manager_lock = manager.lock().await;
     if let Ok(server) = manager_lock.get_server(guild_id) {
-      if let Some(category) = server.categories.iter_mut().find(|g| g.ctg_id == category_id) {
+      if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
         let next = match category.team_vc_settings.destroy_policy {
           TeamVcDestroyPolicy::OnLastLeave => TeamVcDestroyPolicy::AfterPull,
           TeamVcDestroyPolicy::AfterPull => TeamVcDestroyPolicy::AfterExpiration,
@@ -435,7 +435,7 @@ pub async fn handle_category_settings_button(
     // Toggle keep_minimum
     let mut manager_lock = manager.lock().await;
     if let Ok(server) = manager_lock.get_server(guild_id) {
-      if let Some(category) = server.categories.iter_mut().find(|g| g.ctg_id == category_id) {
+      if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
         category.team_vc_settings.keep_minimum = !category.team_vc_settings.keep_minimum;
         let _ = db.categories.update_team_vc_settings(guild_id, category_id, &category.team_vc_settings).await;
         category.reconcile_team_vcs(ctx, guild_id, db).await;
@@ -449,7 +449,7 @@ pub async fn handle_category_settings_button(
 
     // Get the category to find its dashboard channel
     let categories = db.categories.get_categories_for_guild(guild_id).await?;
-    if let Some(category) = categories.iter().find(|g| g.ctg_id == category_id) {
+    if let Some(category) = categories.iter().find(|g| g.id == category_id) {
       let dashboard_channel = category.channels.dashboard;
 
       // Search for bot messages in dashboard channel
@@ -521,7 +521,7 @@ pub async fn handle_category_settings_button(
 
       buttons.push(CB::new(format!("category_settings_back_{}", category_id)).label("Back").style(BS::Secondary));
 
-      let embed = CE::new().title(format!("{} - Link Dashboard Message", category.display_name())).description(description).color(0x5865F2);
+      let embed = CE::new().title(format!("{} - Link Dashboard Message", category.name())).description(description).color(0x5865F2);
 
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(buttons)]));
       interaction.create_response(&ctx.http, response).await?;
@@ -547,7 +547,7 @@ pub async fn handle_category_settings_button(
         // Update in-memory category
         let mut manager_lock = manager.lock().await;
         if let Ok(server) = manager_lock.get_server(guild_id) {
-          if let Some(category) = server.categories.iter_mut().find(|g| g.ctg_id == category_id) {
+          if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
             category.dashboard_msg = dashboard_msg_id.into();
             info!("Updated category {} dashboard_msg to {} in memory", category_id, dashboard_msg_id);
           }
@@ -591,7 +591,7 @@ pub async fn handle_category_settings_button(
   } else if button_id.starts_with("category_settings_formats_") {
     // Show formats list screen
     let display =
-      FormatListDisplay { category_id, category_name: category.display_name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
+      FormatListDisplay { category_id, category_name: category.name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
     let response = CIR::UpdateMessage(CIRM::new().embed(display.build_embed()).components(display.build_components()));
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("category_fmt_back_") {
@@ -633,7 +633,7 @@ pub async fn handle_category_settings_button(
     let category_id_str = button_id.strip_prefix("category_settings_back_").unwrap();
     if let Ok(category_id) = category_id_str.parse::<u8>() {
       let categories = db.categories.get_categories_for_guild(guild_id).await?;
-      if let Some(category) = categories.iter().find(|g| g.ctg_id == category_id) {
+      if let Some(category) = categories.iter().find(|g| g.id == category_id) {
         let settings = CategorySettings::from_category(category);
         let embed = build_category_settings_embed(&settings);
         let buttons = build_category_settings_buttons(settings.category_id);
@@ -670,7 +670,7 @@ pub async fn handle_category_settings_select(
   let mut manager_lock = manager.lock().await;
   let category = {
     let server = manager_lock.get_server(guild_id)?;
-    server.categories.iter().find(|g| g.ctg_id == category_id).ok_or_else(|| anyhow::anyhow!("Category not found"))?.clone()
+    server.categories.iter().find(|g| g.id == category_id).ok_or_else(|| anyhow::anyhow!("Category not found"))?.clone()
   };
   drop(manager_lock);
 
@@ -719,7 +719,7 @@ pub async fn handle_category_link_msg_modal(
 
   // Validate that the message exists in the dashboard channel
   let categories = db.categories.get_categories_for_guild(guild_id).await?;
-  let category = categories.iter().find(|g| g.ctg_id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?;
+  let category = categories.iter().find(|g| g.id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?;
 
   let dashboard_channel = category.channels.dashboard;
 
@@ -732,7 +732,7 @@ pub async fn handle_category_link_msg_modal(
           // Update in-memory category
           let mut manager_lock = manager.lock().await;
           if let Ok(server) = manager_lock.get_server(guild_id) {
-            if let Some(category) = server.categories.iter_mut().find(|g| g.ctg_id == category_id) {
+            if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
               category.dashboard_msg = dashboard_msg_id.into();
               info!("Updated category {} dashboard_msg to {} in memory", category_id, dashboard_msg_id);
             }
@@ -812,7 +812,7 @@ pub async fn handle_category_settings_modal(
   let mut manager_lock = manager.lock().await;
   let category = {
     let server = manager_lock.get_server(guild_id)?;
-    server.categories.iter_mut().find(|g| g.ctg_id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?
+    server.categories.iter_mut().find(|g| g.id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?
   };
 
   if modal_id.starts_with("category_settings_modal_name_") {
@@ -938,7 +938,7 @@ async fn handle_format_modal(
     let mut manager_lock = manager.lock().await;
     let category = {
       let server = manager_lock.get_server(guild_id)?;
-      server.categories.iter_mut().find(|g| g.ctg_id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?
+      server.categories.iter_mut().find(|g| g.id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?
     };
 
     if let Some(sg) = category.formats.iter_mut().find(|s| s.id == fmt_id) {
@@ -957,7 +957,7 @@ async fn handle_format_modal(
 
     // Show updated formats list
     let display =
-      FormatListDisplay { category_id, category_name: category.display_name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
+      FormatListDisplay { category_id, category_name: category.name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
     let response = CIR::UpdateMessage(CIRM::new().embed(display.build_embed()).components(display.build_components()));
     interaction.create_response(&ctx.http, response).await?;
   } else if modal_id.starts_with("category_fmt_modal_add_") {
@@ -966,10 +966,10 @@ async fn handle_format_modal(
     let mut manager_lock = manager.lock().await;
     let category = {
       let server = manager_lock.get_server(guild_id)?;
-      server.categories.iter_mut().find(|g| g.ctg_id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?
+      server.categories.iter_mut().find(|g| g.id == category_id).ok_or_else(|| anyhow::anyhow!("Category {} not found", category_id))?
     };
 
-    match category.add_fmt(name, quota) {
+    match category.add_format(name, quota) {
       Ok(_) => {
         // Persist to DB
         db.categories.save_all_formats(guild_id, category_id, &category.formats).await?;
@@ -979,7 +979,7 @@ async fn handle_format_modal(
 
         // Show updated formats list
         let display =
-          FormatListDisplay { category_id, category_name: category.display_name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
+          FormatListDisplay { category_id, category_name: category.name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
         let response = CIR::UpdateMessage(CIRM::new().embed(display.build_embed()).components(display.build_components()));
         interaction.create_response(&ctx.http, response).await?;
       }

@@ -151,7 +151,7 @@ pub struct MatchPlayerInsert {
 pub struct MatchRecord {
   pub id: i64,
   pub guild_id: i64,
-  pub category_id: i64,
+  pub category_id: u8,
   pub format_id: i64,
   pub session_id: Option<String>,
   pub started_at: i64,

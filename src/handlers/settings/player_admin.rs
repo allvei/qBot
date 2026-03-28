@@ -68,7 +68,7 @@ pub async fn handle_player_settings_rank_select(
 
   // Get the new rank from the selected role ID
   let new_rank = match db.ranks.rank_from_role_id(guild_id, role_id).await {
-    Ok(rank) => crate::models::types::Rank { guild_id: guild_id, role_id: rank.role_id, name: rank.name, elo: rank.elo },
+    Ok(rank) => crate::models::types::Rank { guild_id, role_id: rank.role_id, name: rank.name, elo: rank.elo },
     Err(e) => {
       warn!("Failed to find rank for role ID {}: {}", selected_role_id, e);
 
@@ -92,7 +92,7 @@ pub async fn handle_player_settings_rank_select(
     // Validate ELO against player's Discord rank (if they have one)
     use crate::handlers::player::get_user_rank_from_discord_roles;
     if let Some(discord_rank_info) = get_user_rank_from_discord_roles(ctx, db, guild_id, target_uid).await {
-      let discord_rank = crate::models::types::Rank { guild_id: guild_id, role_id: discord_rank_info.role_id, name: discord_rank_info.name.clone(), elo: discord_rank_info.elo };
+      let discord_rank = crate::models::types::Rank { guild_id, role_id: discord_rank_info.role_id, name: discord_rank_info.name.clone(), elo: discord_rank_info.elo };
 
       // Validate and normalize the manually set rank's ELO
       if let Ok((normalized_elo, was_normalized)) = db.elo.validate_and_normalize_elo(target_uid, guild_id, &discord_rank, db).await {
@@ -154,7 +154,7 @@ pub async fn handle_player_settings_rank_select(
         if player_in_queue {
           found_in_queue = true;
           category.queue_dash_update(ctx, guild_id).await;
-          info!("Player {} rank changed, dashboard updated for category {}", target_uid, category.ctg_id);
+          info!("Player {} rank changed, dashboard updated for category {}", target_uid, category.id);
         }
       }
       if !found_in_queue {
@@ -375,7 +375,7 @@ pub async fn handle_player_settings_modal(
 
           if player_in_queue {
             found_in_queue = true;
-            let prefix = crate::log::log_prefix_category(&crate::models::constants::guild_name(ctx, guild_id), &category.display_name());
+            let prefix = crate::log::log_prefix_category(&crate::models::constants::guild_name(ctx, guild_id), &category.name());
             category.queue_dash_update(ctx, guild_id).await;
             info!("{} Player {} ELO changed, dashboard updated", prefix, target_tag);
           }
@@ -459,7 +459,7 @@ pub async fn handle_player_settings_modal(
           if player_in_queue {
             found_in_queue = true;
             category.queue_dash_update(ctx, guild_id).await;
-            info!("Player {} rank changed, dashboard updated for category {}", target_uid, category.ctg_id);
+            info!("Player {} rank changed, dashboard updated for category {}", target_uid, category.id);
           }
         }
         if !found_in_queue {

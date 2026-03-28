@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::db::Database;
-use crate::handlers::player::check_component_role;
+use crate::handlers::player::is_role_component;
 use crate::handlers::settings::menu::create_selection_menu;
 use crate::models::embeds::Ephemeral as Eph;
 use crate::models::{ComponentContext as CC, Role};
@@ -56,7 +56,7 @@ pub async fn show_runner_menu(cc: &CC<'_>) -> Result<()> {
   let response = CIR::Defer(CIRM::new().ephemeral(true));
   cc.component.create_response(&cc.ctx.http, response).await?;
 
-  if !check_component_role(cc, &Role::Runner).await? {
+  if !is_role_component(cc, &Role::Runner).await? {
     use serenity::all::CreateInteractionResponseFollowup as CIRF;
     let followup = CIRF::new().content("Only runners can access this menu.").ephemeral(true);
     cc.component.create_followup(&cc.ctx.http, followup).await?;
@@ -75,7 +75,7 @@ pub async fn show_runner_menu(cc: &CC<'_>) -> Result<()> {
 
 /// Update existing ephemeral to show runner menu (for back button)
 pub async fn update_runner_menu(cc: &CC<'_>) -> Result<()> {
-  if !check_component_role(cc, &Role::Runner).await? {
+  if !is_role_component(cc, &Role::Runner).await? {
     let embed = CE::new().title("Only runners can access this menu.").color(0xFF0000);
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![]));
     cc.component.create_response(&cc.ctx.http, response).await?;
@@ -98,7 +98,7 @@ pub async fn handle_runner_action(
 ) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
 
-  if !check_component_role(&cc, &Role::Runner).await? {
+  if !is_role_component(&cc, &Role::Runner).await? {
     let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
       CAR::Buttons(vec![Eph::back("runner_menu_back")])
@@ -225,17 +225,10 @@ async fn show_player_selection(
   Ok(())
 }
 
-pub async fn handle_player_selection(
-  ctx: &Context,
-  interaction: &CI,
-  db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<Manager>>,
-  action: &str,
-  user_id_str: &str,
-) -> Result<()> {
+pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<Manager>>, action: &str, user_id_str: &str ) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
 
-  if !check_component_role(&cc, &Role::Runner).await? {
+  if !is_role_component(&cc, &Role::Runner).await? {
     let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
       CAR::Buttons(vec![Eph::back("runner_menu_back")])
@@ -255,7 +248,6 @@ pub async fn handle_player_selection(
   // Track which category index and what action description to set
   let mut last_action_info: Option<(usize, String)> = None;
   // Track if we need to cancel a queue expiration (for remove action)
-  let mut should_cancel_queue_expiration = false;
   
   let result = match action {
     "remove" => {
@@ -269,17 +261,20 @@ pub async fn handle_player_selection(
               let player_tag = session.pool[pos].player.tag.clone();
               session.pool.remove(pos);
               found = true;
-              should_cancel_queue_expiration = true;
+              if let Some(scheduler) = ctx.data.read().await.get::<crate::QueueExpirationSchedulerKey>() {
+                let mut sched = scheduler.lock().await;
+                sched.cancel_queue_expiration(guild_id, category.id, format.id, user_id);
+              }
               let guild_name = guild_name(ctx, guild_id);
-              let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
-              let fmt_nm = &format.name;
-              info!("{} Runner removed player {} from queue", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player_tag);
+              let category_name = category.name.as_deref().unwrap_or("Unknown");
+              let format_name = &format.name;
+              info!("{} Runner removed player {} from queue", crate::log::log_prefix_format(&guild_name, category_name, format_name), player_tag);
               last_action_info = Some((cat_idx, format!("removed {}", player_tag)));
               
               // If this was a Hot session and now below quota, transition back to Idle
               if session.is_hot() && session.pool.len() < quota {
                 session.idle();
-                info!("{} Hot session dropped below quota after removing player, transitioning back to Idle", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm));
+                info!("{} Hot session dropped below quota after removing player, transitioning back to Idle", crate::log::log_prefix_format(&guild_name, category_name, format_name));
               }
             }
           }
@@ -357,15 +352,6 @@ pub async fn handle_player_selection(
   let success = result.is_ok();
   drop(mgr);
 
-  // Cancel queue expiration if player was removed
-  if should_cancel_queue_expiration {
-    use crate::models::QueueExpirationSchedulerKey;
-    if let Some(scheduler) = ctx.data.read().await.get::<QueueExpirationSchedulerKey>() {
-      let mut sched = scheduler.lock().await;
-      sched.cancel_queue_expiration(guild_id, user_id);
-    }
-  }
-
   if success {
     // Regenerate teams for Hot sessions if buffer/fatkid changed player order
     if action == "buffer" || action == "fatkid" {
@@ -429,7 +415,7 @@ async fn handle_clear_queue(
 ) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
 
-  if !check_component_role(&cc, &Role::Runner).await? {
+  if !is_role_component(&cc, &Role::Runner).await? {
     let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
       CAR::Buttons(vec![Eph::back("runner_menu_back")])
@@ -498,7 +484,7 @@ pub async fn handle_remove_all(
 ) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
 
-  if !check_component_role(&cc, &Role::Runner).await? {
+  if !is_role_component(&cc, &Role::Runner).await? {
     let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
       CAR::Buttons(vec![Eph::back("runner_menu_back")])
