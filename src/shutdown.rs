@@ -102,8 +102,8 @@ impl ShutdownHandler {
         if let Ok(mut manager_lock) = self.manager.try_lock() {
             let mut deleted_count = 0;
             
-            for server in &mut manager_lock.servers {
-                let guild_id = server.guild_id;
+            for server in &mut manager_lock.qguilds {
+                let guild_id = server.id;
                 let guild_name = self.cache.guild(guild_id)
                     .map(|g| g.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
@@ -156,8 +156,8 @@ impl ShutdownHandler {
             // Collect all dashboard update tasks for parallel execution
             let mut tasks = tokio::task::JoinSet::new();
             
-            for server in &manager_lock.servers {
-                let guild_id = server.guild_id;
+            for server in &manager_lock.qguilds {
+                let guild_id = server.id;
                 let guild_name = self.cache.guild(guild_id)
                     .map(|g| g.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());

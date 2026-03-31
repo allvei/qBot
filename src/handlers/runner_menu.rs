@@ -159,7 +159,7 @@ async fn show_player_selection(
   action: &str,
 ) -> Result<()> {
   let mut mgr = manager.lock().await;
-  let server = mgr.get_server(guild_id)?;
+  let server = mgr.get_qguild(guild_id)?;
 
   let mut players = Vec::new();
 
@@ -242,7 +242,7 @@ pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<
   let runner_tag = crate::get_user_tag(ctx, interaction.user.id, db).await;
 
   let mut mgr = manager.lock().await;
-  let server = mgr.get_server(guild_id)?;
+  let server = mgr.get_qguild(guild_id)?;
 
   // Execute the action directly on the server
   // Track which category index and what action description to set
@@ -356,7 +356,7 @@ pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<
     // Regenerate teams for Hot sessions if buffer/fatkid changed player order
     if action == "buffer" || action == "fatkid" {
       let mut mgr = manager.lock().await;
-      let server = mgr.get_server(guild_id)?;
+      let server = mgr.get_qguild(guild_id)?;
       for category in &mut server.categories {
         // Validate VC status to sync in_queue_vc flags with actual Discord state
         // This ensures the dashboard shows correct VC status after player reordering
@@ -378,7 +378,7 @@ pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<
     
     // Update dashboard for all affected categories
     let mut mgr = manager.lock().await;
-    let server = mgr.get_server(guild_id)?;
+    let server = mgr.get_qguild(guild_id)?;
     for category in &mut server.categories {
       category.queue_dash_update(ctx, guild_id).await;
     }
@@ -427,7 +427,7 @@ async fn handle_clear_queue(
   let runner_tag = crate::get_user_tag(ctx, interaction.user.id, db).await;
 
   let mut mgr = manager.lock().await;
-  let server = mgr.get_server(guild_id)?;
+  let server = mgr.get_qguild(guild_id)?;
 
   let mut removed_count = 0;
 
@@ -451,7 +451,7 @@ async fn handle_clear_queue(
   // Update dashboard for all categories
   if removed_count > 0 {
     let mut mgr = manager.lock().await;
-    let server = mgr.get_server(guild_id)?;
+    let server = mgr.get_qguild(guild_id)?;
     for category in &mut server.categories {
       category.queue_dash_update(ctx, guild_id).await;
     }
@@ -496,7 +496,7 @@ pub async fn handle_remove_all(
   let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
 
   let mut mgr = manager.lock().await;
-  let server = mgr.get_server(guild_id)?;
+  let server = mgr.get_qguild(guild_id)?;
 
   let mut removed_count = 0;
 
@@ -515,7 +515,7 @@ pub async fn handle_remove_all(
   // Update dashboard for all categories
   if removed_count > 0 {
     let mut mgr = manager.lock().await;
-    let server = mgr.get_server(guild_id)?;
+    let server = mgr.get_qguild(guild_id)?;
     for category in &mut server.categories {
       category.queue_dash_update(ctx, guild_id).await;
     }

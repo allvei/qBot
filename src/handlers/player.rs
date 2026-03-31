@@ -5,7 +5,7 @@ use serenity::all::{Context as Ctx, GuildId as GI, Member, UserId as UI};
 
 use tracing::{debug, error, info, warn};
 
-use crate::models::{CommandContext as CmC, Rank, Role, Server, SessionPlayer as SP, SessionStatus as SS, Team};
+use crate::models::{CommandContext as CmC, Rank, Role, QGuild, SessionPlayer as SP, SessionStatus as SS, Team};
 use crate::{guild_name, ComponentContext as CC, Database as DB};
 
 /// Helper: Get member with cache → DB → Discord API fallback strategy
@@ -323,7 +323,7 @@ pub fn split_into_teams(players: &[SP]) -> (Vec<SP>, Vec<SP>) {
 //
 
 /// `/join` and `/leave`
-pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
+pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut QGuild) -> Result<()> {
   let user = cc.intax.user.id;
   let channel = cc.intax.channel_id;
   let command_name = &cc.intax.data.name;
@@ -484,7 +484,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
 }
 
 /// `/status`
-pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
+pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut QGuild) -> Result<()> {
   let channel = cc.intax.channel_id;
 
   let (queue_count, queue_list, quota) = {
@@ -516,7 +516,7 @@ pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut Server) -> Result<()> {
 }
 
 /// `/shuffle`
-pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
+pub async fn shuffle(cc: &CmC<'_>, guild: &mut QGuild) -> Result<()> {
   if !is_runner(cc).await? {
     return Ok(());
   }
@@ -593,7 +593,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
 }
 
 /// `/accept`
-pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
+pub async fn accept(cc: &CmC<'_>, guild: &mut QGuild) -> Result<()> {
   if !is_runner(cc).await? {
     return Ok(());
   }
@@ -630,7 +630,7 @@ pub async fn accept(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
   Ok(())
 }
 
-pub async fn end(cc: &CmC<'_>, guild: &mut Server) -> Result<()> {
+pub async fn end(cc: &CmC<'_>, guild: &mut QGuild) -> Result<()> {
   if !is_runner(cc).await? {
     return Ok(());
   }

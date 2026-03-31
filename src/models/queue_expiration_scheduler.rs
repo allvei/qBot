@@ -70,7 +70,7 @@ impl QueueExpirationScheduler {
       // Remove the player from the queue
       let mut mgr = manager.lock().await;
       
-      if let Ok(server) = mgr.get_server(guild_id) {
+      if let Ok(server) = mgr.get_qguild(guild_id) {
         let mut removed = false;
         let mut should_update_dashboard = false;
         

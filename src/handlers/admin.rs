@@ -12,7 +12,7 @@ use tracing::{error, info, warn};
 use crate::db::repo::Repository;
 use crate::handlers::player::validate_system_roles;
 use crate::models::embeds::Ephemeral;
-use crate::models::{CommandContext as CC, Server, SETUP_STATE};
+use crate::models::{CommandContext as CC, QGuild, SETUP_STATE};
 use crate::player::{is_admin, is_runner};
 use crate::{guild_name, Database, Manager, CYAN, DEFAULT_QUOTA, GREEN, ORANGE, RED};
 
@@ -44,7 +44,7 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String>) -> Resu
                                      guild: `{}`\n\
                                      roles: `{}`\n\
                                      categories: `{}`",
-      config.guild_id, config.roles.runner, config.roles.admin
+      config.id, config.roles.runner, config.roles.admin
     );
     let embed = CE::new().title("Bot configuration").description(config_text);
     cc.intax.create_response(&cc.ctx.http, Ephemeral::send(embed)).await?;
@@ -351,7 +351,7 @@ pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name
 /// `/dashboard`
 ///
 /// Creates or updates the dashboard in the current channel
-pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut Server) -> Result<()> {
+pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut QGuild) -> Result<()> {
   if !is_runner(cc).await? && !is_admin(cc).await? {
     return Ok(());
   }
@@ -1071,7 +1071,7 @@ async fn save_and_create_category(
     ping_channel_id: 1,
     quota: DEFAULT_QUOTA,
   };
-  db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await?;
+  db.categories.add_category(guild_id, &guild_name, dashboard_msg_id, category_config).await?;
   info!("[{}] Category configuration saved to database", guild_name);
 
   // Load into manager and update dashboard
@@ -1089,16 +1089,16 @@ async fn finalize_category_setup(ctx: &Context, db: &Arc<Database>, manager: &Ar
     Ok(categories) if !categories.is_empty() => {
       let new_category = categories.into_iter().find(|g| g.dashboard_msg.get() == dashboard_msg_id).ok_or_else(|| anyhow!("Could not find newly created category"))?;
 
-      use crate::models::Server;
+      use crate::models::QGuild;
       let mut mgr = manager.lock().await;
 
       // Ensure server exists in manager
-      if mgr.get_server(guild_id).is_err() {
-        let server = Server::empty(guild_id, guild_name.clone());
-        mgr.servers.push(server);
+      if mgr.get_qguild(guild_id).is_err() {
+        let server = QGuild::empty(guild_id, guild_name.clone());
+        mgr.qguilds.push(server);
       }
 
-      let server = mgr.get_server(guild_id)?;
+      let server = mgr.get_qguild(guild_id)?;
       server.add_category(new_category)?;
 
       // Get the newly added category and immediately update its dashboard
@@ -1151,7 +1151,7 @@ async fn handle_categorylink_blue_selection(
 
   // Check and clean up old categories that use these channels
   let mut mgr = manager.lock().await;
-  let server_opt = mgr.servers.iter_mut().find(|s| s.guild_id == guild_id);
+  let server_opt = mgr.qguilds.iter_mut().find(|s| s.id == guild_id);
 
   if let Some(server) = server_opt {
     let mut categories_to_remove = Vec::new();
@@ -1217,13 +1217,13 @@ async fn handle_categorylink_blue_selection(
         ping_channel_id: 1,
         quota: crate::DEFAULT_QUOTA,
       };
-      match db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
+      match db.categories.add_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
         Ok(db_category) => {
           info!("[{}] Category {} created via categorylink", guild_name, db_category.id);
 
           // Add to manager
           let mut mgr = manager.lock().await;
-          if let Ok(server) = mgr.get_server(guild_id) {
+          if let Ok(server) = mgr.get_qguild(guild_id) {
             if let Err(e) = server.add_category(db_category.clone()) {
               error!("[{}] Failed to add category: {}", guild_name, e);
             }
@@ -1406,7 +1406,7 @@ pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
 ///
 /// * `user_id` - The user ID to buffer.
 /// * `server` - The server (already has manager lock held by caller)
-pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result<()> {
+pub async fn cmd_buffer(cc: &CC<'_>, server: &mut QGuild, user_id: UI) -> Result<()> {
   if !is_runner(cc).await? {
     return Ok(());
   }
@@ -1485,7 +1485,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
 ///
 /// * `user_id` - The user ID to fatkid (move to end of queue).
 /// * `server` - The server (already has manager lock held by caller)
-pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result<()> {
+pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut QGuild, user_id: UI) -> Result<()> {
   if !is_runner(cc).await? {
     return Ok(());
   }
@@ -1561,7 +1561,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut Server, user_id: UI) -> Result
 /// `/remove` - Remove all players from the queue, or a specific player
 /// Works in any category channel (queue chat, dashboard, team VCs, etc.)
 /// Handles all formats, not just the first one
-pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut Server, user_option: Option<&CommandDataOption>) -> Result<()> {
+pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut QGuild, user_option: Option<&CommandDataOption>) -> Result<()> {
   if !is_runner(cc).await? {
     return Ok(());
   }

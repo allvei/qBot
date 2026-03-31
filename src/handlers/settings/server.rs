@@ -713,13 +713,13 @@ pub async fn handle_server_settings_button(
 
       let guild_name = guild_name(ctx, guild_id);
 
-      match db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
+      match db.categories.add_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
         Ok(db_category) => {
           info!("[{}] Category {} linked to existing dashboard {}", guild_name, db_category.id, dashboard_msg_id);
 
           // Add category to in-memory server
           let mut manager_lock = manager.lock().await;
-          if let Ok(server) = manager_lock.get_server(guild_id) {
+          if let Ok(server) = manager_lock.get_qguild(guild_id) {
             if let Err(e) = server.add_category(db_category.clone()) {
               error!("Failed to add category to server: {e}");
             }
@@ -798,13 +798,13 @@ pub async fn handle_server_settings_button(
             ping_channel_id: 1,
             quota: crate::DEFAULT_QUOTA,
           };
-          match db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
+          match db.categories.add_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
             Ok(db_category) => {
               info!("[{}] Category {} linked and saved to database", guild_name, db_category.id);
 
               // Add category to in-memory server
               let mut manager_lock = manager.lock().await;
-              if let Ok(server) = manager_lock.get_server(guild_id) {
+              if let Ok(server) = manager_lock.get_qguild(guild_id) {
                 if let Err(e) = server.add_category(db_category.clone()) {
                   error!("Failed to add category to server: {e}");
                 }
@@ -925,13 +925,13 @@ pub async fn handle_server_settings_button(
                     quota: crate::DEFAULT_QUOTA,
                   };
 
-                  match db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
+                  match db.categories.add_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
                     Ok(db_category) => {
                       info!("[{}] Category {} linked and saved to database", guild_name, db_category.id);
 
                       // Add category to in-memory server
                       let mut manager_lock = manager.lock().await;
-                      if let Ok(server) = manager_lock.get_server(guild_id) {
+                      if let Ok(server) = manager_lock.get_qguild(guild_id) {
                         if let Err(e) = server.add_category(db_category.clone()) {
                           error!("Failed to add category to server: {e}");
                         }
@@ -1081,7 +1081,7 @@ pub async fn handle_server_settings_button(
         let dup_category_id = dup_category.id;
 
         // Delete duplicate from database
-        if let Err(e) = db.categories.delete_category(guild_id, dup_category_id).await {
+        if let Err(e) = db.categories.remove_category(guild_id, dup_category_id).await {
           warn!("[{}] Failed to delete duplicate category {}: {}", guild_name, dup_category_id, e);
           send_component_error_response(interaction, ctx, &format!("Failed to remove duplicate category: {e}")).await;
           return Ok(());
@@ -1089,7 +1089,7 @@ pub async fn handle_server_settings_button(
 
         // Remove from in-memory server
         let mut manager_lock = manager.lock().await;
-        if let Ok(server) = manager_lock.get_server(guild_id) {
+        if let Ok(server) = manager_lock.get_qguild(guild_id) {
           server.categories.retain(|g| g.id != dup_category_id);
         }
         drop(manager_lock);
@@ -1110,13 +1110,13 @@ pub async fn handle_server_settings_button(
         quota: crate::DEFAULT_QUOTA,
       };
 
-      match db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
+      match db.categories.add_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
         Ok(db_category) => {
           info!("[{}] Category {} linked to existing dashboard {} (duplicate removed)", guild_name, db_category.id, dashboard_msg_id);
 
           // Add category to in-memory server
           let mut manager_lock = manager.lock().await;
-          if let Ok(server) = manager_lock.get_server(guild_id) {
+          if let Ok(server) = manager_lock.get_qguild(guild_id) {
             if let Err(e) = server.add_category(db_category.clone()) {
               error!("Failed to add category to server: {e}");
             }
@@ -1169,7 +1169,7 @@ pub async fn handle_server_settings_button(
         let dup_category_id = dup_category.id;
 
         // Delete duplicate from database
-        if let Err(e) = db.categories.delete_category(guild_id, dup_category_id).await {
+        if let Err(e) = db.categories.remove_category(guild_id, dup_category_id).await {
           warn!("[{}] Failed to delete duplicate category {}: {}", guild_name, dup_category_id, e);
           send_component_error_response(interaction, ctx, &format!("Failed to remove duplicate category: {e}")).await;
           return Ok(());
@@ -1177,7 +1177,7 @@ pub async fn handle_server_settings_button(
 
         // Remove from in-memory server
         let mut manager_lock = manager.lock().await;
-        if let Ok(server) = manager_lock.get_server(guild_id) {
+        if let Ok(server) = manager_lock.get_qguild(guild_id) {
           server.categories.retain(|g| g.id != dup_category_id);
         }
         drop(manager_lock);
@@ -1223,12 +1223,12 @@ pub async fn handle_server_settings_button(
             quota: crate::DEFAULT_QUOTA,
           };
 
-          match db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
+          match db.categories.add_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
             Ok(db_category) => {
               info!("[{}] Category {} created with new dashboard (duplicate removed)", guild_name, db_category.id);
 
               let mut manager_lock = manager.lock().await;
-              if let Ok(server) = manager_lock.get_server(guild_id) {
+              if let Ok(server) = manager_lock.get_qguild(guild_id) {
                 if let Err(e) = server.add_category(db_category.clone()) {
                   error!("Failed to add category to server: {e}");
                 }
@@ -1313,7 +1313,7 @@ pub async fn handle_server_settings_button(
             // Get category info and channel list
             let (category_name, channel_list) = {
               let mut manager_lock = manager.lock().await;
-              if let Ok(server) = manager_lock.get_server(guild_id) {
+              if let Ok(server) = manager_lock.get_qguild(guild_id) {
                 if let Some(category) = server.categories.iter().find(|g| g.id == category_id) {
                   let name = category.name();
                   let mut channels = Vec::new();
@@ -1371,7 +1371,7 @@ pub async fn handle_server_settings_button(
         // Get category info and channels before deletion
         let (category_name, channels_to_delete) = {
           let mut manager_lock = manager.lock().await;
-          if let Ok(server) = manager_lock.get_server(guild_id) {
+          if let Ok(server) = manager_lock.get_qguild(guild_id) {
             if let Some(category) = server.categories.iter().find(|g| g.id == category_id) {
               let name = category.name();
               let category_channel = category.channels.category;
@@ -1394,13 +1394,13 @@ pub async fn handle_server_settings_button(
         };
 
         // Delete from database first
-        match db.categories.delete_category(guild_id, category_id).await {
+        match db.categories.remove_category(guild_id, category_id).await {
           Ok(_) => {
             info!("[{}] Category {} deleted from database", guild_name, category_id);
 
             // Remove from in-memory server
             let mut manager_lock = manager.lock().await;
-            if let Ok(server) = manager_lock.get_server(guild_id) {
+            if let Ok(server) = manager_lock.get_qguild(guild_id) {
               server.categories.retain(|g| g.id != category_id);
             }
             drop(manager_lock);
@@ -1449,7 +1449,7 @@ pub async fn handle_server_settings_button(
         // Get category info before deletion
         let category_name = {
           let mut manager_lock = manager.lock().await;
-          if let Ok(server) = manager_lock.get_server(guild_id) {
+          if let Ok(server) = manager_lock.get_qguild(guild_id) {
             server.categories.iter().find(|g| g.id == category_id).map(|g| g.name())
           } else {
             None
@@ -1457,13 +1457,13 @@ pub async fn handle_server_settings_button(
         };
 
         // Delete from database
-        match db.categories.delete_category(guild_id, category_id).await {
+        match db.categories.remove_category(guild_id, category_id).await {
           Ok(_) => {
             info!("[{}] Category {} deleted from database (channels kept)", guild_name, category_id);
 
             // Remove from in-memory server
             let mut manager_lock = manager.lock().await;
-            if let Ok(server) = manager_lock.get_server(guild_id) {
+            if let Ok(server) = manager_lock.get_qguild(guild_id) {
               server.categories.retain(|g| g.id != category_id);
             }
             drop(manager_lock);
@@ -1621,7 +1621,7 @@ pub async fn handle_server_settings_button(
 
           // Update in-memory category
           let mut manager_lock = manager.lock().await;
-          if let Ok(server) = manager_lock.get_server(guild_id) {
+          if let Ok(server) = manager_lock.get_qguild(guild_id) {
             if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
               category.dashboard_msg = MI::new(dashboard_msg_id);
             }
@@ -1929,7 +1929,7 @@ pub async fn handle_server_settings_modal(
     // Update in-memory category and show full settings screen
     {
       let mut manager_lock = manager.lock().await;
-      if let Ok(server) = manager_lock.get_server(guild_id) {
+      if let Ok(server) = manager_lock.get_qguild(guild_id) {
         if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
           category.name = name.clone();
           category.confirm_time = confirm_time;
@@ -2035,7 +2035,7 @@ pub async fn handle_server_settings_modal(
               ping_channel_id: ping_channel.get(),
               quota,
             };
-            match db.categories.create_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
+            match db.categories.add_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
               Ok(db_category) => {
                 info!("[{}] Category {} saved to database", guild_name, db_category.id);
 
@@ -2044,7 +2044,7 @@ pub async fn handle_server_settings_modal(
 
                 // Add category to in-memory server
                 let mut manager_lock = manager.lock().await;
-                if let Ok(server) = manager_lock.get_server(guild_id) {
+                if let Ok(server) = manager_lock.get_qguild(guild_id) {
                   let mut category = db_category.clone();
                   category.name = Some(category_name.clone());
                   if let Err(e) = server.add_category(category) {
@@ -2150,7 +2150,7 @@ pub async fn handle_server_settings_balance_select(
   // Update all categories in-memory and persist to database
   let mut manager_lock = manager.lock().await;
   {
-    let server = manager_lock.get_server(guild_id)?;
+    let server = manager_lock.get_qguild(guild_id)?;
     for category in server.categories.iter_mut() {
       category.team_balance_method = method;
       if let Err(e) = db.categories.update_team_balance_method(guild_id, category.id, method).await {

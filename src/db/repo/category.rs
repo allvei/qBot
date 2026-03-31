@@ -28,8 +28,9 @@ impl CategoryRepository {
         Self { pool }
     }
 
-    pub async fn create_category(&self, guild_id: GI, guild_name: &str, dashboard_msg: u64, config: CategoryConfig) -> Result<Category> {
-        info!("Creating new category with queue: {}", config.queue_vc_id);
+    // Add a category to the database
+    pub async fn add_category(&self, guild_id: GI, guild_name: &str, dashboard_msg: u64, config: CategoryConfig) -> Result<Category> {
+        info!("Adding a new category with queue: {}", config.queue_vc_id);
 
         // Get the next available category_id for this guild
         let next_category_id: i64 = sqlx::query_scalar(
@@ -90,7 +91,7 @@ impl CategoryRepository {
         info!("Created category {} with {} format(s)", category_id, category.formats.len());
         Ok(category)
     }
-
+    // Update a category in the database
     pub async fn update_category(&self, guild_id: GI, config: CategoryConfig) -> Result<Category> {
         info!("Updating category with queue_id: {}", config.queue_vc_id);
 
@@ -111,20 +112,8 @@ impl CategoryRepository {
 
         self.build_category_from_row_async(&result).await
     }
-
-    /// Update the guild name for a category
-    pub async fn update_guild_name(&self, guild_id: GI, category_id: u8, guild_name: &str) -> Result<()> {
-        sqlx::query("UPDATE categories SET guild_name = ? WHERE guild_id = ? AND category_id = ?")
-            .bind(guild_name)
-            .bind(guild_id.get() as i64)
-            .bind(category_id as i64)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
     /// Delete a category from the database
-    pub async fn delete_category(&self, guild_id: GI, category_id: u8) -> Result<()> {
+    pub async fn remove_category(&self, guild_id: GI, category_id: u8) -> Result<()> {
         sqlx::query("DELETE FROM categories WHERE guild_id = ? AND category_id = ?")
             .bind(guild_id.get() as i64)
             .bind(category_id as i64)
@@ -139,8 +128,6 @@ impl CategoryRepository {
         let chat_id          = result.get::<i64, _>("chat")  as u64;
         let queue_id         = result.get::<i64, _>("queue") as u64;
         let ping_id          = result.try_get::<i64, _>("ping").unwrap_or(1) as u64;
-        let red_id           = result.get::<i64, _>("red")   as u64;
-        let blu_id           = result.get::<i64, _>("blu")   as u64;
         let dashboard_id     = result.get::<i64, _>("dashboard") as u64;
         let dashboard_msg_id = result.get::<i64, _>("dashboard_msg") as u64;
 
@@ -172,17 +159,10 @@ impl CategoryRepository {
             .map(|s| TeamBalanceMethod::parse(&s))
             .unwrap_or_default();
 
+        
+        // TODO: teams are loaded in teams.rs not here
         // Load teams from teams table; fallback to legacy red/blu columns only if they hold real IDs
-        let teams = match self.get_teams_for_category(guild_id, category_id).await {
-            Ok(teams) if !teams.is_empty() => teams,
-            _ => {
-                if red_id > 1 && blu_id > 1 {
-                    vec![TeamChannel::new(CI::new(red_id), CI::new(blu_id), 1)]
-                } else {
-                    vec![]
-                }
-            }
-        };
+        let teams = self.get_teams_for_category(guild_id, category_id).await?;
 
         let mut category = Category::new(
             guild_id,
@@ -313,7 +293,7 @@ impl CategoryRepository {
 
     /// Get all categories for a guild
     pub async fn get_categories_for_guild(&self, guild_id: GI) -> Result<Vec<Category>> {
-        let rows = sqlx::query("SELECT id, category_id, name, confirm_time, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
+        let rows = sqlx::query("SELECT id, guild_id, category_id, name, confirm_time, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
                                 FROM categories
                                 WHERE guild_id = ?"
         )
@@ -479,7 +459,7 @@ impl Repository<Category, u8> for CategoryRepository {
             ping_channel_id,
             quota: category.quota(),
         };
-        self.create_category(guild_id, category.guild_name.as_deref().unwrap_or("Unknown"), dashboard_msg, config).await
+        self.add_category(guild_id, category.guild_name.as_deref().unwrap_or("Unknown"), dashboard_msg, config).await
     }
 
     async fn get_by_id(&self, category_id: u8) -> Result<Category> {

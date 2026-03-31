@@ -6,13 +6,12 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use serenity::all::{
-  Client, Command, CommandDataOption, CommandInteraction, CommandOptionType as COT, Context, EventHandler, GatewayIntents, Guild, GuildId, Interaction,
-  Ready, UserId, VoiceState,
+  Client, Command, CommandDataOption, CommandInteraction, CommandOptionType as COT, Context, EventHandler, GatewayIntents, Guild, GuildId, Interaction, Ready, UserId, VoiceState,
 };
 use serenity::async_trait;
 use serenity::builder::{CreateCommand as CC, CreateCommandOption as CCO, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
 use serenity::prelude::TypeMapKey;
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 use tracing::{debug, error, info, warn};
 
 use crate::commands;
@@ -20,9 +19,10 @@ use crate::db::migrations::DatabaseMigrations;
 use crate::db::repo::CategoryRepository;
 use crate::handlers::{admin, InteractionHelpers};
 use crate::models::server::QueueContext;
+use crate::repo::GuildRepository;
 use crate::{
   get_user_tag, guild_name, log_prefix_category, log_prefix_format, log_queue_toggle, ButtonType, Category, CommandContext, ComponentContext, DashboardQueueKey,
-  DashboardUpdateQueue, Database, DmMessageTracker, DmTrackerKey, Manager, RED, Roles, Server, SessionStatus, ShutdownHandler, VoiceStateUpdate,
+  DashboardUpdateQueue, Database, DmMessageTracker, DmTrackerKey, Manager, QGuild, Roles, SessionStatus, ShutdownHandler, VoiceStateUpdate, RED,
 };
 
 // Helper macros and functions that need to be available
@@ -65,8 +65,8 @@ impl CmdOp for CC {
 }
 
 // Helper functions that were in main.rs
-async fn get_server_with_error<'a>(manager: &'a mut Manager, guild_id: GuildId, _itx: &CommandInteraction, _ctx: &Context) -> Result<&'a mut Server, String> {
-  manager.get_server(guild_id).map_err(|_| "Server not found. Please run `/setup` first.".to_string())
+async fn get_server_with_error<'a>(manager: &'a mut Manager, guild_id: GuildId, _itx: &CommandInteraction, _ctx: &Context) -> Result<&'a mut QGuild, String> {
+  manager.get_qguild(guild_id).map_err(|_| "Server not found. Please run `/setup` first.".to_string())
 }
 
 async fn extract_user_option(options: &[CommandDataOption], name: &str) -> Option<UserId> {
@@ -205,11 +205,7 @@ impl EventHandler for Handler {
 
     // Initialize player queue expiration scheduler
     {
-      let scheduler = crate::models::QueueExpirationScheduler::new(
-        self.manager.clone(),
-        self.db.clone(),
-        ctx.clone(),
-      );
+      let scheduler = crate::models::QueueExpirationScheduler::new(self.manager.clone(), self.db.clone(), ctx.clone());
       let scheduler_arc = Arc::new(tokio::sync::Mutex::new(scheduler));
       ctx.data.write().await.insert::<crate::models::QueueExpirationSchedulerKey>(scheduler_arc);
     }
@@ -227,14 +223,14 @@ impl EventHandler for Handler {
           check_interval.tick().await;
 
           let mut manager_lock = manager.lock().await;
-          
+
           // Validate pending team switches (commit if stable for 2+ minutes)
-          for server in &mut manager_lock.servers {
+          for server in &mut manager_lock.qguilds {
             for category in &mut server.categories {
               for fmt in &mut category.formats {
                 for session in &mut fmt.sessions {
                   if session.pending_team_switch.is_some() {
-                    session.validate_and_commit_team_switch(&ctx_clone, server.guild_id);
+                    session.validate_and_commit_team_switch(&ctx_clone, server.id);
                   }
                 }
               }
@@ -276,56 +272,49 @@ impl EventHandler for Handler {
   /// When the bot is connected to a new guild
   async fn guild_create(&self, ctx: Context, guild: Guild, _is_new: Option<bool>) {
     let guild_id = guild.id;
-    match self.db.get_config(guild_id).await {
-      Ok(_config) => {
-        // Load categories from database into manager
-        let category_repo = CategoryRepository::new(self.db.pool().clone());
-        match category_repo.get_categories_for_guild(guild_id).await {
-          Ok(categories) => {
-            let mut manager = self.manager.lock().await;
-            if manager.get_server(guild.id).is_err() {
-              let mut server = Server::new(guild.id, guild.name.clone(), Roles::empty());
-              for mut category in categories {
-                // Update guild name in database if it's missing
-                if category.guild_name.is_none() {
-                  if let Err(e) = self.db.categories.update_guild_name(guild_id, category.id, &guild.name).await {
-                    error!("Failed to update guild name for category {}: {}", category.id, e);
-                  } else {
-                    category.guild_name = Some(guild.name.clone());
-                  }
-                }
-                if let Err(e) = server.add_category(category) {
-                  error!("Failed to add category: {e}");
-                }
-              }
-              // Clean up orphaned dynamic VCs from previous bot runs
-              for category in &mut server.categories {
-                category.clean_orphaned_vcs(&ctx, &self.db).await;
-              }
+    let repo = CategoryRepository::new(self.db.pool().clone());
 
-              let categories_len = server.categories.len();
-              manager.servers.push(server);
-
-              if categories_len > 0 {
-                self.check_existing_voice_users(&ctx, &guild, &mut manager).await;
-                self.create_guild_dashboard_from_manager(&ctx, &guild, &mut manager).await;
-              } else {
-                warn!("[{}] No categories", guild.name);
-              }
-            }
-          }
-          Err(e) => {
-            error!("Failed to load categories for guild {}: {}", guild.name, e);
-            // Still create an empty server so commands can work
-            let mut manager = self.manager.lock().await;
-            if manager.get_server(guild.id).is_err() {
-              let server = Server::empty(guild.id, guild.name.clone());
-              manager.servers.push(server);
-            }
-          }
+    // 1. Check existence without unwrapping
+    match self.db.guilds.exists(&guild_id).await {
+      Ok(false) => {
+        let qguild = QGuild::new(guild.id, guild.name.clone(), Roles::empty());
+        if let Err(e) = GuildRepository::add(&qguild).await {
+          error!("Failed to save new guild {} to database: {}", guild_id, e);
         }
       }
-      Err(e) => error!("Failed to load config for guild {}: {}", guild.name, e),
+      Err(e) => {
+        error!("DB error checking guild existence: {e}");
+        return;
+      }
+      _ => {}
+    }
+
+    // 2. Load data BEFORE locking the manager
+    let categories = repo.get_categories_for_guild(guild_id).await.unwrap_or_default();
+
+    // 3. Perform external cleanup BEFORE locking (if possible)
+    // Note: If cleanup requires the manager, this gets tricky.
+
+    let mut manager = self.manager.lock().await;
+
+    if manager.get_qguild(guild_id).is_err() {
+      let mut qguild = QGuild::new(guild_id, guild.name.clone(), Roles::empty());
+
+      for mut category in categories {
+        // Clean up orphanned VCs (Consider if this can be moved outside the lock)
+        category.clean_orphaned_vcs(&ctx, &self.db).await;
+
+        if let Err(e) = qguild.add_category(category) {
+          error!("Failed to add category: {e}");
+        }
+      }
+
+      if qguild.has_categories() {
+        self.check_existing_voice_users(&ctx, &guild, &mut manager).await;
+        self.create_dashboard_from_manager(&ctx, &guild, &mut manager).await;
+      }
+
+      manager.qguilds.push(qguild);
     }
   }
 
@@ -489,7 +478,7 @@ impl EventHandler for Handler {
 
             // Now create the dashboard
             let mut manager = self.manager.lock().await;
-            self.create_guild_dashboard_from_manager(&ctx, &guild, &mut manager).await;
+            self.create_dashboard_from_manager(&ctx, &guild, &mut manager).await;
           }
           return;
         }
@@ -585,11 +574,13 @@ impl EventHandler for Handler {
             Ok(_) => {
               let response = serenity::all::CreateInteractionResponse::UpdateMessage(
                 serenity::all::CreateInteractionResponseMessage::new()
-                  .embed(serenity::all::CreateEmbed::new()
-                    .title("DM Notifications Disabled")
-                    .description("You will no longer receive direct messages when a game is ready.\n\nYou can re-enable this in your settings using `/prefs`.")
-                    .color(0x00FF00))
-                  .components(vec![])
+                  .embed(
+                    serenity::all::CreateEmbed::new()
+                      .title("DM Notifications Disabled")
+                      .description("You will no longer receive direct messages when a game is ready.\n\nYou can re-enable this in your settings using `/prefs`.")
+                      .color(0x00FF00),
+                  )
+                  .components(vec![]),
               );
               if let Err(e) = itx.create_response(&ctx.http, response).await {
                 error!("Failed to send disable DM response: {e}");
@@ -599,9 +590,7 @@ impl EventHandler for Handler {
             Err(e) => {
               error!("Failed to disable DM notifications for user {}: {}", user_id, e);
               let response = serenity::all::CreateInteractionResponse::Message(
-                serenity::all::CreateInteractionResponseMessage::new()
-                  .content("Failed to disable DM notifications. Please try again later.")
-                  .ephemeral(true)
+                serenity::all::CreateInteractionResponseMessage::new().content("Failed to disable DM notifications. Please try again later.").ephemeral(true),
               );
               let _ = itx.create_response(&ctx.http, response).await;
             }
@@ -643,7 +632,7 @@ impl EventHandler for Handler {
         if itx.data.custom_id.starts_with("runner_player_") {
           let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
           let action = parts.get(2).unwrap_or(&"");
-          
+
           // Extract user_id from button click or select menu
           let user_id_str = if let serenity::all::ComponentInteractionDataKind::Button = itx.data.kind {
             // Button variant: custom_id is "runner_player_ACTION_USERID"
@@ -677,9 +666,7 @@ impl EventHandler for Handler {
         // Handle dashboard back button (from help screen)
         if itx.data.custom_id == "dashboard_back" {
           // Dismiss the ephemeral message by updating it to be empty
-          let response = serenity::all::CreateInteractionResponse::UpdateMessage(
-            serenity::all::CreateInteractionResponseMessage::new().components(vec![])
-          );
+          let response = serenity::all::CreateInteractionResponse::UpdateMessage(serenity::all::CreateInteractionResponseMessage::new().components(vec![]));
           if let Err(e) = itx.create_response(&ctx.http, response).await {
             error!("Error dismissing help message: {e}");
           }
@@ -710,7 +697,7 @@ impl EventHandler for Handler {
           if let (Some(cat_id), Some(fmt_id)) = (parts.get(2).and_then(|s| s.parse::<u8>().ok()), parts.get(3).and_then(|s| s.parse::<u8>().ok())) {
             let guild_id = itx.guild_id.unwrap();
             let mut manager = self.manager.lock().await;
-            if let Ok(server) = manager.get_server(guild_id) {
+            if let Ok(server) = manager.get_qguild(guild_id) {
               if let Some(category) = server.categories.iter_mut().find(|c| c.id == cat_id) {
                 let cc = crate::models::ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
                 if let Err(e) = category.handle_ping_format(&cc, fmt_id).await {
@@ -758,7 +745,7 @@ impl EventHandler for Handler {
                   }
 
                   // Add the recovered category to the manager
-                  let server = manager.get_server(guild_id);
+                  let server = manager.get_qguild(guild_id);
                   if let Ok(server) = server {
                     if let Err(e) = server.add_category(recovered_category) {
                       error!("[{}] Failed to add recovered category: {}", guild_name, e);
@@ -900,14 +887,14 @@ impl EventHandler for Handler {
             user_id.to_string()
           })
         }
-      },
+      }
       Err(_) => {
         // Fallback to Discord API tag (not display name)
         ctx.http.get_user(user_id).await.map(|user| user.tag()).unwrap_or_else(|e| {
           error!("Failed to get user {} from Discord API: {}, using user ID as fallback", user_id, e);
           user_id.to_string()
         })
-      },
+      }
     };
 
     // First manager lock scope
@@ -954,7 +941,7 @@ impl EventHandler for Handler {
         }
         VoiceStateUpdate::Moved => {
           let was_team_vc = category.is_team_vc(lookup_channel);
-          
+
           // Check if player moved between team VCs during a live game
           if let Some(new_channel) = new.channel_id {
             if category.is_team_vc(new_channel) && was_team_vc {
@@ -967,7 +954,7 @@ impl EventHandler for Handler {
                 }
               }
             }
-            
+
             // If moving from queue VC to team VC, don't remove from queue
             // (they were just moved by the bot for a match)
             if category.channels.queue_vc == lookup_channel && category.is_team_vc(new_channel) {
@@ -975,7 +962,7 @@ impl EventHandler for Handler {
               return;
             }
           }
-          
+
           if category.channels.queue_vc == lookup_channel {
             self.handle_player_leave_vc(&ctx, category, guild_id, user_id, &tag).await;
             category.queue_dash_update(&ctx, guild_id).await;
@@ -1143,12 +1130,7 @@ impl Handler {
   /// Handle a player leaving the queue VC (disconnect or move away).
   /// Checks auto-leave preference, removes or resets queue expiration time, and regenerates teams if needed.
   async fn handle_player_leave_vc(&self, ctx: &Context, category: &mut Category, guild_id: GuildId, user_id: UserId, _tag: &str) {
-    let queue_ctx = QueueContext {
-      ctx,
-      guild_id: Some(guild_id),
-      db: Some(&self.db),
-      manager: Some(self.manager.clone())
-    };
+    let queue_ctx = QueueContext { ctx, guild_id: Some(guild_id), db: Some(&self.db), manager: Some(self.manager.clone()) };
     let guild_name = guild_name(ctx, guild_id);
     let ctg_nm = category.name.as_deref().unwrap_or("Unknown").to_string();
     let fmt_nm = category.get_user_fmt_name(user_id);
@@ -1156,11 +1138,9 @@ impl Handler {
     let quota = category.quota() as usize;
 
     let category_id = category.id; // Capture category_id before mutable borrow
-    
+
     // Extract team channel IDs before any mutable borrows
-    let team_channel_ids: Vec<_> = category.channels.teams.iter()
-      .flat_map(|t| vec![t.red_vc, t.blu_vc])
-      .collect();
+    let team_channel_ids: Vec<_> = category.channels.teams.iter().flat_map(|t| vec![t.red_vc, t.blu_vc]).collect();
 
     // Check if player is currently in a team channel before getting session
     let is_in_team_vc = if let Some(guild) = ctx.cache.guild(guild_id) {
@@ -1252,7 +1232,7 @@ impl Handler {
       if should_idle {
         sesh.idle();
       }
-      
+
       // Clone format after removal so log gets updated pool count
       let format = category.formats[0].clone();
 
@@ -1268,7 +1248,7 @@ impl Handler {
     } else {
       // Player not found in any session
       let format = category.formats[0].clone();
-      
+
       // Resolve player for logging
       if let Ok(player) = self.db.get_user(user_id, ctx).await {
         if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left", None).await {
@@ -1297,7 +1277,7 @@ impl Handler {
   /// Handle score result button click (RED WON/DRAW/BLU WON)
   async fn handle_score_button(&self, ctx: &Context, interaction: &serenity::all::ComponentInteraction) -> Result<(), anyhow::Error> {
     use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage, EditMessage};
-    
+
     // Parse result and IDs from custom_id (format: score_{result}_{category_id}_{format_id})
     let custom_id = &interaction.data.custom_id;
     let parts: Vec<&str> = custom_id.split('_').collect();
@@ -1305,17 +1285,17 @@ impl Handler {
     let category_id = parts.get(2).and_then(|s| s.parse::<i64>().ok());
     let _format_id = parts.get(3).and_then(|s| s.parse::<i64>().ok());
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
-    
+
     // Validate result
     if !matches!(*result, "red" | "draw" | "blu") {
       return Ok(());
     }
-    
+
     // Check if result was already reported and update database atomically
     let mut already_reported = false;
     if let Some(cat_id) = category_id {
       let mut mgr = self.manager.lock().await;
-      if let Ok(server) = mgr.get_server(guild_id) {
+      if let Ok(server) = mgr.get_qguild(guild_id) {
         if let Some(category) = server.categories.iter_mut().find(|c| c.id == cat_id as u8) {
           if let Some(session) = category.formats.iter_mut().flat_map(|f| &mut f.sessions).find(|s| matches!(s.status, crate::models::SessionStatus::Pull)) {
             if session.score_reported {
@@ -1335,15 +1315,11 @@ impl Handler {
     }
 
     if already_reported {
-      let response = CreateInteractionResponse::Message(
-        CreateInteractionResponseMessage::new()
-          .content("Result has already been reported for this match.")
-          .ephemeral(true)
-      );
+      let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Result has already been reported for this match.").ephemeral(true));
       interaction.create_response(&ctx.http, response).await?;
       return Ok(());
     }
-    
+
     // Update the message embed with result indicator
     let message = &interaction.message;
     if let Some(mut embed) = message.embeds.first().cloned() {
@@ -1367,43 +1343,39 @@ impl Handler {
           }
         }
       }
-      
+
       // Update message and remove buttons
       message.channel_id.edit_message(&ctx.http, message.id, EditMessage::new().embed(embed.into()).components(Vec::new())).await?;
-      
+
       let result_text = match *result {
         "red" => "RED team victory",
         "draw" => "Draw",
         "blu" => "BLU team victory",
         _ => "Result",
       };
-      
-      let response = CreateInteractionResponse::Message(
-        CreateInteractionResponseMessage::new()
-          .content(format!("{} recorded!", result_text))
-          .ephemeral(true)
-      );
+
+      let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content(format!("{} recorded!", result_text)).ephemeral(true));
       interaction.create_response(&ctx.http, response).await?;
     }
-    
+
     Ok(())
   }
 
   /// Handle report score modal submission
   async fn handle_report_score_modal(&self, ctx: &Context, interaction: &serenity::all::ModalInteraction) -> Result<(), anyhow::Error> {
     use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage, EditMessage};
-    
+
     // Parse category_id and format_id from modal custom_id (format: report_score_modal_CATID_FMTID)
     let custom_id = &interaction.data.custom_id;
     let parts: Vec<&str> = custom_id.split('_').collect();
     let category_id = parts.get(3).and_then(|s| s.parse::<i64>().ok());
     let _format_id = parts.get(4).and_then(|s| s.parse::<i64>().ok());
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
-    
+
     // Extract scores from modal
     let mut blu_score = String::new();
     let mut red_score = String::new();
-    
+
     for row in &interaction.data.components {
       if let Some(serenity::all::ActionRowComponent::InputText(input)) = row.components.first() {
         match input.custom_id.as_str() {
@@ -1413,7 +1385,7 @@ impl Handler {
         }
       }
     }
-    
+
     // Validate scores are numbers and within range
     let blu_score_num: u8 = match blu_score.parse() {
       Ok(n) if n <= crate::models::constants::MAX_MATCH_SCORE => n,
@@ -1421,7 +1393,7 @@ impl Handler {
         let response = CreateInteractionResponse::Message(
           CreateInteractionResponseMessage::new()
             .content(format!("Invalid blue team score. Please enter a number between 0-{}.", crate::models::constants::MAX_MATCH_SCORE))
-            .ephemeral(true)
+            .ephemeral(true),
         );
         interaction.create_response(&ctx.http, response).await?;
         return Ok(());
@@ -1430,20 +1402,20 @@ impl Handler {
         let response = CreateInteractionResponse::Message(
           CreateInteractionResponseMessage::new()
             .content(format!("Invalid blue team score. Please enter a number between 0-{}.", crate::models::constants::MAX_MATCH_SCORE))
-            .ephemeral(true)
+            .ephemeral(true),
         );
         interaction.create_response(&ctx.http, response).await?;
         return Ok(());
       }
     };
-    
+
     let red_score_num: u8 = match red_score.parse() {
       Ok(n) if n <= crate::models::constants::MAX_MATCH_SCORE => n,
       Ok(_) => {
         let response = CreateInteractionResponse::Message(
           CreateInteractionResponseMessage::new()
             .content(format!("Invalid red team score. Please enter a number between 0-{}.", crate::models::constants::MAX_MATCH_SCORE))
-            .ephemeral(true)
+            .ephemeral(true),
         );
         interaction.create_response(&ctx.http, response).await?;
         return Ok(());
@@ -1452,13 +1424,13 @@ impl Handler {
         let response = CreateInteractionResponse::Message(
           CreateInteractionResponseMessage::new()
             .content(format!("Invalid red team score. Please enter a number between 0-{}.", crate::models::constants::MAX_MATCH_SCORE))
-            .ephemeral(true)
+            .ephemeral(true),
         );
         interaction.create_response(&ctx.http, response).await?;
         return Ok(());
       }
     };
-    
+
     // Derive result from scores
     let result = if red_score_num > blu_score_num {
       "red"
@@ -1467,12 +1439,12 @@ impl Handler {
     } else {
       "draw"
     };
-    
+
     // Check if score was already reported and update database atomically within the lock
     let mut score_already_reported = false;
     if let Some(cat_id) = category_id {
       let mut mgr = self.manager.lock().await;
-      if let Ok(server) = mgr.get_server(guild_id) {
+      if let Ok(server) = mgr.get_qguild(guild_id) {
         if let Some(category) = server.categories.iter_mut().find(|c| c.id == cat_id as u8) {
           // Find the session that just ended (Pull status)
           if let Some(session) = category.formats.iter_mut().flat_map(|f| &mut f.sessions).find(|s| matches!(s.status, crate::models::SessionStatus::Pull)) {
@@ -1480,7 +1452,7 @@ impl Handler {
               score_already_reported = true;
             } else {
               session.score_reported = true;
-              
+
               // Update database immediately while holding the lock to prevent race condition
               drop(mgr);
               if let Some(match_id) = self.db.matches.get_latest_match_id(guild_id, cat_id).await? {
@@ -1495,15 +1467,11 @@ impl Handler {
     }
 
     if score_already_reported {
-      let response = CreateInteractionResponse::Message(
-        CreateInteractionResponseMessage::new()
-          .content("Score has already been reported for this match.")
-          .ephemeral(true)
-      );
+      let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Score has already been reported for this match.").ephemeral(true));
       interaction.create_response(&ctx.http, response).await?;
       return Ok(());
     }
-    
+
     // Update the message embed with scores in team headers
     if let Some(message) = &interaction.message {
       if let Some(mut embed) = message.embeds.first().cloned() {
@@ -1522,34 +1490,22 @@ impl Handler {
             }
           }
         }
-        
+
         // Update the message and remove the Report Score button
         message.channel_id.edit_message(&ctx.http, message.id, EditMessage::new().embed(embed.into()).components(Vec::new())).await?;
-        
+
         // Send confirmation
-        let response = CreateInteractionResponse::Message(
-          CreateInteractionResponseMessage::new()
-            .content("Score reported successfully!")
-            .ephemeral(true)
-        );
+        let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Score reported successfully!").ephemeral(true));
         interaction.create_response(&ctx.http, response).await?;
       } else {
-        let response = CreateInteractionResponse::Message(
-          CreateInteractionResponseMessage::new()
-            .content("Failed to update score: no embed found.")
-            .ephemeral(true)
-        );
+        let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Failed to update score: no embed found.").ephemeral(true));
         interaction.create_response(&ctx.http, response).await?;
       }
     } else {
-      let response = CreateInteractionResponse::Message(
-        CreateInteractionResponseMessage::new()
-          .content("Failed to update score: message not found.")
-          .ephemeral(true)
-      );
+      let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Failed to update score: message not found.").ephemeral(true));
       interaction.create_response(&ctx.http, response).await?;
     }
-    
+
     Ok(())
   }
 
@@ -1597,13 +1553,7 @@ impl Handler {
   /// Check for users already in queue voice channels and add them to the queue
   async fn check_existing_voice_users(&self, ctx: &Context, guild: &Guild, manager: &mut Manager) {
     // Get the server from the manager
-    let server = match manager.get_server(guild.id) {
-      Ok(s) => s,
-      Err(e) => {
-        error!("Failed to get server from manager: {e}");
-        return;
-      }
-    };
+    let server = manager.get_qguild(guild.id).unwrap();
 
     // Iterate through all categories and check their queue voice channels
     for category in &mut server.categories {
@@ -1687,7 +1637,7 @@ impl Handler {
   }
 
   /// Creates dashboard for a guild using in-memory categories from manager
-  async fn create_guild_dashboard_from_manager(&self, ctx: &Context, guild: &Guild, manager: &mut Manager) {
+  async fn create_dashboard_from_manager(&self, ctx: &Context, guild: &Guild, manager: &mut Manager) {
     // FIRST: Check bot permissions
     let (has_perms, missing_perms) = self.check_perms(ctx, guild).await;
 
@@ -1719,13 +1669,7 @@ impl Handler {
     }
 
     // Get server from manager (already has categories with existing users loaded)
-    let server = match manager.get_server(guild.id) {
-      Ok(s) => s,
-      Err(e) => {
-        error!("Failed to get server from manager: {e}");
-        return;
-      }
-    };
+    let server = manager.get_qguild(guild.id).unwrap();
 
     for category in &mut server.categories {
       // Validate that the dashboard channel still exists

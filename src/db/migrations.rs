@@ -66,6 +66,7 @@ impl DatabaseMigrations {
     self.create_matches_table().await?;
     self.create_match_players_table().await?;
     self.create_fatkid_table().await?;
+    self.create_guilds_table().await?;
 
     // Add foreign key constraint after both tables exist
     self.add_config_foreign_key().await?;
@@ -83,6 +84,7 @@ impl DatabaseMigrations {
     self.verify_matches().await?;
     self.verify_match_players().await?;
     self.verify_fatkids().await?;
+    self.verify_guilds().await?;
     Ok(())
   }
 
@@ -92,15 +94,16 @@ impl DatabaseMigrations {
     if !self.check_table("config").await? {
       sqlx::query(
         "CREATE TABLE config (
-                    guild_id          INTEGER NOT NULL,
-                    runner_id         INTEGER,
-                    admin_id          INTEGER,
-                    active_elo        INTEGER,
-                    default_rank      INTEGER,
-                    elo_ranks_linked  INTEGER DEFAULT 1,
-                    post_game_auto_leave INTEGER DEFAULT 1,
-                    PRIMARY KEY(guild_id)
-                )",
+          guild_id             INTEGER NOT NULL,
+          runner_id            INTEGER,
+          admin_id             INTEGER,
+          active_elo           INTEGER DEFAULT 0,
+          default_rank         INTEGER,
+          elo_ranks_linked     INTEGER DEFAULT 1,
+          post_game_auto_leave INTEGER DEFAULT 1,
+          PRIMARY KEY(guild_id),
+          FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE,
+        )",
       )
       .execute(&self.pool)
       .await?;
@@ -117,32 +120,33 @@ impl DatabaseMigrations {
     self.verify_columns("config", &required_columns).await?;
     Ok(())
   }
+  
   async fn create_users_table(&self) -> Result<()> {
     if !self.check_table("users").await? {
       sqlx::query(
         "CREATE TABLE users (
-                    user_id                  INTEGER PRIMARY KEY,
-                    steam_id                 INTEGER,
-                    discord_tag              TEXT    DEFAULT NULL,
-                    pm_hot_alert             INTEGER DEFAULT 0,
-                    pm_queue_alert_threshold INTEGER DEFAULT NULL,
-                    queue_expiration                  INTEGER DEFAULT 30,
-                    vc_auto_join             INTEGER DEFAULT 0,
-                    join_alert_title         TEXT    DEFAULT NULL,
-                    join_alert               TEXT    DEFAULT NULL,
-                    join_alert_color         INTEGER DEFAULT 3447003,
-                    join_alert_img           TEXT    DEFAULT NULL,
-                    join_alert_footer        TEXT    DEFAULT NULL,
-                    join_alert_footer_img    TEXT    DEFAULT NULL,
-                    vc_auto_leave            INTEGER DEFAULT 0,
-                    post_game_auto_leave    INTEGER DEFAULT 1,
-                    leave_alert_title        TEXT    DEFAULT NULL,
-                    leave_alert              TEXT    DEFAULT NULL,
-                    leave_alert_color        INTEGER DEFAULT 3447003,
-                    leave_alert_img          TEXT    DEFAULT NULL,
-                    leave_alert_footer       TEXT    DEFAULT NULL,
-                    leave_alert_footer_img   TEXT    DEFAULT NULL
-                )",
+          user_id                  INTEGER PRIMARY KEY,
+          steam_id                 INTEGER,
+          discord_tag              TEXT    DEFAULT NULL,
+          pm_hot_alert             INTEGER DEFAULT 0,
+          pm_queue_alert_threshold INTEGER DEFAULT NULL,
+          queue_expiration         INTEGER DEFAULT 30,
+          vc_auto_join             INTEGER DEFAULT 0,
+          join_alert_title         TEXT    DEFAULT NULL,
+          join_alert               TEXT    DEFAULT NULL,
+          join_alert_color         INTEGER DEFAULT 3447003,
+          join_alert_img           TEXT    DEFAULT NULL,
+          join_alert_footer        TEXT    DEFAULT NULL,
+          join_alert_footer_img    TEXT    DEFAULT NULL,
+          vc_auto_leave            INTEGER DEFAULT 0,
+          post_game_auto_leave     INTEGER DEFAULT 1,
+          leave_alert_title        TEXT    DEFAULT NULL,
+          leave_alert              TEXT    DEFAULT NULL,
+          leave_alert_color        INTEGER DEFAULT 3447003,
+          leave_alert_img          TEXT    DEFAULT NULL,
+          leave_alert_footer       TEXT    DEFAULT NULL,
+          leave_alert_footer_img   TEXT    DEFAULT NULL
+        )",
       )
       .execute(&self.pool)
       .await?;
@@ -263,30 +267,30 @@ impl DatabaseMigrations {
     self.verify_columns("users", &required_columns).await?;
     Ok(())
   }
+
   async fn create_categories_table(&self) -> Result<()> {
     use crate::DEFAULT_QUOTA;
 
     if !self.check_table("categories").await? {
       sqlx::query(&format!(
         "CREATE TABLE categories (
-                    id                INTEGER PRIMARY KEY,
-                    category_id          INTEGER DEFAULT 0,
-                    name              TEXT,
-                    confirm_time           INTEGER DEFAULT {DEFAULT_CONFIRM_TIME},
-                    guild_id          INTEGER NOT NULL,
-                    category          INTEGER DEFAULT 0,
-                    dashboard         INTEGER NOT NULL UNIQUE,
-                    chat              INTEGER NOT NULL UNIQUE,
-                    queue             INTEGER NOT NULL UNIQUE,
-                    ping              INTEGER NOT NULL UNIQUE,
-                    dashboard_msg     INTEGER DEFAULT 0,
-                    red               INTEGER NOT NULL DEFAULT 1,
-                    blu               INTEGER NOT NULL DEFAULT 1,
-                    game              INTEGER DEFAULT 0,
-                    game_increment    INTEGER DEFAULT 0,
-                    quota             INTEGER DEFAULT {DEFAULT_QUOTA},
-                    connect_info      TEXT
-                )"
+          id             INTEGER PRIMARY KEY,
+          guild_id       INTEGER NOT NULL,
+          category_id    INTEGER DEFAULT 0,
+          name           TEXT,
+          confirm_time   INTEGER DEFAULT {DEFAULT_CONFIRM_TIME},
+          category       INTEGER DEFAULT 0,
+          dashboard      INTEGER NOT NULL UNIQUE,
+          chat           INTEGER NOT NULL UNIQUE,
+          queue          INTEGER NOT NULL UNIQUE,
+          ping           INTEGER NOT NULL UNIQUE,
+          dashboard_msg  INTEGER DEFAULT 0,
+          game           INTEGER DEFAULT 0,
+          game_increment INTEGER DEFAULT 0,
+          quota          INTEGER DEFAULT {DEFAULT_QUOTA},
+          connect_info   TEXT,
+          FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE,
+        )"
       ))
       .execute(&self.pool)
       .await?;
@@ -299,7 +303,7 @@ impl DatabaseMigrations {
       if !has_id || !has_guild_id {
         // Backup existing data before dropping table
         let backup_data = if has_guild_id {
-          sqlx::query("SELECT category_id, name, confirm_time, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment, quota, connect_info FROM categories")
+          sqlx::query("SELECT guild_id, category_id, name, confirm_time, dashboard, chat, queue, dashboard_msg, game, game_increment, quota, connect_info FROM categories")
             .fetch_all(&self.pool)
             .await
             .unwrap_or_default()
@@ -310,58 +314,53 @@ impl DatabaseMigrations {
         sqlx::query("DROP TABLE categories").execute(&self.pool).await?;
         sqlx::query(&format!(
           "CREATE TABLE categories (
-                        id                INTEGER PRIMARY KEY,
-                        category_id          INTEGER DEFAULT 0,
-                        name              TEXT,
-                        confirm_time           INTEGER DEFAULT {DEFAULT_CONFIRM_TIME},
-                        guild_id          INTEGER NOT NULL,
-                        dashboard         INTEGER NOT NULL UNIQUE,
-                        chat              INTEGER NOT NULL UNIQUE,
-                        queue             INTEGER NOT NULL UNIQUE,
-                        ping              INTEGER NOT NULL UNIQUE,
-                        dashboard_msg     INTEGER DEFAULT 0,
-                        red               INTEGER NOT NULL DEFAULT 1,
-                        blu               INTEGER NOT NULL DEFAULT 1,
-                        game              INTEGER DEFAULT 0,
-                        game_increment    INTEGER DEFAULT 0,
-                        quota             INTEGER DEFAULT {DEFAULT_QUOTA},
-                        connect_info      TEXT
-                    )"
+            id             INTEGER PRIMARY KEY,
+            guild_id       INTEGER NOT NULL,
+            category_id    INTEGER DEFAULT 0,
+            name           TEXT,
+            confirm_time   INTEGER DEFAULT {DEFAULT_CONFIRM_TIME},
+            dashboard      INTEGER NOT NULL UNIQUE,
+            chat           INTEGER NOT NULL UNIQUE,
+            queue          INTEGER NOT NULL UNIQUE,
+            ping           INTEGER NOT NULL UNIQUE,
+            dashboard_msg  INTEGER DEFAULT 0,
+            game           INTEGER DEFAULT 0,
+            game_increment INTEGER DEFAULT 0,
+            quota          INTEGER DEFAULT {DEFAULT_QUOTA},
+            connect_info   TEXT,
+            FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE,
+          )"
         ))
         .execute(&self.pool)
         .await?;
 
         // Restore backed up data
         for row in backup_data {
-          let category_id: i64 = row.try_get("category_id").unwrap_or(0);
-          let name: Option<String> = row.try_get("name").ok();
-          let confirm_time: i64 = row.try_get("confirm_time").unwrap_or(DEFAULT_CONFIRM_TIME as i64);
-          let guild_id: i64 = row.get("guild_id");
-          let dashboard: i64 = row.get("dashboard");
-          let chat: i64 = row.get("chat");
-          let queue: i64 = row.get("queue");
-          let dashboard_msg: i64 = row.try_get("dashboard_msg").unwrap_or(0);
-          let red: i64 = row.get("red");
-          let blu: i64 = row.get("blu");
-          let game: i64 = row.try_get("game").unwrap_or(0);
-          let game_increment: i64 = row.try_get("game_increment").unwrap_or(0);
-          let quota: i64 = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
-          let connect_info: Option<String> = row.try_get("connect_info").ok();
+          let category_id:    i64            = row.try_get("category_id").unwrap_or(0);
+          let guild_id:       i64            = row.get("guild_id");
+          let name:           Option<String> = row.try_get("name").ok();
+          let confirm_time:   i64            = row.try_get("confirm_time").unwrap_or(DEFAULT_CONFIRM_TIME as i64);
+          let dashboard:      i64            = row.get("dashboard");
+          let chat:           i64            = row.get("chat");
+          let queue:          i64            = row.get("queue");
+          let dashboard_msg:  i64            = row.try_get("dashboard_msg").unwrap_or(0);
+          let game:           i64            = row.try_get("game").unwrap_or(0);
+          let game_increment: i64            = row.try_get("game_increment").unwrap_or(0);
+          let quota:          i64            = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
+          let connect_info:   Option<String> = row.try_get("connect_info").ok();
 
           sqlx::query(
-            "INSERT INTO categories (category_id, name, confirm_time, guild_id, dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment, quota, connect_info)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO categories (guild_id, category_id, name, confirm_time, dashboard, chat, queue, dashboard_msg, game, game_increment, quota, connect_info)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .bind(category_id)
+          .bind(guild_id)
           .bind(name)
           .bind(confirm_time)
-          .bind(guild_id)
           .bind(dashboard)
           .bind(chat)
           .bind(queue)
           .bind(dashboard_msg)
-          .bind(red)
-          .bind(blu)
           .bind(game)
           .bind(game_increment)
           .bind(quota)
@@ -373,30 +372,30 @@ impl DatabaseMigrations {
 
       // Add multiple columns using helper macro
       add_columns!(self, "categories",
-        "name": "TEXT" => "NULL",
-        "connect_info": "TEXT" => "NULL",
-        "team_balance_method": "TEXT" => "'BCH'",
-        "dm_alert_enabled": "INTEGER" => "0",
-        "dm_alert_threshold": "INTEGER" => "0",
-        "category": "INTEGER" => "0",
-        "dm_alert_users": "TEXT" => "'[]'",
-        "team_vc_create_policy": "TEXT" => "'on_hot'",
-        "team_vc_destroy_policy": "TEXT" => "'after_pull'",
-        "team_vc_keep_minimum": "INTEGER" => "1",
-        "guild_name": "TEXT" => "NULL",
-        "require_score_report": "INTEGER" => "0",
+        "name":                   "TEXT"    => "NULL",
+        "connect_info":           "TEXT"    => "NULL",
+        "team_balance_method":    "TEXT"    => "'BCH'",
+        "dm_alert_enabled":       "INTEGER" => "0",
+        "dm_alert_threshold":     "INTEGER" => "0",
+        "category":               "INTEGER" => "0",
+        "dm_alert_users":         "TEXT"    => "'[]'",
+        "team_vc_create_policy":  "TEXT"    => "'on_hot'",
+        "team_vc_destroy_policy": "TEXT"    => "'after_pull'",
+        "team_vc_keep_minimum":   "INTEGER" => "1",
+        "guild_name":             "TEXT"    => "NULL",
+        "require_score_report":   "INTEGER" => "0",
       );
 
       // Check if UNIQUE constraints exist on channel columns
       // SQLite doesn't have a direct way to check constraints, so we check if duplicate channels exist
       let has_duplicates: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM (
-                    SELECT dashboard FROM categories CATEGORY BY dashboard HAVING COUNT(*) > 1
-                    UNION ALL
-                    SELECT chat FROM categories CATEGORY BY chat HAVING COUNT(*) > 1
-                    UNION ALL
-                    SELECT queue FROM categories CATEGORY BY queue HAVING COUNT(*) > 1
-                )",
+          SELECT dashboard FROM categories CATEGORY BY dashboard HAVING COUNT(*) > 1
+          UNION ALL
+          SELECT chat FROM categories CATEGORY BY chat HAVING COUNT(*) > 1
+          UNION ALL
+          SELECT queue FROM categories CATEGORY BY queue HAVING COUNT(*) > 1
+        )",
       )
       .fetch_one(&self.pool)
       .await
@@ -413,8 +412,8 @@ impl DatabaseMigrations {
 
           // Try to insert a duplicate to test if UNIQUE constraint exists
           let constraint_exists = sqlx::query(
-            "INSERT INTO categories (guild_id, dashboard, chat, queue, red, blu, quota) 
-                         VALUES (999999, ?, 999998, 999997, 999996, 999995, 12)",
+            "INSERT INTO categories (guild_id, dashboard, chat, queue, quota) 
+              VALUES (999999, ?, 999998, 999997, 999996, 999995, 12)",
           )
           .bind(test_dashboard)
           .execute(&self.pool)
@@ -430,10 +429,10 @@ impl DatabaseMigrations {
 
             // Backup all data
             let backup_data = sqlx::query(
-              "SELECT id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue, 
-                             dashboard_msg, red, blu, game, game_increment, quota, connect_info,
-                             team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users
-                             FROM categories",
+              "SELECT id, guild_id, category_id, name, confirm_time, category, dashboard, chat, queue, 
+                dashboard_msg, game, game_increment, quota, connect_info,
+                team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users
+                FROM categories",
             )
             .fetch_all(&self.pool)
             .await?;
@@ -442,73 +441,67 @@ impl DatabaseMigrations {
             sqlx::query("DROP TABLE categories").execute(&self.pool).await?;
             sqlx::query(&format!(
               "CREATE TABLE categories (
-                                id                INTEGER PRIMARY KEY,
-                                category_id          INTEGER DEFAULT 0,
-                                name              TEXT,
-                                confirm_time           INTEGER DEFAULT {DEFAULT_CONFIRM_TIME},
-                                guild_id          INTEGER NOT NULL,
-                                category          INTEGER DEFAULT 0,
-                                dashboard         INTEGER NOT NULL UNIQUE,
-                                chat              INTEGER NOT NULL UNIQUE,
-                                queue             INTEGER NOT NULL UNIQUE,
-                                ping              INTEGER NOT NULL UNIQUE,
-                                dashboard_msg     INTEGER DEFAULT 0,
-                                red               INTEGER NOT NULL DEFAULT 1,
-                                blu               INTEGER NOT NULL DEFAULT 1,
-                                game              INTEGER DEFAULT 0,
-                                game_increment    INTEGER DEFAULT 0,
-                                quota             INTEGER DEFAULT {DEFAULT_QUOTA},
-                                connect_info      TEXT,
-                                team_balance_method TEXT DEFAULT 'BCH',
-                                dm_alert_enabled  INTEGER DEFAULT 0,
-                                dm_alert_threshold INTEGER DEFAULT 0,
-                                dm_alert_users    TEXT DEFAULT '[]'
-                            )"
+                id                  INTEGER PRIMARY KEY,
+                guild_id            INTEGER NOT NULL,
+                category_id         INTEGER DEFAULT 0,
+                name                TEXT,
+                confirm_time        INTEGER DEFAULT {DEFAULT_CONFIRM_TIME},
+                category            INTEGER DEFAULT 0,
+                dashboard           INTEGER NOT NULL UNIQUE,
+                chat                INTEGER NOT NULL UNIQUE,
+                queue               INTEGER NOT NULL UNIQUE,
+                ping                INTEGER NOT NULL UNIQUE,
+                dashboard_msg       INTEGER DEFAULT 0,
+                game                INTEGER DEFAULT 0,
+                game_increment      INTEGER DEFAULT 0,
+                quota               INTEGER DEFAULT {DEFAULT_QUOTA},
+                connect_info        TEXT,
+                team_balance_method TEXT DEFAULT 'BCH',
+                dm_alert_enabled    INTEGER DEFAULT 0,
+                dm_alert_threshold  INTEGER DEFAULT 0,
+                dm_alert_users      TEXT DEFAULT '[]'
+              )"
             ))
             .execute(&self.pool)
             .await?;
 
             // Restore data
             for row in backup_data {
-              let id: i64 = row.get("id");
-              let category_id: i64 = row.try_get("category_id").unwrap_or(0);
-              let name: Option<String> = row.try_get("name").ok();
-              let confirm_time: i64 = row.try_get("confirm_time").unwrap_or(DEFAULT_CONFIRM_TIME as i64);
-              let guild_id: i64 = row.get("guild_id");
-              let dashboard: i64 = row.get("dashboard");
-              let chat: i64 = row.get("chat");
-              let queue: i64 = row.get("queue");
-              let dashboard_msg: i64 = row.try_get("dashboard_msg").unwrap_or(0);
-              let red: i64 = row.get("red");
-              let blu: i64 = row.get("blu");
-              let game: i64 = row.try_get("game").unwrap_or(0);
-              let game_increment: i64 = row.try_get("game_increment").unwrap_or(0);
-              let quota: i64 = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
-              let connect_info: Option<String> = row.try_get("connect_info").ok();
-              let category: i64 = row.try_get("category").unwrap_or(0);
+              let id:                  i64            = row.get("id");
+              let category_id:         i64            = row.try_get("category_id").unwrap_or(0);
+              let guild_id:            i64            = row.get("guild_id");
+              let name:                Option<String> = row.try_get("name").ok();
+              let confirm_time:        i64            = row.try_get("confirm_time").unwrap_or(DEFAULT_CONFIRM_TIME as i64);
+              let dashboard:           i64            = row.get("dashboard");
+              let chat:                i64            = row.get("chat");
+              let queue:               i64            = row.get("queue");
+              let dashboard_msg:       i64            = row.try_get("dashboard_msg").unwrap_or(0);
+              let game:                i64            = row.try_get("game").unwrap_or(0);
+              let game_increment:      i64            = row.try_get("game_increment").unwrap_or(0);
+              let quota:               i64            = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
+              let connect_info:        Option<String> = row.try_get("connect_info").ok();
+              let category:            i64            = row.try_get("category").unwrap_or(0);
               let team_balance_method: Option<String> = row.try_get("team_balance_method").ok();
-              let dm_alert_enabled: i64 = row.try_get("dm_alert_enabled").unwrap_or(0);
-              let dm_alert_threshold: i64 = row.try_get("dm_alert_threshold").unwrap_or(0);
-              let dm_alert_users: String = row.try_get("dm_alert_users").unwrap_or_else(|_| "[]".to_string());
+              let dm_alert_enabled:    i64            = row.try_get("dm_alert_enabled").unwrap_or(0);
+              let dm_alert_threshold:  i64            = row.try_get("dm_alert_threshold").unwrap_or(0);
+              let dm_alert_users:      String         = row.try_get("dm_alert_users").unwrap_or_else(|_| "[]".to_string());
 
               sqlx::query(
-                "INSERT INTO categories (id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue, 
-                                 dashboard_msg, red, blu, game, game_increment, quota, connect_info,
-                                 team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO categories (id, guild_id, category_id, name, confirm_time, category, dashboard, chat, queue, 
+                  dashboard_msg, game, game_increment, quota, connect_info,
+                  team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
               )
               .bind(id)
+              .bind(guild_id)
               .bind(category_id)
               .bind(name)
               .bind(confirm_time)
-              .bind(guild_id)
               .bind(category)
               .bind(dashboard)
               .bind(chat)
               .bind(queue)
               .bind(dashboard_msg)
-              .bind(red)
-              .bind(blu)
               .bind(game)
               .bind(game_increment)
               .bind(quota)
@@ -525,119 +518,7 @@ impl DatabaseMigrations {
           }
         }
       }
-
-      // Drop UNIQUE constraint from legacy red/blu columns (now in teams table)
-      self.migrate_categories_drop_red_blu_unique().await?;
     }
-    Ok(())
-  }
-
-  /// Recreate the categories table without UNIQUE on red/blu if needed.
-  /// These legacy columns now hold placeholder value 1 for every row;
-  /// the real team channels live in the `teams` table.
-  async fn migrate_categories_drop_red_blu_unique(&self) -> Result<()> {
-    use crate::DEFAULT_QUOTA;
-
-    // Quick probe: try inserting two rows with the same red value.
-    // If the second insert fails, UNIQUE still exists and we must migrate.
-    let probe_ok = sqlx::query(
-      "INSERT INTO categories (guild_id, dashboard, chat, queue, red, blu, quota)
-             VALUES (999999, 999991, 999992, 999993, 1, 1, 12)",
-    )
-    .execute(&self.pool)
-    .await
-    .is_ok();
-
-    // Clean up probe row
-    let _ = sqlx::query("DELETE FROM categories WHERE guild_id = 999999").execute(&self.pool).await;
-
-    if probe_ok {
-      // No UNIQUE on red/blu (or table was empty) - nothing to do
-      return Ok(());
-    }
-
-    info!("Dropping UNIQUE constraints from legacy red/blu columns...");
-
-    let backup_data = sqlx::query(
-      "SELECT id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue,
-             dashboard_msg, red, blu, game, game_increment, quota, connect_info,
-             team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users,
-             team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum
-             FROM categories",
-    )
-    .fetch_all(&self.pool)
-    .await?;
-
-    sqlx::query("DROP TABLE categories").execute(&self.pool).await?;
-    sqlx::query(&format!(
-      "CREATE TABLE categories (
-                id                    INTEGER PRIMARY KEY,
-                confirm_time              INTEGER DEFAULT 0,
-                name                  TEXT,
-                queue_expiration               INTEGER DEFAULT {DEFAULT_CONFIRM_TIME},
-                guild_id              INTEGER NOT NULL,
-                category              INTEGER DEFAULT 0,
-                dashboard             INTEGER NOT NULL UNIQUE,
-                chat                  INTEGER NOT NULL UNIQUE,
-                queue                 INTEGER NOT NULL UNIQUE,
-                ping                  INTEGER NOT NULL UNIQUE,
-                dashboard_msg         INTEGER DEFAULT 0,
-                red                   INTEGER NOT NULL DEFAULT 1,
-                blu                   INTEGER NOT NULL DEFAULT 1,
-                game                  INTEGER DEFAULT 0,
-                game_increment        INTEGER DEFAULT 0,
-                quota                 INTEGER DEFAULT {DEFAULT_QUOTA},
-                connect_info          TEXT,
-                team_balance_method   TEXT DEFAULT 'BCH',
-                dm_alert_enabled      INTEGER DEFAULT 0,
-                dm_alert_threshold    INTEGER DEFAULT 0,
-                dm_alert_users        TEXT DEFAULT '[]',
-                team_vc_create_policy  TEXT DEFAULT 'on_hot',
-                team_vc_destroy_policy TEXT DEFAULT 'after_pull',
-                team_vc_keep_minimum   INTEGER DEFAULT 1,
-                require_score_report   INTEGER DEFAULT 0
-            )"
-    ))
-    .execute(&self.pool)
-    .await?;
-
-    for row in backup_data {
-      sqlx::query(
-        "INSERT INTO categories (id, category_id, name, confirm_time, guild_id, category,
-                 dashboard, chat, queue, dashboard_msg, red, blu, game, game_increment,
-                 quota, connect_info, team_balance_method, dm_alert_enabled,
-                 dm_alert_threshold, dm_alert_users,
-                 team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum)
-                 VALUES (?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?)",
-      )
-      .bind(row.get::<i64, _>("id"))
-      .bind(row.try_get::<i64, _>("category_id").unwrap_or(0))
-      .bind(row.try_get::<Option<String>, _>("name").ok().flatten())
-      .bind(row.try_get::<i64, _>("confirm_time").unwrap_or(DEFAULT_CONFIRM_TIME as i64))
-      .bind(row.get::<i64, _>("guild_id"))
-      .bind(row.try_get::<i64, _>("category").unwrap_or(0))
-      .bind(row.get::<i64, _>("dashboard"))
-      .bind(row.get::<i64, _>("chat"))
-      .bind(row.get::<i64, _>("queue"))
-      .bind(row.try_get::<i64, _>("dashboard_msg").unwrap_or(0))
-      .bind(row.get::<i64, _>("red"))
-      .bind(row.get::<i64, _>("blu"))
-      .bind(row.try_get::<i64, _>("game").unwrap_or(0))
-      .bind(row.try_get::<i64, _>("game_increment").unwrap_or(0))
-      .bind(row.try_get::<i64, _>("quota").unwrap_or(DEFAULT_QUOTA as i64))
-      .bind(row.try_get::<Option<String>, _>("connect_info").ok().flatten())
-      .bind(row.try_get::<Option<String>, _>("team_balance_method").ok().flatten())
-      .bind(row.try_get::<i64, _>("dm_alert_enabled").unwrap_or(0))
-      .bind(row.try_get::<i64, _>("dm_alert_threshold").unwrap_or(0))
-      .bind(row.try_get::<String, _>("dm_alert_users").unwrap_or_else(|_| "[]".to_string()))
-      .bind(row.try_get::<Option<String>, _>("team_vc_create_policy").ok().flatten())
-      .bind(row.try_get::<Option<String>, _>("team_vc_destroy_policy").ok().flatten())
-      .bind(row.try_get::<i64, _>("team_vc_keep_minimum").unwrap_or(1))
-      .execute(&self.pool)
-      .await?;
-    }
-
-    info!("Successfully dropped UNIQUE from red/blu columns");
     Ok(())
   }
   async fn verify_categories(&self) -> Result<()> {
@@ -648,16 +529,14 @@ impl DatabaseMigrations {
 
     let required_columns = vec![
       "id",
+      "guild_id",
       "category_id",
       "confirm_time",
-      "guild_id",
       "category",
       "dashboard",
       "chat",
       "queue",
       "dashboard_msg",
-      "red",
-      "blu",
       "game",
       "game_increment",
       "quota",
@@ -671,20 +550,21 @@ impl DatabaseMigrations {
     self.verify_columns("categories", &required_columns).await?;
     Ok(())
   }
+
   async fn create_teams_table(&self) -> Result<()> {
     if !self.check_table("teams").await? {
       sqlx::query(
         "CREATE TABLE teams (
-                    id           INTEGER PRIMARY KEY,
-                    guild_id     INTEGER NOT NULL,
-                    category_id  INTEGER NOT NULL,
-                    set_index    INTEGER NOT NULL,
-                    session_id   TEXT,
-                    red          INTEGER NOT NULL,
-                    blu          INTEGER NOT NULL,
-                    created_at   INTEGER DEFAULT (strftime('%s', 'now')),
-                    UNIQUE(guild_id, category_id, set_index)
-                )",
+          id           INTEGER PRIMARY KEY,
+          guild_id     INTEGER NOT NULL,
+          category_id  INTEGER NOT NULL,
+          set_index    INTEGER NOT NULL,
+          session_id   TEXT,
+          red          INTEGER NOT NULL,
+          blu          INTEGER NOT NULL,
+          created_at   INTEGER DEFAULT (strftime('%s', 'now')),
+          UNIQUE(guild_id, category_id, set_index)
+        )",
       )
       .execute(&self.pool)
       .await?;
@@ -729,19 +609,21 @@ impl DatabaseMigrations {
 
     Ok(())
   }
+
   async fn create_formats_table(&self) -> Result<()> {
     if !self.check_table("formats").await? {
       sqlx::query(
         "CREATE TABLE formats (
-                    id            INTEGER PRIMARY KEY,
-                    guild_id      INTEGER NOT NULL,
-                    category_id      INTEGER NOT NULL,
-                    format_id   INTEGER NOT NULL DEFAULT 0,
-                    name          TEXT NOT NULL,
-                    quota         INTEGER NOT NULL DEFAULT 12,
-                    connect_info  TEXT,
-                    UNIQUE(guild_id, category_id, format_id)
-                )",
+          id           INTEGER PRIMARY KEY,
+          guild_id     INTEGER NOT NULL,
+          category_id  INTEGER NOT NULL,
+          format_id    INTEGER NOT NULL DEFAULT 0,
+          name         TEXT    NOT NULL,
+          quota        INTEGER NOT NULL DEFAULT 12,
+          connect_info TEXT,
+          UNIQUE(guild_id, category_id, format_id),
+          FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE,
+        )",
       )
       .execute(&self.pool)
       .await?;
@@ -753,21 +635,23 @@ impl DatabaseMigrations {
     self.verify_columns("formats", &required_columns).await?;
     Ok(())
   }
+
   async fn create_elo_table(&self) -> Result<()> {
     if !self.check_table("elo").await? {
       sqlx::query(
         "CREATE TABLE elo (
-                    id        INTEGER PRIMARY KEY,
-                    guild_id  INTEGER NOT NULL,
-                    user_id   INTEGER NOT NULL,
-                    elo       INTEGER NOT NULL DEFAULT 50,
-                    rank      INTEGER NOT NULL,
-                    games     INTEGER NOT NULL DEFAULT 0,
-                    wins      INTEGER NOT NULL DEFAULT 0,
-                    UNIQUE(guild_id, user_id),
-                    FOREIGN KEY (rank)    REFERENCES ranks(id) ON DELETE SET NULL,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-                )",
+          id        INTEGER PRIMARY KEY,
+          guild_id  INTEGER NOT NULL,
+          user_id   INTEGER NOT NULL,
+          elo       INTEGER NOT NULL DEFAULT 50,
+          rank      INTEGER NOT NULL,
+          games     INTEGER NOT NULL DEFAULT 0,
+          wins      INTEGER NOT NULL DEFAULT 0,
+          UNIQUE(guild_id, user_id),
+          FOREIGN KEY (rank)     REFERENCES ranks(id)        ON DELETE SET NULL,
+          FOREIGN KEY (user_id)  REFERENCES users(user_id)   ON DELETE CASCADE
+          FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE,
+        )",
       )
       .execute(&self.pool)
       .await?;
@@ -783,7 +667,6 @@ impl DatabaseMigrations {
 
     Ok(())
   }
-
   /// Migrate elo table to fix foreign key constraint from ranks(role_id) to ranks(id)
   async fn migrate_elo_foreign_key(&self) -> Result<()> {
     // Check if the elo table exists and has data
@@ -808,17 +691,18 @@ impl DatabaseMigrations {
 
         sqlx::query(
           "CREATE TABLE elo (
-                        id        INTEGER PRIMARY KEY,
-                        guild_id  INTEGER NOT NULL,
-                        user_id   INTEGER NOT NULL,
-                        elo       INTEGER NOT NULL DEFAULT 50,
-                        rank      INTEGER NOT NULL,
-                        games     INTEGER NOT NULL DEFAULT 0,
-                        wins      INTEGER NOT NULL DEFAULT 0,
-                        UNIQUE(guild_id, user_id),
-                        FOREIGN KEY (rank)    REFERENCES ranks(id) ON DELETE SET NULL,
-                        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-                    )",
+            id        INTEGER PRIMARY KEY,
+            guild_id  INTEGER NOT NULL,
+            user_id   INTEGER NOT NULL,
+            elo       INTEGER NOT NULL DEFAULT 50,
+            rank      INTEGER NOT NULL,
+            games     INTEGER NOT NULL DEFAULT 0,
+            wins      INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(guild_id, user_id),
+            FOREIGN KEY (rank)     REFERENCES ranks(id)        ON DELETE SET NULL,
+            FOREIGN KEY (user_id)  REFERENCES users(user_id)   ON DELETE CASCADE
+            FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE,
+          )",
         )
         .execute(&self.pool)
         .await?;
@@ -826,16 +710,16 @@ impl DatabaseMigrations {
         // Restore data, converting role_id to rank.id
         sqlx::query(
           "INSERT INTO elo (id, guild_id, user_id, elo, rank, games, wins)
-                     SELECT 
-                         eb.id,
-                         eb.guild_id,
-                         eb.user_id,
-                         eb.elo,
-                         COALESCE(r.id, 0),
-                         eb.games,
-                         eb.wins
-                     FROM elo_backup eb
-                     LEFT JOIN ranks r ON r.role_id = eb.rank AND r.guild_id = eb.guild_id",
+            SELECT 
+              eb.id,
+              eb.guild_id,
+              eb.user_id,
+              eb.elo,
+              COALESCE(r.id, 0),
+              eb.games,
+              eb.wins
+            FROM elo_backup eb
+            LEFT JOIN ranks r ON r.role_id = eb.rank AND r.guild_id = eb.guild_id",
         )
         .execute(&self.pool)
         .await?;
@@ -852,6 +736,30 @@ impl DatabaseMigrations {
 
     Ok(())
   }
+
+  async fn create_guilds_table(&self) -> Result<()> {
+    if !self.check_table("guilds").await? {
+      sqlx::query(
+        "CREATE TABLE guilds (
+          id       INTEGER PRIMARY KEY,
+          guild_id INTEGER NOT NULL,
+          name     TEXT    NOT NULL,
+          nick     TEXT,
+          UNIQUE(guild_id)
+        )",
+      )
+      .execute(&self.pool)
+      .await?;
+    }
+    Ok(())
+  }
+  async fn verify_guilds(&self) -> Result<()> {
+    let required_columns = vec!["id", "guild_id", "name", "nick"];
+    self.verify_columns("guilds", &required_columns).await?;
+
+    Ok(())
+  }
+
   async fn create_ranks_table(&self) -> Result<()> {
     // Check if old schema exists (has position or role_ids columns)
     let needs_migration = if self.check_table("ranks").await? { self.check_column("ranks", "position").await? || self.check_column("ranks", "role_ids").await? } else { false };
@@ -864,12 +772,13 @@ impl DatabaseMigrations {
 
       sqlx::query(
         "CREATE TABLE ranks (
-                    id       INTEGER PRIMARY KEY,
-                    guild_id INTEGER NOT NULL,
-                    name     TEXT    NOT NULL,
-                    elo      INTEGER NOT NULL,
-                    role_id  INTEGER NOT NULL
-                )",
+          id       INTEGER PRIMARY KEY,
+          guild_id INTEGER NOT NULL,
+          name     TEXT    NOT NULL,
+          elo      INTEGER NOT NULL,
+          role_id  INTEGER NOT NULL,
+          FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE,
+        )",
       )
       .execute(&self.pool)
       .await?;
@@ -881,12 +790,13 @@ impl DatabaseMigrations {
     } else if !self.check_table("ranks").await? {
       sqlx::query(
         "CREATE TABLE ranks (
-                    id       INTEGER PRIMARY KEY,
-                    guild_id INTEGER NOT NULL,
-                    name     TEXT    NOT NULL,
-                    elo      INTEGER NOT NULL,
-                    role_id  INTEGER NOT NULL
-                )",
+          id       INTEGER PRIMARY KEY,
+          guild_id INTEGER NOT NULL,
+          name     TEXT    NOT NULL,
+          elo      INTEGER NOT NULL,
+          role_id  INTEGER NOT NULL,
+          FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE,
+        )",
       )
       .execute(&self.pool)
       .await?;
@@ -899,20 +809,24 @@ impl DatabaseMigrations {
     self.verify_columns("ranks", &required_columns).await?;
     Ok(())
   }
+
   async fn create_matches_table(&self) -> Result<()> {
     if !self.check_table("matches").await? {
       sqlx::query(
         "CREATE TABLE matches (
-                    id              INTEGER PRIMARY KEY,
-                    guild_id        INTEGER NOT NULL,
-                    category_id     INTEGER NOT NULL,
-                    format_id       INTEGER NOT NULL DEFAULT 0,
-                    session_id      TEXT,
-                    started_at      INTEGER NOT NULL,
-                    ended_at        INTEGER NOT NULL,
-                    duration_secs   INTEGER NOT NULL,
-                    result          TEXT
-                )",
+          id              INTEGER PRIMARY KEY,
+          guild_id        INTEGER NOT NULL,
+          category_id     INTEGER NOT NULL,
+          format_id       INTEGER NOT NULL DEFAULT 0,
+          session_id      TEXT,
+          started_at      INTEGER NOT NULL,
+          ended_at        INTEGER NOT NULL,
+          duration_secs   INTEGER NOT NULL,
+          result          TEXT,
+          FOREIGN KEY (guild_id)    REFERENCES guilds(guild_id)        ON DELETE CASCADE,
+          FOREIGN KEY (category_id) REFERENCES categories(category_id) ON DELETE SET NULL,
+          FOREIGN KEY (format_id)   REFERENCES formats(format_id)      ON DELETE SET NULL,
+        )",
       )
       .execute(&self.pool)
       .await?;
@@ -952,19 +866,20 @@ impl DatabaseMigrations {
     self.verify_columns("matches", &required_columns).await?;
     Ok(())
   }
+
   async fn create_match_players_table(&self) -> Result<()> {
     if !self.check_table("match_players").await? {
       sqlx::query(
         "CREATE TABLE match_players (
-                    id          INTEGER PRIMARY KEY,
-                    match_id    INTEGER NOT NULL,
-                    user_id     INTEGER NOT NULL,
-                    team        TEXT NOT NULL CHECK(team IN ('red', 'blu')),
-                    elo_before  INTEGER NOT NULL,
-                    elo_after   INTEGER,
-                    FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-                )",
+          id          INTEGER PRIMARY KEY,
+          match_id    INTEGER NOT NULL,
+          user_id     INTEGER NOT NULL,
+          team        TEXT NOT NULL CHECK(team IN ('red', 'blu')),
+          elo_before  INTEGER NOT NULL,
+          elo_after   INTEGER,
+          FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE,
+          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        )",
       )
       .execute(&self.pool)
       .await?;
@@ -987,7 +902,8 @@ impl DatabaseMigrations {
           immunity_level    INTEGER NOT NULL DEFAULT 0,
           last_fatkidded_at INTEGER,
           UNIQUE(guild_id, user_id),
-          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+          FOREIGN KEY (user_id)  REFERENCES users(user_id)  ON DELETE CASCADE,
+          FOREIGN KEY (guild_id) REFERENCES guilds(guild_d) ON DELETE CASCADE,
         )"
       )
       .execute(&self.pool)
@@ -995,7 +911,6 @@ impl DatabaseMigrations {
     }
     Ok(())
   }
-
   async fn verify_fatkids(&self) -> Result<()> {
     let required_columns = vec!["id", "guild_id", "user_id", "immunity_level", "last_fatkidded_at"];
     self.verify_columns("fatkids", &required_columns).await?;
@@ -1026,14 +941,15 @@ impl DatabaseMigrations {
 
       sqlx::query(
         "CREATE TABLE config (
-                    guild_id     INTEGER NOT NULL,
-                    runner_id    INTEGER,
-                    admin_id     INTEGER,
-                    active_elo   INTEGER,
-                    default_rank INTEGER,
-                    PRIMARY KEY(guild_id),
-                    FOREIGN KEY (default_rank) REFERENCES ranks(role_id) ON DELETE SET NULL
-                )",
+          guild_id     INTEGER NOT NULL,
+          runner_id    INTEGER,
+          admin_id     INTEGER,
+          active_elo   INTEGER,
+          default_rank INTEGER,
+          PRIMARY KEY(guild_id),
+          FOREIGN KEY (default_rank) REFERENCES ranks(role_id)  ON DELETE SET NULL
+          FOREIGN KEY (guild_id)     REFERENCES guilds(guild_d) ON DELETE CASCADE,
+        )",
       )
       .execute(&self.pool)
       .await?;
@@ -1093,7 +1009,7 @@ impl DatabaseMigrations {
     if count == 0 {
       sqlx::query(
         "INSERT INTO categories (category_id, guild_id, dashboard, chat, queue, red, blu)
-                        VALUES (1, ?, 1, 1, 1, 1, 1)",
+          VALUES (1, ?, 1, 1, 1, 1, 1)",
       )
       .bind(guild_id.get() as i64)
       .execute(&self.pool)

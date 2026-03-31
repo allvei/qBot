@@ -8,7 +8,7 @@ use serenity::all::{Context as Ctx, UserId as UI, GuildId as GI};
 use sqlx::SqlitePool;
 use tracing::info;
 
-use crate::models::{FileManager, Category, Player, Server};
+use crate::{models::{Category, FileManager, Player, QGuild}, repo::GuildRepository};
 use migrations::DatabaseMigrations;
 use repo::{ConfigRepository, EloRepository, CategoryRepository, RankRepository, UserRepository, TeamRepository, MatchRepo, FatkidRepository};
 
@@ -16,6 +16,7 @@ use repo::{ConfigRepository, EloRepository, CategoryRepository, RankRepository, 
 #[derive(Clone)]
 pub struct Database {
     pub pool:   SqlitePool,
+    pub guilds: GuildRepository,
     pub users:  UserRepository,
     pub categories: CategoryRepository,
     pub config: ConfigRepository,
@@ -54,20 +55,22 @@ impl Database {
         migrations.create_tables().await?;
 
         // Initialize repositories
-        let users  = UserRepository  ::new(pool.clone());
-        let categories = CategoryRepository ::new(pool.clone());
-        let config = ConfigRepository::new(pool.clone());
-        let elos   = EloRepository   ::new(pool.clone());
-        let ranks  = RankRepository  ::new(pool.clone());
-        let teams  = TeamRepository  ::new(pool.clone());
-        let matches = MatchRepo      ::new(&pool);
-        let fatkids = FatkidRepository::new(pool.clone());
+        let users      = UserRepository    ::new(pool.clone());
+        let guilds     = GuildRepository   ::new(pool.clone());
+        let categories = CategoryRepository::new(pool.clone());
+        let config     = ConfigRepository  ::new(pool.clone());
+        let elos       = EloRepository     ::new(pool.clone());
+        let ranks      = RankRepository    ::new(pool.clone());
+        let teams      = TeamRepository    ::new(pool.clone());
+        let matches    = MatchRepo         ::new(&pool);
+        let fatkids    = FatkidRepository  ::new(pool.clone());
 
         // Verify schemas after all repositories are created
         migrations.verify_schemas().await?;
 
         Ok(Self {
             pool,
+            guilds,
             users,
             categories,
             config,
@@ -127,7 +130,7 @@ impl Database {
             ping_channel_id:      1,
             quota,
         };
-        self.categories.create_category(guild_id, guild_name, dashboard_msg, config).await
+        self.categories.add_category(guild_id, guild_name, dashboard_msg, config).await
     }
 
     /// Updates a category
@@ -152,21 +155,10 @@ impl Database {
         self.categories.update_category(guild_id, config).await
     }
 
-    /// Sets a configuration value
-    #[deprecated(note = "Use column-specific methods instead. This method doesn't match actual schema.")]
-    pub async fn set_config(&self, key: &str, value: &str, guild_id: GI) -> Result<()> {
-        self.config.set_config(key, value, guild_id).await
-    }
-
-    /// Gets configuration map for a guild
-    pub async fn get_config_map(&self, guild_id: GI) -> Result<std::collections::HashMap<String, String>> {
-        self.config.get_config_map(guild_id).await
-    }
-
     /// Gets configuration for a guild
-    pub async fn get_config(&self, guild_id: GI) -> Result<Server> {
+    pub async fn get_config(&self, guild_id: GI) -> Result<QGuild> {
         // For now, return a simple Guild with the guild_id
         // The actual configuration is handled through get_config_map
-        Ok(Server::empty(guild_id, "Unknown".to_string()))
+        Ok(QGuild::empty(guild_id, "Unknown".to_string()))
     }
 }

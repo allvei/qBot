@@ -6,6 +6,7 @@
 use std::time::{Instant, SystemTime};
 use std::{sync::Arc, time::Duration};
 
+use crate::cinfo;
 use crate::{
   guild_name, log_prefix_format,
   models::constants::{DEFAULT_ACTIVE_ELO, MAX_QUEUE_EXPIRATION, MIN_QUEUE_EXPIRATION},
@@ -63,33 +64,37 @@ pub struct GameServer {
 
 // Server
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Server {
-  pub guild_id: GI,
-  pub guild_name: String,
+pub struct QGuild {
+  pub id: GI,
+  pub name: String,
   pub roles: Roles,
   pub categories: Vec<Category>,
 }
 
-impl Server {
+impl QGuild {
   pub fn new(guild_id: GI, guild_name: String, roles: Roles) -> Self {
-    Self { guild_id, guild_name, roles, categories: Vec::new() }
+    Self { id: guild_id, name: guild_name, roles, categories: Vec::new() }
   }
 
   pub fn add_category(&mut self, category: Category) -> Result<()> {
     self.categories.push(category);
     if let Some(category) = self.categories.last_mut() {
       // Create an idle session for every format
-      for sg in &mut category.formats {
-        if sg.sessions.is_empty() {
-          sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
+      for format in &mut category.formats {
+        if format.sessions.is_empty() {
+          format.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
         }
       }
     }
     Ok(())
   }
 
+  pub fn has_categories(&self) -> bool {
+    !self.categories.is_empty()
+  }
+
   pub fn empty(guild_id: GI, guild_name: String) -> Self {
-    Self { guild_id, guild_name, roles: Roles::empty(), categories: Vec::new() }
+    Self { id: guild_id, name: guild_name, roles: Roles::empty(), categories: Vec::new() }
   }
 
   pub fn get_category(&mut self, channel_id: CI) -> Result<&mut Category> {
@@ -101,7 +106,7 @@ impl Server {
 
   /// Check if active ELO is enabled for this server
   pub async fn is_active_elo_enabled(&self, db: &DB) -> Result<bool> {
-    Ok(db.config.get_active_elo(self.guild_id).await.unwrap_or(DEFAULT_ACTIVE_ELO))
+    Ok(db.config.get_active_elo(self.id).await.unwrap_or(DEFAULT_ACTIVE_ELO))
   }
 }
 
@@ -738,7 +743,7 @@ impl Category {
 
         // Check if players have joined, remove those who haven't
         let mut manager_lock = mgr.lock().await;
-        if let Ok(server) = manager_lock.get_server(guild_id) {
+        if let Ok(server) = manager_lock.get_qguild(guild_id) {
           if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
             if category.check_hot_confirm_time(&ctx_clone, guild_id, post_game_confirm_time).await {
               info!("Deadline timer fired: removed timed-out players from category {}", category_id);
@@ -1057,7 +1062,12 @@ impl Category {
     let has_free = self.channels.teams.iter().any(|t| !occupied.iter().any(|o| o.red_vc == t.red_vc && o.blu_vc == t.blu_vc));
 
     if has_free {
+      use crate::ansi::GREEN;
+      cinfo!("{GREEN} Found an empty set of team channels.");
       return Ok(None);
+    } else {
+      use crate::ansi::RED;
+      cinfo!("{RED} No empty set of team channels found, creating a new set.")
     }
 
     // Create a new pair
@@ -1138,16 +1148,16 @@ impl Category {
       let http = ctx.http.clone();
       let red_vc = tc.red_vc;
       let blu_vc = tc.blu_vc;
-      info!("Deleting unused team VCs: RED={} BLU={}", red_vc, blu_vc);
+      info!("Deleting unused team VCs:");
       vec![
         tokio::spawn(async move { 
-          info!("Deleting RED team VC: {}", red_vc);
+          info!("RED: {red_vc}");
           (red_vc, red_vc.delete(&http).await, "RED") 
         }),
         tokio::spawn({
           let http = ctx.http.clone();
           async move { 
-            info!("Deleting BLU team VC: {}", blu_vc);
+            info!("BLU: {blu_vc}");
             (blu_vc, blu_vc.delete(&http).await, "BLU") 
           }
         }),
@@ -1157,7 +1167,7 @@ impl Category {
     for task in delete_tasks {
       if let Ok((vc_id, result, team)) = task.await {
         if let Err(e) = result {
-          let hint = if e.to_string().contains("Missing Access") { "(Missing *Manage Channels* permissions)" } else { "" };
+          let hint = if e.to_string().contains("Missing Access") { "(Missing \"Manage Channels\" permissions)" } else { "" };
           warn!("Failed to delete {} VC {}:{}{}", team, vc_id, e, hint);
         } else {
           info!("Deleted {} team VC: {}", team, vc_id);
@@ -1414,7 +1424,7 @@ impl Category {
             sleep(Duration::from_secs(post_game_timeout_secs)).await;
 
             let mut manager_lock = mgr.lock().await;
-            if let Ok(server) = manager_lock.get_server(guild_id) {
+            if let Ok(server) = manager_lock.get_qguild(guild_id) {
               if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
                 // Only clean up if no active games are running
                 let has_active = category.formats.iter().any(|sg| sg.sessions.iter().any(|s| s.is_active()));

@@ -47,56 +47,6 @@ impl ConfigRepository {
         Ok(config_map)
     }
 
-    /// DEPRECATED: This method uses dynamic SQL with arbitrary column names that don't match the actual schema.
-    /// The config table has columns: runner_id, admin_id, active_elo, default_rank (all INTEGER)
-    /// But code uses this with keys like "runner_role", "admin_role", "active_elo_enabled" which don't exist.
-    /// 
-    /// TODO: Replace all usages with proper column-specific methods:
-    /// - Use get_runner_id(), set_runner_id() for runner_id column
-    /// - Use get_admin_id(), set_admin_id() for admin_id column  
-    /// - Use get_active_elo(), set_active_elo() for active_elo column
-    /// - Use get_default_rank_role_id(), set_default_rank_role_id() for default_rank column
-    #[deprecated(note = "Use column-specific methods instead. This method doesn't match actual schema.")]
-    pub async fn set_config(&self, key: &str, value: &str, guild_id: GI) -> Result<()> {
-        // Build dynamic query for setting specific columns
-        let query = format!("INSERT INTO config (guild_id, {}) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET {} = excluded.{}", key, key, key);
-        sqlx::query(&query)
-        .bind(guild_id.get() as i64)
-        .bind(value)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    /// DEPRECATED: This method uses dynamic SQL with arbitrary column names that don't match the actual schema.
-    /// See set_config() deprecation note for details.
-    #[deprecated(note = "Use column-specific methods instead. This method doesn't match actual schema.")]
-    pub async fn get_config_item(&self, column: &str, guild_id: GI) -> Result<Option<String>> {
-        // Build dynamic query - cannot use bind for column names
-        let query = format!("SELECT {} FROM config WHERE guild_id = ?", column);
-        let result = sqlx::query(&query)
-            .bind(guild_id.get() as i64)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        Ok(result.and_then(|row| {
-            // Try to get as i64 first (for INTEGER columns), then as String
-            if let Ok(val) = row.try_get::<i64, _>(column) {
-                Some(val.to_string())
-            } else {
-                row.get::<Option<String>, _>(column)
-            }
-        }))
-    }
-
-    /// DEPRECATED: This method assumes a key-value schema that doesn't exist.
-    /// The config table doesn't have a 'key' column.
-    #[deprecated(note = "Config table doesn't have key-value structure. Use column-specific methods.")]
-    pub async fn delete_config(&self, _key: &str, _guild_id: GI) -> Result<()> {
-        // This method cannot work with the current schema
-        Err(anyhow::anyhow!("delete_config is deprecated and doesn't match schema. Set column to NULL instead."))
-    }
-
     /// Get default_rank as Discord role ID
     pub async fn get_default_rank_role_id(&self, guild_id: GI) -> Result<Option<RoleId>> {
         let row = sqlx::query(

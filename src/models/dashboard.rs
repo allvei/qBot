@@ -1647,7 +1647,7 @@ impl Category {
 
     // Send the ping message to ping channel (or dashboard if not set)
     let ping_channel = if self.channels.ping_channel.get() > 1 { self.channels.ping_channel } else { self.channels.dashboard };
-    let content = format!("@here +{} for {}\n**Pinged by <@{}>**", players_needed, format.name, user_id.get());
+    let content = format!("@here +{} for {}\nPing by <@{}>", players_needed, format.name, user_id.get());
     
     if let Ok(sent) = ping_channel.send_message(&cc.ctx.http, CM::new().content(content)).await {
       // Delete the message after 15 minutes
@@ -1724,9 +1724,9 @@ impl DashboardUpdateQueue {
 
   /// Request dashboard updates for all categories across all servers
   pub fn request_update_all(&self, manager: &crate::models::Manager) {
-    for srv in &manager.servers {
+    for srv in &manager.qguilds {
       for group in &srv.categories {
-        self.request_update(srv.guild_id, group.id);
+        self.request_update(srv.id, group.id);
       }
     }
   }
@@ -1817,9 +1817,9 @@ impl DashboardUpdateQueue {
   /// Expand an "update all" sentinel into concrete requests for every category.
   async fn expand_update_all(pending: &mut HashSet<DashboardUpdateRequest>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) {
     let mgr = manager.lock().await;
-    for srv in &mgr.servers {
+    for srv in &mgr.qguilds {
       for grp in &srv.categories {
-        pending.insert(DashboardUpdateRequest { guild_id: srv.guild_id, category_id: grp.id });
+        pending.insert(DashboardUpdateRequest { guild_id: srv.id, category_id: grp.id });
       }
     }
   }
@@ -1848,7 +1848,7 @@ impl DashboardUpdateQueue {
           // Collect players in active sessions across all servers
           // Maps UserId -> (GuildId, format_name) for "in-game" status display
           let mut in_game_players: HashMap<UI, (GI, String)> = HashMap::new();
-          for srv in &manager_lock.servers {
+          for srv in &manager_lock.qguilds {
             for grp in &srv.categories {
               for sg in &grp.formats {
                 let has_active = sg.sessions.iter().any(|s| s.is_active());
@@ -1860,14 +1860,14 @@ impl DashboardUpdateQueue {
                     continue;
                   }
                   for sp in &session.pool {
-                    in_game_players.insert(sp.player.user_id, (srv.guild_id, sg.name.clone()));
+                    in_game_players.insert(sp.player.user_id, (srv.id, sg.name.clone()));
                   }
                 }
               }
             }
           }
 
-          let server = match manager_lock.get_server(guild_id) {
+          let server = match manager_lock.get_qguild(guild_id) {
             Ok(s) => s,
             Err(e) => {
               warn!("Failed to get server for dashboard update: {e}");
@@ -1875,7 +1875,7 @@ impl DashboardUpdateQueue {
             }
           };
 
-          let guild_name = server.guild_name.clone();
+          let guild_name = server.name.clone();
 
           let category = match server.categories.iter_mut().find(|g| g.id == category_id) {
             Some(g) => g,
@@ -1933,7 +1933,7 @@ impl DashboardUpdateQueue {
 
                   // Update the stored message ID in memory
                   let mut manager_lock = manager.lock().await;
-                  if let Ok(server) = manager_lock.get_server(guild_id) {
+                  if let Ok(server) = manager_lock.get_qguild(guild_id) {
                     if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
                       category.dashboard_msg = new_msg.id;
                     }

@@ -1,4 +1,5 @@
 pub mod user;
+pub mod guilds;
 pub mod category;
 pub mod config;
 pub mod elo;
@@ -8,6 +9,7 @@ pub mod r#match;
 pub mod fatkid;
 
 pub use user::{UserRepository, UserPreferences, is_valid_user_text};
+pub use guilds::GuildRepository;
 pub use category::CategoryRepository;
 pub use config::ConfigRepository;
 pub use elo::{EloRepository, GuildElo};

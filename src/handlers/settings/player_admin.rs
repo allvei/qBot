@@ -134,7 +134,7 @@ pub async fn handle_player_settings_rank_select(
   // Update in-memory player data and dashboards where this player is queued
   {
     let mut manager_lock = manager.lock().await;
-    if let Ok(server) = manager_lock.get_server(guild_id) {
+    if let Ok(server) = manager_lock.get_qguild(guild_id) {
       let mut found_in_queue = false;
       for category in &mut server.categories {
         // Update in-memory player rank for all sessions
@@ -359,7 +359,7 @@ pub async fn handle_player_settings_modal(
     // Update in-memory player data and dashboards where this player is queued
     {
       let mut manager_lock = manager.lock().await;
-      if let Ok(server) = manager_lock.get_server(guild_id) {
+      if let Ok(server) = manager_lock.get_qguild(guild_id) {
         let mut found_in_queue = false;
         for category in &mut server.categories {
           // Update in-memory player ELO for all sessions
@@ -441,7 +441,7 @@ pub async fn handle_player_settings_modal(
     // Update in-memory player data and dashboards where this player is queued
     {
       let mut manager_lock = manager.lock().await;
-      if let Ok(server) = manager_lock.get_server(guild_id) {
+      if let Ok(server) = manager_lock.get_qguild(guild_id) {
         let mut found_in_queue = false;
         for category in &mut server.categories {
           // Update in-memory player rank for all sessions

@@ -37,7 +37,7 @@ pub async fn handle_end_without_score(
   // Find the runner's active match
   let (found_match, guild_name_str, category_name, format_name) = {
     let mut mgr = manager.lock().await;
-    let server = mgr.get_server(guild_id)?;
+    let server = mgr.get_qguild(guild_id)?;
     
     let mut found_match = None;
     
@@ -114,7 +114,7 @@ pub async fn handle_end_without_score(
   // End the match using the category's pull method
   {
     let mut mgr = manager.lock().await;
-    let server = mgr.get_server(guild_id)?;
+    let server = mgr.get_qguild(guild_id)?;
     let (cat_idx, _fmt_idx, _category_id, _format_id) = found_match.unwrap();
     let category = &mut server.categories[cat_idx];
     
@@ -172,7 +172,7 @@ pub async fn show_end_match_selection(
   // Find the runner's active match (same logic as end_without_score)
   let found_match = {
     let mut mgr = manager.lock().await;
-    let server = mgr.get_server(guild_id)?;
+    let server = mgr.get_qguild(guild_id)?;
     
     let mut found_match = None;
     
@@ -232,7 +232,7 @@ pub async fn show_end_match_selection(
   // Get format name for display
   let format_name = {
     let mut mgr = manager.lock().await;
-    let server = mgr.get_server(guild_id)?;
+    let server = mgr.get_qguild(guild_id)?;
     server.categories[cat_idx].formats.iter()
       .find(|f| f.id == format_id)
       .map(|f| f.name.clone())
@@ -300,7 +300,7 @@ pub async fn handle_end_match_result(
   
   let (guild_name_str, category_name, format_name) = {
     let mut mgr = manager.lock().await;
-    let server = mgr.get_server(guild_id)?;
+    let server = mgr.get_qguild(guild_id)?;
     let category = server.categories.iter().find(|c| c.id == category_id)
       .ok_or_else(|| anyhow::anyhow!("Category not found"))?;
     let format = category.formats.iter().find(|f| f.id == format_id)
@@ -327,7 +327,7 @@ pub async fn handle_end_match_result(
   // Record result in database and end the match
   {
     let mut mgr = manager.lock().await;
-    let server = mgr.get_server(guild_id)?;
+    let server = mgr.get_qguild(guild_id)?;
     let category = server.categories.iter_mut().find(|c| c.id == category_id)
       .ok_or_else(|| anyhow::anyhow!("Category not found"))?;
     

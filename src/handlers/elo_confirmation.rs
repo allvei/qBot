@@ -95,7 +95,7 @@ pub async fn handle_elo_change_confirmation(
     // Update in-memory player data and dashboards where this player is queued
     {
       let mut manager_lock = manager.lock().await;
-      if let Ok(server) = manager_lock.get_server(guild_id) {
+      if let Ok(server) = manager_lock.get_qguild(guild_id) {
         for category in &mut server.categories {
           // Update in-memory player ELO and rank for all sessions
           for session in &mut category.formats[0].sessions {
