@@ -53,6 +53,7 @@ pub async fn handle_player_settings_rank_select(
   let target_uid = UI::new(target_user_id);
   let guild_id = interaction.guild_id.expect("Guild ID not found");
   let guild_name = guild_name(ctx, guild_id);
+  let target_tag = get_user_tag(ctx, target_uid, db).await;
   // Get the selected role ID from the select menu
   let selected_role_id_str = match &interaction.data.kind {
     CIDK::StringSelect { values } => values.first().ok_or_else(|| anyhow::anyhow!("No rank selected"))?.clone(),
@@ -97,7 +98,7 @@ pub async fn handle_player_settings_rank_select(
       // Validate and normalize the manually set rank's ELO
       if let Ok((normalized_elo, was_normalized)) = db.elo.validate_and_normalize_elo(target_uid, guild_id, &discord_rank, db).await {
         if was_normalized {
-          info!("Admin set rank {} (ELO {}) for {}, but normalized to {} based on Discord rank {}", new_rank.name, new_rank.elo, target_uid, normalized_elo, discord_rank.name);
+          info!("Admin set rank {} (ELO {}) for {}, but normalized to {} based on Discord rank {}", new_rank.name, new_rank.elo, target_tag, normalized_elo, discord_rank.name);
         }
       }
     }
@@ -107,7 +108,7 @@ pub async fn handle_player_settings_rank_select(
   }
 
   if guild_elo.rank.name != new_rank.name {
-    info!("{} Updated rank for {}: {} -> {}{}", log_prefix_guild(&guild_name), user_tag, guild_elo.rank.name, new_rank.name, if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" });
+    info!("{} Updated rank for {}: {} -> {}{}", log_prefix_guild(&guild_name), target_tag, guild_elo.rank.name, new_rank.name, if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" });
   }
 
   // Update Discord roles
@@ -115,18 +116,18 @@ pub async fn handle_player_settings_rank_select(
     // Remove old rank role
     if member.roles.contains(&guild_elo.rank.role_id) {
       if let Err(e) = member.remove_role(&ctx.http, guild_elo.rank.role_id).await {
-        info!("Failed to remove old rank role {} from user {}: {}", guild_elo.rank.role_id, target_uid, e);
+        info!("Failed to remove old rank role {} from {}: {}", guild_elo.rank.name, target_tag, e);
       } else {
-        info!("Removed rank role {} from user {}", guild_elo.rank.name, target_uid);
+        info!("Removed rank role {} from {}", guild_elo.rank.name, target_tag);
       }
     }
 
     // Add new rank role
     if !member.roles.contains(&new_rank.role_id) {
       if let Err(e) = member.add_role(&ctx.http, new_rank.role_id).await {
-        info!("Failed to add new rank role {} to user {}: {}", new_rank.role_id, target_uid, e);
+        info!("Failed to add new rank role {} to {}: {}", new_rank.name, target_tag, e);
       } else {
-        info!("Added rank role {} to user {}", new_rank.name, target_uid);
+        info!("Added rank role {} to {}", new_rank.name, target_tag);
       }
     }
   }
@@ -154,14 +155,14 @@ pub async fn handle_player_settings_rank_select(
         if player_in_queue {
           found_in_queue = true;
           category.queue_dash_update(ctx, guild_id).await;
-          info!("Player {} rank changed, dashboard updated for category {}", target_uid, category.id);
+          info!("[{}] Player {} rank changed, dashboard updated for {}", guild_name, target_tag, category.name());
         }
       }
       if !found_in_queue {
-        info!("Player {} rank changed but not found in any queue, no dashboard update needed", target_uid);
+        info!("Player {} rank changed but not found in any queue", target_tag);
       }
     } else {
-      warn!("Failed to get server for guild {} when checking if player {} is queued", guild_id, target_uid);
+      warn!("[{}] Failed to get server when checking if player {} is queued", guild_name, target_tag);
     }
   }
 
@@ -186,19 +187,21 @@ pub async fn handle_player_settings_rank_select(
   let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
   interaction.create_response(&ctx.http, response).await?;
   Ok(())
-}
+} // <--- Added closing brace here
 
 /// Handle player settings button interactions
 pub async fn handle_player_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Database>) -> Result<()> {
   let button_id = &interaction.data.custom_id;
 
   let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
-  info!("[Player Settings] {} pressed {}", user_tag, button_id);
 
   // Extract user_id from button custom_id (format: player_settings_edit_<action>_<user_id>)
   let target_user_id: u64 = button_id.rsplit('_').next().and_then(|s| s.parse().ok()).ok_or_else(|| anyhow::anyhow!("Invalid button ID format: {}", button_id))?;
 
   let target_uid = UI::new(target_user_id);
+  let target_tag = crate::log::get_user_tag(ctx, target_uid, db).await;
+  let action = button_id.trim_end_matches(&format!("_{}", target_user_id)).replace("player_settings_", "");
+  info!("[Player Settings] {} pressed {} on {}", user_tag, action, target_tag);
 
   // Get current player data (ensure user exists)
   let player = db.users.check_user(target_uid, None).await?;
@@ -268,12 +271,14 @@ pub async fn handle_player_settings_modal(
   let modal_id = &interaction.data.custom_id;
 
   let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
-  info!("[Player Settings] {} submitted modal {}", user_tag, modal_id);
 
   // Extract user_id from modal custom_id (format: player_settings_modal_<action>_<user_id>)
   let target_user_id: u64 = modal_id.rsplit('_').next().and_then(|s| s.parse().ok()).ok_or_else(|| anyhow::anyhow!("Invalid modal ID format: {}", modal_id))?;
 
   let target_uid = UI::new(target_user_id);
+  let target_tag = crate::log::get_user_tag(ctx, target_uid, db).await;
+  let action = modal_id.trim_end_matches(&format!("_{}", target_user_id)).replace("player_settings_modal_", "");
+  info!("[Player Settings] {} submitted {} for {}", user_tag, action, target_tag);
 
   if modal_id.starts_with("player_settings_modal_steam_") {
     let steam_str = get_modal_input!(interaction);
@@ -313,9 +318,6 @@ pub async fn handle_player_settings_modal(
     let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
     let old_rank = guild_elo.rank.clone();
     let elo_ranks_linked = db.config.get_elo_ranks_linked(guild_id).await?;
-
-    // Get user tag for logging
-    let target_tag = crate::log::get_user_tag(ctx, target_uid, db).await;
 
     if elo_ranks_linked {
       let new_rank = crate::models::types::Rank::from_elo(db, guild_id, elo).await?;
@@ -414,7 +416,7 @@ pub async fn handle_player_settings_modal(
     }
 
     if old_rank.name != new_rank.name {
-      info!("Updated rank for {}: {} -> {}{}", target_uid, old_rank.name, new_rank.name, if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" });
+      info!("Updated rank for {}: {} -> {}{}", target_tag, old_rank.name, new_rank.name, if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" });
     }
 
     // Update Discord roles
@@ -422,18 +424,18 @@ pub async fn handle_player_settings_modal(
       // Remove old rank role
       if member.roles.contains(&old_rank.role_id) {
         if let Err(e) = member.remove_role(&ctx.http, old_rank.role_id).await {
-          info!("Failed to remove old rank role {} from user {}: {}", old_rank.role_id, target_uid, e);
+          info!("Failed to remove old rank role {} from {}: {}", old_rank.name, target_tag, e);
         } else {
-          info!("Removed rank role {} from user {}", old_rank.name, target_uid);
+          info!("Removed rank role {} from {}", old_rank.name, target_tag);
         }
       }
 
       // Add new rank role
       if !member.roles.contains(&new_rank.role_id) {
         if let Err(e) = member.add_role(&ctx.http, new_rank.role_id).await {
-          info!("Failed to add new rank role {} to user {}: {}", new_rank.role_id, target_uid, e);
+          info!("Failed to add new rank role {} to {}: {}", new_rank.name, target_tag, e);
         } else {
-          info!("Added rank role {} to user {}", new_rank.name, target_uid);
+          info!("Added rank role {} to {}", new_rank.name, target_tag);
         }
       }
     }
@@ -459,14 +461,14 @@ pub async fn handle_player_settings_modal(
           if player_in_queue {
             found_in_queue = true;
             category.queue_dash_update(ctx, guild_id).await;
-            info!("Player {} rank changed, dashboard updated for category {}", target_uid, category.id);
+            info!("Player {} rank changed, dashboard updated for category {}", target_tag, category.name());
           }
         }
         if !found_in_queue {
-          info!("Player {} rank changed but not found in any queue, no dashboard update needed", target_uid);
+          info!("Player {} rank changed but not found in any queue", target_tag);
         }
       } else {
-        warn!("Failed to get server for guild {} when checking if player {} is queued", guild_id, target_uid);
+        warn!("Failed to get server when checking if player {} is queued", target_tag);
       }
     }
 
@@ -515,7 +517,7 @@ pub async fn handle_player_settings_modal(
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
     interaction.create_response(&ctx.http, response).await?;
 
-    info!("[Player Settings] Updated alerts for user {}", target_uid);
+    info!("[Player Settings] Updated alerts for {}", target_tag);
   } else {
     warn!("Unknown player settings modal: {}", modal_id);
   }

@@ -928,16 +928,16 @@ impl Category {
     changes_made
   }
 
-  pub async fn push(&mut self, ctx: &Context, guild_id: GI, db: &DB) -> Result<(), Error> {
-    self.push_fmt(0, ctx, guild_id, db).await
+  pub async fn push(&mut self, ctx: &Context, guild_id: GI, db: &DB, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
+    self.push_fmt(0, ctx, guild_id, db, manager).await
   }
 
-  pub async fn push_fmt(&mut self, format_id: u8, ctx: &Context, guild_id: GI, db: &DB) -> Result<(), Error> {
+  pub async fn push_fmt(&mut self, format_id: u8, ctx: &Context, guild_id: GI, db: &DB, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
     // Ensure a free team VC pair exists (creates one if needed)
     self.ensure_team_vcs(ctx, guild_id, db).await?;
 
-    // Now find the free pair
-    let occupied_teams: Vec<TeamChannel> = self.all_occupied_teams();
+    // Now find the free pair (recently freed pairs are available for reuse)
+    let occupied_teams: Vec<TeamChannel> = self.actively_occupied_teams();
 
     let team_pair = self.channels.teams.iter().find(|t| !occupied_teams.iter().any(|o| o.red_vc == t.red_vc && o.blu_vc == t.blu_vc)).cloned()
       .ok_or_else(|| anyhow!("No free team VC pair available after ensure"))?;
@@ -1027,24 +1027,39 @@ impl Category {
 
     // Add overflow players to the new idle session
     if !overflow_players.is_empty() {
+      let overflow_count = overflow_players.len();
       let idle_session = self.get_queue_fmt(format_id).await?;
       for player in overflow_players {
         idle_session.pool.push(player);
       }
+      info!("Moved {} overflow players to new idle session in format {}", overflow_count, format_id);
     }
 
     // Clear recently freed teams since we're now using team channels
     self.recently_freed_teams.clear();
 
+    // Clean up excess free team VCs (e.g., higher-numbered sets when a lower one is now in use)
+    self.cleanup_team_vcs(ctx, true).await;
+
+    // Check if the new idle session already has enough players for another game (concurrent games)
+    if self.is_quota_fmt(format_id) {
+      info!("Overflow players met quota for format {} - firing next game", format_id);
+      self.hot_fmt(format_id, ctx, Some(guild_id), Some(db), manager, false).await?;
+    }
+
     self.queue_dash_update(ctx, guild_id).await;
     Ok(())
   }
 
-  /// Collect all team channel pairs occupied by active sessions across all formats
-  pub fn all_occupied_teams(&self) -> Vec<TeamChannel> {
-    let mut occupied: Vec<TeamChannel> = self.formats.iter().flat_map(|sg| sg.sessions.iter()).filter(|s| s.is_active()).filter_map(|s| s.team_channels.clone()).collect();
+  /// Collect team channel pairs occupied by active sessions (excludes recently freed)
+  /// Use this when looking for a free pair to reuse
+  pub fn actively_occupied_teams(&self) -> Vec<TeamChannel> {
+    self.formats.iter().flat_map(|sg| sg.sessions.iter()).filter(|s| s.is_active()).filter_map(|s| s.team_channels.clone()).collect()
+  }
 
-    // Also include recently freed teams to prevent immediate recreation
+  /// Collect all occupied teams including recently freed (for cleanup - prevents deleting reserved pairs)
+  pub fn all_occupied_teams(&self) -> Vec<TeamChannel> {
+    let mut occupied = self.actively_occupied_teams();
     occupied.extend(self.recently_freed_teams.clone());
     occupied
   }
@@ -1055,8 +1070,8 @@ impl Category {
   pub async fn ensure_team_vcs(&mut self, ctx: &Context, guild_id: GI, db: &crate::Database) -> Result<Option<TeamChannel>, Error> {
     use serenity::all::{ChannelType, CreateChannel};
 
-    // Check which team pairs are currently occupied by active sessions across all formats
-    let occupied: Vec<TeamChannel> = self.all_occupied_teams();
+    // Check which team pairs are currently in active use (recently freed pairs are available for reuse)
+    let occupied: Vec<TeamChannel> = self.actively_occupied_teams();
 
     // Check if there's already a free pair
     let has_free = self.channels.teams.iter().any(|t| !occupied.iter().any(|o| o.red_vc == t.red_vc && o.blu_vc == t.blu_vc));
@@ -1091,7 +1106,9 @@ impl Category {
     };
     // Update stored category if it was wrong
     if category != self.channels.category {
-      info!("Resolved team VC category to {} (was {})", category, self.channels.category);
+      let new_name = ctx.cache.channel(category).map(|c| c.name.clone()).unwrap_or_else(|| category.to_string());
+      let old_name = ctx.cache.channel(self.channels.category).map(|c| c.name.clone()).unwrap_or_else(|| self.channels.category.to_string());
+      info!("Resolved team VC category to {} (was {})", new_name, old_name);
       self.channels.category = category;
     }
 
@@ -1136,7 +1153,10 @@ impl Category {
     // Partition into occupied and free
     let (keep, mut removable): (Vec<_>, Vec<_>) = self.channels.teams.iter().cloned().partition(|t| occupied.iter().any(|o| o.red_vc == t.red_vc && o.blu_vc == t.blu_vc));
 
-    // If keep_minimum and not forced, preserve one free pair
+    // Sort removable by set_index descending so higher-numbered sets are deleted first
+    removable.sort_by(|a, b| b.set_index.cmp(&a.set_index));
+
+    // If keep_minimum and not forced, preserve one free pair (the lowest-numbered one survives)
     let min_free = if !force && self.team_vc_settings.keep_minimum && keep.is_empty() { 1 } else { 0 };
     let to_delete_count = removable.len().saturating_sub(min_free);
     let to_delete: Vec<TeamChannel> = removable.drain(..to_delete_count).collect();
@@ -1148,29 +1168,29 @@ impl Category {
       let http = ctx.http.clone();
       let red_vc = tc.red_vc;
       let blu_vc = tc.blu_vc;
-      info!("Deleting unused team VCs:");
+      let set_idx = tc.set_index;
+      let red_name = ctx.cache.channel(red_vc).map(|c| c.name.clone()).unwrap_or_else(|| red_vc.to_string());
+      let blu_name = ctx.cache.channel(blu_vc).map(|c| c.name.clone()).unwrap_or_else(|| blu_vc.to_string());
       vec![
         tokio::spawn(async move { 
-          info!("RED: {red_vc}");
-          (red_vc, red_vc.delete(&http).await, "RED") 
+          (red_vc, red_vc.delete(&http).await, "RED", red_name, set_idx) 
         }),
         tokio::spawn({
           let http = ctx.http.clone();
           async move { 
-            info!("BLU: {blu_vc}");
-            (blu_vc, blu_vc.delete(&http).await, "BLU") 
+            (blu_vc, blu_vc.delete(&http).await, "BLU", blu_name, set_idx) 
           }
         }),
       ]
     }).collect();
 
     for task in delete_tasks {
-      if let Ok((vc_id, result, team)) = task.await {
+      if let Ok((_, result, team, name, set_idx)) = task.await {
         if let Err(e) = result {
           let hint = if e.to_string().contains("Missing Access") { "(Missing \"Manage Channels\" permissions)" } else { "" };
-          warn!("Failed to delete {} VC {}:{}{}", team, vc_id, e, hint);
+          warn!("Failed to delete {} VC #{} ({}): {}{}", team, set_idx, name, e, hint);
         } else {
-          info!("Deleted {} team VC: {}", team, vc_id);
+          info!("Deleted {} team VC #{} ({})", team, set_idx, name);
         }
       }
     }
@@ -1323,18 +1343,24 @@ impl Category {
     users_to_move.extend(spectators_to_move.iter().cloned());
     let player_ids: std::collections::HashSet<_> = players_to_requeue.iter().map(|p| p.user_id).collect();
 
+    // Build tag lookup for readable log messages
+    let tag_map: std::collections::HashMap<UI, String> = players_to_requeue.iter()
+      .map(|p| (p.user_id, p.tag.clone()))
+      .collect();
+
     // Move all users to queue VC in parallel
     let move_tasks: Vec<_> = users_to_move.into_iter().map(|user_id| {
       let http = ctx.http.clone();
       let gid = guild_id;
       let qvc = queue_vc;
       let cache = ctx.cache.clone();
+      let tag = tag_map.get(&user_id).cloned().unwrap_or_else(|| user_id.to_string());
       tokio::spawn(async move {
         // Check if already in queue VC
         if let Some(guild) = cache.guild(gid) {
           if let Some(vs) = guild.voice_states.get(&user_id) {
             if vs.channel_id == Some(qvc) {
-              info!("User {} already in queue VC", user_id);
+              info!("User {} already in queue VC", tag);
               return (user_id, true);
             }
           }
@@ -1342,11 +1368,11 @@ impl Category {
         
         match http.edit_member(gid, user_id, &EditMember::new().voice_channel(qvc), Some("Moving user back to queue VC after game end")).await {
           Ok(_) => {
-            info!("Moved user {} back to queue VC after game end", user_id);
+            info!("Moved user {} back to queue VC after game end", tag);
             (user_id, true)
           },
           Err(e) => {
-            warn!("Failed to move user {} back to queue VC: {}", user_id, e);
+            warn!("Failed to move user {} back to queue VC: {}", tag, e);
             (user_id, false)
           }
         }
@@ -1531,6 +1557,10 @@ impl Category {
 
   /// Select players for queue with fatkid immunity consideration
   /// Returns (selected_players, fatkidded_players)
+  ///
+  /// Selection priority:
+  /// 1. Immune players sorted by immunity_level descending (most-fatkidded get priority)
+  /// 2. Non-immune players sorted by immunity_level ascending (least-fatkidded get priority)
   async fn select_players_with_fatkid_immunity(
       players: Vec<Player>,
       available_slots: usize,
@@ -1546,43 +1576,51 @@ impl Category {
           players_with_immunity.push((player.clone(), info));
       }
 
-      // Count immune players
-      let immune_count = players_with_immunity.iter().filter(|(_, info)| info.has_immunity).count();
+      // Log immunity status for each player
+      for (player, info) in &players_with_immunity {
+          debug!("  Fatkid immunity: {} immune={} level={}", player.tag, info.has_immunity, info.immunity_level);
+      }
 
-      let selected_players = if immune_count >= available_slots {
-          // Take first N immune players (FIFO among immune)
-          players_with_immunity
-              .iter()
-              .filter(|(_, info)| info.has_immunity)
-              .take(available_slots)
-              .map(|(p, _)| p.clone())
-              .collect::<Vec<_>>()
-      } else if immune_count == players.len() {
-          // Everyone has immunity, take first N (FIFO)
-          players.iter().take(available_slots).cloned().collect()
-      } else {
-          // Mix: all immune players + fill remaining with non-immune (lowest immunity level first)
-          let mut selected: Vec<Player> = players_with_immunity
-              .iter()
-              .filter(|(_, info)| info.has_immunity)
-              .map(|(p, _)| p.clone())
-              .collect();
+      // Separate into immune and non-immune groups
+      let mut immune: Vec<(&Player, u32)> = players_with_immunity
+          .iter()
+          .filter(|(_, info)| info.has_immunity)
+          .map(|(p, info)| (p, info.immunity_level))
+          .collect();
 
-          let remaining_slots = available_slots.saturating_sub(selected.len());
-          
-          // Sort non-immune by immunity level (lower = less recently fatkidded)
-          let mut non_immune: Vec<(Player, u32)> = players_with_immunity
-              .iter()
-              .filter(|(_, info)| !info.has_immunity)
-              .map(|(p, info)| (p.clone(), info.immunity_level))
-              .collect();
-          non_immune.sort_by_key(|(_, level)| *level);
+      let mut non_immune: Vec<(&Player, u32)> = players_with_immunity
+          .iter()
+          .filter(|(_, info)| !info.has_immunity)
+          .map(|(p, info)| (p, info.immunity_level))
+          .collect();
 
-          selected.extend(non_immune.iter().take(remaining_slots).map(|(p, _)| p.clone()));
-          selected
-      };
+      // Sort immune by level descending: players fatkidded most get priority for slots
+      immune.sort_by(|a, b| b.1.cmp(&a.1));
+      // Sort non-immune by level ascending: least-fatkidded get priority for remaining slots
+      non_immune.sort_by_key(|(_, level)| *level);
 
-      // Determine fatkidded players
+      // Fill slots: immune first, then non-immune
+      let mut selected_players: Vec<Player> = Vec::with_capacity(available_slots);
+
+      for (player, _) in &immune {
+          if selected_players.len() >= available_slots {
+              break;
+          }
+          selected_players.push((*player).clone());
+      }
+
+      for (player, _) in &non_immune {
+          if selected_players.len() >= available_slots {
+              break;
+          }
+          selected_players.push((*player).clone());
+      }
+
+      info!("  Fatkid selection: {}/{} immune, {} slots → {} selected, {} fatkidded",
+          immune.len(), players_with_immunity.len(), available_slots,
+          selected_players.len(), players_with_immunity.len() - selected_players.len());
+
+      // Determine fatkidded players (preserve original order)
       let selected_ids: std::collections::HashSet<_> = selected_players.iter().map(|p| p.user_id).collect();
       let fatkidded_players: Vec<Player> = players
           .into_iter()

@@ -309,12 +309,13 @@ impl EventHandler for Handler {
         }
       }
 
-      if qguild.has_categories() {
+      let has_categories = qguild.has_categories();
+      manager.qguilds.push(qguild);
+
+      if has_categories {
         self.check_existing_voice_users(&ctx, &guild, &mut manager).await;
         self.create_dashboard_from_manager(&ctx, &guild, &mut manager).await;
       }
-
-      manager.qguilds.push(qguild);
     }
   }
 
@@ -620,7 +621,7 @@ impl EventHandler for Handler {
         // Handle runner menu actions
         if itx.data.custom_id.starts_with("runner_action_") {
           let action = itx.data.custom_id.strip_prefix("runner_action_").unwrap_or("");
-          info!("Runner action '{}' triggered by user {}", action, itx.user.id);
+          info!("Runner action '{}' triggered by {}", action, itx.user.tag());
           let result = crate::handlers::runner_menu::handle_runner_action(&ctx, itx, &self.db, &self.manager, action).await;
           if let Err(e) = result {
             error!("Error handling runner action '{}': {e}", action);

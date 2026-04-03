@@ -1086,7 +1086,7 @@ impl Category {
     cc.reply_update_message().await?;
 
     // Move players to team channels (Hot → Push → Live)
-    match self.push_fmt(fmt_id, cc.ctx, cc.component.guild_id.unwrap(), &cc.db).await {
+    match self.push_fmt(fmt_id, cc.ctx, cc.component.guild_id.unwrap(), &cc.db, Some(cc.manager.clone())).await {
       Ok(_) => {
         info!("Players moved to team channels and game is now live");
         // Update all dashboards to reflect in-game status for match players
