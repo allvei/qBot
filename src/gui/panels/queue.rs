@@ -1,7 +1,8 @@
 //! Queue/Game view panel
 
 use crate::gui::state::GuiSharedState;
-use egui::{self, ScrollArea};
+use egui::{self, FontFamily, RichText, ScrollArea};
+use egui_phosphor::regular;
 
 pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     // Read latest manager snapshot
@@ -44,26 +45,26 @@ pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
                                                         ui.label("No sessions initiated");
                                                     } else {
                                                         for (i, session) in format.sessions.iter().enumerate() {
-                                                            let status_str = match session.status {
-                                                                crate::models::SessionStatus::Idle => "Idle",
-                                                                crate::models::SessionStatus::Hot => "Hot",
-                                                                crate::models::SessionStatus::Push => "Push",
-                                                                crate::models::SessionStatus::Live => "Live",
-                                                                crate::models::SessionStatus::Pull => "Pull",
-                                                            };
-                                                            ui.label(format!("Session {}: {} - {} players", i, status_str, session.pool.len()));
+                                                            ui.horizontal(|ui| {
+                                                                ui.label(session.status.icon());
+                                                                ui.label(format!("Session {} - {}", i, session.pool.len()));
+                                                                ui.label(RichText::new(regular::USER).family(FontFamily::Name("phosphor".into())));
+                                                            });
 
                                                             if !session.pool.is_empty() {
-                                                                ui.indent("players", |ui: &mut egui::Ui| {
-                                                                    for player in &session.pool {
-                                                                        let vc_status = if player.in_queue_vc { "In VC" } else { "" };
-                                                                        let team_str = match player.team {
-                                                                            Some(crate::models::Team::Red) => "RED",
-                                                                            Some(crate::models::Team::Blu) => "BLU",
+                                                                ui.indent(format!("players_{}", i), |ui: &mut egui::Ui| {
+                                                                    for session_player in &session.pool {
+
+                                                                        let team_str = match session_player.team {
+                                                                            Some(crate::models::Team::Red) => "RED ",
+                                                                            Some(crate::models::Team::Blu) => "BLU ",
                                                                             Some(crate::models::Team::Unassigned) => "",
                                                                             None => "",
                                                                         };
-                                                                        ui.label(format!("  {} {} {} - ELO: {}", vc_status, team_str, player.player.tag, player.player.elo));
+                                                                        ui.horizontal(|ui| {
+                                                                            ui.label(session_player.vc_icon());
+                                                                            ui.label(format!("{}{}‹{}›", team_str, session_player.player.tag, session_player.player.elo));
+                                                                        });
                                                                     }
                                                                 });
                                                             }
@@ -80,7 +81,7 @@ pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
                         response.header_response.context_menu(|ui| {
                             let guild_id_str = format!("{}", guild_id);
                             if ui.button("Copy Guild ID").clicked() {
-                                ui.output_mut(|o| o.copied_text = guild_id_str.clone());
+                                ui.ctx().copy_text(guild_id_str.clone());
                                 ui.close_menu();
                             }
                         });
