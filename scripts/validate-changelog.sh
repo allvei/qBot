@@ -13,7 +13,7 @@ YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
 NC='\033[0m' # No Color
 
-echo "🔍 Checking changelog for technical jargon..."
+echo "Checking changelog for technical jargon..."
 
 # Forbidden terms and their user-friendly alternatives
 declare -A forbidden_terms=(
@@ -44,7 +44,7 @@ declare -A forbidden_terms=(
 # Track if any issues were found
 issues_found=false
 
-echo -e "\n📋 Checking for forbidden technical terms..."
+echo -e "\nChecking for forbidden technical terms..."
 
 # Check each forbidden term (case insensitive)
 for term in "${!forbidden_terms[@]}"; do
@@ -60,7 +60,7 @@ for term in "${!forbidden_terms[@]}"; do
 done
 
 # Check for other common technical patterns
-echo -e "\n🔧 Checking for other technical patterns..."
+echo -e "\nChecking for other technical patterns..."
 
 # Check for programming-related terms
 programming_terms=("class" "struct" "enum" "interface" "abstract" "inherit" "extend" "override")
@@ -96,7 +96,7 @@ fi
 if [ "$issues_found" = true ]; then
     echo -e "${RED}❌ Changelog validation failed!${NC}"
     echo -e "${YELLOW}Please review and fix the issues above before committing.${NC}"
-    echo -e "\n💡 Tip: Use the changelog workflow at /.windsurf/workflows/changelog.md for guidance"
+    echo -e "\nTip: Use the changelog workflow at /.windsurf/workflows/changelog.md for guidance"
     exit 1
 else
     echo -e "${GREEN}✅ Changelog validation passed!${NC}"

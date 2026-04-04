@@ -27,42 +27,43 @@ pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
                     });
                 } else {
                     for guild in &manager.qguilds {
-                        ui.collapsing(format!("📁 {} (ID: {})", guild.name, guild.id.get()), |ui| {
+                        let guild_id = guild.id;
+                        let response = ui.collapsing(format!("{}", guild.name), |ui| {
                             if guild.categories.is_empty() {
-                                ui.label("  ⚠️ No categories configured - run `/setup` in Discord");
+                                ui.label("No categories configured - run `/setup` in Discord");
                             } else {
                                 for category in &guild.categories {
                                     let cat_name = category.name.as_deref().unwrap_or("Unnamed");
-                                    ui.collapsing(format!("  📂 Category {} - {}", category.id, cat_name), |ui| {
+                                    ui.collapsing(format!("{}", cat_name), |ui| {
                                         if category.formats.is_empty() {
-                                            ui.label("    ⚠️ No formats configured");
+                                            ui.label("No formats configured");
                                         } else {
                                             for format in &category.formats {
-                                                ui.collapsing(format!("    🎮 Format {}: {} (quota: {})", format.id, format.name, format.quota), |ui| {
+                                                ui.collapsing(format!("{} (quota: {})", format.name, format.quota), |ui| {
                                                     if format.sessions.is_empty() {
-                                                        ui.label("      💤 No active sessions");
+                                                        ui.label("No sessions initiated");
                                                     } else {
                                                         for (i, session) in format.sessions.iter().enumerate() {
                                                             let status_str = match session.status {
-                                                                crate::models::SessionStatus::Idle => "💤 Idle",
-                                                                crate::models::SessionStatus::Hot => "🔥 Hot",
-                                                                crate::models::SessionStatus::Push => "➡️ Push",
-                                                                crate::models::SessionStatus::Live => "▶️ Live",
-                                                                crate::models::SessionStatus::Pull => "⬅️ Pull",
+                                                                crate::models::SessionStatus::Idle => "Idle",
+                                                                crate::models::SessionStatus::Hot => "Hot",
+                                                                crate::models::SessionStatus::Push => "Push",
+                                                                crate::models::SessionStatus::Live => "Live",
+                                                                crate::models::SessionStatus::Pull => "Pull",
                                                             };
-                                                            ui.label(format!("      Session {}: {} - {} players", i, status_str, session.pool.len()));
+                                                            ui.label(format!("Session {}: {} - {} players", i, status_str, session.pool.len()));
 
                                                             if !session.pool.is_empty() {
                                                                 ui.indent("players", |ui: &mut egui::Ui| {
                                                                     for player in &session.pool {
-                                                                        let vc_status = if player.in_queue_vc { "🎤" } else { "🔇" };
+                                                                        let vc_status = if player.in_queue_vc { "In VC" } else { "" };
                                                                         let team_str = match player.team {
-                                                                            Some(crate::models::Team::Red) => "🔴",
-                                                                            Some(crate::models::Team::Blu) => "🔵",
-                                                                            Some(crate::models::Team::Unassigned) => "⚪",
-                                                                            None => "⚪",
+                                                                            Some(crate::models::Team::Red) => "RED",
+                                                                            Some(crate::models::Team::Blu) => "BLU",
+                                                                            Some(crate::models::Team::Unassigned) => "",
+                                                                            None => "",
                                                                         };
-                                                                        ui.label(format!("        {} {} {} - ELO: {}", vc_status, team_str, player.player.tag, player.player.elo));
+                                                                        ui.label(format!("  {} {} {} - ELO: {}", vc_status, team_str, player.player.tag, player.player.elo));
                                                                     }
                                                                 });
                                                             }
@@ -73,6 +74,14 @@ pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
                                         }
                                     });
                                 }
+                            }
+                        });
+
+                        response.header_response.context_menu(|ui| {
+                            let guild_id_str = format!("{}", guild_id);
+                            if ui.button("Copy Guild ID").clicked() {
+                                ui.output_mut(|o| o.copied_text = guild_id_str.clone());
+                                ui.close_menu();
                             }
                         });
                     }

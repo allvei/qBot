@@ -11,7 +11,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     ScrollArea::vertical()
         .max_height(600.0)
         .show(ui, |ui| {
-            ui.collapsing("📋 Queue Management", |ui| {
+            ui.collapsing("Queue Management", |ui| {
                 ui.label("Manage queues and sessions:");
                 ui.separator();
                 ui.label("• Force-end game - End a live game immediately");
@@ -31,7 +31,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
                 ui.label("  - Result feedback");
             });
 
-            ui.collapsing("🔧 Recovery from Bugs", |ui| {
+            ui.collapsing("Recovery from Bugs", |ui| {
                 ui.label("Recover from stuck states:");
                 ui.separator();
                 ui.label("• Clear all team VCs - Force delete all team channels");
@@ -45,7 +45,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
                 ui.label("(TODO: Implement command UI)");
             });
 
-            ui.collapsing("🎤 Voice Channel Management", |ui| {
+            ui.collapsing("Voice Channel Management", |ui| {
                 ui.label("Manage voice channels:");
                 ui.separator();
                 ui.label("• Move player to VC - Force move to specific channel");
@@ -55,7 +55,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
                 ui.label("(TODO: Implement command UI)");
             });
 
-            ui.collapsing("🔍 Debugging/Development", |ui| {
+            ui.collapsing("Debugging/Development", |ui| {
                 ui.label("Debug and development tools:");
                 ui.separator();
                 ui.label("• Dump state to log - Export full state");
@@ -66,7 +66,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
                 ui.label("(TODO: Implement command UI)");
             });
 
-            ui.collapsing("🧪 Testing/Load Testing", |ui| {
+            ui.collapsing("Testing/Load Testing", |ui| {
                 ui.label("Testing and load simulation:");
                 ui.separator();
                 ui.label("• Add dummy players - Add test accounts");
@@ -81,6 +81,6 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
         });
 
     ui.separator();
-    ui.label("💡 Tip: Commands will execute on the bot thread and results will appear in the Logs tab");
+    ui.label("Tip: Commands will execute on the bot thread and results will appear in the Logs tab");
 }
 

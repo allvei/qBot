@@ -990,7 +990,7 @@ impl DatabaseMigrations {
 
     for required_col in required_columns {
       if !existing_cols.contains(&required_col.to_string()) {
-        return Err(anyhow::anyhow!("🔴 {} in {}", required_col, table_name));
+        return Err(anyhow::anyhow!("{} in {}", required_col, table_name));
       }
     }
     Ok(())

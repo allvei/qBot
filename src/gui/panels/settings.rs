@@ -8,21 +8,21 @@ pub fn show_settings_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     ui.separator();
 
     ui.collapsing("Connection Status", |ui| {
-        ui.label("📊 Bot Status: Running");
-        ui.label("🔌 Discord Gateway: Connected");
-        ui.label("💾 Database: Connected");
+        ui.label("Bot Status: Running");
+        ui.label("Discord Gateway: Connected");
+        ui.label("Database: Connected");
     });
 
     ui.collapsing("GUI Settings", |ui| {
-        ui.label("📋 Log Buffer Size: 1000 lines");
-        ui.label("🔄 Snapshot Interval: 100ms");
-        ui.label("🎨 Theme: System Default");
+        ui.label("Log Buffer Size: 1000 lines");
+        ui.label("Snapshot Interval: 100ms");
+        ui.label("Theme: System Default");
     });
 
     ui.separator();
 
     ui.collapsing("Actions", |ui| {
-        if ui.button("🔄 Refresh Data").clicked() {
+        if ui.button("Refresh Data").clicked() {
             // TODO: Trigger manual snapshot refresh
         }
 

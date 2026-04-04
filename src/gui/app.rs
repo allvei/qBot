@@ -44,12 +44,12 @@ impl eframe::App for MyApp {
 
                 if let Some(manager) = manager_opt {
                     if manager.qguilds.is_empty() {
-                        ui.label("🔴 No guilds connected");
+                        ui.label("No guilds connected");
                     } else {
-                        ui.label(format!("🟢 Connected to {} guild(s)", manager.qguilds.len()));
+                        ui.label(format!("Connected to {} guild(s)", manager.qguilds.len()));
                     }
                 } else {
-                    ui.label("🟡 Waiting for data...");
+                    ui.label("Waiting for data...");
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -69,10 +69,10 @@ impl eframe::App for MyApp {
         // Tab navigation
         egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.selected_tab, PanelTab::Logs, "📋 Logs");
-                ui.selectable_value(&mut self.selected_tab, PanelTab::Queue, "🎮 Queue / Games");
-                ui.selectable_value(&mut self.selected_tab, PanelTab::Admin, "⚙️ Admin");
-                ui.selectable_value(&mut self.selected_tab, PanelTab::Settings, "🔧 Settings");
+                ui.selectable_value(&mut self.selected_tab, PanelTab::Logs, "Logs");
+                ui.selectable_value(&mut self.selected_tab, PanelTab::Queue, "Queues");
+                ui.selectable_value(&mut self.selected_tab, PanelTab::Admin, "Admin");
+                ui.selectable_value(&mut self.selected_tab, PanelTab::Settings, "Settings");
             });
         });
 
