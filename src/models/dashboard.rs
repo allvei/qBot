@@ -291,12 +291,13 @@ impl Category {
         row.push(CB::new(format!("leave_queue{fmt_suffix}")).label("Leave").style(BS::Danger));
         row.push(CB::new(format!("change_expiry{fmt_suffix}")).label("Edit timeout").style(BS::Secondary));
       }
+      if is_live {
+        let end_label = if self.require_score_report { "End & log score" } else { "End" };
+        row.push(CB::new(format!("end_match{fmt_suffix}")).label(end_label).style(BS::Danger));
+      }
       if is_hot {
         row.push(CB::new(format!("start_match{fmt_suffix}")).label("Start").style(BS::Success));
         row.push(CB::new(format!("shuffle_teams{fmt_suffix}")).label("Shuffle").style(BS::Secondary));
-      } else if is_live {
-        let end_label = if self.require_score_report { "End & log score" } else { "End" };
-        row.push(CB::new(format!("end_match{fmt_suffix}")).label(end_label).style(BS::Danger));
       }
       buttons.push(CAR::Buttons(row));
     }
@@ -421,134 +422,101 @@ impl Category {
     let fmt_count = self.formats.len();
     for (fmt_i, sg) in self.formats.iter().enumerate() {
       let quota = sg.quota as usize;
-      let inactives: Vec<_> = sg.sessions.iter().filter(|s| !s.is_active()).collect();
-      let actives: Vec<_> = sg.sessions.iter().filter(|s| s.is_active()).collect();
-
       let fmt_label = if has_multiple { format!("{} queue", sg.name) } else { "Queue".to_string() };
 
-      // --- Active games (Hot/Push/Live/Pull) ---
-      if !actives.is_empty() {
-        // Get timestamp from first active session
-        let started_time = actives
-          .first()
-          .and_then(|session| session.started_at)
+      // Categorize sessions
+      let live_sessions: Vec<_> = sg.sessions.iter().filter(|s| s.is_active()).collect();
+      let hot_sessions: Vec<_> = sg.sessions.iter().filter(|s| s.is_hot()).collect();
+      let idle_sessions: Vec<_> = sg.sessions.iter().filter(|s| s.is_idle()).collect();
+      let has_concurrent = live_sessions.len() + hot_sessions.len() > 1;
+
+      // --- Live games (Push/Live/Pull) ---
+      for (game_i, session) in live_sessions.iter().enumerate() {
+        let started_time = session.started_at
           .and_then(|started_at| crate::timestamp_from_system_time(&started_at, crate::Style::Relative))
           .unwrap_or_else(|| "recently".to_string());
 
-        // Determine status for field title
-        let status_text = match actives.first().unwrap().status {
-          SessionStatus::Hot => "Ready to start",
-          SessionStatus::Push => "Moving players to team channels...",
-          SessionStatus::Live => &format!("Started {}", started_time),
-          SessionStatus::Pull => "Moving players back to queue...",
-          _ => "",
+        let status_text = match session.status {
+          SessionStatus::Push => "Moving players to team channels...".to_string(),
+          SessionStatus::Live => format!("Started {}", started_time),
+          SessionStatus::Pull => "Moving players back to queue...".to_string(),
+          _ => String::new(),
         };
 
-        let mut match_info = String::new();
-        for session in &actives {
-          if session.is_hot() {
-            let players_never_joined: Vec<_> = session.pool.iter().take(quota).filter(|p| !p.in_queue_vc).collect();
+        let game_label = if has_concurrent {
+          format!("Game {} - {}", game_i + 1, status_text)
+        } else {
+          format!("{fmt_label} - {}", status_text)
+        };
 
-            if !players_never_joined.is_empty() {
-              // Use match_ended_at if available (post-game scenario), otherwise ready_at
-              let base_time = session.match_ended_at.or(session.ready_at);
-              if let Some(base_time) = base_time {
-                // Use appropriate timeout based on scenario
-                let confirm_time_deadline = if session.match_ended_at.is_some() { post_game_confirm_time } else { confirm_time_seconds };
+        embed = embed.field(&game_label, "", false);
 
-                if let Ok(d) = base_time.duration_since(SystemTime::UNIX_EPOCH) {
-                  let deadline = d.as_secs() + confirm_time_deadline;
-                  match_info.push_str(&format!("Join deadline: {}\n", crate::timestamp_from_unix(deadline as i64, crate::Style::Relative)));
-                  match_info.push_str("Missing players will be removed.\n\n");
-                }
-              }
-              match_info.push_str("**Missing players:**\n");
-              for player in &players_never_joined {
-                match_info.push_str(&format!("  • ‹**{}**› <@{}>\n", player.player.elo, player.player.user_id));
-              }
-            } else {
-              match_info.push_str("All players ready");
+        if session.pool.len() >= quota {
+          let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
+          embed = TeamDisplay::new(team_red, team_blu).add_to_embed(embed, db, guild_id).await;
+        }
+      }
+
+      // --- Hot sessions (Ready to start) ---
+      for session in &hot_sessions {
+        let hot_label = if has_concurrent {
+          format!("Next game - Ready to start")
+        } else {
+          format!("{fmt_label} - Ready to start")
+        };
+
+        let mut hot_info = String::new();
+        let players_never_joined: Vec<_> = session.pool.iter().take(quota).filter(|p| !p.in_queue_vc).collect();
+
+        if !players_never_joined.is_empty() {
+          let base_time = session.match_ended_at.or(session.ready_at);
+          if let Some(base_time) = base_time {
+            let confirm_time_deadline = if session.match_ended_at.is_some() { post_game_confirm_time } else { confirm_time_seconds };
+            if let Ok(d) = base_time.duration_since(SystemTime::UNIX_EPOCH) {
+              let deadline = d.as_secs() + confirm_time_deadline;
+              hot_info.push_str(&format!("Join deadline: {}\n", crate::timestamp_from_unix(deadline as i64, crate::Style::Relative)));
+              hot_info.push_str("Missing players will be removed.\n\n");
             }
           }
-          // Note: Push/Live/Pull status is now in the field title, no need to add here
-        }
-
-        embed = embed.field(format!("{fmt_label} - {}", status_text), match_info, false);
-
-        // Team fields for active sessions
-        for session in &actives {
-          if session.pool.len() >= quota {
-            let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
-            embed = TeamDisplay::new(team_red, team_blu).add_to_embed(embed, db, guild_id).await;
+          hot_info.push_str("**Missing players:**\n");
+          for player in &players_never_joined {
+            hot_info.push_str(&format!("  • ‹**{}**› <@{}>\n", player.player.elo, player.player.user_id));
           }
+        } else if !session.pool.is_empty() {
+          hot_info.push_str("All players ready");
         }
 
-        // Show overflow players for idle session (when there's an active game)
-        if let Some(next_session) = inactives.first() {
-          if !next_session.pool.is_empty() {
-            embed = format_team_display(embed, &next_session.pool, "Waiting for next game").await;
+        embed = embed.field(&hot_label, hot_info, false);
+
+        if session.pool.len() >= quota {
+          let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
+          embed = TeamDisplay::new(team_red, team_blu).add_to_embed(embed, db, guild_id).await;
+
+          // Overflow players in the hot session
+          if session.pool.len() > quota {
+            let overflow_count = session.pool.len() - quota;
+            let fatkid: Vec<_> = session.pool.iter().skip(quota).map(|p| format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id)).collect();
+            embed = embed.field(format!("Waiting for next game ({overflow_count}/{quota})"), fatkid.join("\n"), false);
           }
         }
       }
-      // --- Idle/Hot session ---
-      else if let Some(current_session) = inactives.first() {
-        let queue_players = current_session.pool.len();
 
-        if current_session.is_hot() {
-          // Validate Hot session has correct player count
-          if queue_players < quota {
-            warn!(
-              "Dashboard validation: Hot session has {} players but quota is {}. This indicates a bug - session should have been transitioned back to Idle.",
-              queue_players, quota
-            );
-          }
-          
-          // Hot session - show missing players and teams
-          let mut hot_info = String::new();
-          let players_never_joined: Vec<_> = current_session.pool.iter().take(quota).filter(|p| !p.in_queue_vc).collect();
+      // --- Idle session (queue for next game) ---
+      if let Some(idle_session) = idle_sessions.first() {
+        let queue_players = idle_session.pool.len();
 
-          if !players_never_joined.is_empty() {
-            // Use match_ended_at if available (post-game scenario), otherwise ready_at
-            let base_time = current_session.match_ended_at.or(current_session.ready_at);
-            if let Some(base_time) = base_time {
-              // Use appropriate timeout based on scenario
-              let confirm_time_deadline = if current_session.match_ended_at.is_some() { post_game_confirm_time } else { confirm_time_seconds };
-
-              if let Ok(d) = base_time.duration_since(SystemTime::UNIX_EPOCH) {
-                let deadline = d.as_secs() + confirm_time_deadline;
-                hot_info.push_str(&format!("Join deadline: {}\n", crate::timestamp_from_unix(deadline as i64, crate::Style::Relative)));
-                hot_info.push_str("Missing players will be removed.\n\n");
-              }
-            }
-            hot_info.push_str("**Missing players:**\n");
-            for player in &players_never_joined {
-              hot_info.push_str(&format!("  • ‹**{}**› <@{}>\n", player.player.elo, player.player.user_id));
-            }
-          }
-          embed = embed.field(format!("{fmt_label} - Ready to start"), hot_info, false);
-
-          // Team fields
-          if queue_players >= quota {
-            let (team_red, team_blu) = get_sorted_teams(&current_session.pool, quota);
-            embed = TeamDisplay::new(team_red, team_blu).add_to_embed(embed, db, guild_id).await;
-
-            // Overflow players
-            if queue_players > quota {
-              let overflow_count = queue_players - quota;
-              let fatkid: Vec<_> = current_session.pool.iter().skip(quota).map(|p| format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id)).collect();
-              embed = embed.field(format!("Waiting for next game ({overflow_count}/{quota})"), fatkid.join("\n"), false);
-            }
-          }
-        } else if queue_players == 0 {
-          // Empty queue
+        if queue_players > 0 && (has_concurrent || !live_sessions.is_empty()) {
+          // There are active/hot games — show idle players as waiting for next game
+          embed = format_team_display(embed, &idle_session.pool, "Waiting for next game").await;
+        } else if queue_players == 0 && live_sessions.is_empty() && hot_sessions.is_empty() {
+          // No games at all — show empty queue
           embed = add_waiting_field(embed, &fmt_label, 0, quota, "*Join to get started!*");
-        } else {
-          // Idle with players - show player list and timers
-          // Queue header as a field so it stays categoryed with player fields
+        } else if queue_players > 0 && live_sessions.is_empty() && hot_sessions.is_empty() {
+          // Only idle with players — show full player list with timers
           let mut players_field = String::new();
           let mut timers_field = String::new();
 
-          for player in current_session.pool.iter() {
+          for player in idle_session.pool.iter() {
             let elo_str = format!("‹**{}**› ", player.player.elo);
             players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
 
@@ -576,11 +544,10 @@ impl Category {
             }
           }
 
-          // Use format name in the field title
           embed = embed.field(format!("{fmt_label} - Idle ({queue_players}/{quota})"), players_field, true);
           embed = embed.field("Status", timers_field, true);
         }
-      } else {
+      } else if live_sessions.is_empty() && hot_sessions.is_empty() {
         // No sessions at all
         embed = add_waiting_field(embed, &fmt_label, 0, quota, "*Empty, join to get started!*");
       }
@@ -1105,7 +1072,10 @@ impl Category {
     use serenity::all::CreateMessage;
     use std::time::SystemTime;
 
-    let active_session = self.format(fmt_id).and_then(|sg| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live));
+    let active_session = self.format(fmt_id).and_then(|sg| {
+      sg.sessions.iter().find(|s| s.status == SessionStatus::Live)
+        .or_else(|| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot))
+    });
 
     if active_session.is_none() {
       cc.reply_ephemeral("No active match to end.").await?;

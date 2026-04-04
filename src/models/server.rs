@@ -6,7 +6,6 @@
 use std::time::{Instant, SystemTime};
 use std::{sync::Arc, time::Duration};
 
-use crate::cinfo;
 use crate::{
   guild_name, log_prefix_format,
   models::constants::{DEFAULT_ACTIVE_ELO, MAX_QUEUE_EXPIRATION, MIN_QUEUE_EXPIRATION},
@@ -1077,12 +1076,10 @@ impl Category {
     let has_free = self.channels.teams.iter().any(|t| !occupied.iter().any(|o| o.red_vc == t.red_vc && o.blu_vc == t.blu_vc));
 
     if has_free {
-      use crate::ansi::GREEN;
-      cinfo!("{GREEN} Found an empty set of team channels.");
+      info!("Found an empty set of team channels.");
       return Ok(None);
     } else {
-      use crate::ansi::RED;
-      cinfo!("{RED} No empty set of team channels found, creating a new set.")
+      info!("No empty set of team channels found, creating a new set.");
     }
 
     // Create a new pair
@@ -1194,7 +1191,9 @@ impl Category {
         }
       }
     }
-    info!("Deleted {} team channels", delete_count);
+    if delete_count > 0 {
+      info!("Deleted {} team channels", delete_count);
+    }
 
     // Rebuild teams list: occupied + remaining free
     let mut new_teams = keep;
@@ -1288,10 +1287,11 @@ impl Category {
     // Extract queue vc channel ID
     let queue_vc = self.channels.queue_vc;
 
-    // Find the active game (Hot or Live status) in the target format
+    // Find the active game to end - prefer Live sessions over Hot (Live games should be ended first)
     let sg = self.format_mut(fmt_id).ok_or_else(|| anyhow!("Format {} not found for pull", fmt_id))?;
-    let active_session_idx =
-      sg.sessions.iter().position(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Live).ok_or(anyhow!("No active game to pull in format {}", fmt_id))?;
+    let active_session_idx = sg.sessions.iter().position(|s| s.status == SessionStatus::Live)
+      .or_else(|| sg.sessions.iter().position(|s| s.status == SessionStatus::Hot))
+      .ok_or(anyhow!("No active game to pull in format {}", fmt_id))?;
     let game = &mut sg.sessions[active_session_idx];
 
     // Determine if this is a post-game scenario (game was Live, not just Hot)
@@ -1323,9 +1323,10 @@ impl Category {
       users_to_move.push(player.user_id);
     }
     
-    // Add any other users in team VCs (spectators, etc.) - they get moved to VC but NOT added to queue
+    // Add any other users in THIS game's team VCs (spectators, etc.) - they get moved to VC but NOT added to queue
+    // Only scan the ending game's team channels, not all team channels (avoids pulling players from concurrent games)
     let mut spectators_to_move: Vec<UI> = Vec::new();
-    for tc in &self.channels.teams {
+    if let Some(tc) = &game.team_channels {
       for vc_id in [tc.red_vc, tc.blu_vc] {
         let users_in_vc: Vec<_> = guild.voice_states.iter()
           .filter(|(_, vs)| vs.channel_id == Some(vc_id))
@@ -1491,7 +1492,7 @@ impl Category {
         Some(idx) => idx,
         None => {
           // No idle session exists (game ended from Hot without push), create one
-          info!("No idle session found, creating one for re-queuing players in format {}", fmt_id);
+          info!("No idle session found, creating one for re-queuing players in format {}", fmt_id + 1);
           sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
           sg.sessions.len() - 1
         }
@@ -1673,8 +1674,9 @@ impl Category {
 
           if player.in_queue_vc != actual_in_vc {
             corrected.push(player.player.tag.clone());
+            let old_value = player.in_queue_vc;
             player.in_queue_vc = actual_in_vc;
-            info!("{}[validate_vc_status] {}Corrected in_queue_vc for player {} (was {}, now {})", crate::ansi::YELLOW, crate::ansi::RESET,player.player.tag, player.in_queue_vc, actual_in_vc);
+            info!("[validate_vc_status] Corrected in_queue_vc for player {} (was {}, now {})", player.player.tag, old_value, actual_in_vc);
           }
         }
       }

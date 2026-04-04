@@ -112,12 +112,18 @@ pub async fn log_queue_toggle(
   let ctg_nm: &str = fmt_info.get("category_name");
   let fmt_nm: &str = fmt_info.get("format_name");
 
-  // Get pool size and position from format's sessions
+  // Get pool size from all joinable sessions (Idle + Hot) to show accurate count with concurrent games
   // For joins: log is called AFTER add, so pool already contains the player
   // For leaves: log is called AFTER remove, so pool no longer contains the player
-  let pool_size =
-    format.sessions.iter().find(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot)
-      .map(|s| (s.pool.len(), format.quota as usize));
+  let total_queued: usize = format.sessions.iter()
+    .filter(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot)
+    .map(|s| s.pool.len())
+    .sum();
+  let pool_size = if total_queued > 0 || format.sessions.iter().any(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot) {
+    Some((total_queued, format.quota as usize))
+  } else {
+    None
+  };
 
   // Calculate position based on actual player position in session
   let position = if action == "joined" {
