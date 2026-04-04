@@ -10,14 +10,14 @@ use tracing::info;
 
 use crate::{models::{Category, FileManager, Player, QGuild}, repo::GuildRepository};
 use migrations::DatabaseMigrations;
-use repo::{ConfigRepository, EloRepository, CategoryRepository, RankRepository, UserRepository, TeamRepository, MatchRepo, FatkidRepository};
+use repo::{ConfigRepository, EloRepository, CategoryRepository, RankRepository, PlayerRepository, TeamRepository, MatchRepo, FatkidRepository};
 
 /// Main database interface that orchestrates all repositories
 #[derive(Clone)]
 pub struct Database {
     pub pool:   SqlitePool,
     pub guilds: GuildRepository,
-    pub users:  UserRepository,
+    pub players:  PlayerRepository,
     pub categories: CategoryRepository,
     pub config: ConfigRepository,
     pub elo:    EloRepository,
@@ -55,7 +55,7 @@ impl Database {
         migrations.create_tables().await?;
 
         // Initialize repositories
-        let users      = UserRepository    ::new(pool.clone());
+        let users      = PlayerRepository    ::new(pool.clone());
         let guilds     = GuildRepository   ::new(pool.clone());
         let categories = CategoryRepository::new(pool.clone());
         let config     = ConfigRepository  ::new(pool.clone());
@@ -71,7 +71,7 @@ impl Database {
         Ok(Self {
             pool,
             guilds,
-            users,
+            players: users,
             categories,
             config,
             elo: elos,
@@ -90,23 +90,23 @@ impl Database {
     // Backward compatibility methods - delegate to repositories
 
     /// Creates a new user in the database
-    pub async fn new_user(&self, user_id: UI, _ctx: &Ctx) -> Result<Player> {
-        self.users.check_user(user_id, Some(0)).await
+    pub async fn new_player(&self, user_id: UI, _ctx: &Ctx) -> Result<Player> {
+        self.players.check_user(user_id, Some(0)).await
     }
 
     /// Gets a Player by Discord ID
-    pub async fn get_user(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
-        self.users.get_with_tag(user_id, ctx).await
+    pub async fn get_player(&self, user_id: UI, ctx: &Ctx) -> Result<Player> {
+        self.players.get_with_tag(user_id, ctx).await
     }
 
     /// Gets a Player by Discord ID
-    pub async fn get_user_with_display_name(&self, user_id: UI, ctx: &Ctx, guild_id: Option<serenity::all::GuildId>) -> Result<Player> {
-        self.users.get_with_nick(user_id, ctx, guild_id).await
+    pub async fn get_player_with_nick(&self, user_id: UI, ctx: &Ctx, guild_id: Option<serenity::all::GuildId>) -> Result<Player> {
+        self.players.get_with_nick(user_id, ctx, guild_id).await
     }
 
     /// Updates a user's Steam ID
     pub async fn set_player_steam_id(&self, user_id: &UI, steam_id: Option<u64>) -> Result<Player> {
-        self.users.update_steam_id(user_id, steam_id).await
+        self.players.update_steam_id(user_id, steam_id).await
     }
 
     /// Creates a new category

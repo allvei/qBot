@@ -668,6 +668,14 @@ impl Category {
     self.formats.iter().any(|f| f.id != fmt_id && f.contains_user(user_id))
   }
 
+  /// Check if a user is currently in the queue voice channel
+  pub async fn is_user_in_queue_vc(&self, http: &serenity::all::Http, user_id: UI) -> bool {
+    match self.guild_id.get_user_voice_state(http, user_id).await {
+      Ok(voice_state) => voice_state.channel_id == Some(self.channels.queue_vc),
+      Err(_) => false,
+    }
+  }
+
   pub fn get_player(&mut self, user_id: UI) -> Result<&mut SessionPlayer> {
     for sg in &mut self.formats {
       for session in &mut sg.sessions {
@@ -908,7 +916,7 @@ impl Category {
               session.remove_player(*user_id);
 
               // Optionally: disconnect from VC if vc_kick is enabled
-              if let Ok(settings) = db.users.get_prefs(*user_id).await {
+              if let Ok(settings) = db.players.get_prefs(*user_id).await {
                 if settings.vc_auto_leave {
                   if let Ok(member) = guild_id.member(&ctx.http, *user_id).await {
                     if let Err(e) = member.disconnect_from_voice(&ctx.http).await {
@@ -1841,7 +1849,7 @@ impl Category {
     let ply_tg = player.tag.clone();
     let player_queue_expiration = player.queue_expiration;
     let db = queue_ctx.db.unwrap();
-    let usr_prefs = db.users.get_prefs(user_id).await?;
+    let usr_prefs = db.players.get_prefs(user_id).await?;
 
     if in_vc {
       session.add_ply_in_vc(player)?;
@@ -1880,7 +1888,7 @@ impl Category {
     let player_tag = player.tag.clone();
     let player_queue_expiration = player.queue_expiration;
     let db = queue_ctx.db.unwrap();
-    let user_prefs = db.users.get_prefs(user_id).await?;
+    let user_prefs = db.players.get_prefs(user_id).await?;
 
     if in_vc {
       session.add_ply_in_vc(player)?;
@@ -1985,7 +1993,7 @@ impl Category {
     
     session.add_ply(player)?;
     let db = queue_ctx.db.unwrap();
-    let user_prefs = db.users.get_prefs(user_id).await?;
+    let user_prefs = db.players.get_prefs(user_id).await?;
     
     // Schedule timeout for this player
     self.schedule_player_rejoin_expiration(queue_ctx.ctx, guild_id, user_id, player_queue_expiration, player_tag).await;
@@ -2152,7 +2160,7 @@ impl Category {
 
       for user_id in players_to_dm {
         // Check if user has DM notifications enabled
-        match database.users.get_pm_hot_alert(user_id).await {
+        match database.players.get_pm_hot_alert(user_id).await {
           Ok(true) => {
             let dm_embed = CreateEmbed::new()
               .title("PUG Ready!")

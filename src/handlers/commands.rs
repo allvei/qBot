@@ -13,7 +13,7 @@ pub async fn cmd_prefs(cc: &CC<'_>) -> Result<()> {
   let user_id = cc.intax.user.id;
 
   // Get current settings
-  let prefs = cc.db.users.get_prefs(user_id).await?;
+  let prefs = cc.db.players.get_prefs(user_id).await?;
 
   // Send ephemeral message in the current channel
   cc.intax.create_response(&cc.ctx.http, Ephemeral::send_prefs(&prefs)).await?;
@@ -109,7 +109,7 @@ pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
   let user_ids: Vec<_> = matching.iter().map(|m| m.user.id).collect();
 
   // Batch ensure all users exist, then batch set ELO (2 queries instead of 2*N)
-  if let Err(e) = cc.db.users.batch_ensure(&user_ids).await {
+  if let Err(e) = cc.db.players.batch_ensure(&user_ids).await {
     let embed = CE::new().title("Migration Failed").description(format!("Failed to create user records: {}", e)).color(RED);
     cc.intax.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
     return Ok(());
@@ -148,7 +148,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
   let target_user = cc.intax.data.options.iter().find(|o| o.name == "user").and_then(|o| o.value.as_user_id()).ok_or_else(|| anyhow!("User option not found"))?;
 
   // Get player data (ensure user exists in database)
-  let player = cc.db.users.check_user(target_user, None).await?;
+  let player = cc.db.players.check_user(target_user, None).await?;
 
   // First, try to get player's rank from Discord roles (source of truth)
   use crate::handlers::player::get_user_rank_from_discord_roles;

@@ -1,8 +1,7 @@
 use crate::{get_user_tag, guild_name, log_prefix_category, log_prefix_guild};
 use anyhow::{anyhow, Error, Result};
 use serenity::all::{
-  ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR,
-  CreateInteractionResponseMessage as CIRM, CreateMessage as CM, EditMessage, GuildId as GI, Message, UserId as UI,
+  ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateMessage as CM, EditMessage, GuildId as GI, Message, UserId as UI
 };
 use std::{
   collections::{HashMap, HashSet},
@@ -529,7 +528,7 @@ impl Category {
             } else if player.in_queue_vc {
               timers_field.push_str("VC\n");
             } else {
-              let queue_expiration = if let Ok(settings) = db.users.get_prefs(player.player.user_id).await { settings.queue_expiration } else { player.queue_expiration };
+              let queue_expiration = if let Ok(settings) = db.players.get_prefs(player.player.user_id).await { settings.queue_expiration } else { player.queue_expiration };
 
               if queue_expiration > 0 {
                 if let Ok(join_time) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
@@ -737,12 +736,10 @@ impl Category {
     cc.reply_acknowledge().await?;
 
     let user_id = cc.component.user.id;
-
-    // Get player tag from database (primary source)
-    let _tag = match cc.db.get_user(user_id, cc.ctx).await {
-      Ok(player) => player.tag,
-      Err(_) => cc.component.user.display_name().to_string(),
-    };
+    let guild_id = cc.component.guild_id.unwrap();
+    
+    // Get user tag from database (primary source)
+    let _tag = cc.db.get_player(user_id, cc.ctx).await?.tag;
 
     // Store channel IDs before any borrows
     let _dashboard_channel = self.channels.dashboard;
@@ -874,7 +871,7 @@ impl Category {
       // If player is in VC, check if they want to be disconnected
       if ply_in_vc && !ply_in_other_fmts {
         // Check user's VC disconnect preference
-        let prefs = cc.db.users.get_prefs(user_id).await.unwrap_or_default();
+        let prefs = cc.db.players.get_prefs(user_id).await.unwrap_or_default();
 
         if prefs.vc_auto_leave {
           if let Some(guild_id) = cc.component.guild_id {
@@ -904,7 +901,7 @@ impl Category {
       let _server_name = guild_name(cc.ctx, guild_id);
 
       // Resolve player for logging
-      if let Ok(player) = cc.db.get_user(user_id, cc.ctx).await {
+      if let Ok(player) = cc.db.get_player(user_id, cc.ctx).await {
         if let Some(ref format) = format {
           if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, category_id, format, &player, "left", None).await {
             warn!("Failed to log queue toggle: {e}");
@@ -1404,7 +1401,7 @@ impl Category {
     let user_id = cc.component.user.id;
 
     // Get user's settings
-    let settings = match cc.db.users.get_prefs(user_id).await {
+    let settings = match cc.db.players.get_prefs(user_id).await {
       Ok(s) => s,
       Err(e) => {
         use serenity::all::CreateInteractionResponseFollowup as CIRF;
@@ -1945,7 +1942,7 @@ pub async fn show_help(cc: &ComponentContext<'_>) -> Result<()> {
 
   // Get user's VC auto-join setting to conditionally show that info
   let user_id = cc.component.user.id;
-  let vc_auto_join_enabled = cc.db.users.get_prefs(user_id).await
+  let vc_auto_join_enabled = cc.db.players.get_prefs(user_id).await
     .map(|prefs| prefs.vc_auto_join)
     .unwrap_or(false);
 

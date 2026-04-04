@@ -82,15 +82,16 @@ pub fn sanitize_user_text(s: &str) -> String {
 }
 
 #[derive(Clone)]
-pub struct UserRepository {
+pub struct PlayerRepository {
     pool: SqlitePool,
 }
 
-impl UserRepository {
+impl PlayerRepository {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
+    // Return user purely with DB data
     pub async fn get(&self, user_id: UserId) -> Result<Player> {
         match sqlx::query("SELECT user_id, steam_id, discord_tag, queue_expiration FROM users WHERE user_id = ?").bind(user_id.get() as i64).fetch_one(&self.pool).await {
             Ok(result) => Ok(Self::get_player(result)),
@@ -98,6 +99,7 @@ impl UserRepository {
         }
     }
 
+    // With context, we can use API as a backup
     pub async fn get_with_tag(&self, user_id: UserId, ctx: &Context) -> Result<Player> {
         let result = sqlx::query("SELECT user_id, steam_id, discord_tag, queue_expiration FROM users WHERE user_id = ?")
         .bind(user_id.get() as i64)
@@ -108,10 +110,16 @@ impl UserRepository {
         
         // If no tag in database, fetch from Discord API and cache it
         if player.tag.is_empty() {
-            if let Ok(user) = ctx.http.get_user(user_id).await {
-                player.tag = user.tag(); // Use tag() instead of display_name()
-                // Cache the tag for future use
-                let _ = self.update_discord_tag(user_id, &player.tag).await;
+            match ctx.http.get_user(user_id).await {
+                Ok(user) => {
+                    player.tag = user.tag(); // Use tag() instead of display_name()
+                    // Cache the tag for future use
+                    let _ = self.update_discord_tag(user_id, &player.tag).await;
+                }
+                Err(e) => {
+                    warn!("Failed to fetch user {}: {}", user_id, e);
+                    player.tag = "unknown".to_string();
+                }
             }
         }
 
@@ -601,7 +609,7 @@ impl Default for UserPreferences {
 }
 
 #[async_trait]
-impl Repository<Player, UserId> for UserRepository {
+impl Repository<Player, UserId> for PlayerRepository {
     async fn create(&self, player: &Player) -> Result<Player> {
         self.check_user(player.user_id, player.steam_id).await
     }

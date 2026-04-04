@@ -18,7 +18,7 @@ async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI, db: &DB) -> Opt
   }
 
   // 2. Check if user exists in database (avoids Discord API call)
-  if db.users.get(user_id).await.is_ok() {
+  if db.players.get(user_id).await.is_ok() {
     // User exists in DB, try Discord API to get full member info
     if let Ok(member) = guild_id.member(&ctx.http, user_id).await {
       return Some(member);
@@ -122,9 +122,9 @@ pub async fn resolve_player_for_queue(ctx: &Ctx, db: &DB, guild_id: GI, user_id:
   };
 
   // 2. Get or create player
-  let mut player = match db.get_user(user_id, ctx).await {
+  let mut player = match db.get_player(user_id, ctx).await {
     Ok(p) => p,
-    Err(_) => db.new_user(user_id, ctx).await?,
+    Err(_) => db.new_player(user_id, ctx).await?,
   };
 
   // 3. Normalize ELO based on elo_ranks_linked setting
@@ -384,7 +384,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut QGuild) -> Result<()> {
   let elo_ranks_linked = cc.db.config.get_elo_ranks_linked(guild_id).await.unwrap_or(true);
 
   // Get player info with guild-specific ELO or create a new one
-  let mut player = match cc.db.users.get_with_guild_rank(user, cc.ctx, guild_id, &cc.db).await {
+  let mut player = match cc.db.players.get_with_guild_rank(user, cc.ctx, guild_id, &cc.db).await {
     Ok(mut player) => {
       if elo_ranks_linked {
         // Linked: ELO and rank are coupled
@@ -430,7 +430,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut QGuild) -> Result<()> {
     }
     Err(_) => {
       // New player
-      let mut new_player = cc.db.new_user(user, cc.ctx).await?;
+      let mut new_player = cc.db.new_player(user, cc.ctx).await?;
       new_player.elo = rank.elo;
       new_player.rank = Some(rank.clone());
       if let Err(e) = cc.db.elo.set(user, guild_id, new_player.elo, new_player.rank.clone().unwrap()).await {

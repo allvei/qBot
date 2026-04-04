@@ -64,7 +64,7 @@ pub async fn handle_player_settings_rank_select(
   let role_id = RI::new(selected_role_id);
 
   // Get current player data
-  let player = db.users.check_user(target_uid, None).await?;
+  let player = db.players.check_user(target_uid, None).await?;
   let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
 
   // Get the new rank from the selected role ID
@@ -204,7 +204,7 @@ pub async fn handle_player_settings_button(ctx: &Context, interaction: &CI, db: 
   info!("[Player Settings] {} pressed {} on {}", user_tag, action, target_tag);
 
   // Get current player data (ensure user exists)
-  let player = db.users.check_user(target_uid, None).await?;
+  let player = db.players.check_user(target_uid, None).await?;
   let guild_id = interaction.guild_id.expect("Guild ID not found");
   let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
 
@@ -242,7 +242,7 @@ pub async fn handle_player_settings_button(ctx: &Context, interaction: &CI, db: 
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("player_settings_edit_alerts_") {
     // Get target user's current alert settings
-    let user_settings = db.users.get_prefs(target_uid).await?;
+    let user_settings = db.players.get_prefs(target_uid).await?;
 
     let modal = CM::new(format!("player_settings_modal_alerts_{target_user_id}"), "Edit player alerts").components(vec![
       create_short_input_opt("HEX color", "join_alert_color", "e.g., 3447003 or FF5733", &format!("{:06X}", user_settings.join_alert_color)),
@@ -295,7 +295,7 @@ pub async fn handle_player_settings_modal(
       }
     };
 
-    db.users.update_steam_id(&target_uid, steam_id).await?;
+    db.players.update_steam_id(&target_uid, steam_id).await?;
 
     // Refresh the settings menu
     let settings = get_player_settings!(db, ctx, target_uid, guild_id, target_user_id);
@@ -480,7 +480,7 @@ pub async fn handle_player_settings_modal(
     interaction.create_response(&ctx.http, response).await?;
   } else if modal_id.starts_with("player_settings_modal_alerts_") {
     // Extract values from modal components
-    let mut user_settings = db.users.get_prefs(target_uid).await?;
+    let mut user_settings = db.players.get_prefs(target_uid).await?;
 
     for (idx, action_row) in interaction.data.components.iter().enumerate() {
       if let Some(ARC::InputText(input)) = action_row.components.first() {
@@ -508,7 +508,7 @@ pub async fn handle_player_settings_modal(
     }
 
     // Update target user's settings
-    db.users.update_prefs(target_uid, &user_settings).await?;
+    db.players.update_prefs(target_uid, &user_settings).await?;
 
     // Refresh the settings menu
     let settings = get_player_settings!(db, ctx, target_uid, guild_id, target_user_id);

@@ -1290,7 +1290,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
   let guild_elo = cc.db.elo.get(user_id, guild_id, &cc.db).await?;
 
   // Get base player info for steam_id
-  let player = match cc.db.users.get(user_id).await {
+  let player = match cc.db.players.get(user_id).await {
     Ok(p) => p,
     Err(_) => {
       let error_embed = CE::new().title("Player not found").description(format!("<@{}> is not in the database.", user_id)).color(RED);

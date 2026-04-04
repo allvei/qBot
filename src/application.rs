@@ -635,7 +635,7 @@ impl EventHandler for Handler {
         // Handle disable DM notifications button
         if itx.data.custom_id == "disable_dm_notifications" {
           let user_id = itx.user.id;
-          match self.db.users.set_pm_hot_alert(user_id, false).await {
+          match self.db.players.set_pm_hot_alert(user_id, false).await {
             Ok(_) => {
               let response = serenity::all::CreateInteractionResponse::UpdateMessage(
                 serenity::all::CreateInteractionResponseMessage::new()
@@ -941,7 +941,7 @@ impl EventHandler for Handler {
     };
 
     // Get player tag from database (primary source)
-    let tag = match self.db.get_user(user_id, &ctx).await {
+    let tag = match self.db.get_player(user_id, &ctx).await {
       Ok(player) => {
         if !player.tag.is_empty() {
           player.tag
@@ -1063,9 +1063,9 @@ impl EventHandler for Handler {
     // Note: Join logging is done inside the queue VC check below to avoid logging unrelated channel joins
 
     // Get player data
-    let _player = match self.db.get_user(user_id, &ctx).await {
+    let _player = match self.db.get_player(user_id, &ctx).await {
       Ok(user) => user,
-      Err(_) => match self.db.new_user(user_id, &ctx).await {
+      Err(_) => match self.db.new_player(user_id, &ctx).await {
         Ok(new_user) => new_user,
         Err(e) => {
           error!("Failed to create new user: {e}");
@@ -1110,7 +1110,7 @@ impl EventHandler for Handler {
               }
             } else {
               // Player not in session yet - check if they want auto-queue
-              let user_prefs = self.db.users.get_prefs(user_id).await.unwrap_or_default();
+              let user_prefs = self.db.players.get_prefs(user_id).await.unwrap_or_default();
               if !user_prefs.vc_auto_join {
                 // User has disabled VC auto-queue, log that they joined VC but didn't join queue
                 let guild_name = guild_name(&ctx, guild_id);
@@ -1259,7 +1259,7 @@ impl Handler {
             }
           } else if sesh.is_hot() {
             // Hot game behavior: check user's vc_auto_leave preference
-            if let Ok(settings) = self.db.users.get_prefs(user_id).await {
+            if let Ok(settings) = self.db.players.get_prefs(user_id).await {
               settings.vc_auto_leave
             } else {
               false
@@ -1303,7 +1303,7 @@ impl Handler {
 
       // Log after removal so pool count is accurate, but use position before removal
       // Resolve player for logging
-      if let Ok(player) = self.db.get_user(user_id, ctx).await {
+      if let Ok(player) = self.db.get_player(user_id, ctx).await {
         if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left", None).await {
           warn!("Failed to log queue toggle: {e}");
         }
@@ -1315,7 +1315,7 @@ impl Handler {
       let format = category.formats[0].clone();
 
       // Resolve player for logging
-      if let Ok(player) = self.db.get_user(user_id, ctx).await {
+      if let Ok(player) = self.db.get_player(user_id, ctx).await {
         if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left", None).await {
           warn!("Failed to log queue toggle: {e}");
         }
@@ -1330,7 +1330,7 @@ impl Handler {
       }
     } else if should_schedule_queue_expiration {
       // Player left VC but is still in queue - schedule expiration
-      let duration = queue_ctx.db.unwrap().users.get_prefs(user_id).await.unwrap().queue_expiration;
+      let duration = queue_ctx.db.unwrap().players.get_prefs(user_id).await.unwrap().queue_expiration;
       category.schedule_player_rejoin_expiration(ctx, guild_id, user_id, duration, user_tag.clone()).await;
     }
 
@@ -1643,7 +1643,7 @@ impl Handler {
             continue;
           }
 
-          let tag = if let Ok(player) = self.db.get_user(*user_id, ctx).await { player.tag } else { "Unknown".to_string() };
+          let tag = if let Ok(player) = self.db.get_player(*user_id, ctx).await { player.tag } else { "Unknown".to_string() };
 
           players_to_add.push((*user_id, tag));
         }

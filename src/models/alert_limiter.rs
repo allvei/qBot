@@ -144,7 +144,7 @@ pub fn schedule_alert(
     }
 
     // Build and send embeds
-    let settings = match alert.db.users.get_prefs(alert.user_id).await {
+    let settings = match alert.db.players.get_prefs(alert.user_id).await {
       Ok(s) => s,
       Err(_) => return,
     };

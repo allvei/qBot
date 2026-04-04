@@ -23,7 +23,7 @@ pub async fn handle_elo_change_confirmation(
     let target_uid = UI::new(target_user_id);
 
     // Refresh the settings menu
-    let player = db.users.check_user(target_uid, None).await?;
+    let player = db.players.check_user(target_uid, None).await?;
     let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
     let username = ctx.http.get_user(target_uid).await.map(|u| u.name.clone()).unwrap_or_else(|_| target_user_id.to_string());
 
@@ -118,7 +118,7 @@ pub async fn handle_elo_change_confirmation(
     }
 
     // Show success message and refresh settings menu
-    let player = db.users.check_user(target_uid, None).await?;
+    let player = db.players.check_user(target_uid, None).await?;
     let updated_guild_elo = db.elo.get(target_uid, guild_id, db).await?;
     let username = ctx.http.get_user(target_uid).await.map(|u| u.name.clone()).unwrap_or_else(|_| target_user_id.to_string());
 

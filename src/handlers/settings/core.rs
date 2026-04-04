@@ -20,10 +20,10 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
   match button_id.as_str() {
     "settings_toggle_dm" => {
       // Toggle DM alerts
-      let _new_state = db.users.toggle_pm_hot_alert(user_id).await?;
+      let _new_state = db.players.toggle_pm_hot_alert(user_id).await?;
 
       // Acknowledge and update the settings menu directly (no popup)
-      let settings = db.users.get_prefs(user_id).await?;
+      let settings = db.players.get_prefs(user_id).await?;
       let embed = build_settings_embed(&settings);
       let buttons = build_settings_buttons(&settings);
 
@@ -32,7 +32,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
     }
     "settings_queue_expiration" => {
       // Show time selection buttons inline (replace current message temporarily)
-      let settings = db.users.get_prefs(user_id).await?;
+      let settings = db.players.get_prefs(user_id).await?;
       let current_minutes = settings.queue_expiration;
 
       let time_buttons = vec![
@@ -57,7 +57,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
 
       if time_str == "cancel" {
         // Just restore the settings menu
-        let settings = db.users.get_prefs(user_id).await?;
+        let settings = db.players.get_prefs(user_id).await?;
         let embed = build_settings_embed(&settings);
         let buttons = build_settings_buttons(&settings);
 
@@ -74,9 +74,9 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
         };
 
         // Update user settings
-        let mut settings = db.users.get_prefs(user_id).await?;
+        let mut settings = db.players.get_prefs(user_id).await?;
         settings.queue_expiration = minutes;
-        db.users.update_prefs(user_id, &settings).await?;
+        db.players.update_prefs(user_id, &settings).await?;
 
         // Update the settings menu directly (no confirmation popup)
         let embed = build_settings_embed(&settings);
@@ -88,9 +88,9 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
     }
     "settings_vc_auto_leave" => {
       // Toggle VC disconnect preference
-      let mut settings = db.users.get_prefs(user_id).await?;
+      let mut settings = db.players.get_prefs(user_id).await?;
       settings.vc_auto_leave = !settings.vc_auto_leave;
-      db.users.update_prefs(user_id, &settings).await?;
+      db.players.update_prefs(user_id, &settings).await?;
 
       // Acknowledge and update the settings menu directly (no popup)
       let embed = build_settings_embed(&settings);
@@ -101,9 +101,9 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
     }
     "settings_vc_auto_join" => {
       // Toggle VC auto-queue preference
-      let mut settings = db.users.get_prefs(user_id).await?;
+      let mut settings = db.players.get_prefs(user_id).await?;
       settings.vc_auto_join = !settings.vc_auto_join;
-      db.users.update_prefs(user_id, &settings).await?;
+      db.players.update_prefs(user_id, &settings).await?;
 
       // Acknowledge and update the settings menu directly (no popup)
       let embed = build_settings_embed(&settings);
@@ -114,7 +114,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
     }
     "settings_edit_alert" => {
       // Show modal for customizing join announcement embed
-      let settings = db.users.get_prefs(user_id).await?;
+      let settings = db.players.get_prefs(user_id).await?;
       let modal = CreateModal::new("settings_modal_announcement", "Customize join announcement").components(vec![
         create_short_input_opt("HEX Color", "join_alert_color", "e.g., 3447003 or FF5733", &format!("{:06X}", settings.join_alert_color)),
         create_paragraph_input_with_value("Message", "join_alert", "e.g., Kafri: defense", &settings.join_alert_desc.unwrap_or_default()),
@@ -127,7 +127,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
     }
     "settings_edit_leave_alert" => {
       // Show modal for customizing leave announcement embed
-      let settings = db.users.get_prefs(user_id).await?;
+      let settings = db.players.get_prefs(user_id).await?;
       let modal = CreateModal::new("settings_modal_leave_alert", "Customize leave announcement").components(vec![
         create_short_input_opt("Color (hex, optional)", "leave_alert_color", "e.g., 3447003 or FF5733", &format!("{:06X}", settings.leave_alert_color)),
         create_paragraph_input_with_value("Description", "leave_alert", "e.g., {name} has left. Use {user} for mention", &settings.leave_alert_desc.unwrap_or_default()),
@@ -161,7 +161,7 @@ pub async fn handle_settings_modal(ctx: &Context, interaction: &MI, db: &Arc<Dat
   match modal_id.as_str() {
     "settings_modal_announcement" => {
       // Get all input values from the modal
-      let mut settings = db.users.get_prefs(user_id).await?;
+      let mut settings = db.players.get_prefs(user_id).await?;
 
       // Extract and validate values from modal components
       for (idx, action_row) in interaction.data.components.iter().enumerate() {
@@ -201,7 +201,7 @@ pub async fn handle_settings_modal(ctx: &Context, interaction: &MI, db: &Arc<Dat
       }
 
       // Update settings in database
-      db.users.update_prefs(user_id, &settings).await?;
+      db.players.update_prefs(user_id, &settings).await?;
 
       // Build preview embed
       let preview_embed = build_join_alert_embed(ctx, user_id, None, &settings, "Journeyman", None).await;
@@ -215,7 +215,7 @@ pub async fn handle_settings_modal(ctx: &Context, interaction: &MI, db: &Arc<Dat
     }
     "settings_modal_leave_alert" => {
       // Get all input values from the modal
-      let mut settings = db.users.get_prefs(user_id).await?;
+      let mut settings = db.players.get_prefs(user_id).await?;
 
       // Extract and validate values from modal components
       for (idx, action_row) in interaction.data.components.iter().enumerate() {
@@ -255,7 +255,7 @@ pub async fn handle_settings_modal(ctx: &Context, interaction: &MI, db: &Arc<Dat
       }
 
       // Update settings in database
-      db.users.update_prefs(user_id, &settings).await?;
+      db.players.update_prefs(user_id, &settings).await?;
 
       // Build preview embed
       let preview_embed = build_leave_alert_embed(ctx, user_id, None, &settings, None).await;
@@ -285,7 +285,7 @@ where
   update_fn().await?;
 
   // Get updated settings and rebuild UI
-  let settings = db.users.get_prefs(user_id).await?;
+  let settings = db.players.get_prefs(user_id).await?;
   let embed = build_settings_embed(&settings);
   let buttons = build_settings_buttons(&settings);
 
@@ -297,7 +297,7 @@ where
 /// Update the settings menu embed (for modal interactions)
 async fn update_settings_menu_from_modal(ctx: &Context, interaction: &MI, db: &Arc<Database>) -> Result<()> {
   let user_id = interaction.user.id;
-  let settings = db.users.get_prefs(user_id).await?;
+  let settings = db.players.get_prefs(user_id).await?;
 
   let embed = build_settings_embed(&settings);
   let buttons = build_settings_buttons(&settings);

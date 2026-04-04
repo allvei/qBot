@@ -71,7 +71,7 @@ use crate::models::constants::guild_name;
 /// Get user tag for logging purposes - tries database first, then Discord API
 pub async fn get_user_tag(ctx: &Context, user_id: UI, db: &crate::Database) -> String {
   // Try database first (most efficient)
-  if let Ok(player) = db.get_user(user_id, ctx).await {
+  if let Ok(player) = db.get_player(user_id, ctx).await {
     if !player.tag.is_empty() {
       return player.tag;
     }
