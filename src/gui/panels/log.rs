@@ -26,8 +26,6 @@ pub fn show_log_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
                     ui.add_space(50.0);
                 });
             } else {
-                ui.label(format!("Showing {} log entries (newest at bottom)", logs.len()));
-                ui.separator();
                 for log in logs.iter() {
                     ui.label(log);
                 }

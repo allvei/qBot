@@ -18,7 +18,7 @@ pub struct GuiSharedState {
     /// Command sender from GUI to bot (tokio::sync::mpsc)
     pub cmd_tx: mpsc::Sender<GuiCommand>,
     /// Shutdown signal sender (optional, consumed on shutdown)
-    pub shutdown_tx: Option<oneshot::Sender<()>>,
+    pub shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
     /// Latest snapshot of Manager state for GUI (updated periodically)
     pub latest_manager: Arc<RwLock<Option<Manager>>>,
 }
@@ -36,7 +36,7 @@ impl GuiSharedState {
             db,
             log_buffer,
             cmd_tx,
-            shutdown_tx: Some(shutdown_tx),
+            shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
             latest_manager: Arc::new(RwLock::new(None)),
         }
     }
