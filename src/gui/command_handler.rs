@@ -13,6 +13,12 @@ pub async fn handle_command(
     db: &Database,
 ) -> Result<()> {
     match command {
+        GuiCommand::RefreshSnapshot => {
+            info!("RefreshSnapshot requested from GUI");
+            // Snapshot is updated automatically by the periodic task
+            // This command just logs that a refresh was requested
+            Ok(())
+        }
         GuiCommand::ForceEndGame { guild_id, category_id, fmt_id, session_index } => {
             info!("ForceEndGame: guild={}, category={}, fmt={}, session={}", guild_id, category_id, fmt_id, session_index);
             // TODO: Implement

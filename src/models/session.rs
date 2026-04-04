@@ -3,6 +3,7 @@ use std::time::SystemTime;
 use std::collections::HashMap;
 
 use anyhow::{Error, Result};
+use egui::RichText;
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId as CI, CreateEmbed as CE, CreateEmbedFooter as CEF, UserId as UI};
 use sqlx::FromRow;
@@ -313,6 +314,20 @@ pub enum SessionStatus {
   Pull, // Moving players back to the queue
 }
 
+impl SessionStatus {
+  pub fn icon(&self) -> egui::RichText {
+    use egui_phosphor::regular::*;
+    let icon = match self {
+      SessionStatus::Idle => MOON,
+      SessionStatus::Hot => FIRE_SIMPLE,
+      SessionStatus::Push => ARROW_BEND_DOWN_RIGHT,
+      SessionStatus::Live => PLAY,
+      SessionStatus::Pull => ARROW_BEND_DOWN_LEFT,
+    };
+    egui::RichText::new(icon).family(egui::FontFamily::Name("phosphor".into()))
+  }
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct SessionPlayer {
   pub player: Player,
@@ -341,6 +356,15 @@ impl SessionPlayer {
 
   pub fn in_queue(&self) -> bool {
     self.in_queue_vc || self.in_queue_cmd
+  }
+
+  pub fn vc_icon(&self) -> egui::RichText {
+    use egui_phosphor::regular::*;
+    let icon = match self.in_queue_vc {
+      true => HEADSET,
+      false => MOON,
+    };
+    RichText::new(icon).family(egui::FontFamily::Name("phosphor".into()))
   }
 }
 

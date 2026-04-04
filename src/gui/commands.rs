@@ -4,6 +4,9 @@ use crate::models::SessionStatus;
 
 /// Commands that can be sent from the GUI to the tokio thread
 pub enum GuiCommand {
+    // Snapshot Control
+    RefreshSnapshot,
+
     // Queue Management
     ForceEndGame { guild_id: u64, category_id: u8, fmt_id: u8, session_index: usize },
     ClearQueue { guild_id: u64, category_id: u8, fmt_id: u8 },

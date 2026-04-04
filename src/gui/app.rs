@@ -11,6 +11,7 @@ use crate::gui::state::GuiSharedState;
 pub struct MyApp {
     state: Arc<GuiSharedState>,
     selected_tab: PanelTab,
+    should_quit: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,12 +24,44 @@ enum PanelTab {
 
 impl MyApp {
     pub fn new(state: Arc<GuiSharedState>) -> Self {
-        Self { state, selected_tab: PanelTab::Queue }
+        Self { state, selected_tab: PanelTab::Queue, should_quit: false }
+    }
+
+    fn trigger_shutdown(&mut self) {
+        if let Ok(mut tx_lock) = self.state.shutdown_tx.try_lock() {
+            if let Some(shutdown_tx) = tx_lock.take() {
+                let _ = shutdown_tx.send(());
+            }
+        }
+        self.should_quit = true;
+    }
+
+    fn refresh_data(&self) {
+        // Trigger a manual refresh by sending a command
+        let _ = self.state.cmd_tx.try_send(crate::gui::commands::GuiCommand::RefreshSnapshot);
     }
 }
 
 impl eframe::App for MyApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn on_exit(&mut self) {
+        // Trigger shutdown when GUI closes
+        self.trigger_shutdown();
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let ctx = ui.ctx();
+        
+        // Handle keyboard shortcuts
+        ctx.input(|i| {
+            if i.modifiers.ctrl && i.key_pressed(egui::Key::Q) {
+                self.trigger_shutdown();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            if i.modifiers.ctrl && i.key_pressed(egui::Key::R) {
+                self.refresh_data();
+            }
+        });
+
         // Top bar with title and status
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -43,10 +76,9 @@ impl eframe::App for MyApp {
                 };
 
                 if let Some(manager) = manager_opt {
-                    if manager.qguilds.is_empty() {
-                        ui.label("No guilds connected");
-                    } else {
-                        ui.label(format!("Connected to {} guild(s)", manager.qguilds.len()));
+                    if !manager.qguilds.is_empty() {
+                        let plural = if manager.qguilds.len() == 1 { "" } else { "s" };
+                        ui.label(format!("{} guild{} and counting!", manager.qguilds.len(), plural));
                     }
                 } else {
                     ui.label("Waiting for data...");
@@ -66,13 +98,23 @@ impl eframe::App for MyApp {
             });
         });
 
-        // Tab navigation
+        // Tab navigation with action buttons
         egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.selected_tab, PanelTab::Logs, "Logs");
                 ui.selectable_value(&mut self.selected_tab, PanelTab::Queue, "Queues");
                 ui.selectable_value(&mut self.selected_tab, PanelTab::Admin, "Admin");
                 ui.selectable_value(&mut self.selected_tab, PanelTab::Settings, "Settings");
+                
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Quit").clicked() {
+                        self.trigger_shutdown();
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    if ui.button("Refresh").clicked() {
+                        self.refresh_data();
+                    }
+                });
             });
         });
 
@@ -85,5 +127,9 @@ impl eframe::App for MyApp {
                 PanelTab::Settings => settings::show_settings_panel(ui, &self.state),
             }
         });
+
+        if self.should_quit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 }
