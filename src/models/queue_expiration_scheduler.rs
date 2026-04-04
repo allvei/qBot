@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::models::Manager;
-use crate::Database;
+use crate::{Database, Player};
 
 /// Key for identifying a player's timeout task
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -16,6 +16,17 @@ pub struct QueueExpirationKey {
   pub category_id: u8,
   pub format_id: u8,
   pub user_id: UI,
+}
+
+impl QueueExpirationKey {
+  pub fn new(guild_id: GI, category_id: u8, format_id: u8, user_id: UI) -> Self {
+    Self {
+      guild_id,
+      category_id,
+      format_id,
+      user_id,
+    }
+  }
 }
 
 /// Manages per-player timeout tasks for accurate queue expiry
@@ -42,11 +53,10 @@ impl QueueExpirationScheduler {
     guild_id: GI,
     category_id: u8,
     format_id: u8,
-    user_id: UI,
-    player_tag: String,
+    player: Player,
     queue_expiration_minutes: u8,
   ) {
-    let key = QueueExpirationKey { guild_id, category_id, format_id, user_id };
+    let key = QueueExpirationKey::new(guild_id, category_id, format_id, player.user_id);
     
     // Cancel existing timeout if any
     if let Some(handle) = self.tasks.remove(&key) {
@@ -79,7 +89,7 @@ impl QueueExpirationScheduler {
           for format in &mut category.formats {
             let format_clone = format.clone();
             for session in &mut format.sessions {
-              if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == user_id) {
+              if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == player.user_id) {
                 session.pool.remove(pos);
                 removed = true;
                 should_update_dashboard = true;

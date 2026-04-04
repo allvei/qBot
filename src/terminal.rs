@@ -566,7 +566,7 @@ async fn cmd_showqueue(
                     println!("\n    Session {}: {:?} - {} players", idx, session.status, session.pool.len());
                     
                     for (pidx, player) in session.pool.iter().enumerate() {
-                        let vc_indicator = if player.in_queue_vc { "[VC] " } else { "" };
+                        let vc_indicator = if player.in_vc { "[VC] " } else { "" };
                         let team_str = match player.team {
                             Some(Team::Red) => "[RED] ",
                             Some(Team::Blu) => "[BLU] ",

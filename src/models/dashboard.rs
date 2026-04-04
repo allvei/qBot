@@ -465,9 +465,9 @@ impl Category {
         };
 
         let mut hot_info = String::new();
-        let players_never_joined: Vec<_> = session.pool.iter().take(quota).filter(|p| !p.in_queue_vc).collect();
+        let missing_players: Vec<_> = session.pool.iter().take(quota).filter(|p| !p.in_vc).collect();
 
-        if !players_never_joined.is_empty() {
+        if !missing_players.is_empty() {
           let base_time = session.match_ended_at.or(session.ready_at);
           if let Some(base_time) = base_time {
             let confirm_time_deadline = if session.match_ended_at.is_some() { post_game_confirm_time } else { confirm_time_seconds };
@@ -478,7 +478,7 @@ impl Category {
             }
           }
           hot_info.push_str("**Missing players:**\n");
-          for player in &players_never_joined {
+          for player in &missing_players {
             hot_info.push_str(&format!("  • ‹**{}**› <@{}>\n", player.player.elo, player.player.user_id));
           }
         } else if !session.pool.is_empty() {
@@ -525,7 +525,7 @@ impl Category {
               } else {
                 timers_field.push_str("In-game\n");
               }
-            } else if player.in_queue_vc {
+            } else if player.in_vc {
               timers_field.push_str("VC\n");
             } else {
               let queue_expiration = if let Ok(settings) = db.players.get_prefs(player.player.user_id).await { settings.queue_expiration } else { player.queue_expiration };
@@ -799,7 +799,7 @@ impl Category {
       let queue_context = crate::QueueContext::new(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone()));
       let is_user_in_vc = self.is_user_in_queue_vc(&cc.ctx.http, user_id).await;
 
-      if let Err(e) = self.queue_ply_with_vc_status_fmt(fmt_id, player.clone(), discord_rank, queue_context, is_user_in_vc).await {
+      if let Err(e) = self.queue_player_with_vc_status_fmt(fmt_id, player.clone(), discord_rank, queue_context, is_user_in_vc).await {
         warn!("Failed to queue player: {e}");
       } else {
         // Log AFTER queue operation so position and count are accurate
@@ -870,7 +870,7 @@ impl Category {
     let ply_in_other_fmts = self.is_user_in_other_fmts(format_id, user_id);
     let should_regenerate_teams = if let Ok(session) = self.get_user_sesh_fmt(format_id, user_id) {
       // Check if player is physically in the queue VC
-      let ply_in_vc = if let Some(player) = session.pool.iter().find(|p| p.player.user_id == user_id) { player.in_queue_vc } else { false };
+      let ply_in_vc = if let Some(player) = session.pool.iter().find(|p| p.player.user_id == user_id) { player.in_vc } else { false };
       // If player is in VC, check if they want to be disconnected
       if ply_in_vc && !ply_in_other_fmts {
         // Check user's VC disconnect preference

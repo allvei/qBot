@@ -558,10 +558,10 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut QGuild) -> Result<()> {
 
   // Assign teams using GamePlayer's team method
   for sp in &mut red_team {
-    sp.team(Team::Red);
+    sp.set_team(Team::Red);
   }
   for sp in &mut blu_team {
-    sp.team(Team::Blu);
+    sp.set_team(Team::Blu);
   }
 
   // Update pool with new team assignments

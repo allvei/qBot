@@ -23,7 +23,7 @@ use crate::gui::commands::GuiCommand;
 use crate::models::server::QueueContext;
 use crate::repo::GuildRepository;
 use crate::{
-  get_user_tag, guild_name, log_prefix_category, log_prefix_format, log_queue_toggle, ButtonType, Category, CommandContext, ComponentContext, DashboardQueueKey,
+  guild_name, log_prefix_category, log_prefix_format, log_queue_toggle, ButtonType, Category, CommandContext, ComponentContext, DashboardQueueKey,
   DashboardUpdateQueue, Database, DmMessageTracker, DmTrackerKey, Manager, QGuild, Roles, SessionStatus, VoiceStateUpdate, RED,
 };
 
@@ -417,7 +417,6 @@ impl EventHandler for Handler {
   async fn interaction_create(&self, ctx: Context, pl: Interaction) {
     match pl {
       Interaction::Command(itx) => {
-        let _tag = get_user_tag(&ctx, itx.user.id, &self.db).await;
         let cmd_ctx = CommandContext { ctx: &ctx, intax: &itx, db: self.db.clone(), manager: &self.manager.clone() };
         let cd = &itx.data;
         let cdo = &cd.options;
@@ -1116,8 +1115,8 @@ impl EventHandler for Handler {
             if let Ok(session) = category.get_user_sesh(user_id).await {
               let was_hot = session.is_hot();
               if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
-                let was_missing = !player.in_queue_vc;
-                player.in_queue_vc = true;
+                let was_missing = !player.in_vc;
+                player.vc_on();
 
                 // Clear any VC leave grace period since they rejoined
                 if player.vc_leave_grace_until.is_some() {
@@ -1229,8 +1228,8 @@ impl Handler {
     let guild_name = guild_name(ctx, guild_id);
     let ctg_nm = category.name.as_deref().unwrap_or("Unknown").to_string();
     let fmt_nm = category.get_user_fmt_name(user_id);
-    let user_tag = get_user_tag(ctx, user_id, &self.db).await;
     let quota = category.quota() as usize;
+    let player = category.get_player(user_id).unwrap();
 
     let category_id = category.id; // Capture category_id before mutable borrow
 
@@ -1273,10 +1272,10 @@ impl Handler {
             if let Some(position) = sesh.pool.iter().position(|p| p.player.user_id == user_id) {
               if position < quota {
                 // Player has position < quota, give them 10 second grace period
-                if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+                if let Some(session_player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                   let grace_until = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
-                  player.vc_leave_grace_until = Some(grace_until);
-                  info!("{} #{} {} left VC post-game, 10s grace period started", log_prefix_format(&guild_name, &ctg_nm, &fmt_nm), position + 1, user_tag);
+                  session_player.vc_leave_grace_until = Some(grace_until);
+                  info!("{} #{} {} left VC post-game, 10s grace period started", log_prefix_format(&guild_name, &ctg_nm, &fmt_nm), position + 1, player.tag);
                 }
                 false // Don't remove immediately
               } else {
@@ -1305,7 +1304,7 @@ impl Handler {
       let should_schedule_rejoin_expiration = if !should_remove_player {
         if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
           player.joined_at = std::time::SystemTime::now();
-          player.in_queue_vc = false;
+          player.in_vc = false;
           true // player left VC but in queue - schedule expiration
         } else {
           false
@@ -1361,7 +1360,7 @@ impl Handler {
     } else if should_schedule_queue_expiration {
       // Player left VC but is still in queue - schedule expiration
       let duration = queue_ctx.db.unwrap().players.get_prefs(user_id).await.unwrap().queue_expiration;
-      category.schedule_player_rejoin_expiration(ctx, guild_id, user_id, duration, user_tag.clone()).await;
+      category.set_player_rejoin_expiration(ctx, guild_id, player, duration).await;
     }
 
     if should_regenerate {

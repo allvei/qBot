@@ -15,7 +15,7 @@ use anyhow::{anyhow, Error, Result};
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId as CI, Context, CreateEmbed, CreateMessage as CM, EditMember, GuildId as GI, MessageId as MI, RoleId as RI, UserId as UI};
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::models::{Player, Session, SessionPlayer, SessionStatus, TeamChannel};
 
@@ -682,25 +682,32 @@ impl Category {
     }
   }
 
-  pub fn get_player(&mut self, user_id: UI) -> Result<&mut SessionPlayer> {
-    for sg in &mut self.formats {
-      for session in &mut sg.sessions {
+  pub fn get_session_player(&mut self, user_id: UI) -> Result<&mut SessionPlayer> {
+    for format in &mut self.formats {
+      for session in &mut format.sessions {
         if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
           return Ok(player);
         }
       }
     }
-    Err(anyhow!("User not found in any game"))
+    Err(anyhow!("Player not found in any session"))
+  }
+
+  pub fn get_player(&mut self, user_id: UI) -> Result<Player> {
+    match self.get_session_player(user_id) {
+      Ok(session_player) => Ok(session_player.player),
+      Err(e) => Err(e),
+    }
   }
 
   pub async fn hot(&mut self, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
     self.hot_fmt(0, ctx, guild_id, db, manager, false).await
   }
 
-  pub async fn hot_fmt(&mut self, fmt_id: u8, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>, post_game: bool) -> Result<(), Error> {
+  pub async fn hot_fmt(&mut self, format_id: u8, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>, post_game: bool) -> Result<(), Error> {
     // Verify session has enough players before transitioning to Hot
-    let quota = self.format(fmt_id).ok_or_else(|| anyhow!("Format {} not found", fmt_id))?.quota as usize;
-    let session = self.get_queue_fmt(fmt_id).await?;
+    let quota = self.format(format_id).ok_or_else(|| anyhow!("Format {} not found", format_id))?.quota as usize;
+    let session = self.get_queue_fmt(format_id).await?;
     
     if session.pool.len() < quota {
       // Not enough players, don't transition to Hot
@@ -727,14 +734,14 @@ impl Category {
 
     // Notify requires guild_id for VC validation
     if let Some(gid) = guild_id {
-      self.notify_fmt(fmt_id, ctx, gid, db, post_game).await;
+      self.notify_fmt(format_id, ctx, gid, db, post_game).await;
     } else {
       warn!("Cannot notify: guild_id not provided");
     }
 
     // Generate teams - guild_id is required for dashboard updates
     if let Some(gid) = guild_id {
-      self.generate_teams_fmt(fmt_id, ctx, gid, db).await;
+      self.generate_teams_fmt(format_id, ctx, gid, db).await;
     } else {
       warn!("Cannot generate teams: guild_id not provided");
     }
@@ -800,7 +807,7 @@ impl Category {
         let session = &mut sg.sessions[idx];
 
         // Get players who are not in VC (timed out)
-        let timed_out_players: Vec<_> = session.pool.iter().take(quota).filter(|p| !p.in_queue_vc).collect();
+        let timed_out_players: Vec<_> = session.pool.iter().take(quota).filter(|p| !p.in_vc).collect();
 
         if timed_out_players.is_empty() {
           continue;
@@ -984,7 +991,7 @@ impl Category {
       .pool
       .iter()
       .filter_map(|player| {
-        if !player.in_queue_vc {
+        if !player.in_vc {
           return None;
         }
 
@@ -1537,11 +1544,11 @@ impl Category {
       let idle_session = &mut sg.sessions[idle_session_idx];
       idle_session.match_ended_at = Some(std::time::SystemTime::now());
       for player in selected_players {
-        idle_session.add_ply_in_vc(player);
+        idle_session.add_player_in_vc(player);
       }
       // Add fatkidded players to the end of the queue (not removed, just moved to back)
       for player in fatkidded_players {
-        idle_session.add_ply_in_vc(player);
+        idle_session.add_player_in_vc(player);
       }
     } else {
       // Queue has space for everyone, add them all
@@ -1549,7 +1556,7 @@ impl Category {
       let idle_session = &mut sg.sessions[idle_session_idx];
       idle_session.match_ended_at = Some(std::time::SystemTime::now());
       for player in players_to_add {
-        idle_session.add_ply_in_vc(player);
+        idle_session.add_player_in_vc(player);
       }
     }
 
@@ -1662,7 +1669,7 @@ impl Category {
 
   /// Validate and correct in_queue_vc flags against actual Discord voice states
   /// This prevents desync where cached flags don't match reality
-  pub async fn validate_vc_status(&mut self, ctx: &Context, guild_id: GI) {
+  pub async fn verify_vc(&mut self, ctx: &Context, guild_id: GI) {
     // Get actual voice states from Discord
     let guild = match ctx.cache.guild(guild_id) {
       Some(g) => g,
@@ -1686,10 +1693,10 @@ impl Category {
           let user_id = player.player.user_id.get();
           let actual_in_vc = users_in_vc.contains(&user_id);
 
-          if player.in_queue_vc != actual_in_vc {
+          if player.in_vc != actual_in_vc {
             corrected.push(player.player.tag.clone());
-            let old_value = player.in_queue_vc;
-            player.in_queue_vc = actual_in_vc;
+            let old_value = player.in_vc;
+            player.in_vc = actual_in_vc;
             info!("[validate_vc_status] Corrected in_queue_vc for player {} (was {}, now {})", player.player.tag, old_value, actual_in_vc);
           }
         }
@@ -1812,13 +1819,13 @@ impl Category {
       // First assign red team
       for &idx in &red_indices {
         let pool_idx = players_to_balance[idx].0;
-        game.pool[pool_idx].team(crate::models::Team::Red);
+        game.pool[pool_idx].set_team(crate::models::Team::Red);
       }
 
       // Then assign blue team
       for &idx in &blu_indices {
         let pool_idx = players_to_balance[idx].0;
-        game.pool[pool_idx].team(crate::models::Team::Blu);
+        game.pool[pool_idx].set_team(crate::models::Team::Blu);
       }
     } else {
       warn!("Failed to generate balanced teams");
@@ -1844,14 +1851,14 @@ impl Category {
     let usr_prefs = db.players.get_prefs(user_id).await?;
 
     if in_vc {
-      session.add_ply_in_vc(player)?;
+      session.add_player_in_vc(player)?;
     } else {
       session.add_ply(player)?;
     }
     
     // Schedule timeout for this player
     if let Some(guild_id) = queue_ctx.guild_id {
-      self.schedule_player_rejoin_expiration(queue_ctx.ctx, guild_id, user_id, player_queue_expiration, ply_tg).await;
+      self.set_player_rejoin_expiration(queue_ctx.ctx, guild_id, user_id, player_queue_expiration, ply_tg).await;
     }
 
     // Create team VCs on first join if policy requires it
@@ -1871,9 +1878,9 @@ impl Category {
     Ok(())
   }
 
-  pub async fn queue_ply_with_vc_status_fmt(&mut self, fmt_id: u8, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
-    let was_empty = self.get_queue_fmt(fmt_id).await?.pool.is_empty();
+  pub async fn queue_player_with_vc_status_fmt(&mut self, fmt_id: u8, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
     let session = self.get_queue_fmt(fmt_id).await?;
+    let was_empty = session.pool.is_empty();
     let was_idle = session.is_idle();
     
     let user_id = player.user_id;
@@ -1883,14 +1890,14 @@ impl Category {
     let user_prefs = db.players.get_prefs(user_id).await?;
 
     if in_vc {
-      session.add_ply_in_vc(player)?;
+      session.add_player_in_vc(player)?;
     } else {
       session.add_ply(player)?;
     }
     
     // Schedule timeout for this player
     if let Some(guild_id) = queue_ctx.guild_id {
-      self.schedule_player_rejoin_expiration(queue_ctx.ctx, guild_id, user_id, player_queue_expiration, player_tag).await;
+      self.set_player_rejoin_expiration(queue_ctx.ctx, guild_id, user_id, player_queue_expiration, player_tag).await;
     }
 
     // Create team VCs on first join if policy requires it
@@ -1988,19 +1995,19 @@ impl Category {
     let user_prefs = db.players.get_prefs(user_id).await?;
     
     // Schedule timeout for this player
-    self.schedule_player_rejoin_expiration(queue_ctx.ctx, guild_id, user_id, player_queue_expiration, player_tag).await;
+    self.set_player_rejoin_expiration(queue_ctx.ctx, guild_id, user_id, player_queue_expiration, player_tag).await;
     
     self.queue_dash_update(queue_ctx.ctx, guild_id).await;
     Ok(())
   }
   
   /// Schedule a timeout task for a player
-  pub async fn schedule_player_rejoin_expiration(&self, ctx: &Context, guild_id: GI, user_id: UI, rejoin_expiration_minutes: u8, user_tag: String) {
+  pub async fn set_player_rejoin_expiration(&self, ctx: &Context, guild_id: GI, player: Player, rejoin_expiration_minutes: u8) {
     use crate::models::QueueExpirationSchedulerKey;
     
     if let Some(scheduler) = ctx.data.read().await.get::<QueueExpirationSchedulerKey>() {
       let mut sched = scheduler.lock().await;
-      sched.schedule_queue_expiration(guild_id, self.id, self.formats[0].id, user_id, user_tag, rejoin_expiration_minutes);
+      sched.schedule_queue_expiration(guild_id, self.id, self.formats[0].id, player.user_id, player.tag, rejoin_expiration_minutes);
     }
   }
   
@@ -2060,7 +2067,7 @@ impl Category {
   /// If `post_game` is true, only pings players who are NOT in voice chat (to avoid pinging players who just finished)
   pub async fn notify_fmt(&mut self, fmt_id: u8, ctx: &Context, guild_id: GI, db: Option<&DB>, post_game: bool) {
     // Validate VC status before sending notifications to prevent desync
-    self.validate_vc_status(ctx, guild_id).await;
+    self.verify_vc(ctx, guild_id).await;
     let mut player_mentions = Vec::new();
     let mut players_to_dm = Vec::new();
     

@@ -56,9 +56,9 @@ impl Session {
   /// Add a player to the session with their rank, marking them as already in queue VC
   /// Use this when re-adding players who were just moved to the queue channel
   /// Returns Ok(position) with the player's 1-indexed position in the queue
-  pub fn add_ply_in_vc(&mut self, player: Player) -> Result<usize> {
+  pub fn add_player_in_vc(&mut self, player: Player) -> Result<usize> {
     let mut session_player = SessionPlayer::add(player);
-    session_player.in_queue_vc = true;
+    session_player.in_vc = true;
     self.pool.push(session_player);
     Ok(self.pool.len())
   }
@@ -332,8 +332,8 @@ impl SessionStatus {
 pub struct SessionPlayer {
   pub player: Player,
   pub team: Option<Team>,
-  pub in_queue_vc: bool,
-  pub in_queue_cmd: bool,
+  pub in_vc: bool,
+  pub in_queue: bool,
   pub joined_at: SystemTime,
   pub queue_expiration: u8,
   pub vc_leave_grace_until: Option<SystemTime>,
@@ -343,24 +343,28 @@ impl SessionPlayer {
   pub fn add(player: Player) -> Self {
     Self { player,
       team: None,
-      in_queue_vc: false,
-      in_queue_cmd: false,
+      in_vc: false,
+      in_queue: false,
       joined_at: SystemTime::now(),
       queue_expiration: crate::DEFAULT_QUEUE_EXPIRATION,
       vc_leave_grace_until: None }
   }
 
-  pub fn team(&mut self, team: Team) {
+  pub fn set_team(&mut self, team: Team) {
     self.team = Some(team);
   }
 
-  pub fn in_queue(&self) -> bool {
-    self.in_queue_vc || self.in_queue_cmd
+  pub fn vc_on(&mut self) {
+    self.in_vc = true;
+  }
+
+  pub fn vc_off(&mut self) {
+    self.in_vc = false;
   }
 
   pub fn vc_icon(&self) -> egui::RichText {
     use egui_phosphor::regular::*;
-    let icon = match self.in_queue_vc {
+    let icon = match self.in_vc {
       true => HEADSET,
       false => MOON,
     };

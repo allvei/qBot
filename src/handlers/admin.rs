@@ -1464,7 +1464,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut QGuild, user_id: UI) -> Result
   let is_hot = session.is_hot();
 
   // Validate VC status to sync in_queue_vc flags with actual Discord state
-  category.validate_vc_status(cc.ctx, guild_id).await;
+  category.verify_vc(cc.ctx, guild_id).await;
 
   // If session is hot, regenerate teams with new order
   // Note: generate_teams() already handles dashboard update
@@ -1543,7 +1543,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut QGuild, user_id: UI) -> Result
   let is_hot = session.is_hot();
 
   // Validate VC status to sync in_queue_vc flags with actual Discord state
-  category.validate_vc_status(cc.ctx, guild_id).await;
+  category.verify_vc(cc.ctx, guild_id).await;
 
   // If session is hot, regenerate teams with new order
   if is_hot {

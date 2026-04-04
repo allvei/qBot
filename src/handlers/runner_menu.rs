@@ -360,7 +360,7 @@ pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<
       for category in &mut server.categories {
         // Validate VC status to sync in_queue_vc flags with actual Discord state
         // This ensures the dashboard shows correct VC status after player reordering
-        category.validate_vc_status(ctx, guild_id).await;
+        category.verify_vc(ctx, guild_id).await;
         
         // Collect format IDs that need team regeneration
         let hot_fmt_ids: Vec<u8> = category.formats.iter()
