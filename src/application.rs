@@ -24,7 +24,7 @@ use crate::models::server::QueueContext;
 use crate::repo::GuildRepository;
 use crate::{
   get_user_tag, guild_name, log_prefix_category, log_prefix_format, log_queue_toggle, ButtonType, Category, CommandContext, ComponentContext, DashboardQueueKey,
-  DashboardUpdateQueue, Database, DmMessageTracker, DmTrackerKey, Manager, QGuild, Roles, SessionStatus, ShutdownHandler, VoiceStateUpdate, RED,
+  DashboardUpdateQueue, Database, DmMessageTracker, DmTrackerKey, Manager, QGuild, Roles, SessionStatus, VoiceStateUpdate, RED,
 };
 
 // Helper macros and functions that need to be available
@@ -168,24 +168,43 @@ impl Application {
 
     // Set up signal handling
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let shutdown_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     // Spawn shutdown handler
-    let shutdown_handler = ShutdownHandler::new(self.manager.clone(), self.dashboard_queue.clone(), client.cache.clone(), client.http.clone(), self.db.clone());
+    let shutdown_handler = crate::shutdown::ShutdownHandler::new(self.manager.clone(), self.dashboard_queue.clone(), client.cache.clone(), client.http.clone(), self.db.clone());
+    let shutdown_flag_signal = shutdown_flag.clone();
 
     tokio::spawn(async move {
       shutdown_handler.handle_signals(shutdown_tx).await;
+      shutdown_flag_signal.store(true, std::sync::atomic::Ordering::Relaxed);
     });
 
     // Spawn command handler if cmd_rx is set
     if let Some(mut cmd_rx) = self.cmd_rx.take() {
       let manager = self.manager.clone();
       let db = self.db.clone();
+      let shutdown_flag_cmd = shutdown_flag.clone();
 
       tokio::spawn(async move {
-        while let Some(command) = cmd_rx.recv().await {
-          let mut manager_lock = manager.lock().await;
-          if let Err(e) = command_handler::handle_command(command, &mut manager_lock, &db).await {
-            error!("Error handling GUI command: {}", e);
+        loop {
+          tokio::select! {
+            biased;
+            _ = tokio::task::yield_now() => {
+              if shutdown_flag_cmd.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+              }
+            }
+            cmd = cmd_rx.recv() => {
+              match cmd {
+                Some(command) => {
+                  let mut manager_lock = manager.lock().await;
+                  if let Err(e) = command_handler::handle_command(command, &mut manager_lock, &db).await {
+                    error!("Error handling GUI command: {}", e);
+                  }
+                }
+                None => break, // Channel closed
+              }
+            }
           }
         }
       });
@@ -194,38 +213,49 @@ impl Application {
     // Spawn periodic snapshot task for GUI
     if let Some(latest_manager) = self.latest_manager.take() {
       let manager = self.manager.clone();
+      let shutdown_flag_snap = shutdown_flag.clone();
 
       tokio::spawn(async move {
         use tokio::time::{interval, Duration};
         let mut snapshot_interval = interval(Duration::from_millis(100));
 
         loop {
-          snapshot_interval.tick().await;
+          tokio::select! {
+            biased;
+            _ = tokio::task::yield_now() => {
+              if shutdown_flag_snap.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+              }
+            }
+            _ = snapshot_interval.tick() => {
+              // Clone manager state under lock (brief lock)
+              let manager_clone = if let Ok(manager_lock) = manager.try_lock() {
+                manager_lock.clone()
+              } else {
+                continue; // Skip this snapshot if lock is held
+              };
 
-          // Clone manager state under lock (brief lock)
-          let manager_clone = if let Ok(manager_lock) = manager.try_lock() {
-            manager_lock.clone()
-          } else {
-            continue; // Skip this snapshot if lock is held
-          };
-
-          // Update snapshot
-          let mut latest = latest_manager.write().await;
-          *latest = Some(manager_clone);
+              // Update snapshot
+              let mut latest = latest_manager.write().await;
+              *latest = Some(manager_clone);
+            }
+          }
         }
       });
     }
 
+    // Start terminal command reader for testing
+    crate::terminal::start_terminal_reader(self.manager.clone(), self.db.clone()).await;
+
     // Start client
     tokio::select! {
-        result = client.start() => {
-            if let Err(why) = result {
-                error!("Client error: {:?}", why);
-            }
+      result = client.start() => {
+        if let Err(why) = result {
+          error!("Client error: {:?}", why);
         }
-        _ = shutdown_rx => {
-            info!("Shutting down client...");
-        }
+      }
+      _ = shutdown_rx => {
+      }
     }
 
     Ok(())
