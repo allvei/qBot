@@ -11,13 +11,15 @@ use serenity::all::{
 use serenity::async_trait;
 use serenity::builder::{CreateCommand as CC, CreateCommandOption as CCO, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
 use serenity::prelude::TypeMapKey;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot, mpsc};
 use tracing::{debug, error, info, warn};
 
 use crate::commands;
 use crate::db::migrations::DatabaseMigrations;
 use crate::db::repo::CategoryRepository;
 use crate::handlers::{admin, InteractionHelpers};
+use crate::gui::command_handler;
+use crate::gui::commands::GuiCommand;
 use crate::models::server::QueueContext;
 use crate::repo::GuildRepository;
 use crate::{
@@ -94,6 +96,8 @@ pub struct Application {
   pub db: Arc<Database>,
   pub manager: Arc<Mutex<Manager>>,
   pub dashboard_queue: Arc<Mutex<Option<DashboardUpdateQueue>>>,
+  pub cmd_rx: Option<mpsc::Receiver<GuiCommand>>,
+  pub latest_manager: Option<Arc<tokio::sync::RwLock<Option<Manager>>>>,
 }
 
 impl Application {
@@ -111,7 +115,27 @@ impl Application {
     // Initialize dashboard queue
     let dashboard_queue = Arc::new(Mutex::new(None));
 
-    Ok(Self { db, manager, dashboard_queue })
+    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None })
+  }
+
+  /// Initialize the application with pre-created manager and db (for GUI integration)
+  pub async fn new_with_shared(manager: Arc<Mutex<Manager>>, db: Arc<Database>) -> Result<Self> {
+    // Initialize dashboard queue
+    let dashboard_queue = Arc::new(Mutex::new(None));
+
+    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None })
+  }
+
+  /// Set the command receiver for GUI commands
+  pub fn with_cmd_rx(mut self, cmd_rx: mpsc::Receiver<GuiCommand>) -> Self {
+    self.cmd_rx = Some(cmd_rx);
+    self
+  }
+
+  /// Set the latest_manager snapshot target for GUI
+  pub fn with_latest_manager(mut self, latest_manager: Arc<tokio::sync::RwLock<Option<Manager>>>) -> Self {
+    self.latest_manager = Some(latest_manager);
+    self
   }
 
   /// Setup database connection and run migrations
@@ -139,7 +163,7 @@ impl Application {
   }
 
   /// Run the application with graceful shutdown
-  pub async fn run(self) -> Result<()> {
+  pub async fn run(mut self) -> Result<()> {
     let mut client = self.create_client().await?;
 
     // Set up signal handling
@@ -151,6 +175,46 @@ impl Application {
     tokio::spawn(async move {
       shutdown_handler.handle_signals(shutdown_tx).await;
     });
+
+    // Spawn command handler if cmd_rx is set
+    if let Some(mut cmd_rx) = self.cmd_rx.take() {
+      let manager = self.manager.clone();
+      let db = self.db.clone();
+
+      tokio::spawn(async move {
+        while let Some(command) = cmd_rx.recv().await {
+          let mut manager_lock = manager.lock().await;
+          if let Err(e) = command_handler::handle_command(command, &mut manager_lock, &db).await {
+            error!("Error handling GUI command: {}", e);
+          }
+        }
+      });
+    }
+
+    // Spawn periodic snapshot task for GUI
+    if let Some(latest_manager) = self.latest_manager.take() {
+      let manager = self.manager.clone();
+
+      tokio::spawn(async move {
+        use tokio::time::{interval, Duration};
+        let mut snapshot_interval = interval(Duration::from_millis(100));
+
+        loop {
+          snapshot_interval.tick().await;
+
+          // Clone manager state under lock (brief lock)
+          let manager_clone = if let Ok(manager_lock) = manager.try_lock() {
+            manager_lock.clone()
+          } else {
+            continue; // Skip this snapshot if lock is held
+          };
+
+          // Update snapshot
+          let mut latest = latest_manager.write().await;
+          *latest = Some(manager_clone);
+        }
+      });
+    }
 
     // Start client
     tokio::select! {

@@ -31,6 +31,8 @@ itertools          = "0.14.0"
 async-trait        = "0.1"   
 lazy_static        = "1.4"   
 rustyline          = "17.0.2"
+eframe             = "0.31"
+egui               = "0.31"
 
 [lints.rust]
 # missing_docs_in_private_items = "warn"

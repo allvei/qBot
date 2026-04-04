@@ -2,6 +2,7 @@
 
 pub mod application;
 pub mod db;
+pub mod gui;
 pub mod handlers;
 pub mod log;
 pub mod models;

@@ -70,7 +70,7 @@ impl Config {
 }
 
 /// Initialize tracing with both console and file output
-pub fn init_logging() {
+pub fn init_logging(log_buffer: Option<std::sync::Arc<tokio::sync::Mutex<std::collections::VecDeque<String>>>>) {
     use std::fs;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
@@ -133,10 +133,18 @@ pub fn init_logging() {
         .with_filter(file_filter);
     
     // Initialize subscriber with both layers
-    tracing_subscriber::registry()
+    let registry = tracing_subscriber::registry()
         .with(console_layer)
-        .with(file_layer)
-        .init();
+        .with(file_layer);
+
+    // Add GUI log layer if buffer is provided
+    if let Some(buffer) = log_buffer {
+        use crate::gui::log_layer::GuiLogLayer;
+        let gui_layer = GuiLogLayer::new(buffer, 1000);
+        registry.with(gui_layer).init();
+    } else {
+        registry.init();
+    }
 }
 
 /// Discord timestamp styles
