@@ -52,11 +52,63 @@ fn main() -> Result<()> {
     });
 
     // Run eframe GUI on main thread
-    let native_options = eframe::NativeOptions::default();
+    let mut native_options = eframe::NativeOptions::default();
+    
+    // Configure small windowed mode
+    native_options.viewport.inner_size = Some(egui::vec2(900.0, 650.0));
+    native_options.viewport.min_inner_size = Some(egui::vec2(600.0, 400.0));
+    
     let result = eframe::run_native(
         "qBot Host Management Panel",
         native_options,
-        Box::new(|_cc| {
+        Box::new(|cc| {
+            // Configure custom font
+            let mut fonts = egui::FontDefinitions::default();
+            
+            // Try to load JetBrainsMonoNL Nerd Font Mono from system
+            // First, check if we can load it from common system font paths
+            let font_paths = [
+                "fonts/JetBrainsMonoNLNerdFont-Regular.ttf",
+            ];
+            
+            let mut font_loaded = false;
+            for path in &font_paths {
+                if let Ok(font_data) = std::fs::read(path) {
+                    fonts.font_data.insert(
+                        "JetBrainsMonoNLNerdFontMono".to_owned(),
+                        egui::FontData::from_owned(font_data).into(),
+                    );
+                    fonts
+                        .families
+                        .entry(egui::FontFamily::Monospace)
+                        .or_default()
+                        .insert(0, "JetBrainsMonoNLNerdFontMono".to_owned());
+                    fonts
+                        .families
+                        .entry(egui::FontFamily::Proportional)
+                        .or_default()
+                        .insert(0, "JetBrainsMonoNLNerdFontMono".to_owned());
+                    font_loaded = true;
+                    break;
+                }
+            }
+            
+            if !font_loaded {
+                eprintln!("Warning: JetBrainsMonoNL Nerd Font Mono not found, using default font");
+            }
+            
+            // Add Phosphor icons
+            fonts.font_data.insert(
+                "phosphor".into(),
+                std::sync::Arc::new(egui_phosphor::Variant::Regular.font_data()),
+            );
+            fonts.families.insert(
+                egui::FontFamily::Name("phosphor".into()),
+                vec!["Ubuntu-Light".into(), "phosphor".into()],
+            );
+            
+            cc.egui_ctx.set_fonts(fonts);
+            
             Ok(Box::new(pf_pug_bot::gui::app::MyApp::new(shared_state)))
         }),
     );
