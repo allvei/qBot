@@ -1145,7 +1145,7 @@ impl EventHandler for Handler {
 
                 // Use queue_player_with_vc_status to set in_queue_vc BEFORE quota check/notification
                 let queue_ctx = QueueContext { ctx: &ctx, guild_id: Some(guild_id), db: Some(&self.db), manager: Some(self.manager.clone()) };
-                if let Err(e) = category.queue_player_with_vc_status(player.clone(), discord_rank, queue_ctx, true).await {
+                if let Err(e) = category.queue_player_fmt(player.clone(), discord_rank, queue_ctx, true).await {
                   error!("Failed to add player to queue: {e}");
                 } else {
                   let guild_name = guild_name(&ctx, guild_id);

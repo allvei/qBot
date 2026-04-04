@@ -27,6 +27,12 @@ pub struct QueueContext<'a> {
   pub manager: Option<Arc<Mutex<Manager>>>,
 }
 
+impl<'a> QueueContext<'a> {
+  pub fn new(ctx: &'a Context, guild_id: Option<GI>, db: Option<&'a DB>, manager: Option<Arc<Mutex<Manager>>>) -> Self {
+    Self { ctx, guild_id, db, manager }
+  }
+}
+
 /// Helper function to calculate mean, median, and standard deviation for team ELOs
 fn calculate_stats(elos: &[f64]) -> (f64, f64, f64) {
   if elos.is_empty() {
@@ -1824,24 +1830,10 @@ impl Category {
 
   pub async fn queue_player(&mut self, player: Player, rank: Rank, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>) -> Result<()> {
     let queue_ctx = QueueContext { ctx, guild_id, db, manager };
-    self.queue_player_with_vc_status(player, rank, queue_ctx, false).await
+    self.queue_player_fmt(player, rank, queue_ctx, false).await
   }
 
-  pub async fn queue_player_fmt(
-    &mut self,
-    fmt_id: u8,
-    player: Player,
-    rank: Rank,
-    ctx: &Context,
-    guild_id: Option<GI>,
-    db: Option<&DB>,
-    manager: Option<Arc<Mutex<Manager>>>,
-  ) -> Result<()> {
-    let queue_ctx = QueueContext { ctx, guild_id, db, manager };
-    self.queue_ply_with_vc_status_fmt(fmt_id, player, rank, queue_ctx, false).await
-  }
-
-  pub async fn queue_player_with_vc_status(&mut self, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
+  pub async fn queue_player_fmt(&mut self, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
     let was_empty = self.get_queue().await?.pool.is_empty();
     let session = self.get_queue().await?;
     

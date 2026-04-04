@@ -796,7 +796,10 @@ impl Category {
       // Clone fmt_name to avoid borrowing issues
       let fmt_name_owned = fmt_name.map(|s| s.to_string());
 
-      if let Err(e) = self.queue_player_fmt(fmt_id, player.clone(), discord_rank, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await {
+      let queue_context = crate::QueueContext::new(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone()));
+      let is_user_in_vc = self.is_user_in_queue_vc(&cc.ctx.http, user_id).await;
+
+      if let Err(e) = self.queue_ply_with_vc_status_fmt(fmt_id, player.clone(), discord_rank, queue_context, is_user_in_vc).await {
         warn!("Failed to queue player: {e}");
       } else {
         // Log AFTER queue operation so position and count are accurate
