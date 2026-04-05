@@ -209,7 +209,7 @@ async fn cmd_addplayers(
                                 None, // rank
                             );
                             
-                            if let Err(e) = session.add_ply(player) {
+                            if let Err(e) = session.add_ply(player, false) {
                                 warn!("[Terminal] Failed to add player {}: {}", added + 1, e);
                             } else {
                                 added += 1;
@@ -263,7 +263,7 @@ async fn cmd_fillqueue(
                                 None, // rank
                             );
                             
-                            if let Err(e) = session.add_ply(player) {
+                            if let Err(e) = session.add_ply(player, false) {
                                 warn!("[Terminal] Failed to add player: {}", e);
                             } else {
                                 filled += 1;

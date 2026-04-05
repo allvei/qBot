@@ -45,6 +45,16 @@ pub async fn handle_command(
             // TODO: Implement
             Ok(())
         }
+        GuiCommand::BufferPlayer { guild_id, category_id, fmt_id, user_id } => {
+            info!("BufferPlayer: guild={}, category={}, fmt={}, user={}", guild_id, category_id, fmt_id, user_id);
+            // TODO: Implement
+            Ok(())
+        }
+        GuiCommand::FatkidPlayer { guild_id, category_id, fmt_id, user_id } => {
+            info!("FatkidPlayer: guild={}, category={}, fmt={}, user={}", guild_id, category_id, fmt_id, user_id);
+            // TODO: Implement
+            Ok(())
+        }
         GuiCommand::MovePlayerBetweenSessions { guild_id, category_id, fmt_id, user_id, from_session, to_session } => {
             info!("MovePlayerBetweenSessions: guild={}, category={}, fmt={}, user={}, {}->{}", guild_id, category_id, fmt_id, user_id, from_session, to_session);
             // TODO: Implement

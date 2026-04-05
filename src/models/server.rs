@@ -272,6 +272,20 @@ impl Format {
   pub fn contains_user(&self, user_id: UI) -> bool {
     self.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.user_id == user_id))
   }
+
+  pub fn get_player(&self, user_id: UI) -> Result<Player> {
+    self.sessions.get_player(user_id)
+  }
+}
+
+trait FindPlayer {
+  fn get_player(&self, user_id: UI) -> Result<Player>;
+}
+
+impl FindPlayer for Vec<Session> {
+  fn get_player(&self, user_id: UI) -> Result<Player> {
+    self.iter().find(|session| session.get_player(user_id).is_ok()).unwrap().get_player(user_id)
+  }
 }
 
 // Category
@@ -695,7 +709,7 @@ impl Category {
 
   pub fn get_player(&mut self, user_id: UI) -> Result<Player> {
     match self.get_session_player(user_id) {
-      Ok(session_player) => Ok(session_player.player),
+      Ok(session_player) => Ok(session_player.player.clone()),
       Err(e) => Err(e),
     }
   }
@@ -1850,15 +1864,11 @@ impl Category {
     let db = queue_ctx.db.unwrap();
     let usr_prefs = db.players.get_prefs(user_id).await?;
 
-    if in_vc {
-      session.add_player_in_vc(player)?;
-    } else {
-      session.add_ply(player)?;
-    }
+    session.add_ply(player.clone(), in_vc)?;
     
     // Schedule timeout for this player
     if let Some(guild_id) = queue_ctx.guild_id {
-      self.set_player_rejoin_expiration(queue_ctx.ctx, guild_id, user_id, player_queue_expiration, ply_tg).await;
+      self.set_player_rejoin_expiration(queue_ctx.ctx, guild_id, player, player_queue_expiration).await;
     }
 
     // Create team VCs on first join if policy requires it
@@ -1889,15 +1899,11 @@ impl Category {
     let db = queue_ctx.db.unwrap();
     let user_prefs = db.players.get_prefs(user_id).await?;
 
-    if in_vc {
-      session.add_player_in_vc(player)?;
-    } else {
-      session.add_ply(player)?;
-    }
+    session.add_ply(player.clone(), in_vc)?;
     
     // Schedule timeout for this player
     if let Some(guild_id) = queue_ctx.guild_id {
-      self.set_player_rejoin_expiration(queue_ctx.ctx, guild_id, user_id, player_queue_expiration, player_tag).await;
+      self.set_player_rejoin_expiration(queue_ctx.ctx, guild_id, player, player_queue_expiration).await;
     }
 
     // Create team VCs on first join if policy requires it
@@ -1990,12 +1996,12 @@ impl Category {
     let player_tag = player.tag.clone();
     let player_queue_expiration = player.queue_expiration;
     
-    session.add_ply(player)?;
+    session.add_ply(player.clone(), false)?;
     let db = queue_ctx.db.unwrap();
     let user_prefs = db.players.get_prefs(user_id).await?;
     
     // Schedule timeout for this player
-    self.set_player_rejoin_expiration(queue_ctx.ctx, guild_id, user_id, player_queue_expiration, player_tag).await;
+    self.set_player_rejoin_expiration(queue_ctx.ctx, guild_id, player, player_queue_expiration).await;
     
     self.queue_dash_update(queue_ctx.ctx, guild_id).await;
     Ok(())
@@ -2007,7 +2013,7 @@ impl Category {
     
     if let Some(scheduler) = ctx.data.read().await.get::<QueueExpirationSchedulerKey>() {
       let mut sched = scheduler.lock().await;
-      sched.schedule_queue_expiration(guild_id, self.id, self.formats[0].id, player.user_id, player.tag, rejoin_expiration_minutes);
+      sched.schedule_queue_expiration(guild_id, self.id, self.formats[0].id, player, rejoin_expiration_minutes);
     }
   }
   

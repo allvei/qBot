@@ -45,10 +45,11 @@ impl Session {
     }
   }
 
-  /// Add a player to the session with their rank
+  /// Add a player to the session
   /// Returns Ok(position) with the player's 1-indexed position in the queue
-  pub fn add_ply(&mut self, player: Player) -> Result<usize> {
-    let session_player = SessionPlayer::add(player);
+  pub fn add_ply(&mut self, player: Player, in_vc: bool) -> Result<usize> {
+    let mut session_player = SessionPlayer::add(player);
+    session_player.in_vc = in_vc;
     self.pool.push(session_player);
     Ok(self.pool.len())
   }
@@ -56,11 +57,9 @@ impl Session {
   /// Add a player to the session with their rank, marking them as already in queue VC
   /// Use this when re-adding players who were just moved to the queue channel
   /// Returns Ok(position) with the player's 1-indexed position in the queue
+  #[deprecated(since = "0.12.0", note = "Use add_ply() with in_vc=true instead")]
   pub fn add_player_in_vc(&mut self, player: Player) -> Result<usize> {
-    let mut session_player = SessionPlayer::add(player);
-    session_player.in_vc = true;
-    self.pool.push(session_player);
-    Ok(self.pool.len())
+    self.add_ply(player, true)
   }
 
   pub fn remove_player(&mut self, user_id: UI) {

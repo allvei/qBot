@@ -72,6 +72,10 @@ impl QueueExpirationScheduler {
     let manager = self.manager.clone();
     let db = self.db.clone();
     let ctx = self.ctx.clone();
+    
+    // Capture player data for the async block
+    let player_user_id = player.user_id;
+    let player_tag = player.tag.clone();
 
     let handle = tokio::spawn(async move {
       // Wait for the exact timeout duration
@@ -89,7 +93,7 @@ impl QueueExpirationScheduler {
           for format in &mut category.formats {
             let format_clone = format.clone();
             for session in &mut format.sessions {
-              if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == player.user_id) {
+              if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == player_user_id) {
                 session.pool.remove(pos);
                 removed = true;
                 should_update_dashboard = true;
@@ -158,11 +162,10 @@ impl QueueExpirationScheduler {
     guild_id: GI,
     category_id: u8,
     format_id: u8,
-    user_id: UI,
-    player_tag: String,
+    player: Player,
     new_expiration_duration_minutes: u8,
   ) {
-    self.schedule_queue_expiration(guild_id, category_id, format_id, user_id, player_tag, new_expiration_duration_minutes);
+    self.schedule_queue_expiration(guild_id, category_id, format_id, player, new_expiration_duration_minutes);
   }
 }
 

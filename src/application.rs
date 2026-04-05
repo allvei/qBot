@@ -1701,7 +1701,7 @@ impl Handler {
           };
 
           // Add player to pool and log only on success
-          match session.add_ply(player.clone()) {
+          match session.add_ply(player.clone(), false) {
             Ok(_position) => {
               // Player successfully added, now log
               if let Err(e) = log_queue_toggle(ctx, &self.db, guild.id, category_id, &format, &player, "joined", rank_mismatch).await {
