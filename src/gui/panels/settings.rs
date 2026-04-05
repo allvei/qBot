@@ -10,14 +10,6 @@ pub fn show_settings_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     // Connection Status Panel (left side)
     ui.columns(2, |cols| {
         cols[0].group(|ui| {
-            ui.heading("Connection Status");
-            ui.separator();
-            ui.label("Bot Status: Running");
-            ui.label("Discord Gateway: Connected");
-            ui.label("Database: Connected");
-        });
-
-        cols[1].group(|ui| {
             ui.heading("GUI Settings");
             ui.separator();
             ui.label("Log Buffer Size: 1000 lines");

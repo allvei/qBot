@@ -12,6 +12,7 @@ pub struct MyApp {
     state: Arc<GuiSharedState>,
     selected_tab: PanelTab,
     should_quit: bool,
+    next_clock_tick: std::time::Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +25,13 @@ enum PanelTab {
 
 impl MyApp {
     pub fn new(state: Arc<GuiSharedState>) -> Self {
-        Self { state, selected_tab: PanelTab::Queue, should_quit: false }
+        Self { state, selected_tab: PanelTab::Queue, should_quit: false, next_clock_tick: Self::next_second_instant() }
+    }
+
+    fn next_second_instant() -> std::time::Instant {
+        let now_sys = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
+        let millis_until_next = 1000 - (now_sys.as_millis() % 1000);
+        std::time::Instant::now() + std::time::Duration::from_millis(millis_until_next as u64)
     }
 
     fn trigger_shutdown(&mut self) {
@@ -131,5 +138,14 @@ impl eframe::App for MyApp {
         if self.should_quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        
+        // Request repaint at the next whole second boundary to keep clock synchronized.
+        // next_clock_tick is stored in the struct so multiple repaints within the same tick
+        // reuse the same Instant without recalculating.
+        let now = std::time::Instant::now();
+        if now >= self.next_clock_tick {
+            self.next_clock_tick = Self::next_second_instant();
+        }
+        ctx.request_repaint_after(self.next_clock_tick.saturating_duration_since(now));
     }
 }
