@@ -93,6 +93,9 @@ impl QueueExpirationScheduler {
           for format in &mut category.formats {
             let format_clone = format.clone();
             for session in &mut format.sessions {
+              if session.is_hot() || session.is_active() {
+                continue;
+              }
               if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == player_user_id) {
                 session.pool.remove(pos);
                 removed = true;
