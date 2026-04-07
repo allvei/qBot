@@ -1621,6 +1621,8 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut QGuild, user_option: Opt
 
           // Remove from each targeted format
           for &fmt_idx in &target_formats {
+            let mut hot_session_still_hot = false;
+
             if let Some(sg) = category.formats.get_mut(fmt_idx) {
               let quota = sg.quota as usize;
               
@@ -1634,20 +1636,28 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut QGuild, user_option: Opt
                     total_removed += removed_count;
                     removed_from_formats.push((fmt_idx, sg.name.clone()));
                     
-                    // If this was a Hot session and now below quota, transition back to Idle
-                    if session.is_hot() && session.pool.len() < quota {
-                      session.idle();
-                      info!("Hot session dropped below quota after removing player, transitioning back to Idle");
+                    if session.is_hot() {
+                      if session.pool.len() < quota {
+                        // If this was a Hot session and now below quota, transition back to Idle
+                        session.idle();
+                        info!("Hot session dropped below quota after removing player, transitioning back to Idle");
+                      } else {
+                        // Still at or above quota - teams need regenerating to fill the gap
+                        hot_session_still_hot = true;
+                      }
                     }
                   }
                 }
               }
-              
-              // After removal, check if we can pull waiting players to meet quota
-              if category.is_quota_fmt(fmt_idx as u8) {
-                if let Err(e) = category.hot_fmt(fmt_idx as u8, cc.ctx, Some(guild_id), Some(&*cc.db), None, false).await {
-                  warn!("Failed to transition to hot after player removal: {}", e);
-                }
+            }
+
+            // After removal: regenerate teams if the hot session is still valid,
+            // or try to pull waiting players if it dropped to idle
+            if hot_session_still_hot {
+              category.generate_teams_fmt(fmt_idx as u8, cc.ctx, guild_id, Some(&*cc.db)).await;
+            } else if category.is_quota_fmt(fmt_idx as u8) {
+              if let Err(e) = category.hot_fmt(fmt_idx as u8, cc.ctx, Some(guild_id), Some(&*cc.db), None, false).await {
+                warn!("Failed to transition to hot after player removal: {}", e);
               }
             }
           }

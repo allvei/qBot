@@ -354,7 +354,7 @@ pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<
 
   if success {
     // Regenerate teams for Hot sessions if buffer/fatkid changed player order
-    if action == "buffer" || action == "fatkid" {
+    if action == "buffer" || action == "fatkid" || action == "remove" {
       let mut mgr = manager.lock().await;
       let server = mgr.get_qguild(guild_id)?;
       for category in &mut server.categories {
