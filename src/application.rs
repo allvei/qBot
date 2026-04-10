@@ -184,6 +184,9 @@ impl Application {
       let manager = self.manager.clone();
       let db = self.db.clone();
       let shutdown_flag_cmd = shutdown_flag.clone();
+      // Clone refs so the command task can update the snapshot and refresh the Discord dashboard
+      let latest_manager_cmd  = self.latest_manager.clone();
+      let dashboard_queue_cmd = self.dashboard_queue.clone();
 
       tokio::spawn(async move {
         loop {
@@ -197,9 +200,22 @@ impl Application {
             cmd = cmd_rx.recv() => {
               match cmd {
                 Some(command) => {
-                  let mut manager_lock = manager.lock().await;
-                  if let Err(e) = command_handler::handle_command(command, &mut manager_lock, &db).await {
-                    error!("Error handling GUI command: {}", e);
+                  let snapshot = {
+                    let mut manager_lock = manager.lock().await;
+                    if let Err(e) = command_handler::handle_command(command, &mut manager_lock, &db).await {
+                      error!("Error handling GUI command: {}", e);
+                    }
+                    manager_lock.clone() // snapshot taken while lock is still held
+                  };
+
+                  // Immediately push updated state to the GUI
+                  if let Some(ref lm) = latest_manager_cmd {
+                    *lm.write().await = Some(snapshot);
+                  }
+
+                  // Trigger Discord dashboard refresh for all categories
+                  if let Some(ref queue) = *dashboard_queue_cmd.lock().await {
+                    queue.request_update_all_deferred();
                   }
                 }
                 None => break, // Channel closed

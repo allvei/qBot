@@ -34,11 +34,20 @@ pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
             ui.separator();
             for (g_idx, guild) in manager.qguilds.iter().enumerate() {
                 let selected = g_idx == sel_guild;
-                let resp = ui.selectable_label(selected, &guild.name);
+                let resp = ui.selectable_label(selected, &guild.name)
+                    .on_hover_text(format!("ID: {}", guild.id.get()));
                 if resp.clicked() {
                     if g_idx != sel_guild { sel_cat = 0; }
                     sel_guild = g_idx;
                 }
+                resp.context_menu(|ui| {
+                    ui.label(RichText::new(&guild.name).strong());
+                    ui.separator();
+                    if ui.button("Copy Guild ID").clicked() {
+                        ui.ctx().copy_text(guild.id.get().to_string());
+                        ui.close_menu();
+                    }
+                });
             }
 
             // Category tabs for selected guild
@@ -195,15 +204,25 @@ fn player_row(
     ui: &mut egui::Ui, sp: &crate::models::SessionPlayer,
     guild_id: u64, cat_id: u8, fmt_id: u8, state: &GuiSharedState,
 ) {
+    let uid = sp.player.user_id.get();
     let text = format!("{} ‹{}›", sp.player.tag, sp.player.elo);
     let resp = ui.horizontal(|ui| {
         ui.label(sp.vc_icon());
-        ui.label(&text)
+        ui.label(&text).on_hover_text(format!("Discord ID: {}", uid))
     }).inner;
     resp.context_menu(|ui| {
         ui.label(RichText::new(&sp.player.tag).strong());
+        ui.label(RichText::new(format!("ID: {}", uid)).weak());
         ui.separator();
-        let uid = sp.player.user_id.get();
+        if ui.button("Copy Player ID").clicked() {
+            ui.ctx().copy_text(uid.to_string());
+            ui.close_menu();
+        }
+        if ui.button("Copy tag").clicked() {
+            ui.ctx().copy_text(sp.player.tag.clone());
+            ui.close_menu();
+        }
+        ui.separator();
         if ui.button("Remove").clicked() {
             let _ = state.cmd_tx.try_send(GuiCommand::RemovePlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
             ui.close_menu();
