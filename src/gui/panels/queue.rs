@@ -1,169 +1,225 @@
-//! Queue/Game view panel
+//! Queue/Game view panel – plain egui widgets
 
+use crate::gui::commands::GuiCommand;
 use crate::gui::state::GuiSharedState;
-use egui::{self, FontFamily, RichText, ScrollArea};
-use egui_phosphor::regular;
+use crate::models::{SessionStatus, Team};
+use egui::{self, Align, Layout, RichText, ScrollArea};
 
 pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
-  // Read latest manager snapshot
-  let manager_opt = if let Ok(latest) = state.latest_manager.try_read() { latest.clone() } else { None };
-
-  ScrollArea::vertical().max_height(600.0).show(ui, |ui| {
-    if let Some(manager) = manager_opt {
-      if manager.qguilds.is_empty() {
-        ui.vertical_centered(|ui| {
-          ui.add_space(50.0);
-          ui.heading("No Guilds Connected");
-          ui.add_space(20.0);
-          ui.label("Waiting for the bot to connect to Discord servers...");
-          ui.add_space(10.0);
-          ui.label("Make sure the bot is running and has access to your servers.");
-          ui.add_space(50.0);
-        });
-      } else {
-        for guild in &manager.qguilds {
-          let guild_id = guild.id;
-          let guild_response = ui.collapsing(format!("{}", guild.name), |ui| {
-            if guild.categories.is_empty() {
-              ui.label("No categories configured - run `/setup` in Discord");
-            } else {
-              for category in &guild.categories {
-                let cat_id = category.id;
-                let cat_name = category.name.as_deref().unwrap_or("Unnamed");
-                let cat_response = ui.collapsing(cat_name.to_string(), |ui| {
-                  if category.formats.is_empty() {
-                    ui.label("No formats configured");
-                  } else {
-                    for format in &category.formats {
-                      let fmt_id = format.id;
-                      let fmt_name = &format.name;
-                      let fmt_response = ui.collapsing(format!("{} (quota: {})", fmt_name, format.quota), |ui| {
-                        if format.sessions.is_empty() {
-                          ui.label("No sessions initiated");
-                        } else {
-                          for (session_idx, session) in format.sessions.iter().enumerate() {
-                            let session_response = ui.horizontal(|ui| {
-                              ui.label(session.status.icon());
-                              ui.label(format!("Session {} - {}", session_idx, session.pool.len()));
-                              ui.label(RichText::new(regular::USER).family(FontFamily::Name("phosphor".into())));
-                            });
-
-                            // Session context menu (placeholder) - attached to session header
-                            session_response.response.context_menu(|ui| {
-                              ui.label(format!("Session {}", session_idx));
-                              ui.separator();
-                              ui.label("(Session actions - TODO)");
-                              ui.label("- Force session state");
-                              ui.label("- Reset timer");
-                              ui.label("- Regenerate teams");
-                              ui.label("- Swap teams");
-                            });
-
-                            if !session.pool.is_empty() {
-                              ui.indent(format!("players_{}", session_idx), |ui: &mut egui::Ui| {
-                                for session_player in &session.pool {
-                                  let user_id = session_player.player.user_id.get();
-                                  let team_str = match session_player.team {
-                                    Some(crate::models::Team::Red) => "RED ",
-                                    Some(crate::models::Team::Blu) => "BLU ",
-                                    Some(crate::models::Team::Unassigned) => "",
-                                    None => "",
-                                  };
-                                  let player_response = ui.horizontal(|ui| {
-                                    ui.label(session_player.vc_icon());
-                                    ui.label(format!("{}{}‹{}›", team_str, session_player.player.tag, session_player.player.elo));
-                                  });
-
-                                  // Player context menu with Remove, Buffer, Fatkid
-                                  player_response.response.context_menu(|ui| {
-                                    ui.label(format!("Player: {}", session_player.player.tag));
-                                    ui.separator();
-
-                                    if ui.button("Remove from Queue").clicked() {
-                                      let _ = state.cmd_tx.try_send(crate::gui::commands::GuiCommand::RemovePlayer {
-                                        guild_id: guild_id.get(),
-                                        category_id: cat_id,
-                                        fmt_id,
-                                        user_id,
-                                      });
-                                      ui.close_menu();
-                                    }
-
-                                    if ui.button("Buffer (Move to Front)").clicked() {
-                                      let _ = state.cmd_tx.try_send(crate::gui::commands::GuiCommand::BufferPlayer {
-                                        guild_id: guild_id.get(),
-                                        category_id: cat_id,
-                                        fmt_id,
-                                        user_id,
-                                      });
-                                      ui.close_menu();
-                                    }
-
-                                    if ui.button("Fatkid (Move to End)").clicked() {
-                                      let _ = state.cmd_tx.try_send(crate::gui::commands::GuiCommand::FatkidPlayer {
-                                        guild_id: guild_id.get(),
-                                        category_id: cat_id,
-                                        fmt_id,
-                                        user_id,
-                                      });
-                                      ui.close_menu();
-                                    }
-                                  });
-                                }
-                              });
-                            }
-                          }
-                        }
-                      });
-
-                      // Format context menu (placeholder) - attached to format header
-                      fmt_response.header_response.context_menu(|ui| {
-                        ui.label(format!("Format: {}", fmt_name));
-                        ui.separator();
-                        ui.label("(Format actions - TODO)");
-                        ui.label("- Clear queue");
-                        ui.label("- Force quota met");
-                        ui.label("- Add dummy players");
-                        ui.label("- Simulate game flow");
-                      });
-                    }
-                  }
-                });
-
-                // Category context menu (placeholder) - attached to category header
-                cat_response.header_response.context_menu(|ui| {
-                  ui.label(format!("Category: {}", cat_name));
-                  ui.separator();
-                  ui.label("(Category actions - TODO)");
-                  ui.label("- Clear all team VCs");
-                  ui.label("- Reset category state");
-                  ui.label("- Remove orphaned sessions");
-                  ui.label("- Sync VC state");
-                  ui.label("- Recover from database");
-                });
-              }
-            }
-          });
-
-          // Guild context menu - attached to guild header
-          guild_response.header_response.context_menu(|ui| {
-            let guild_id_str = format!("{}", guild_id);
-            if ui.button("Copy Guild ID").clicked() {
-              ui.ctx().copy_text(guild_id_str.clone());
-              ui.close_menu();
-            }
-          });
-        }
-      }
-    } else {
-      ui.vertical_centered(|ui| {
-        ui.add_space(50.0);
-        ui.heading("Waiting for Bot Data");
-        ui.add_space(20.0);
-        ui.label("The bot is starting up...");
-        ui.label("Please wait a moment for data to load.");
-        ui.add_space(50.0);
-      });
+    let manager_opt = if let Ok(l) = state.latest_manager.try_read() { l.clone() } else { None };
+    let Some(manager) = manager_opt else {
+        ui.centered_and_justified(|ui| { ui.label("Waiting for bot data…"); });
+        return;
+    };
+    if manager.qguilds.is_empty() {
+        ui.centered_and_justified(|ui| { ui.label("No guilds connected."); });
+        return;
     }
-  });
+
+    let guild_key       = egui::Id::new("q_sel_guild");
+    let cat_key         = egui::Id::new("q_sel_cat");
+    let dummy_count_key = egui::Id::new("q_dummy_count");
+    let mut sel_guild:    usize = ui.ctx().data(|d| d.get_temp(guild_key)).unwrap_or(0);
+    let mut sel_cat:      usize = ui.ctx().data(|d| d.get_temp(cat_key)).unwrap_or(0);
+    let mut dummy_count:  usize = ui.ctx().data(|d| d.get_temp(dummy_count_key)).unwrap_or(1);
+    sel_guild = sel_guild.min(manager.qguilds.len().saturating_sub(1));
+
+    // ── Sidebar: guild list ────────────────────────────────────────────────────
+    egui::SidePanel::left("q_guild_panel")
+        .resizable(false)
+        .exact_width(160.0)
+        .show_inside(ui, |ui| {
+            ui.add_space(4.0);
+            ui.label(RichText::new("Guilds").strong());
+            ui.separator();
+            for (g_idx, guild) in manager.qguilds.iter().enumerate() {
+                let selected = g_idx == sel_guild;
+                let resp = ui.selectable_label(selected, &guild.name);
+                if resp.clicked() {
+                    if g_idx != sel_guild { sel_cat = 0; }
+                    sel_guild = g_idx;
+                }
+            }
+
+            // Category tabs for selected guild
+            let guild = &manager.qguilds[sel_guild];
+            if !guild.categories.is_empty() {
+                ui.add_space(8.0);
+                ui.label(RichText::new("Categories").strong());
+                ui.separator();
+                for (c_idx, cat) in guild.categories.iter().enumerate() {
+                    let name = cat.name.as_deref().unwrap_or("?");
+                    if ui.selectable_label(c_idx == sel_cat, name).clicked() {
+                        sel_cat = c_idx;
+                    }
+                }
+            }
+        });
+
+    // ── Main content ───────────────────────────────────────────────────────────
+    let guild = &manager.qguilds[sel_guild];
+    sel_cat = sel_cat.min(guild.categories.len().saturating_sub(1));
+
+    let Some(category) = guild.categories.get(sel_cat) else {
+        ui.label("No categories configured.");
+        persist(ui, guild_key, sel_guild, cat_key, sel_cat, dummy_count_key, dummy_count);
+        return;
+    };
+
+    let guild_id = guild.id.get();
+    let cat_id   = category.id;
+    let send     = |cmd: GuiCommand| { let _ = state.cmd_tx.try_send(cmd); };
+
+    ScrollArea::vertical().show(ui, |ui| {
+        for format in &category.formats {
+            let fid = format.id;
+            ui.group(|ui| {
+                // ── Format header + action buttons ─────────────────────────
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&format.name).heading());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.small_button("Force Hot").clicked() {
+                            send(GuiCommand::ForceQuotaMet { guild_id, category_id: cat_id, fmt_id: fid });
+                        }
+                        if ui.small_button("Clear Queue").clicked() {
+                            send(GuiCommand::ClearQueue { guild_id, category_id: cat_id, fmt_id: fid });
+                        }
+                        ui.separator();
+                        if ui.small_button("+Dummies").clicked() {
+                            send(GuiCommand::AddDummyPlayers { guild_id, category_id: cat_id, fmt_id: fid, count: dummy_count, role_id: None });
+                        }
+                        ui.add(egui::DragValue::new(&mut dummy_count).range(1..=32));
+                    });
+                });
+                ui.separator();
+
+                // ── Queue players (left) and active sessions (right) ────────
+                ui.columns(2, |cols| {
+                    cols[0].label(RichText::new("Queue").strong());
+                    let has_queue = format.sessions.iter().any(|s| s.is_idle() && !s.pool.is_empty());
+                    if !has_queue {
+                        cols[0].label("Empty");
+                    } else {
+                        for session in format.sessions.iter().filter(|s| s.is_idle()) {
+                            for sp in &session.pool {
+                                player_row(&mut cols[0], sp, guild_id, cat_id, fid, state);
+                            }
+                        }
+                    }
+
+                    cols[1].label(RichText::new("Sessions").strong());
+                    let has_active = format.sessions.iter().any(|s| !s.is_idle());
+                    if !has_active {
+                        cols[1].label("No active sessions");
+                    } else {
+                        // Pass the real index into format.sessions so session commands work correctly
+                        for (sess_idx, session) in format.sessions.iter().enumerate() {
+                            if !session.is_idle() {
+                                session_block(&mut cols[1], session, sess_idx, guild_id, cat_id, fid, state);
+                            }
+                        }
+                    }
+                });
+            });
+            ui.add_space(6.0);
+        }
+    });
+
+    persist(ui, guild_key, sel_guild, cat_key, sel_cat, dummy_count_key, dummy_count);
+}
+
+fn persist(ui: &egui::Ui, gk: egui::Id, sg: usize, ck: egui::Id, sc: usize, dk: egui::Id, dc: usize) {
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(gk, sg);
+        d.insert_temp(ck, sc);
+        d.insert_temp(dk, dc);
+    });
+}
+
+fn session_block(
+    ui: &mut egui::Ui, session: &crate::models::Session, sess_idx: usize,
+    guild_id: u64, cat_id: u8, fmt_id: u8, state: &GuiSharedState,
+) {
+    let blu: Vec<&crate::models::SessionPlayer> =
+        session.pool.iter().filter(|p| p.team == Some(Team::Blu)).collect();
+    let red: Vec<&crate::models::SessionPlayer> =
+        session.pool.iter().filter(|p| p.team == Some(Team::Red)).collect();
+    let has_teams = !blu.is_empty() || !red.is_empty();
+    let send = |cmd: GuiCommand| { let _ = state.cmd_tx.try_send(cmd); };
+
+    ui.group(|ui| {
+        // ── Session header + action buttons ────────────────────────────────
+        ui.horizontal(|ui| {
+            ui.label(session.status.icon());
+            ui.label(format!("Session {}", sess_idx + 1));
+            ui.separator();
+            if ui.small_button("End").on_hover_text("Force end — clears pool, resets to Idle").clicked() {
+                send(GuiCommand::ForceEndGame { guild_id, category_id: cat_id, fmt_id, session_index: sess_idx });
+            }
+            if ui.small_button("Regen").on_hover_text("Regenerate teams (BCH)").clicked() {
+                send(GuiCommand::ForceTeamRegeneration { guild_id, category_id: cat_id, fmt_id, session_index: sess_idx });
+            }
+            if ui.small_button("Swap").on_hover_text("Swap Red ↔ Blue").clicked() {
+                send(GuiCommand::SwapTeams { guild_id, category_id: cat_id, fmt_id, session_index: sess_idx });
+            }
+            ui.separator();
+            if ui.small_button("→Idle").on_hover_text("Force session to Idle").clicked() {
+                send(GuiCommand::ForceSessionState { guild_id, category_id: cat_id, fmt_id, session_index: sess_idx, new_state: SessionStatus::Idle });
+            }
+            if ui.small_button("→Live").on_hover_text("Force session to Live").clicked() {
+                send(GuiCommand::ForceSessionState { guild_id, category_id: cat_id, fmt_id, session_index: sess_idx, new_state: SessionStatus::Live });
+            }
+            if ui.small_button("⏱").on_hover_text("Reset confirm timer").clicked() {
+                send(GuiCommand::ResetSessionTimer { guild_id, category_id: cat_id, fmt_id, session_index: sess_idx });
+            }
+        });
+
+        // ── Player list ────────────────────────────────────────────────────
+        if !has_teams {
+            for sp in &session.pool {
+                player_row(ui, sp, guild_id, cat_id, fmt_id, state);
+            }
+            return;
+        }
+
+        ui.columns(2, |cols| {
+            cols[0].label(RichText::new("Blue").strong());
+            for sp in &blu { player_row(&mut cols[0], sp, guild_id, cat_id, fmt_id, state); }
+            cols[1].label(RichText::new("Red").strong());
+            for sp in &red { player_row(&mut cols[1], sp, guild_id, cat_id, fmt_id, state); }
+        });
+    });
+}
+
+fn player_row(
+    ui: &mut egui::Ui, sp: &crate::models::SessionPlayer,
+    guild_id: u64, cat_id: u8, fmt_id: u8, state: &GuiSharedState,
+) {
+    let text = format!("{} ‹{}›", sp.player.tag, sp.player.elo);
+    let resp = ui.horizontal(|ui| {
+        ui.label(sp.vc_icon());
+        ui.label(&text)
+    }).inner;
+    resp.context_menu(|ui| {
+        ui.label(RichText::new(&sp.player.tag).strong());
+        ui.separator();
+        let uid = sp.player.user_id.get();
+        if ui.button("Remove").clicked() {
+            let _ = state.cmd_tx.try_send(GuiCommand::RemovePlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
+            ui.close_menu();
+        }
+        if ui.button("Buffer (move to front)").clicked() {
+            let _ = state.cmd_tx.try_send(GuiCommand::BufferPlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
+            ui.close_menu();
+        }
+        if ui.button("Fatkid (move to end)").clicked() {
+            let _ = state.cmd_tx.try_send(GuiCommand::FatkidPlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
+            ui.close_menu();
+        }
+        ui.separator();
+        if ui.button("Fix VC State").on_hover_text("Reset stuck in_vc flag for this player").clicked() {
+            let _ = state.cmd_tx.try_send(GuiCommand::FixPlayerVCState { guild_id, category_id: cat_id, user_id: uid });
+            ui.close_menu();
+        }
+    });
 }
