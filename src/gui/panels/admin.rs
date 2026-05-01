@@ -3,7 +3,7 @@
 use crate::gui::commands::GuiCommand;
 use crate::gui::state::GuiSharedState;
 use crate::models::SessionStatus;
-use egui::{self, RichText, ScrollArea};
+use egui::{self, ScrollArea};
 
 pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     let manager_opt = if let Ok(l) = state.latest_manager.try_read() { l.clone() } else { None };
@@ -50,7 +50,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     };
 
     // Send helper
-    let send = |cmd: GuiCommand| { let _ = state.cmd_tx.try_send(cmd); };
+    let send = |cmd: GuiCommand| { let _ = state.send_cmd(cmd); };
 
     // ── Target selector UI ─────────────────────────────────────────────────────
     ui.heading("Admin Commands");

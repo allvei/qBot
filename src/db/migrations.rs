@@ -1008,8 +1008,8 @@ impl DatabaseMigrations {
 
     if count == 0 {
       sqlx::query(
-        "INSERT INTO categories (category_id, guild_id, dashboard, chat, queue, red, blu)
-          VALUES (1, ?, 1, 1, 1, 1, 1)",
+        "INSERT INTO categories (category_id, guild_id, dashboard, chat, queue)
+          VALUES (1, ?, 1, 1, 1)",
       )
       .bind(guild_id.get() as i64)
       .execute(&self.pool)

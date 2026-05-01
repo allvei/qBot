@@ -149,7 +149,7 @@ pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name
   // Pre-flight: check bot permissions
   let bot_member = guild_id.member(&ctx.http, bot_user_id).await.map_err(|e| anyhow!("Failed to fetch bot member: {e}"))?;
   let bot_perms = guild.member_permissions(&bot_member);
-  info!("[{}] Bot permissions: {:?}", guild_name, bot_perms);
+  info!("[{}] Bot permissions: {:?} | MFA level: {:?}", guild_name, bot_perms, guild.mfa_level);
   let required = [
     (Permissions::MANAGE_CHANNELS, "Manage Channels"),
     (Permissions::MANAGE_ROLES, "Manage Roles"),
@@ -168,13 +168,16 @@ pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name
 
   // Bot permissions to set on the category and channels so the bot retains
   // access even after ELO gate or other permission overwrites are applied.
-  let bot_channel_perms = Permissions::VIEW_CHANNEL
+  // Intersect with actual bot perms — Discord rejects channel creation if
+  // an overwrite grants a permission the bot doesn't hold.
+  let desired_channel_perms = Permissions::VIEW_CHANNEL
     | Permissions::SEND_MESSAGES
     | Permissions::EMBED_LINKS
     | Permissions::CONNECT
     | Permissions::MOVE_MEMBERS
     | Permissions::MANAGE_CHANNELS
     | Permissions::MANAGE_ROLES;
+  let bot_channel_perms = desired_channel_perms & bot_perms;
 
   // Step 1: Create category with bot permission overwrites
   let mut cat_permissions = vec![PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Member(bot_user_id) }];
@@ -182,71 +185,63 @@ pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name
     cat_permissions.push(PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Role(role_id) });
   }
 
+  info!("[{}] Creating category with {} overwrites, channel perms: {:?}", guild_name, cat_permissions.len(), bot_channel_perms);
+
   let category = match guild_id.create_channel(&ctx.http, CreateChannel::new(category_name).kind(ChannelType::Category).permissions(cat_permissions)).await {
     Ok(cat) => cat,
     Err(e) => {
-      error!("[{}] Failed to create category: {}", guild_name, e);
-      return Err(anyhow!("Failed to create category: {e}"));
+      // Fallback: retry without permission overwrites
+      warn!("[{}] Failed to create category with overwrites ({}), retrying without overwrites", guild_name, e);
+      match guild_id.create_channel(&ctx.http, CreateChannel::new(category_name).kind(ChannelType::Category)).await {
+        Ok(cat) => {
+          info!("[{}] Category created without overwrites (bot may lose access if permissions are restricted later)", guild_name);
+          cat
+        }
+        Err(e2) => {
+          error!("[{}] Failed to create category even without overwrites: {}", guild_name, e2);
+          return Err(anyhow!("Failed to create category: {e2}"));
+        }
+      }
     }
   };
 
   let category_id = category.id;
 
   // Step 2: Create dashboard text channel with proper permissions
-  let mut permissions = vec![
-    // Allow bot user explicitly
+  let mut dash_perms = vec![
     PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Member(bot_user_id) },
   ];
-
-  // Add bot's integration role if found
   if let Some(role_id) = bot_role {
-    permissions.push(PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Role(role_id) });
+    dash_perms.push(PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Role(role_id) });
   }
-
-  // If bot-only dashboard is enabled, deny @everyone from sending messages
   if bot_only_dashboard {
-    // Only deny permissions the bot itself has (Discord requires this)
     let mut everyone_deny = Permissions::SEND_MESSAGES | Permissions::ADD_REACTIONS;
-    if let Ok(member) = guild_id.member(&ctx.http, bot_user_id).await {
-      let bot_perms = guild.member_permissions(&member);
-      if bot_perms.contains(Permissions::CREATE_PUBLIC_THREADS) {
-        everyone_deny |= Permissions::CREATE_PUBLIC_THREADS;
-      }
-      if bot_perms.contains(Permissions::CREATE_PRIVATE_THREADS) {
-        everyone_deny |= Permissions::CREATE_PRIVATE_THREADS;
-      }
+    if bot_perms.contains(Permissions::CREATE_PUBLIC_THREADS) {
+      everyone_deny |= Permissions::CREATE_PUBLIC_THREADS;
     }
-
-    permissions.push(PermissionOverwrite { allow: Permissions::empty(), deny: everyone_deny, kind: PermissionOverwriteType::Role(guild_id.everyone_role()) });
+    if bot_perms.contains(Permissions::CREATE_PRIVATE_THREADS) {
+      everyone_deny |= Permissions::CREATE_PRIVATE_THREADS;
+    }
+    dash_perms.push(PermissionOverwrite { allow: Permissions::empty(), deny: everyone_deny, kind: PermissionOverwriteType::Role(guild_id.everyone_role()) });
   }
 
-  let dashboard_channel = match guild_id
-    .create_channel(
-      &ctx.http,
-      CreateChannel::new(format!("{channel_prefix}-dashboard"))
-        .kind(ChannelType::Text)
-        .category(category_id)
-        .topic("PUG queue dashboard - use buttons to join/leave")
-        .permissions(permissions),
-    )
-    .await
-  {
+  let dash_builder = CreateChannel::new(format!("{channel_prefix}-dashboard"))
+    .kind(ChannelType::Text)
+    .category(category_id)
+    .topic("PUG queue dashboard - use buttons to join/leave");
+
+  let dashboard_channel = match guild_id.create_channel(&ctx.http, dash_builder.clone().permissions(dash_perms)).await {
     Ok(ch) => ch,
     Err(e) => {
-      // Diagnostic: log bot permissions and attempted overwrites
-      if let Ok(member) = guild_id.member(&ctx.http, bot_user_id).await {
-        let bot_perms = guild.member_permissions(&member);
-        let deny_info = if bot_only_dashboard { "SEND_MESSAGES (and threads if bot has those perms)" } else { "none" };
-        error!(
-          "[{}] Failed to create dashboard channel: {} | Bot perms: {:?} | Bot-only dashboard: {} | Deny overwrites: {}",
-          guild_name, e, bot_perms, bot_only_dashboard, deny_info
-        );
-      } else {
-        error!("[{}] Failed to create dashboard channel: {}", guild_name, e);
+      warn!("[{}] Failed to create dashboard channel with overwrites ({}), retrying without", guild_name, e);
+      match guild_id.create_channel(&ctx.http, dash_builder).await {
+        Ok(ch) => ch,
+        Err(e2) => {
+          error!("[{}] Failed to create dashboard channel: {}", guild_name, e2);
+          let _ = category_id.delete(&ctx.http).await;
+          return Err(anyhow!("Failed to create dashboard channel: {e2}"));
+        }
       }
-      // Clean up category
-      let _ = category_id.delete(&ctx.http).await;
-      return Err(anyhow!("Failed to create dashboard channel: {e}"));
     }
   };
 
@@ -300,19 +295,14 @@ pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name
   let mut ping_permissions = vec![
     PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Member(bot_user_id) },
   ];
-  
   if let Some(role_id) = bot_role {
     ping_permissions.push(PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Role(role_id) });
   }
-  
-  // Deny @everyone from sending messages (only Runner role can send)
   ping_permissions.push(PermissionOverwrite {
     allow: Permissions::VIEW_CHANNEL | Permissions::READ_MESSAGE_HISTORY,
     deny: Permissions::SEND_MESSAGES | Permissions::ADD_REACTIONS | Permissions::CREATE_PUBLIC_THREADS | Permissions::CREATE_PRIVATE_THREADS,
     kind: PermissionOverwriteType::Role(guild_id.everyone_role()),
   });
-  
-  // Allow Runner role to send messages
   if let Some(runner_role_id) = runner_role {
     ping_permissions.push(PermissionOverwrite {
       allow: Permissions::SEND_MESSAGES | Permissions::MENTION_EVERYONE,
@@ -321,25 +311,26 @@ pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name
     });
   }
 
-  let ping_channel = match guild_id
-    .create_channel(
-      &ctx.http,
-      CreateChannel::new(format!("{channel_prefix}-ping"))
-        .kind(ChannelType::Text)
-        .category(category_id)
-        .topic("Ping channel - Only Runners can send @here messages to encourage queue participation")
-        .permissions(ping_permissions),
-    )
-    .await
-  {
+  let ping_builder = CreateChannel::new(format!("{channel_prefix}-ping"))
+    .kind(ChannelType::Text)
+    .category(category_id)
+    .topic("Ping channel - Only Runners can send @here messages to encourage queue participation");
+
+  let ping_channel = match guild_id.create_channel(&ctx.http, ping_builder.clone().permissions(ping_permissions)).await {
     Ok(ch) => ch,
     Err(e) => {
-      error!("[{}] Failed to create ping channel: {}", guild_name, e);
-      let _ = queue_vc_channel.id.delete(&ctx.http).await;
-      let _ = queue_channel.id.delete(&ctx.http).await;
-      let _ = dashboard_channel.id.delete(&ctx.http).await;
-      let _ = category_id.delete(&ctx.http).await;
-      return Err(anyhow!("Failed to create ping channel: {e}"));
+      warn!("[{}] Failed to create ping channel with overwrites ({}), retrying without", guild_name, e);
+      match guild_id.create_channel(&ctx.http, ping_builder).await {
+        Ok(ch) => ch,
+        Err(e2) => {
+          error!("[{}] Failed to create ping channel: {}", guild_name, e2);
+          let _ = queue_vc_channel.id.delete(&ctx.http).await;
+          let _ = queue_channel.id.delete(&ctx.http).await;
+          let _ = dashboard_channel.id.delete(&ctx.http).await;
+          let _ = category_id.delete(&ctx.http).await;
+          return Err(anyhow!("Failed to create ping channel: {e2}"));
+        }
+      }
     }
   };
 

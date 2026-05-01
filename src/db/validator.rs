@@ -80,7 +80,7 @@ impl DatabaseValidator {
     /// Check for invalid Discord IDs (placeholder values)
     async fn check_invalid_user_ids(&self, report: &mut ValidationReport) -> Result<()> {
         let placeholder_categories: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM categories
-                                                          WHERE dashboard = 1 OR chat = 1 OR queue = 1 OR red = 1 OR blu = 1")
+                                                          WHERE dashboard = 1 OR chat = 1 OR queue = 1")
         .fetch_one(&self.pool)
         .await?;
 
@@ -171,7 +171,7 @@ impl DatabaseValidator {
 
     /// Count categories with placeholder IDs
     async fn count_placeholder_ids(&self) -> Result<i64> {
-        let count = sqlx::query_scalar("SELECT COUNT(*) FROM categories WHERE dashboard = 1 OR chat = 1 OR queue = 1 OR red = 1 OR blu = 1")
+        let count = sqlx::query_scalar("SELECT COUNT(*) FROM categories WHERE dashboard = 1 OR chat = 1 OR queue = 1")
         .fetch_one(&self.pool)
         .await?;
 

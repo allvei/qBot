@@ -40,12 +40,16 @@ impl MyApp {
                 let _ = shutdown_tx.send(());
             }
         }
+        // Drop cmd_tx so the command receiver gets None and exits
+        if let Ok(mut tx_lock) = self.state.cmd_tx.try_lock() {
+            tx_lock.take();
+        }
         self.should_quit = true;
     }
 
     fn refresh_data(&self) {
         // Trigger a manual refresh by sending a command
-        let _ = self.state.cmd_tx.try_send(crate::gui::commands::GuiCommand::RefreshSnapshot);
+        let _ = self.state.send_cmd(crate::gui::commands::GuiCommand::RefreshSnapshot);
     }
 }
 

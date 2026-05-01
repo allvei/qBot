@@ -41,8 +41,8 @@ impl CategoryRepository {
         .await?;
 
         sqlx::query(
-            "INSERT INTO categories (guild_id, guild_name, category_id, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, quota)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)"
+            "INSERT INTO categories (guild_id, guild_name, category_id, category, dashboard, chat, queue, ping, dashboard_msg, quota)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(guild_id.get()              as i64)
         .bind(guild_name)
@@ -98,7 +98,7 @@ impl CategoryRepository {
         let result = sqlx::query("UPDATE categories
                                   SET guild_id = ?, category = ?, dashboard = ?, chat = ?, ping = ?, quota = ?
                                   WHERE queue = ?
-                                  RETURNING id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report"
+                                  RETURNING id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue, ping, dashboard_msg, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report"
         )
         .bind(guild_id.get()              as i64)
         .bind(config.channel_category_id          as i64)
@@ -200,13 +200,25 @@ impl CategoryRepository {
         match self.get_formats(guild_id, category_id).await {
             Ok(sgs) if !sgs.is_empty() => {
                 category.formats = sgs;
+                // Apply category-level connect_info to all formats that don't have their own
+                if let Some(ref cat_connect_info) = connect_info {
+                    for fmt in &mut category.formats {
+                        if fmt.connect_info.is_none() || fmt.connect_info.as_ref().map_or(true, |s| s.trim().is_empty()) {
+                            fmt.connect_info = Some(cat_connect_info.clone());
+                        }
+                    }
+                }
             }
             _ => {
                 // No DB formats yet - keep the default created by Category::new
-                // and apply connect_info from the categories table
+                // and apply connect_info from the categories table to all formats
                 let category_name = category.name.as_deref().unwrap_or("Unknown");
                 info!("{} Using default formats", log_prefix_category(guild_name.as_deref().unwrap_or("Unknown"), category_name));
-                category.set_connect_info(connect_info);
+                if let Some(ref cat_connect_info) = connect_info {
+                    for fmt in &mut category.formats {
+                        fmt.connect_info = Some(cat_connect_info.clone());
+                    }
+                }
             }
         }
 
@@ -463,7 +475,7 @@ impl Repository<Category, u8> for CategoryRepository {
     }
 
     async fn get_by_id(&self, category_id: u8) -> Result<Category> {
-        let result = sqlx::query("SELECT id, category_id, name, confirm_time, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, red, blu, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
+        let result = sqlx::query("SELECT id, category_id, name, confirm_time, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
                                   FROM categories WHERE category_id = ?"
         )
         .bind(category_id as i64)

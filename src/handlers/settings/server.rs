@@ -1425,9 +1425,9 @@ pub async fn handle_server_settings_button(
             let display = CategoryListDisplay { guild_name: guild_name.clone(), categories };
 
             let success_msg = if let Some(name) = category_name {
-              format!("Successfully removed category: {}\n🗑️ Deleted {} Discord channels", name, deleted_count)
+              format!("Successfully removed category: {}\nDeleted {} Discord channels", name, deleted_count)
             } else {
-              format!("Successfully removed category {}\n🗑️ Deleted {} Discord channels", category_id, deleted_count)
+              format!("Successfully removed category {}\nDeleted {} Discord channels", category_id, deleted_count)
             };
 
             let response = CIR::UpdateMessage(CIRM::new().content(success_msg).embed(display.build_embed()).components(display.build_components()));
