@@ -1375,7 +1375,7 @@ pub async fn handle_server_settings_button(
             if let Some(category) = server.categories.iter().find(|g| g.id == category_id) {
               let name = category.name();
               let category_channel = category.channels.category;
-              let mut channels = vec![category.channels.dashboard, category.channels.queue_chat, category.channels.queue_vc];
+              let mut channels = vec![category.channels.dashboard, category.channels.queue_chat, category.channels.queue_vc, category.channels.ping_channel];
               for team in &category.channels.teams {
                 channels.push(team.red_vc);
                 channels.push(team.blu_vc);

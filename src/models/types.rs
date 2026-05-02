@@ -270,14 +270,18 @@ impl Rank {
              WHERE c.guild_id = ?",
     )
     .bind(guild_id.get() as i64)
-    .fetch_one(&db.pool)
+    .fetch_optional(&db.pool)
     .await?;
 
-    let elo: u16 = row.get("elo");
-    let name: String = row.get("name");
-    let role_id: RI = RI::new(row.get::<i64, _>("role_id") as u64);
-
-    Ok(Rank { guild_id, name, elo, role_id })
+    match row {
+      Some(row) => {
+        let elo: u16 = row.get("elo");
+        let name: String = row.get("name");
+        let role_id: RI = RI::new(row.get::<i64, _>("role_id") as u64);
+        Ok(Rank { guild_id, name, elo, role_id })
+      }
+      None => Self::lowest(db, guild_id).await,
+    }
   }
 
   pub fn get_rank_elo(&self) -> u16 {
@@ -297,6 +301,24 @@ impl Rank {
     .await?;
 
     Ok(Rank { guild_id, role_id: RI::new(row.get::<i64, _>("role_id") as u64), name: row.get("name"), elo: row.get("elo") })
+  }
+
+  pub async fn lowest(db: &Database, guild_id: GI) -> Result<Rank, anyhow::Error> {
+    let row = sqlx::query(
+      "SELECT role_id, name, elo 
+             FROM ranks 
+             WHERE guild_id = ?
+             ORDER BY elo ASC 
+             LIMIT 1",
+    )
+    .bind(guild_id.get() as i64)
+    .fetch_optional(&db.pool)
+    .await?;
+
+    match row {
+      Some(row) => Ok(Rank { guild_id, role_id: RI::new(row.get::<i64, _>("role_id") as u64), name: row.get("name"), elo: row.get("elo") }),
+      None => Err(anyhow::anyhow!("No ranks configured for this guild")),
+    }
   }
 
   pub async fn from_elo(db: &Database, guild_id: GI, elo: u16) -> Result<Rank, anyhow::Error> {

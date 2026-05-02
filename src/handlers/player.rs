@@ -79,17 +79,22 @@ pub async fn get_or_assign_player_rank(db: &DB, guild_id: GI, user_id: UI) -> Re
 
   // Find the configured default rank in the database by role ID
   let default_guild_rank = match default_rank_role_id {
-    Some(role_id) => db.ranks.rank_from_role_id(guild_id, role_id).await?,
-    None => Err(anyhow!("Default rank role not found"))?,
+    Some(role_id) => db.ranks.rank_from_role_id(guild_id, role_id).await.ok(),
+    None => None,
   };
 
-  // Convert the guild rank's ELO to the appropriate Rank struct
-  let assigned_rank = Rank::from_elo(db, guild_id, default_guild_rank.elo).await?;
+  // Fall back to lowest ELO rank if no default configured
+  let (assigned_rank, elo) = if let Some(ref guild_rank) = default_guild_rank {
+    (Rank::from_elo(db, guild_id, guild_rank.elo).await?, guild_rank.elo)
+  } else {
+    let rank = Rank::lowest(db, guild_id).await?;
+    (rank.clone(), rank.elo)
+  };
 
   // Set the player's ELO and rank in the database
-  db.elo.set(user_id, guild_id, default_guild_rank.elo, assigned_rank.clone()).await?;
+  db.elo.set(user_id, guild_id, elo, assigned_rank.clone()).await?;
 
-  info!("Assigned server default rank '{}' (role {}, ELO {}) to user {}", default_guild_rank.name, default_guild_rank.role_id, default_guild_rank.elo, user_id);
+  info!("Assigned rank '{}' (ELO {}) to user {}", assigned_rank.name, elo, user_id);
   Ok(assigned_rank)
 }
 

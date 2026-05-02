@@ -98,6 +98,7 @@ pub struct Application {
   pub dashboard_queue: Arc<Mutex<Option<DashboardUpdateQueue>>>,
   pub cmd_rx: Option<mpsc::Receiver<GuiCommand>>,
   pub latest_manager: Option<Arc<tokio::sync::RwLock<Option<Manager>>>>,
+  pub gui_shutdown_rx: Option<oneshot::Receiver<()>>,
 }
 
 impl Application {
@@ -115,7 +116,7 @@ impl Application {
     // Initialize dashboard queue
     let dashboard_queue = Arc::new(Mutex::new(None));
 
-    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None })
+    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None, gui_shutdown_rx: None })
   }
 
   /// Initialize the application with pre-created manager and db (for GUI integration)
@@ -123,7 +124,7 @@ impl Application {
     // Initialize dashboard queue
     let dashboard_queue = Arc::new(Mutex::new(None));
 
-    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None })
+    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None, gui_shutdown_rx: None })
   }
 
   /// Set the command receiver for GUI commands
@@ -135,6 +136,12 @@ impl Application {
   /// Set the latest_manager snapshot target for GUI
   pub fn with_latest_manager(mut self, latest_manager: Arc<tokio::sync::RwLock<Option<Manager>>>) -> Self {
     self.latest_manager = Some(latest_manager);
+    self
+  }
+
+  /// Set the GUI shutdown receiver
+  pub fn with_gui_shutdown(mut self, rx: oneshot::Receiver<()>) -> Self {
+    self.gui_shutdown_rx = Some(rx);
     self
   }
 
@@ -264,14 +271,16 @@ impl Application {
     crate::terminal::start_terminal_reader(self.manager.clone(), self.db.clone()).await;
 
     // Start client
+    // Listen for signal-based shutdown AND GUI-based shutdown
+    let gui_rx = self.gui_shutdown_rx.take();
     tokio::select! {
       result = client.start() => {
         if let Err(why) = result {
           error!("Client error: {:?}", why);
         }
       }
-      _ = shutdown_rx => {
-      }
+      _ = shutdown_rx => {}
+      _ = async { if let Some(rx) = gui_rx { let _ = rx.await; } else { std::future::pending::<()>().await; } } => {}
     }
 
     Ok(())
@@ -619,15 +628,6 @@ impl EventHandler for Handler {
           return;
         }
 
-        // Handle server settings buttons (including link channel flow)
-        if itx.data.custom_id.starts_with("server_settings_") || itx.data.custom_id.starts_with("server_cfg_") || itx.data.custom_id.starts_with("link_ch_") {
-          let result = crate::handlers::handle_server_settings_button(&ctx, itx, &self.db, &self.manager).await;
-          if let Err(e) = result {
-            error!("Error handling server settings interaction: {e}");
-          }
-          return;
-        }
-
         // Handle category settings select menu
         if itx.data.custom_id == "category_settings_select" {
           let result = crate::handlers::handle_category_settings_select(&ctx, itx, &self.db, &self.manager).await;
@@ -637,11 +637,20 @@ impl EventHandler for Handler {
           return;
         }
 
-        // Handle server-level team balance method select
+        // Handle server-level team balance method select (must be before server_settings_ prefix)
         if itx.data.custom_id == "server_settings_balance" {
           let result = crate::handlers::handle_server_settings_balance_select(&ctx, itx, &self.db, &self.manager).await;
           if let Err(e) = result {
             error!("Error handling server settings balance select: {e}");
+          }
+          return;
+        }
+
+        // Handle server settings buttons (including link channel flow)
+        if itx.data.custom_id.starts_with("server_settings_") || itx.data.custom_id.starts_with("server_cfg_") || itx.data.custom_id.starts_with("link_ch_") {
+          let result = crate::handlers::handle_server_settings_button(&ctx, itx, &self.db, &self.manager).await;
+          if let Err(e) = result {
+            error!("Error handling server settings interaction: {e}");
           }
           return;
         }

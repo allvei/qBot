@@ -762,7 +762,9 @@ impl Category {
     let has_joinable_session = self.format(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)).unwrap_or(false);
 
     if !has_joinable_session {
-      cc.reply_ephemeral("Cannot join - match is in progress. Please wait.").await?;
+      use serenity::all::CreateInteractionResponseFollowup as CIRF;
+      let followup = CIRF::new().content("Cannot join - match is in progress. Please wait.").ephemeral(true);
+      cc.component.create_followup(&cc.ctx.http, followup).await?;
       return Ok(());
     }
 
@@ -773,7 +775,9 @@ impl Category {
         Ok(result) => result,
         Err(e) => {
           error!("Failed to resolve player for queue: {e}");
-          cc.reply_ephemeral("Failed to join queue. Please try again.").await?;
+          use serenity::all::CreateInteractionResponseFollowup as CIRF;
+          let followup = CIRF::new().content("Failed to join queue. Please try again.").ephemeral(true);
+          cc.component.create_followup(&cc.ctx.http, followup).await?;
           return Ok(());
         }
       };

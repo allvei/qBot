@@ -240,8 +240,19 @@ impl PlayerRepository {
             
             // Find the configured default rank in the database by role ID
             let default_guild_rank = match default_rank_role_id {
-                Some(role_id) => db.ranks.rank_from_role_id(guild_id, role_id).await?,
-                None => return Err(anyhow!("No default rank configured for guild"))
+                Some(role_id) => match db.ranks.rank_from_role_id(guild_id, role_id).await {
+                    Ok(rank) => rank,
+                    Err(_) => {
+                        let rank = Rank::lowest(db, guild_id).await
+                            .map_err(|_| anyhow!("No ranks configured for guild"))?;
+                        crate::db::repo::rank::GuildRank::new(guild_id, rank.name.clone(), rank.elo, rank.role_id)
+                    }
+                },
+                None => {
+                    let rank = Rank::lowest(db, guild_id).await
+                        .map_err(|_| anyhow!("No ranks configured for guild"))?;
+                    crate::db::repo::rank::GuildRank::new(guild_id, rank.name.clone(), rank.elo, rank.role_id)
+                }
             };
             
             // Convert the guild rank's ELO to the appropriate Rank struct

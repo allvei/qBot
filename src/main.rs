@@ -11,11 +11,7 @@ fn main() -> Result<()> {
     // Initialize shared state components
     let log_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(1000)));
     let (cmd_tx, cmd_rx) = mpsc::channel::<pf_pug_bot::gui::commands::GuiCommand>(100);
-    let (shutdown_tx, _shutdown_rx) = oneshot::channel();
-
-    // TODO: Implement GUI shutdown trigger (Phase 1.3, Phase 7.1)
-    // The shutdown_tx is passed to GuiSharedState but not currently used by the GUI
-    // Add a shutdown button in Settings panel that calls shutdown_tx.send()
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
     // Initialize logging with GUI log buffer
     init_logging(Some(log_buffer.clone()));
@@ -44,7 +40,7 @@ fn main() -> Result<()> {
 
         rt.block_on(async {
             let app = Application::new_with_shared(manager, db).await.unwrap();
-            let app = app.with_cmd_rx(cmd_rx).with_latest_manager(latest_manager_bot);
+            let app = app.with_cmd_rx(cmd_rx).with_latest_manager(latest_manager_bot).with_gui_shutdown(shutdown_rx);
             if let Err(e) = app.run().await {
                 eprintln!("Bot error: {}", e);
             }

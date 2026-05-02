@@ -2353,7 +2353,7 @@ impl Channels {
 
   /// Returns all known static channel IDs (category, chat, queue, dashboard, team VCs)
   pub fn known_channel_ids(&self) -> Vec<CI> {
-    let mut ids = vec![self.category, self.queue_chat, self.queue_vc, self.dashboard];
+    let mut ids = vec![self.category, self.queue_chat, self.queue_vc, self.ping_channel, self.dashboard];
     for team in &self.teams {
       ids.push(team.red_vc);
       ids.push(team.blu_vc);
