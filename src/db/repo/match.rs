@@ -71,6 +71,17 @@ impl MatchRepo {
     Ok(())
   }
 
+  /// Update elo_after for a specific player in a match
+  pub async fn update_player_elo_after(&self, match_id: i64, user_id: UI, elo_after: i64) -> Result<()> {
+    sqlx::query("UPDATE match_players SET elo_after = ? WHERE match_id = ? AND user_id = ?")
+      .bind(elo_after)
+      .bind(match_id)
+      .bind(user_id.get() as i64)
+      .execute(&self.pool)
+      .await?;
+    Ok(())
+  }
+
   /// Get the most recent match ID for a guild/category (used to find match to update scores)
   pub async fn get_latest_match_id(&self, guild_id: GI, category_id: i64) -> Result<Option<i64>> {
     let result: Option<i64> = sqlx::query_scalar(

@@ -331,6 +331,13 @@ pub async fn handle_end_match_result(
     let category = server.categories.iter_mut().find(|c| c.id == category_id)
       .ok_or_else(|| anyhow::anyhow!("Category not found"))?;
     
+    // Capture session player data for ELO processing before the session is ended
+    let session_players: Vec<crate::models::session::SessionPlayer> = category.formats.iter()
+      .find(|f| f.id == format_id)
+      .and_then(|f| f.sessions.iter().find(|s| s.is_active()))
+      .map(|s| s.pool.clone())
+      .unwrap_or_default();
+
     // Mark score as reported and save to database
     if let Some(session) = category.formats.iter_mut()
       .find(|f| f.id == format_id)
@@ -343,6 +350,22 @@ pub async fn handle_end_match_result(
     if let Some(match_id) = db.matches.get_latest_match_id(guild_id, category_id as i64).await? {
       if let Err(e) = db.matches.update_match_result(match_id, result).await {
         error!("Failed to update match result in database: {e}");
+      }
+
+      // Apply dynamic ELO changes if enabled
+      match crate::models::dynamic_elo::process_match_elo(
+        db, guild_id, match_id, &session_players, result,
+      ).await {
+        Ok(Some(changes)) => {
+          info!("{} Dynamic ELO applied: {} players updated",
+            log_prefix_category(&guild_name_str, &category_name),
+            changes.len());
+        }
+        Ok(None) => {} // Dynamic ELO not enabled
+        Err(e) => {
+          error!("{} Failed to process dynamic ELO: {e}",
+            log_prefix_category(&guild_name_str, &category_name));
+        }
       }
     }
     

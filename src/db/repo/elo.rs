@@ -7,10 +7,11 @@ use crate::{Rank, db::helpers::RowHelpers};
 /// Guild-specific ELO data for a player
 #[derive(Debug, Clone)]
 pub struct GuildElo {
-    pub elo:      u16,
-    pub rank:     Rank,
-    pub games:    u32,
-    pub wins:     u32,
+    pub elo:         u16,
+    pub dynamic_elo: Option<u16>,
+    pub rank:        Rank,
+    pub games:       u32,
+    pub wins:        u32,
 }
 
 impl GuildElo {
@@ -19,13 +20,18 @@ impl GuildElo {
         // Extract ELO stats
         let (elo, games, wins) = RowHelpers::extract_elo_stats(row)?;
         
+        // Extract dynamic_elo (nullable column)
+        let dynamic_elo: Option<u16> = row.try_get::<Option<i64>, _>("dynamic_elo")
+            .unwrap_or(None)
+            .map(|v| v as u16);
+
         // Extract rank data
         let rank = match RowHelpers::extract_rank_data(row, guild_id)? {
             Some(rank) => rank,
             None => return Ok(None), // Incomplete rank data
         };
         
-        Ok(Some(GuildElo { elo, rank, games, wins }))
+        Ok(Some(GuildElo { elo, dynamic_elo, rank, games, wins }))
     }
 }
 
@@ -42,7 +48,7 @@ impl EloRepository {
     /// Get a player's ELO for a specific guild (returns None if no record)
     pub async fn get_if_exists(&self, user_id: UI, guild_id: GI) -> Result<Option<GuildElo>> {
         let result = sqlx::query(
-            "SELECT e.elo, e.games, e.wins, r.name, r.elo as rank_elo, r.role_id
+            "SELECT e.elo, e.dynamic_elo, e.games, e.wins, r.name, r.elo as rank_elo, r.role_id
              FROM elo e
              LEFT JOIN ranks r ON e.rank = r.id
              WHERE e.guild_id = ? AND e.user_id = ?"
@@ -63,16 +69,12 @@ impl EloRepository {
         match self.get_if_exists(user_id, guild_id).await? {
             Some(elo) => Ok(elo),
             None => {
-                // Player has no ELO record - try to determine rank from Discord roles
-                // Note: This requires a Context, which we don't have here.
-                // We'll need to modify this to accept a Context or use a different approach.
-                
-                // For now, fall back to guild default rank
-                // TODO: This should be updated to check Discord roles when Context is available
+                // Player has no ELO record - fall back to guild default rank
                 let default_rank = Rank::get_guild_default(db, guild_id).await
                     .map_err(|_| anyhow::anyhow!("Failed to get default rank for guild {}", guild_id))?;
                 Ok(GuildElo {
                     elo: default_rank.elo,
+                    dynamic_elo: None,
                     rank: default_rank,
                     games: 0,
                     wins: 0,
@@ -157,8 +159,8 @@ impl EloRepository {
         // Get current ELO or create default
         let current = self.get(user_id, guild_id, db).await?;
         
-        // Calculate new ELO
-        let new_elo   = (current.elo as i32 + elo_change as i32) as u16;
+        // Calculate new ELO (clamp to valid u16 range)
+        let new_elo   = (current.elo as i32 + elo_change as i32).clamp(0, u16::MAX as i32) as u16;
         let new_rank  = Rank::from_elo(db, guild_id, new_elo).await?;
         let new_games = current.games + 1;
         let new_wins  = if won { current.wins + 1 } else { current.wins };
@@ -182,17 +184,53 @@ impl EloRepository {
         .await?;
 
         Ok(GuildElo {
-            elo:      new_elo,
-            rank:     new_rank,
-            games:    new_games,
-            wins:     new_wins,
+            elo:         new_elo,
+            dynamic_elo: current.dynamic_elo,
+            rank:        new_rank,
+            games:       new_games,
+            wins:        new_wins,
+        })
+    }
+
+    /// Record a dynamic ELO game result.
+    /// Only updates `dynamic_elo`, `games`, and `wins`. Leaves legacy `elo` untouched.
+    pub async fn record_dynamic_game(&self, user_id: UI, guild_id: GI, won: bool, new_dynamic_elo: u16, db: &crate::Database) -> Result<GuildElo> {
+        let current = self.get(user_id, guild_id, db).await?;
+
+        let new_games = current.games + 1;
+        let new_wins  = if won { current.wins + 1 } else { current.wins };
+
+        sqlx::query(
+            "INSERT INTO elo (guild_id, user_id, elo, rank, dynamic_elo, games, wins)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                dynamic_elo = excluded.dynamic_elo,
+                games       = excluded.games,
+                wins        = excluded.wins"
+        )
+        .bind(guild_id.get() as i64)
+        .bind(user_id.get()  as i64)
+        .bind(current.elo    as i64)
+        .bind(self.resolve_rank_id(guild_id, &current.rank).await?)
+        .bind(new_dynamic_elo as i64)
+        .bind(new_games       as i64)
+        .bind(new_wins        as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(GuildElo {
+            elo:         current.elo,
+            dynamic_elo: Some(new_dynamic_elo),
+            rank:        current.rank,
+            games:       new_games,
+            wins:        new_wins,
         })
     }
 
     /// Get all ELO records for a user across all guilds
     pub async fn get_all_for_user(&self, user_id: UI) -> Result<Vec<(u64, GuildElo)>> {
         let rows = sqlx::query(
-            "SELECT e.guild_id, e.elo, e.games, e.wins, r.name, r.elo as rank_elo, r.role_id
+            "SELECT e.guild_id, e.elo, e.dynamic_elo, e.games, e.wins, r.name, r.elo as rank_elo, r.role_id
              FROM elo e
              LEFT JOIN ranks r ON e.rank = r.id
              WHERE e.user_id = ?"
@@ -217,7 +255,7 @@ impl EloRepository {
     /// Get leaderboard for a guild (top N players by ELO)
     pub async fn get_leaderboard(&self, guild_id: GI, limit: u32) -> Result<Vec<(UI, GuildElo)>> {
         let rows = sqlx::query(
-            "SELECT e.user_id, e.elo, e.games, e.wins, r.name, r.elo as rank_elo, r.role_id
+            "SELECT e.user_id, e.elo, e.dynamic_elo, e.games, e.wins, r.name, r.elo as rank_elo, r.role_id
              FROM elo e
              LEFT JOIN ranks r ON e.rank = r.id
              WHERE e.guild_id = ? 
@@ -241,20 +279,84 @@ impl EloRepository {
         Ok(results)
     }
 
+    /// Get the average legacy ELO of all players in a guild
+    pub async fn get_guild_average_elo(&self, guild_id: GI) -> Result<f64> {
+        let avg: f64 = sqlx::query_scalar(
+            "SELECT COALESCE(AVG(CAST(elo AS REAL)), 0.0) FROM elo WHERE guild_id = ?"
+        )
+        .bind(guild_id.get() as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(avg)
+    }
+
+    /// Get the average dynamic ELO of all players who have one (for normalization)
+    pub async fn get_guild_average_dynamic_elo(&self, guild_id: GI) -> Result<f64> {
+        let avg: f64 = sqlx::query_scalar(
+            "SELECT COALESCE(AVG(CAST(dynamic_elo AS REAL)), 0.0) FROM elo WHERE guild_id = ? AND dynamic_elo IS NOT NULL"
+        )
+        .bind(guild_id.get() as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(avg)
+    }
+
+    /// Apply a linear offset to all dynamic ELO values in a guild (normalization).
+    /// Preserves relative distances while correcting system mean drift.
+    /// Only affects players who have a dynamic_elo value.
+    pub async fn apply_normalization_offset(&self, guild_id: GI, offset: i32) -> Result<u32> {
+        let result = if offset >= 0 {
+            sqlx::query(
+                "UPDATE elo SET dynamic_elo = dynamic_elo + ? WHERE guild_id = ? AND dynamic_elo IS NOT NULL"
+            )
+            .bind(offset as i64)
+            .bind(guild_id.get() as i64)
+            .execute(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                "UPDATE elo SET dynamic_elo = MAX(0, dynamic_elo + ?) WHERE guild_id = ? AND dynamic_elo IS NOT NULL"
+            )
+            .bind(offset as i64)
+            .bind(guild_id.get() as i64)
+            .execute(&self.pool)
+            .await?
+        };
+
+        Ok(result.rows_affected() as u32)
+    }
+
+    /// Migrate all guild players without a dynamic_elo to the dynamic scale.
+    ///
+    /// For each player where `dynamic_elo IS NULL`:
+    ///   `dynamic_elo = anchor + (elo - guild_average) * scaling`
+    ///
+    /// Returns the number of players migrated.
+    pub async fn migrate_guild_to_dynamic_elo(&self, guild_id: GI, anchor: f64, scaling: f64) -> Result<u32> {
+        let avg = self.get_guild_average_elo(guild_id).await?;
+
+        let result = sqlx::query(
+            "UPDATE elo
+             SET dynamic_elo = MAX(0, MIN(65535, ROUND(?1 + (CAST(elo AS REAL) - ?2) * ?3)))
+             WHERE guild_id = ?4 AND dynamic_elo IS NULL"
+        )
+        .bind(anchor)
+        .bind(avg)
+        .bind(scaling)
+        .bind(guild_id.get() as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() as u32)
+    }
+
     /// Validate and normalize player ELO based on their Discord rank
-    /// 
+    ///
     /// Discord roles define ELO ranges. Each rank has a base ELO (e.g., rank1=50, rank2=65).
     /// A player's ELO is valid if it's within [rank_base, next_rank_base).
     /// If ELO is unset or outside this range, it gets normalized to the rank's base ELO.
-    /// 
-    /// # Arguments
-    /// * `user_id` - The player's user ID
-    /// * `guild_id` - The guild ID
-    /// * `discord_rank` - The player's current Discord rank (source of truth)
-    /// * `db` - Database reference for querying ranks
-    /// 
-    /// # Returns
-    /// The validated/normalized ELO and whether it was changed
     pub async fn validate_and_normalize_elo(
         &self,
         user_id: UI,

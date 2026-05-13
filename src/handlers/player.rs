@@ -156,6 +156,16 @@ pub async fn resolve_player_for_queue(ctx: &Ctx, db: &DB, guild_id: GI, user_id:
   }
 
   player.rank = Some(discord_rank.clone());
+
+  // 4. Override with dynamic ELO if enabled for this guild
+  if db.config.get_active_elo(guild_id).await.unwrap_or(false) {
+    if let Ok(Some(guild_elo)) = db.elo.get_if_exists(user_id, guild_id).await {
+      if let Some(dyn_elo) = guild_elo.dynamic_elo {
+        player.elo = dyn_elo;
+      }
+    }
+  }
+
   Ok((player, discord_rank, rank_mismatch))
 }
 
@@ -447,6 +457,15 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut QGuild) -> Result<()> {
 
   // Set discord tag from interaction user data (already available, no API call needed)
   player.tag = cc.intax.user.tag();
+
+  // Override with dynamic ELO if enabled for this guild
+  if cc.db.config.get_active_elo(guild_id).await.unwrap_or(false) {
+    if let Ok(Some(guild_elo)) = cc.db.elo.get_if_exists(user, guild_id).await {
+      if let Some(dyn_elo) = guild_elo.dynamic_elo {
+        player.elo = dyn_elo;
+      }
+    }
+  }
 
   let category = guild.get_category(channel)?;
 

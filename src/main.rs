@@ -6,8 +6,31 @@ use std::thread;
 use tokio::sync::{mpsc, Mutex, oneshot};
 
 /// Main entry point for the PUG bot application.
-/// Runs tokio in a background thread and eframe GUI on the main thread.
+/// Launches the egui management panel by default.
+/// Pass `-nogui` to run headless (terminal only).
 fn main() -> Result<()> {
+    let nogui = std::env::args().any(|a| a == "-nogui" || a == "--nogui");
+
+    if nogui {
+        return run_headless();
+    }
+
+    run_gui()
+}
+
+/// Headless mode: tokio runtime on the main thread, no GUI.
+fn run_headless() -> Result<()> {
+    init_logging(None);
+
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        let app = Application::new().await?;
+        app.run().await
+    })
+}
+
+/// GUI mode: egui on the main thread, bot in a background thread.
+fn run_gui() -> Result<()> {
     // Initialize shared state components
     let log_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(1000)));
     let (cmd_tx, cmd_rx) = mpsc::channel::<pf_pug_bot::gui::commands::GuiCommand>(100);
@@ -53,6 +76,15 @@ fn main() -> Result<()> {
     // Configure small windowed mode
     native_options.viewport.inner_size = Some(egui::vec2(900.0, 650.0));
     native_options.viewport.min_inner_size = Some(egui::vec2(600.0, 400.0));
+
+    // Force X11 backend on Linux to avoid Wayland display errors on long-running sessions
+    #[cfg(target_os = "linux")]
+    {
+        native_options.event_loop_builder = Some(Box::new(|builder| {
+            use winit::platform::x11::EventLoopBuilderExtX11;
+            builder.with_x11();
+        }));
+    }
     
     let result = eframe::run_native(
         "qBot Host Management Panel",
@@ -62,7 +94,6 @@ fn main() -> Result<()> {
             let mut fonts = egui::FontDefinitions::default();
             
             // Try to load JetBrainsMonoNL Nerd Font Mono from system
-            // First, check if we can load it from common system font paths
             let font_paths = [
                 "fonts/JetBrainsMonoNLNerdFont-Regular.ttf",
             ];

@@ -4,6 +4,7 @@ pub mod colours;
 pub mod constants;
 pub mod dashboard;
 pub mod dm_tracker;
+pub mod dynamic_elo;
 pub mod embeds;
 pub mod fatkid_immunity;
 pub mod manager;

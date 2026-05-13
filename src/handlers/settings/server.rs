@@ -10,6 +10,7 @@ use serenity::all::{
 use tracing::{info, warn, error};
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
+use sqlx::Row;
 use crate::Database;
 use crate::handlers::settings::utils::{send_nav_response, send_nav_response_modal, send_component_error_response, send_modal_error_response, create_input_sh, create_input_sh_cap, create_value_input_sh, create_value_input_sh_cap, create_paragraph_input_with_value, get_role_name_with_fallback};
 use crate::handlers::settings::core::{parse_cid, parse_opt_cid, parse_mid};
@@ -48,7 +49,74 @@ pub async fn handle_server_settings_button(
       let toggle = SERVER_CONFIG_TOGGLES.iter().find(|t| t.button_id == button_id).unwrap();
 
       let current = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
-      db.config.set_bool(guild_id, toggle.column, !current).await?;
+      let new_value = !current;
+      db.config.set_bool(guild_id, toggle.column, new_value).await?;
+
+      // When enabling dynamic ELO, migrate existing players who have no dynamic_elo yet
+      if toggle.column == "active_elo" && new_value {
+        let config = crate::models::dynamic_elo::DynamicEloConfig::default();
+        match db.elo.migrate_guild_to_dynamic_elo(guild_id, config.anchor, config.scaling).await {
+          Ok(count) if count > 0 => info!("Migrated {} players to dynamic ELO for guild {}", count, guild_id),
+          Ok(_) => {}
+          Err(e) => warn!("Failed to migrate players to dynamic ELO: {}", e),
+        }
+      }
+
+      // When dynamic ELO is toggled, update in-memory player ELOs and refresh dashboards
+      if toggle.column == "active_elo" {
+        // Batch-fetch all player ELOs for this guild
+        let elo_rows = sqlx::query("SELECT user_id, elo, dynamic_elo FROM elo WHERE guild_id = ?")
+          .bind(guild_id.get() as i64)
+          .fetch_all(&db.pool)
+          .await?;
+
+        let mut legacy_elo_map = std::collections::HashMap::new();
+        let mut dyn_elo_map = std::collections::HashMap::new();
+        for row in elo_rows {
+          let uid: i64 = row.get("user_id");
+          let elo: i64 = row.get("elo");
+          let dyn_elo: Option<i64> = row.try_get("dynamic_elo").ok();
+          legacy_elo_map.insert(uid as u64, elo as u16);
+          dyn_elo_map.insert(uid as u64, dyn_elo.map(|v| v as u16));
+        }
+
+        let mut categories_to_refresh = Vec::new();
+        {
+          let mut manager_lock = manager.lock().await;
+          if let Ok(server) = manager_lock.get_qguild(guild_id) {
+            for category in server.categories.iter_mut() {
+              for fmt in category.formats.iter_mut() {
+                for session in fmt.sessions.iter_mut() {
+                  for sp in session.pool.iter_mut() {
+                    let uid = sp.player.user_id.get();
+                    if new_value {
+                      if let Some(Some(dyn_elo)) = dyn_elo_map.get(&uid) {
+                        sp.player.elo = *dyn_elo;
+                      }
+                    } else {
+                      if let Some(elo) = legacy_elo_map.get(&uid) {
+                        sp.player.elo = *elo;
+                      }
+                    }
+                  }
+                }
+              }
+              categories_to_refresh.push(category.id);
+            }
+          }
+        }
+
+        // Refresh dashboards after releasing lock
+        for category_id in categories_to_refresh {
+          let mut manager_lock = manager.lock().await;
+          if let Ok(server) = manager_lock.get_qguild(guild_id) {
+            if let Some(category) = server.categories.iter().find(|c| c.id == category_id) {
+              category.queue_dash_update(ctx, guild_id).await;
+            }
+          }
+        }
+      }
+
       send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
     }
     // Generic handler for all rank config toggles (dynamic ELO, ELO-Rank linked, etc.)
