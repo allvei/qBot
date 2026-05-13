@@ -274,6 +274,10 @@ pub async fn is_admin(cc: &CmC<'_>) -> Result<bool> {
 }
 
 pub async fn is_runner(cc: &CmC<'_>) -> Result<bool> {
+  // Admins can do anything runners can
+  if is_admin(cc).await? {
+    return Ok(true);
+  }
   is_role(cc, &Role::Runner).await
 }
 
@@ -292,19 +296,28 @@ pub async fn is_role_component(cc: &CC<'_>, role: &Role) -> Result<bool> {
       }
     };
 
-    // For Admin role: Check Discord permissions first (Administrator or Manage Server)
-    if matches!(role, Role::Admin) {
-      let has_discord_perms = guild_id
-        .to_guild_cached(&cc.ctx.cache)
-        .map(|guild_ref| {
-          let perms = guild_ref.member_permissions(&member);
-          perms.contains(Permissions::ADMINISTRATOR) || perms.contains(Permissions::MANAGE_GUILD)
-        })
-        .unwrap_or(false);
+    // Check Discord permissions first (Administrator or Manage Server)
+    let has_discord_perms = guild_id
+      .to_guild_cached(&cc.ctx.cache)
+      .map(|guild_ref| {
+        let perms = guild_ref.member_permissions(&member);
+        perms.contains(Permissions::ADMINISTRATOR) || perms.contains(Permissions::MANAGE_GUILD)
+      })
+      .unwrap_or(false);
 
+    if matches!(role, Role::Admin) && has_discord_perms {
+      let user_tag = crate::log::get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
+      info!("User {} has Discord admin/manage permissions", user_tag);
+      return Ok(true);
+    }
+
+    // Admins can do anything runners can
+    if matches!(role, Role::Runner) {
       if has_discord_perms {
-        let user_tag = crate::log::get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
-        info!("User {} has Discord admin/manage permissions", user_tag);
+        return Ok(true);
+      }
+      let admin_role_ids = Role::Admin.ids(&cc.db, guild_id).await;
+      if admin_role_ids.iter().any(|role_id| member.roles.contains(role_id)) {
         return Ok(true);
       }
     }
