@@ -25,7 +25,7 @@ enum PanelTab {
 
 impl MyApp {
     pub fn new(state: Arc<GuiSharedState>) -> Self {
-        Self { state, selected_tab: PanelTab::Queue, should_quit: false, next_clock_tick: Self::next_second_instant() }
+        Self { state, selected_tab: PanelTab::Logs, should_quit: false, next_clock_tick: Self::next_second_instant() }
     }
 
     fn next_second_instant() -> std::time::Instant {
@@ -49,7 +49,7 @@ impl MyApp {
 
     fn refresh_data(&self) {
         // Trigger a manual refresh by sending a command
-        let _ = self.state.send_cmd(crate::gui::commands::GuiCommand::RefreshSnapshot);
+        self.state.send_cmd(crate::gui::commands::GuiCommand::RefreshSnapshot);
     }
 }
 

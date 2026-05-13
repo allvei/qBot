@@ -51,7 +51,7 @@ pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     // ── Main content ───────────────────────────────────────────────────────────
     let guild = &manager.qguilds[sel_guild];
     let guild_id = guild.id.get();
-    let send     = |cmd: GuiCommand| { let _ = state.send_cmd(cmd); };
+    let send     = |cmd: GuiCommand| { state.send_cmd(cmd); };
 
     ScrollArea::vertical().show(ui, |ui| {
         for category in &guild.categories {
@@ -139,7 +139,7 @@ fn session_block(
     let red: Vec<&crate::models::SessionPlayer> =
         session.pool.iter().filter(|p| p.team == Some(Team::Red)).collect();
     let has_teams = !blu.is_empty() || !red.is_empty();
-    let send = |cmd: GuiCommand| { let _ = state.send_cmd(cmd); };
+    let send = |cmd: GuiCommand| { state.send_cmd(cmd); };
 
     ui.group(|ui| {
         // ── Session header + action buttons ────────────────────────────────
@@ -209,20 +209,20 @@ fn player_row(
         }
         ui.separator();
         if ui.button("Remove").clicked() {
-            let _ = state.send_cmd(GuiCommand::RemovePlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
+            state.send_cmd(GuiCommand::RemovePlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
             ui.close_menu();
         }
         if ui.button("Buffer (move to front)").clicked() {
-            let _ = state.send_cmd(GuiCommand::BufferPlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
+            state.send_cmd(GuiCommand::BufferPlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
             ui.close_menu();
         }
         if ui.button("Fatkid (move to end)").clicked() {
-            let _ = state.send_cmd(GuiCommand::FatkidPlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
+            state.send_cmd(GuiCommand::FatkidPlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
             ui.close_menu();
         }
         ui.separator();
         if ui.button("Fix VC State").on_hover_text("Reset stuck in_vc flag for this player").clicked() {
-            let _ = state.send_cmd(GuiCommand::FixPlayerVCState { guild_id, category_id: cat_id, user_id: uid });
+            state.send_cmd(GuiCommand::FixPlayerVCState { guild_id, category_id: cat_id, user_id: uid });
             ui.close_menu();
         }
     });

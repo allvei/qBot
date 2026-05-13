@@ -25,7 +25,7 @@ pub fn show_settings_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
         ui.heading("Actions");
         ui.separator();
         if ui.button("Refresh Data").clicked() {
-            let _ = state.send_cmd(crate::gui::commands::GuiCommand::RefreshSnapshot);
+            state.send_cmd(crate::gui::commands::GuiCommand::RefreshSnapshot);
         }
     });
 

@@ -50,7 +50,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     };
 
     // Send helper
-    let send = |cmd: GuiCommand| { let _ = state.send_cmd(cmd); };
+    let send = |cmd: GuiCommand| { state.send_cmd(cmd); };
 
     // ── Target selector UI ─────────────────────────────────────────────────────
     ui.heading("Admin Commands");

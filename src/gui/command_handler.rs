@@ -10,12 +10,12 @@ use crate::{Database, Manager};
 
 // ── Navigation helpers ────────────────────────────────────────────────────────
 
-fn find_format<'a>(
-    manager: &'a mut Manager,
+fn find_format(
+    manager: &mut Manager,
     guild_id: u64,
     category_id: u8,
     fmt_id: u8,
-) -> Result<&'a mut crate::models::Format> {
+) -> Result<&mut crate::models::Format> {
     let guild = manager.get_qguild(GI::new(guild_id))?;
     let cat = guild.categories.iter_mut()
         .find(|c| c.id == category_id)
@@ -25,13 +25,13 @@ fn find_format<'a>(
         .ok_or_else(|| anyhow!("Format {} not found", fmt_id))
 }
 
-fn find_session<'a>(
-    manager: &'a mut Manager,
+fn find_session(
+    manager: &mut Manager,
     guild_id: u64,
     category_id: u8,
     fmt_id: u8,
     session_index: usize,
-) -> Result<&'a mut Session> {
+) -> Result<&mut Session> {
     let fmt = find_format(manager, guild_id, category_id, fmt_id)?;
     fmt.sessions.get_mut(session_index)
         .ok_or_else(|| anyhow!("Session index {} out of range", session_index))
@@ -323,8 +323,8 @@ pub async fn handle_command(
                 info!("[GUI] TestBalanceMethods — top {} players by ELO:", players.len());
                 for (tag, elo) in &players { info!("  {} — {}", tag, elo); }
                 // BCH split
-                let (mut red, mut blu): (Vec<_>, Vec<_>) = players.iter().enumerate()
-                    .partition(|(i, _)| matches!((i/2)%2 == 0 && i%2 == 0 || (i/2)%2 != 0 && i%2 != 0, true));
+                let (red, blu): (Vec<_>, Vec<_>) = players.iter().enumerate()
+                    .partition(|(i, _)| (i/2)%2 == 0 && i%2 == 0 || (i/2)%2 != 0 && i%2 != 0);
                 info!("[GUI] Red: {:?}", red.iter().map(|(_, p)| p.0.as_str()).collect::<Vec<_>>());
                 info!("[GUI] Blu: {:?}", blu.iter().map(|(_, p)| p.0.as_str()).collect::<Vec<_>>());
             }
