@@ -97,9 +97,10 @@ pub async fn log_queue_toggle(
 ) -> Result<(), anyhow::Error> {
   // Get format info from database using guild_id, category_id, and format_id
   let fmt_info = sqlx::query(
-    "SELECT f.id, c.guild_name, c.name as category_name, f.name as format_name 
-         FROM formats f 
-         JOIN categories c ON f.guild_id = c.guild_id AND f.category_id = c.category_id 
+    "SELECT f.id, g.name as guild_name, c.name as category_name, f.name as format_name
+         FROM formats f
+         JOIN categories c ON f.guild_id = c.guild_id AND f.category_id = c.category_id
+         JOIN guilds g ON f.guild_id = g.guild_id
          WHERE f.guild_id = ? AND f.category_id = ? AND f.format_id = ?",
   )
   .bind(guild_id.get() as i64)

@@ -214,4 +214,28 @@ impl ConfigRepository {
             .await?;
         Ok(())
     }
+
+    /// Get team_balance_method setting
+    pub async fn get_team_balance_method(&self, guild_id: GI) -> Result<String> {
+        let row = sqlx::query("SELECT team_balance_method FROM config WHERE guild_id = ?")
+            .bind(guild_id.get() as i64)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|row| {
+            row.try_get::<Option<String>, _>("team_balance_method")
+                .ok()
+                .flatten()
+        }).unwrap_or_else(|| "bch".to_string()))
+    }
+
+    /// Set team_balance_method setting
+    pub async fn set_team_balance_method(&self, guild_id: GI, method: &str) -> Result<()> {
+        sqlx::query("INSERT INTO config (guild_id, team_balance_method) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET team_balance_method = excluded.team_balance_method")
+            .bind(guild_id.get() as i64)
+            .bind(method)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }

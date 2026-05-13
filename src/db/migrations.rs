@@ -101,6 +101,8 @@ impl DatabaseMigrations {
           default_rank         INTEGER,
           elo_ranks_linked     INTEGER DEFAULT 1,
           post_game_auto_leave INTEGER DEFAULT 1,
+          team_balance_method  TEXT DEFAULT 'bch',
+          hide_elo             INTEGER DEFAULT 0,
           PRIMARY KEY(guild_id),
           FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE,
         )",
@@ -113,10 +115,12 @@ impl DatabaseMigrations {
     Ok(())
   }
   async fn verify_config(&self) -> Result<()> {
-    let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank", "elo_ranks_linked", "post_game_auto_leave", "post_game_confirm_time"];
+    let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank", "elo_ranks_linked", "post_game_auto_leave", "post_game_confirm_time", "team_balance_method", "hide_elo"];
     add_column!(self, "config", "elo_ranks_linked", "INTEGER", "1");
     add_column!(self, "config", "post_game_auto_leave", "INTEGER", "1");
     add_column!(self, "config", "post_game_confirm_time", "INTEGER", "120");
+    add_column!(self, "config", "team_balance_method", "TEXT", "'bch'");
+    add_column!(self, "config", "hide_elo", "INTEGER", "0");
     self.verify_columns("config", &required_columns).await?;
     Ok(())
   }
@@ -374,7 +378,6 @@ impl DatabaseMigrations {
       add_columns!(self, "categories",
         "name":                   "TEXT"    => "NULL",
         "connect_info":           "TEXT"    => "NULL",
-        "team_balance_method":    "TEXT"    => "'BCH'",
         "dm_alert_enabled":       "INTEGER" => "0",
         "dm_alert_threshold":     "INTEGER" => "0",
         "category":               "INTEGER" => "0",
@@ -382,7 +385,6 @@ impl DatabaseMigrations {
         "team_vc_create_policy":  "TEXT"    => "'on_hot'",
         "team_vc_destroy_policy": "TEXT"    => "'after_pull'",
         "team_vc_keep_minimum":   "INTEGER" => "1",
-        "guild_name":             "TEXT"    => "NULL",
         "require_score_report":   "INTEGER" => "0",
       );
 
@@ -429,9 +431,9 @@ impl DatabaseMigrations {
 
             // Backup all data
             let backup_data = sqlx::query(
-              "SELECT id, guild_id, category_id, name, confirm_time, category, dashboard, chat, queue, 
+              "SELECT id, guild_id, category_id, name, confirm_time, category, dashboard, chat, queue,
                 dashboard_msg, game, game_increment, quota, connect_info,
-                team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users
+                dm_alert_enabled, dm_alert_threshold, dm_alert_users
                 FROM categories",
             )
             .fetch_all(&self.pool)
@@ -456,7 +458,6 @@ impl DatabaseMigrations {
                 game_increment      INTEGER DEFAULT 0,
                 quota               INTEGER DEFAULT {DEFAULT_QUOTA},
                 connect_info        TEXT,
-                team_balance_method TEXT DEFAULT 'BCH',
                 dm_alert_enabled    INTEGER DEFAULT 0,
                 dm_alert_threshold  INTEGER DEFAULT 0,
                 dm_alert_users      TEXT DEFAULT '[]'
@@ -481,16 +482,15 @@ impl DatabaseMigrations {
               let quota:               i64            = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
               let connect_info:        Option<String> = row.try_get("connect_info").ok();
               let category:            i64            = row.try_get("category").unwrap_or(0);
-              let team_balance_method: Option<String> = row.try_get("team_balance_method").ok();
               let dm_alert_enabled:    i64            = row.try_get("dm_alert_enabled").unwrap_or(0);
               let dm_alert_threshold:  i64            = row.try_get("dm_alert_threshold").unwrap_or(0);
               let dm_alert_users:      String         = row.try_get("dm_alert_users").unwrap_or_else(|_| "[]".to_string());
 
               sqlx::query(
-                "INSERT INTO categories (id, guild_id, category_id, name, confirm_time, category, dashboard, chat, queue, 
+                "INSERT INTO categories (id, guild_id, category_id, name, confirm_time, category, dashboard, chat, queue,
                   dashboard_msg, game, game_increment, quota, connect_info,
-                  team_balance_method, dm_alert_enabled, dm_alert_threshold, dm_alert_users)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  dm_alert_enabled, dm_alert_threshold, dm_alert_users)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
               )
               .bind(id)
               .bind(guild_id)
@@ -506,7 +506,6 @@ impl DatabaseMigrations {
               .bind(game_increment)
               .bind(quota)
               .bind(connect_info)
-              .bind(team_balance_method)
               .bind(dm_alert_enabled)
               .bind(dm_alert_threshold)
               .bind(dm_alert_users)
@@ -541,11 +540,9 @@ impl DatabaseMigrations {
       "game_increment",
       "quota",
       "connect_info",
-      "team_balance_method",
       "dm_alert_enabled",
       "dm_alert_threshold",
       "dm_alert_users",
-      "guild_name",
     ];
     self.verify_columns("categories", &required_columns).await?;
     Ok(())
@@ -659,7 +656,9 @@ impl DatabaseMigrations {
     Ok(())
   }
   async fn verify_elos(&self) -> Result<()> {
-    let required_columns = vec!["id", "guild_id", "user_id", "elo", "rank", "games", "wins"];
+    add_column!(self, "elo", "dynamic_elo", "INTEGER", "NULL");
+
+    let required_columns = vec!["id", "guild_id", "user_id", "elo", "rank", "games", "wins", "dynamic_elo"];
     self.verify_columns("elo", &required_columns).await?;
 
     // Check if we need to migrate the foreign key constraint

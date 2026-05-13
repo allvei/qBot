@@ -6,7 +6,7 @@ use tracing::{info, warn};
 
 use super::Repository;
 use crate::{log_prefix_category, log_prefix_guild};
-use crate::models::{Channels, Category, TeamBalanceMethod, TeamChannel};
+use crate::models::{Channels, Category, TeamChannel};
 
 /// Configuration for creating or updating a category
 pub struct CategoryConfig {
@@ -41,11 +41,10 @@ impl CategoryRepository {
         .await?;
 
         sqlx::query(
-            "INSERT INTO categories (guild_id, guild_name, category_id, category, dashboard, chat, queue, ping, dashboard_msg, quota)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO categories (guild_id, category_id, category, dashboard, chat, queue, ping, dashboard_msg, quota)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(guild_id.get()              as i64)
-        .bind(guild_name)
         .bind(next_category_id)
         .bind(config.channel_category_id  as i64)
         .bind(config.dashboard_channel_id as i64)
@@ -152,21 +151,15 @@ impl CategoryRepository {
         let guild_id     = GI::new(result.get::<i64, _>("guild_id") as u64);
         let category_id     = result.get::<i64, _>("category_id") as u8;
         let name         = result.try_get::<Option<String>, _>("name").ok().flatten();
-        let guild_name   = result.try_get::<Option<String>, _>("guild_name").ok().flatten();
         let connect_info = result.try_get::<Option<String>, _>("connect_info").ok().flatten();
-        let team_balance_method_str = result.try_get::<Option<String>, _>("team_balance_method").ok().flatten();
-        let team_balance_method = team_balance_method_str
-            .map(|s| TeamBalanceMethod::parse(&s))
-            .unwrap_or_default();
 
-        
         // TODO: teams are loaded in teams.rs not here
         // Load teams from teams table; fallback to legacy red/blu columns only if they hold real IDs
         let teams = self.get_teams_for_category(guild_id, category_id).await?;
 
         let mut category = Category::new(
             guild_id,
-            guild_name.clone(),
+            None,
             category_id,
             name,
             result.try_get::<i64, _>("quota")  .unwrap_or(8)  as u8,
@@ -175,7 +168,6 @@ impl CategoryRepository {
             Channels::new(category, chat, queue, ping, teams, dashboard),
             Vec::new(),
         );
-        category.team_balance_method = team_balance_method;
 
         // Load team VC lifecycle settings
         {
@@ -203,7 +195,7 @@ impl CategoryRepository {
                 // Apply category-level connect_info to all formats that don't have their own
                 if let Some(ref cat_connect_info) = connect_info {
                     for fmt in &mut category.formats {
-                        if fmt.connect_info.is_none() || fmt.connect_info.as_ref().map_or(true, |s| s.trim().is_empty()) {
+                        if fmt.connect_info.is_none() || fmt.connect_info.as_ref().is_none_or(|s| s.trim().is_empty()) {
                             fmt.connect_info = Some(cat_connect_info.clone());
                         }
                     }
@@ -213,7 +205,7 @@ impl CategoryRepository {
                 // No DB formats yet - keep the default created by Category::new
                 // and apply connect_info from the categories table to all formats
                 let category_name = category.name.as_deref().unwrap_or("Unknown");
-                info!("{} Using default formats", log_prefix_category(guild_name.as_deref().unwrap_or("Unknown"), category_name));
+                info!("{} Using default formats", log_prefix_category("Unknown", category_name));
                 if let Some(ref cat_connect_info) = connect_info {
                     for fmt in &mut category.formats {
                         fmt.connect_info = Some(cat_connect_info.clone());
@@ -305,7 +297,7 @@ impl CategoryRepository {
 
     /// Get all categories for a guild
     pub async fn get_categories_for_guild(&self, guild_id: GI) -> Result<Vec<Category>> {
-        let rows = sqlx::query("SELECT id, guild_id, category_id, name, confirm_time, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
+        let rows = sqlx::query("SELECT id, guild_id, category_id, name, confirm_time, category, dashboard, chat, queue, ping, dashboard_msg, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
                                 FROM categories
                                 WHERE guild_id = ?"
         )
@@ -313,10 +305,30 @@ impl CategoryRepository {
         .fetch_all(&self.pool)
         .await?;
 
+        // Fetch guild-wide settings from their proper tables
+        let guild_name: Option<String> = sqlx::query_scalar("SELECT name FROM guilds WHERE guild_id = ?")
+            .bind(guild_id.get() as i64)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten();
+
+        let team_balance_method: String = sqlx::query_scalar("SELECT COALESCE(team_balance_method, 'bch') FROM config WHERE guild_id = ?")
+            .bind(guild_id.get() as i64)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "bch".to_string());
+
         let mut categories = Vec::new();
         for row in rows {
             match self.build_category_from_row_async(&row).await {
-                Ok(category) => categories.push(category),
+                Ok(mut category) => {
+                    category.guild_name = guild_name.clone();
+                    category.team_balance_method = crate::models::TeamBalanceMethod::parse(&team_balance_method);
+                    categories.push(category);
+                }
                 Err(e) => {
                     let category_id: i64 = row.try_get("category_id").unwrap_or(0);
                     let queue_id: i64 = row.try_get("queue").unwrap_or(0);
@@ -332,12 +344,12 @@ impl CategoryRepository {
     /// Update dashboard message ID for a category by its dashboard channel ID
     pub async fn update_dashboard_msg(&self, guild_id: GI, dashboard_channel_id: u64, dashboard_msg_id: u64) -> Result<()> {
         // Get guild name for logging
-        let guild_name = sqlx::query("SELECT guild_name FROM categories WHERE guild_id = ? AND dashboard = ? LIMIT 1")
+        let guild_name: String = sqlx::query_scalar("SELECT name FROM guilds WHERE guild_id = ?")
             .bind(guild_id.get() as i64)
-            .bind(dashboard_channel_id as i64)
             .fetch_optional(&self.pool)
-            .await?
-            .and_then(|row| row.try_get::<Option<String>, _>("guild_name").ok().flatten())
+            .await
+            .ok()
+            .flatten()
             .unwrap_or_else(|| guild_id.to_string());
 
         info!("{} Updating dashboard message ID for dashboard channel {}", log_prefix_guild(&guild_name), dashboard_channel_id);
@@ -422,20 +434,6 @@ impl CategoryRepository {
         Ok(())
     }
 
-    /// Update category team balance method
-    pub async fn update_team_balance_method(&self, guild_id: GI, category_id: u8, method: TeamBalanceMethod) -> Result<()> {
-        info!("Updating team_balance_method for guild {} category {}: {}", guild_id, category_id, method);
-
-        sqlx::query("UPDATE categories SET team_balance_method = ? WHERE guild_id = ? AND category_id = ?")
-        .bind(method.as_str())
-        .bind(guild_id.get() as i64)
-        .bind(category_id as i64)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
     pub async fn update_team_vc_settings(&self, guild_id: GI, category_id: u8, settings: &crate::models::TeamVcSettings) -> Result<()> {
         sqlx::query(
             "UPDATE categories SET team_vc_create_policy = ?, team_vc_destroy_policy = ?, team_vc_keep_minimum = ? WHERE guild_id = ? AND category_id = ?"
@@ -475,7 +473,7 @@ impl Repository<Category, u8> for CategoryRepository {
     }
 
     async fn get_by_id(&self, category_id: u8) -> Result<Category> {
-        let result = sqlx::query("SELECT id, category_id, name, confirm_time, guild_id, guild_name, category, dashboard, chat, queue, ping, dashboard_msg, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
+        let result = sqlx::query("SELECT id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue, ping, dashboard_msg, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
                                   FROM categories WHERE category_id = ?"
         )
         .bind(category_id as i64)

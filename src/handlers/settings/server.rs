@@ -2147,15 +2147,16 @@ pub async fn handle_server_settings_balance_select(
 
   let method = crate::models::TeamBalanceMethod::parse(&method_str);
 
-  // Update all categories in-memory and persist to database
+  // Persist to config table and update all categories in-memory
+  if let Err(e) = db.config.set_team_balance_method(guild_id, method.as_str()).await {
+    warn!("Failed to persist team_balance_method for guild {}: {e}", guild_id);
+  }
+
   let mut manager_lock = manager.lock().await;
   {
     let server = manager_lock.get_qguild(guild_id)?;
     for category in server.categories.iter_mut() {
       category.team_balance_method = method;
-      if let Err(e) = db.categories.update_team_balance_method(guild_id, category.id, method).await {
-        warn!("Failed to persist team_balance_method for category {}: {e}", category.id);
-      }
     }
   }
   drop(manager_lock);
@@ -2179,7 +2180,7 @@ pub async fn get_server_settings(db: &Arc<Database>, guild_id: GI) -> Result<Ser
   let config_map = db.config.get_config_map(guild_id).await?;
   let runner_role = config_map.get("runner_id").cloned();
   let admin_role = config_map.get("admin_id").cloned();
-  let balance_method = config_map.get("balance_method").cloned().unwrap_or_else(|| "bch".to_string());
+  let balance_method = db.config.get_team_balance_method(guild_id).await?;
 
   let mut toggle_states = Vec::with_capacity(SERVER_CONFIG_TOGGLES.len());
   for toggle in SERVER_CONFIG_TOGGLES {
