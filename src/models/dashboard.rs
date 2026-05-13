@@ -16,12 +16,18 @@ use crate::models::{Category, ComponentContext, DashboardQueueKey, Session, Sess
 // Helper methods to reduce code duplication
 
 /// Format team display for embed fields
-async fn format_team_display(embed: serenity::all::CreateEmbed, pool: &[crate::models::SessionPlayer], label: &str) -> serenity::all::CreateEmbed {
+async fn format_team_display(embed: serenity::all::CreateEmbed, pool: &[crate::models::SessionPlayer], label: &str, hide_elo: bool) -> serenity::all::CreateEmbed {
   if pool.is_empty() {
     return embed;
   }
 
-  let formatted_players: Vec<_> = pool.iter().map(|p| format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id)).collect();
+  let formatted_players: Vec<_> = pool.iter().map(|p| {
+    if hide_elo {
+      format!("<@{}>", p.player.user_id)
+    } else {
+      format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id)
+    }
+  }).collect();
 
   embed.field(format!("{} ({})", label, pool.len()), formatted_players.join("\n"), false)
 }
@@ -54,18 +60,27 @@ enum ButtonResponseType {
 struct TeamDisplay {
   red: Vec<crate::models::SessionPlayer>,
   blu: Vec<crate::models::SessionPlayer>,
+  hide_elo: bool,
 }
 
 impl TeamDisplay {
   /// Create new team display from sorted teams
-  fn new(red: Vec<crate::models::SessionPlayer>, blu: Vec<crate::models::SessionPlayer>) -> Self {
-    Self { red, blu }
+  fn new(red: Vec<crate::models::SessionPlayer>, blu: Vec<crate::models::SessionPlayer>, hide_elo: bool) -> Self {
+    Self { red, blu, hide_elo }
   }
 
   /// Build team field headers with average ELO
   fn build_headers(&self) -> (String, String) {
-    let red_header = format!("‹**{}**› 🔴 RED", get_avg_elo(&self.red));
-    let blu_header = format!("‹**{}**› 🔵 BLU", get_avg_elo(&self.blu));
+    let red_header = if self.hide_elo {
+      "🔴 RED".to_string()
+    } else {
+      format!("‹**{}**› 🔴 RED", get_avg_elo(&self.red))
+    };
+    let blu_header = if self.hide_elo {
+      "🔵 BLU".to_string()
+    } else {
+      format!("‹**{}**› 🔵 BLU", get_avg_elo(&self.blu))
+    };
     (red_header, blu_header)
   }
 
@@ -73,7 +88,7 @@ impl TeamDisplay {
   /// Blue team is shown first, then red team
   async fn add_to_embed(self, embed: CE, db: &crate::Database, guild_id: GI) -> CE {
     let (red_header, blu_header) = self.build_headers();
-    embed.field(blu_header, format_team_field(&self.blu, db, guild_id).await, true).field(red_header, format_team_field(&self.red, db, guild_id).await, true)
+    embed.field(blu_header, format_team_field(&self.blu, db, guild_id, self.hide_elo).await, true).field(red_header, format_team_field(&self.red, db, guild_id, self.hide_elo).await, true)
   }
 }
 
@@ -83,10 +98,14 @@ fn get_avg_elo(team: &[crate::models::SessionPlayer]) -> f64 {
 }
 
 /// Helper function to format team players as a string for embed fields
-async fn format_team_field(team: &[crate::models::SessionPlayer], _db: &crate::Database, _guild_id: GI) -> String {
+async fn format_team_field(team: &[crate::models::SessionPlayer], _db: &crate::Database, _guild_id: GI, hide_elo: bool) -> String {
   let mut lines = Vec::new();
   for player in team {
-    lines.push(format!("‹**{}**› <@{}>", player.player.elo, player.player.user_id));
+    if hide_elo {
+      lines.push(format!("<@{}>", player.player.user_id));
+    } else {
+      lines.push(format!("‹**{}**› <@{}>", player.player.elo, player.player.user_id));
+    }
   }
   lines.join("\n")
 }
@@ -413,6 +432,7 @@ impl Category {
   pub async fn build_dashboard_content(&self, db: &crate::Database, guild_id: GI, in_game_players: &HashMap<UI, (GI, String)>) -> Result<(CE, Vec<CAR>)> {
     let confirm_time_seconds = self.confirm_time as u64;
     let post_game_confirm_time = db.config.get_post_game_confirm_time(guild_id).await.unwrap_or(120) as u64;
+    let hide_elo = db.config.get_bool(guild_id, "hide_elo", false).await.unwrap_or(false);
     let has_multiple = self.formats.len() > 1;
 
     let mut embed = CE::new().title(self.name());
@@ -452,14 +472,14 @@ impl Category {
 
         if session.pool.len() >= quota {
           let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
-          embed = TeamDisplay::new(team_red, team_blu).add_to_embed(embed, db, guild_id).await;
+          embed = TeamDisplay::new(team_red, team_blu, hide_elo).add_to_embed(embed, db, guild_id).await;
         }
       }
 
       // --- Hot sessions (Ready to start) ---
       for session in &hot_sessions {
         let hot_label = if has_concurrent {
-          format!("Next game - Ready to start")
+          "Next game - Ready to start".to_string()
         } else {
           format!("{fmt_label} - Ready to start")
         };
@@ -479,7 +499,11 @@ impl Category {
           }
           hot_info.push_str("**Missing players:**\n");
           for player in &missing_players {
-            hot_info.push_str(&format!("  • ‹**{}**› <@{}>\n", player.player.elo, player.player.user_id));
+            if hide_elo {
+              hot_info.push_str(&format!("  • <@{}>\n", player.player.user_id));
+            } else {
+              hot_info.push_str(&format!("  • ‹**{}**› <@{}>\n", player.player.elo, player.player.user_id));
+            }
           }
         } else if !session.pool.is_empty() {
           hot_info.push_str("All players ready");
@@ -489,12 +513,18 @@ impl Category {
 
         if session.pool.len() >= quota {
           let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
-          embed = TeamDisplay::new(team_red, team_blu).add_to_embed(embed, db, guild_id).await;
+          embed = TeamDisplay::new(team_red, team_blu, hide_elo).add_to_embed(embed, db, guild_id).await;
 
           // Overflow players in the hot session
           if session.pool.len() > quota {
             let overflow_count = session.pool.len() - quota;
-            let fatkid: Vec<_> = session.pool.iter().skip(quota).map(|p| format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id)).collect();
+            let fatkid: Vec<_> = session.pool.iter().skip(quota).map(|p| {
+              if hide_elo {
+                format!("<@{}>", p.player.user_id)
+              } else {
+                format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id)
+              }
+            }).collect();
             embed = embed.field(format!("Waiting for next game ({overflow_count}/{quota})"), fatkid.join("\n"), false);
           }
         }
@@ -506,7 +536,7 @@ impl Category {
 
         if queue_players > 0 && (has_concurrent || !live_sessions.is_empty()) {
           // There are active/hot games — show idle players as waiting for next game
-          embed = format_team_display(embed, &idle_session.pool, "Waiting for next game").await;
+          embed = format_team_display(embed, &idle_session.pool, "Waiting for next game", hide_elo).await;
         } else if queue_players == 0 && live_sessions.is_empty() && hot_sessions.is_empty() {
           // No games at all — show empty queue
           embed = add_waiting_field(embed, &fmt_label, 0, quota, "*Join to get started!*");
@@ -516,7 +546,7 @@ impl Category {
           let mut timers_field = String::new();
 
           for player in idle_session.pool.iter() {
-            let elo_str = format!("‹**{}**› ", player.player.elo);
+            let elo_str = if hide_elo { String::new() } else { format!("‹**{}**› ", player.player.elo) };
             players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
 
             if let Some((game_guild_id, fmt_name)) = in_game_players.get(&player.player.user_id) {
@@ -831,7 +861,9 @@ impl Category {
         }
       }
     } else {
-      cc.reply_ephemeral("This command can only be used in a server.").await?;
+      use serenity::all::CreateInteractionResponseFollowup as CIRF;
+      let followup = CIRF::new().content("This command can only be used in a server.").ephemeral(true);
+      cc.component.create_followup(&cc.ctx.http, followup).await?;
       return Ok(());
     }
 
@@ -851,7 +883,9 @@ impl Category {
     // Check if player is in a live match - disallow leaving
     if let Ok(session) = self.get_user_sesh_fmt(format_id, user_id) {
       if session.status == SessionStatus::Live {
-        cc.reply_ephemeral("You cannot leave during a live match. Please find a substitute if needed.").await?;
+        use serenity::all::CreateInteractionResponseFollowup as CIRF;
+        let followup = CIRF::new().content("You cannot leave during a live match. Please find a substitute if needed.").ephemeral(true);
+        cc.component.create_followup(&cc.ctx.http, followup).await?;
         return Ok(());
       }
     }
@@ -946,8 +980,9 @@ impl Category {
       }
     } else {
       // Player not in queue
-
-      cc.reply_ephemeral("You are not in the queue!").await?;
+      use serenity::all::CreateInteractionResponseFollowup as CIRF;
+      let followup = CIRF::new().content("You are not in the queue!").ephemeral(true);
+      cc.component.create_followup(&cc.ctx.http, followup).await?;
       return Ok(());
     };
 
@@ -1111,6 +1146,7 @@ impl Category {
 
     // Build match summary embed
     let mut embed = CE::new().title("Match ended").color(0x5865F2);
+    let hide_elo = cc.db.config.get_bool(guild_id, "hide_elo", false).await.unwrap_or(false);
 
     // Format duration
     if let Some(secs) = match_time {
@@ -1119,7 +1155,7 @@ impl Category {
       embed = embed.field("Time", format!("{}m {}s", mins, remaining_secs), true);
     }
 
-    embed = TeamDisplay::new(team_red, team_blu).add_to_embed(embed, &cc.db, guild_id).await;
+    embed = TeamDisplay::new(team_red, team_blu, hide_elo).add_to_embed(embed, &cc.db, guild_id).await;
 
     // Post match summary to queue chat only if match was 1+ minute
     if let Some(secs) = match_time {

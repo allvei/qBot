@@ -264,9 +264,16 @@ pub const SERVER_CONFIG_TOGGLES: &[ConfigToggle] = &[
   ConfigToggle {
     column: "post_game_auto_leave",
     button_id: "server_cfg_post_game_auto_leave",
-    label_on: "Post-game auto-remove enabled",
-    label_off: "Post-game auto-remove disabled",
+    label_on: "Post-game auto-remove is enabled",
+    label_off: "Post-game auto-remove is disabled",
     default: true,
+  },
+  ConfigToggle {
+    column: "hide_elo",
+    button_id: "server_cfg_hide_elo",
+    label_on: "ELO is visible",
+    label_off: "ELO is hidden",
+    default: false,
   },
 ];
 
@@ -343,7 +350,7 @@ impl AsSettingsMenu for ServerConfigDisplay {
       let toggle_buttons: Vec<SB> = SERVER_CONFIG_TOGGLES
         .iter()
         .zip(self.toggle_states.iter())
-        .map(|(toggle, &state)| SB::toggle(toggle.button_id, toggle.label_on, state))
+        .map(|(toggle, &state)| SB::toggle(toggle.button_id, if state { toggle.label_on } else { toggle.label_off }, state))
         .collect();
       menu = menu.row(SR::Buttons(toggle_buttons));
     }

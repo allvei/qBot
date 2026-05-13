@@ -1277,6 +1277,10 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
     return Ok(());
   }
 
+  let caller_is_admin = is_admin(cc).await?;
+  let hide_elo = cc.db.config.get_bool(guild_id, "hide_elo", false).await.unwrap_or(false);
+  let active_elo = cc.db.config.get_active_elo(guild_id).await.unwrap_or(false);
+
   // Get guild-specific ELO data
   let guild_elo = cc.db.elo.get(user_id, guild_id, &cc.db).await?;
 
@@ -1302,8 +1306,16 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
   // Create embed with player info
   let mut embed = CE::new().title(format!("{}'s ELO Information", user_info.tag())).color(CYAN);
 
-  // ELO information
-  embed = embed.field("ELO Rating", format!("**{}**", guild_elo.elo), true);
+  // Show ELO only if not hidden or caller is admin
+  let show_elo = !hide_elo || caller_is_admin;
+  if show_elo {
+    if active_elo {
+      let dyn_value = guild_elo.dynamic_elo.unwrap_or(guild_elo.elo);
+      embed = embed.field("Dynamic ELO", format!("**{}**", dyn_value), true);
+    } else {
+      embed = embed.field("ELO Rating", format!("**{}**", guild_elo.elo), true);
+    }
+  }
 
   // Rank information
   embed = embed.field("Rank", format!("**{}**", guild_elo.rank.name), true);
