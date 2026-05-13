@@ -15,7 +15,7 @@ use anyhow::{anyhow, Error, Result};
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId as CI, Context, CreateEmbed, CreateMessage as CM, EditMember, GuildId as GI, MessageId as MI, RoleId as RI, UserId as UI};
 use tokio::sync::Mutex;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::models::{Player, Session, SessionPlayer, SessionStatus, TeamChannel};
 
@@ -1023,26 +1023,26 @@ impl Category {
     let move_tasks: Vec<_> = player_moves.into_iter().map(|(user_id, channel_id, tag)| {
       let http = ctx.http.clone();
       tokio::spawn(async move {
-        let move_start = Instant::now();
         let result = async {
           let member = guild_id.member(&http, user_id).await?;
           member.move_to_voice_channel(&http, channel_id).await
         }.await;
         if let Err(ref e) = result {
           warn!("Failed to move user {}: {}", tag, e);
-        } else {
-          info!("Moved user {} to team channel", tag);
         }
         (tag, result)
       })
     }).collect();
 
+    let mut moved_tags = Vec::new();
     for task in move_tasks {
-      if let Ok((tag, Err(e))) = task.await {
-        warn!("Failed to move user {}: {}", tag, e);
+      match task.await {
+        Ok((tag, Ok(_))) => moved_tags.push(tag),
+        Ok((tag, Err(e))) => warn!("Failed to move user {}: {}", tag, e),
+        Err(e) => warn!("Move task panicked: {}", e),
       }
     }
-    info!("Moved {} players to team channels", player_count);
+    info!("Moved {} player(s) to team channels: {}", moved_tags.len(), moved_tags.join(", "));
 
     // Set game status to Live and extract overflow players
     let sg = self.format_mut(format_id).unwrap();
