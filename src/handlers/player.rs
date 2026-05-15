@@ -160,9 +160,8 @@ pub async fn resolve_player_for_queue(ctx: &Ctx, db: &DB, guild_id: GI, user_id:
   // 4. Override with dynamic ELO if enabled for this guild
   if db.config.get_active_elo(guild_id).await.unwrap_or(false) {
     if let Ok(Some(guild_elo)) = db.elo.get_if_exists(user_id, guild_id).await {
-      if let Some(dyn_elo) = guild_elo.dynamic_elo {
-        player.elo = dyn_elo;
-      }
+      // Use dynamic_elo if set, otherwise use 1500 as default
+      player.elo = guild_elo.dynamic_elo.unwrap_or(1500);
     }
   }
 
