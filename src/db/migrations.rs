@@ -664,6 +664,9 @@ impl DatabaseMigrations {
     // Check if we need to migrate the foreign key constraint
     self.migrate_elo_foreign_key().await?;
 
+    // Update NULL dynamic_elo values to 1500 (default for unmigrated players)
+    self.migrate_dynamic_elo_defaults().await?;
+
     Ok(())
   }
   /// Migrate elo table to fix foreign key constraint from ranks(role_id) to ranks(id)
@@ -731,6 +734,30 @@ impl DatabaseMigrations {
 
         info!("Elo table migration completed successfully");
       }
+    }
+
+    Ok(())
+  }
+
+  /// Migrate NULL dynamic_elo values to 1500 (default for unmigrated players)
+  async fn migrate_dynamic_elo_defaults(&self) -> Result<()> {
+    // Check if the elo table exists
+    if !self.check_table("elo").await? {
+      return Ok(());
+    }
+
+    // Check if there are any NULL dynamic_elo values
+    let null_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE dynamic_elo IS NULL")
+      .fetch_optional(&self.pool)
+      .await?
+      .unwrap_or(0);
+
+    if null_count > 0 {
+      info!("Found {} players with NULL dynamic_elo, setting to 1500", null_count);
+      sqlx::query("UPDATE elo SET dynamic_elo = 1500 WHERE dynamic_elo IS NULL")
+        .execute(&self.pool)
+        .await?;
+      info!("Updated {} players to default dynamic_elo of 1500", null_count);
     }
 
     Ok(())
