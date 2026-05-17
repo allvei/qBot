@@ -297,7 +297,35 @@ pub async fn handle_end_match_result(
   
   let category_id = category_id.unwrap();
   let format_id = format_id.unwrap();
-  
+
+  // Check if someone is already submitting a score for this match
+  {
+    let mgr = manager.lock().await;
+    if let Some(submitting_user_id) = mgr.get_active_score_submission(guild_id, category_id, format_id) {
+      if submitting_user_id != interaction.user.id {
+        // Get the username of the user currently submitting
+        let submitting_user_tag = crate::log::get_user_tag(ctx, submitting_user_id, db).await;
+        let embed = CE::new()
+          .title("Match already being reported")
+          .description(format!("{} started reporting this match already", submitting_user_tag))
+          .color(0xFFAA00);
+        let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+          CAR::Buttons(vec![Eph::back("runner_menu_back")])
+        ]));
+        interaction.create_response(&ctx.http, response).await?;
+        return Ok(());
+      }
+    }
+    drop(mgr);
+  }
+
+  // Mark this user as submitting
+  {
+    let mut mgr = manager.lock().await;
+    mgr.set_active_score_submission(guild_id, category_id, format_id, interaction.user.id);
+    drop(mgr);
+  }
+
   let (guild_name_str, category_name, format_name) = {
     let mut mgr = manager.lock().await;
     let server = mgr.get_qguild(guild_id)?;
@@ -338,65 +366,84 @@ pub async fn handle_end_match_result(
       .map(|s| s.pool.clone())
       .unwrap_or_default();
 
-    // Mark score as reported and save to database
+    // Mark score as reported
     if let Some(session) = category.formats.iter_mut()
       .find(|f| f.id == format_id)
-      .and_then(|f| f.sessions.iter_mut().find(|s| s.is_active())) 
+      .and_then(|f| f.sessions.iter_mut().find(|s| s.is_active()))
     {
       session.score_reported = true;
     }
-    
-    // Save result to database
-    if let Some(match_id) = db.matches.get_latest_match_id(guild_id, category_id as i64).await? {
-      if let Err(e) = db.matches.update_match_result(match_id, result).await {
-        error!("Failed to update match result in database: {e}");
-      }
 
-      // Apply dynamic ELO changes if enabled
-      match crate::models::dynamic_elo::process_match_elo(
-        db, guild_id, match_id, &session_players, result,
-      ).await {
-        Ok(Some(changes)) => {
-          info!("{} Dynamic ELO applied: {} players updated",
-            log_prefix_category(&guild_name_str, &category_name),
-            changes.len());
+    // Process match result with ELO using shared function
+    let elo_changes = match crate::models::session::process_match_result_with_elo(
+      db.clone(), guild_id, category_id, &session_players, result, ctx,
+    ).await {
+      Ok(changes) => changes,
+      Err(e) => {
+        error!("{} Failed to process match result with ELO: {e}",
+          log_prefix_category(&guild_name_str, &category_name));
+        None
+      }
+    };
+
+    // Update session players' ELO values in memory if changes were applied
+    if let Some(changes) = elo_changes {
+      if let Some(session) = category.formats.iter_mut()
+        .find(|f| f.id == format_id)
+        .and_then(|f| f.sessions.iter_mut().find(|s| s.is_active()))
+      {
+        for change in &changes {
+          if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == change.user_id) {
+            player.player.elo = change.new_elo;
+          }
         }
-        Ok(None) => {} // Dynamic ELO not enabled
-        Err(e) => {
-          error!("{} Failed to process dynamic ELO: {e}",
-            log_prefix_category(&guild_name_str, &category_name));
-        }
+        info!("{} Updated {} players' ELO in session memory",
+          log_prefix_category(&guild_name_str, &category_name), changes.len());
       }
     }
-    
+
     // End the match
     match category.pull_fmt(format_id, ctx, guild_id, db, Some(manager.clone())).await {
       Ok(_) => {
         info!("{} Match ended with {}", log_prefix_category(&guild_name_str, &category_name), result_text);
         category.queue_dash_update_all(ctx).await;
-        
+
+        // Clear the active score submission
+        {
+          let mut mgr = manager.lock().await;
+          mgr.clear_active_score_submission(guild_id, category_id, format_id);
+          drop(mgr);
+        }
+
         let result_color = match *result {
           "red" => RED,
           "blu" => BLUE,
           _ => 0x888888,
         };
-        
+
         let embed = CE::new()
           .title("Match ended")
           .description(format!("**{}** - {}", format_name, result_text))
           .color(result_color);
-        
+
         let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![]));
         interaction.create_response(&ctx.http, response).await?;
       }
       Err(e) => {
         error!("Failed to end match: {e}");
-        
+
+        // Clear the active score submission on error
+        {
+          let mut mgr = manager.lock().await;
+          mgr.clear_active_score_submission(guild_id, category_id, format_id);
+          drop(mgr);
+        }
+
         let embed = CE::new()
           .title("Failed to end match")
           .description(format!("Error: {}", e))
           .color(0xFF0000);
-        
+
         let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
           CAR::Buttons(vec![Eph::back("runner_menu_back")])
         ]));

@@ -16,6 +16,145 @@ use crate::{guild_name, log_prefix_guild, Manager, CYAN};
 mod runner_menu_end;
 pub use runner_menu_end::{handle_end_without_score, show_end_match_selection, handle_end_match_result};
 
+pub async fn handle_change_result_button(
+  ctx: &Context,
+  interaction: &CI,
+  db: &Arc<Database>,
+  manager: &Arc<tokio::sync::Mutex<Manager>>,
+  button_id: &str,
+) -> Result<()> {
+  let cc = CC { ctx, component: interaction, db: db.clone(), manager };
+
+  if !is_role_component(&cc, &Role::Runner).await? {
+    let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+      CAR::Buttons(vec![Eph::back("runner_menu_back")])
+    ]));
+    interaction.create_response(&ctx.http, response).await?;
+    return Ok(());
+  }
+
+  // Parse the button ID to get match_id and new result
+  // Format: change_result_{result}_{match_id}
+  let parts: Vec<&str> = button_id.split('_').collect();
+  if parts.len() < 4 {
+    let embed = CE::new().title("Invalid button ID").color(0xFF0000);
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+      CAR::Buttons(vec![Eph::back("runner_menu_back")])
+    ]));
+    interaction.create_response(&ctx.http, response).await?;
+    return Ok(());
+  }
+
+  let new_result = parts[2];
+  let match_id: i64 = parts[3].parse().map_err(|_| anyhow::anyhow!("Invalid match ID"))?;
+
+  let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
+
+  // Get match details
+  let match_details = match db.matches.get_match_details(match_id).await? {
+    Some(details) => details,
+    None => {
+      let embed = CE::new().title("Match not found").description("Could not retrieve match details.").color(0xFF0000);
+      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+        CAR::Buttons(vec![Eph::back("runner_menu_back")])
+      ]));
+      interaction.create_response(&ctx.http, response).await?;
+      return Ok(());
+    }
+  };
+
+  // Get match players
+  let players = db.matches.get_match_players_with_elo(match_id).await?;
+
+  // Revert ELO changes if they exist
+  let mut reverted_count = 0;
+  for player in &players {
+    if let Some(elo_after) = player.elo_after {
+      let user_id = UI::new(player.user_id as u64);
+      // Determine if this player won based on their team and the old result
+      let old_result = match_details.result.as_deref();
+      let old_won = match (old_result, player.team.as_str()) {
+        (Some("red"), "red") => true,
+        (Some("blu"), "blu") => true,
+        _ => false,
+      };
+
+      // Revert the ELO change
+      if let Err(e) = db.elo.revert_match_elo(user_id, guild_id, player.elo_before as u16, old_won).await {
+        tracing::warn!("Failed to revert ELO for user {}: {}", player.user_id, e);
+      } else {
+        reverted_count += 1;
+      }
+    }
+  }
+
+  // Update the match result
+  db.matches.update_match_result(match_id, new_result).await?;
+
+  // Recalculate ELO for the new result
+  // Build SessionPlayer objects from match players for ELO calculation
+  let mut session_players = Vec::new();
+  for player in &players {
+    let user_id = UI::new(player.user_id as u64);
+    // Get player data from database
+    if let Ok(db_player) = db.get_player(user_id, ctx).await {
+      let team = match player.team.as_str() {
+        "red" => Some(crate::models::Team::Red),
+        "blu" => Some(crate::models::Team::Blu),
+        _ => None,
+      };
+      let session_player = crate::models::session::SessionPlayer {
+        player: db_player,
+        team,
+        in_vc: false,
+        in_queue: false,
+        joined_at: std::time::SystemTime::now(),
+        queue_expiration: 0,
+        vc_leave_grace_until: None,
+      };
+      session_players.push(session_player);
+    }
+  }
+
+  if let Err(e) = crate::models::dynamic_elo::process_match_elo(
+    db,
+    guild_id,
+    match_id,
+    &session_players,
+    new_result,
+    ctx,
+  ).await {
+    tracing::warn!("Failed to recalculate ELO for new result: {}", e);
+  }
+
+  let guild_name = guild_name(ctx, guild_id);
+  info!("{} Runner changed match {} result from {:?} to {} (reverted ELO for {} players)",
+    log_prefix_guild(&guild_name), match_id, match_details.result, new_result, reverted_count);
+
+  let embed = CE::new()
+    .title("Match result updated")
+    .description(format!(
+      "Match {} result changed from {:?} to {}.{}",
+      match_id,
+      match_details.result,
+      new_result,
+      if reverted_count > 0 {
+        format!(" Reverted ELO for {} player(s).", reverted_count)
+      } else {
+        String::new()
+      }
+    ))
+    .color(0x00FF00);
+
+  let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+    CAR::Buttons(vec![Eph::back("runner_menu_back")])
+  ]));
+  interaction.create_response(&ctx.http, response).await?;
+
+  Ok(())
+}
+
 /// Build the runner menu embed and buttons (shared by show and update)
 fn build_runner_menu() -> (CE, Vec<CAR>) {
   let embed = CE::new()
@@ -29,7 +168,8 @@ fn build_runner_menu() -> (CE, Vec<CAR>) {
        **Match control:**\n\
        • **Accept** - Bypass VC join requirement for players who need more time\n\
        • **End match** - End match and report the winning team\n\
-       • **End without score** - End match without reporting score (backup option)",
+       • **End without score** - End match without reporting score (backup option)\n\
+       • **Change result** - Change last match result and revert ELO if applicable",
     )
     .color(CYAN);
 
@@ -44,6 +184,7 @@ fn build_runner_menu() -> (CE, Vec<CAR>) {
       CB::new("runner_action_accept").label("Force accept").style(BS::Primary),
       CB::new("runner_action_end_match").label("End match").style(BS::Success),
       CB::new("runner_action_end_no_score").label("End without score").style(BS::Danger),
+      CB::new("runner_action_change_result").label("Change result").style(BS::Secondary),
     ]),
   ];
 
@@ -118,6 +259,9 @@ pub async fn handle_runner_action(
     }
     "end_no_score" => {
       handle_end_without_score(ctx, interaction, db, manager, guild_id).await
+    }
+    "change_result" => {
+      show_change_result_selection(ctx, interaction, db, manager, guild_id).await
     }
     "clear_queue" => {
       handle_clear_queue(ctx, interaction, db, manager, guild_id).await
@@ -401,6 +545,88 @@ pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<
   let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
     CAR::Buttons(vec![Eph::back("runner_menu_back")])
   ]));
+  interaction.create_response(&ctx.http, response).await?;
+
+  Ok(())
+}
+
+async fn show_change_result_selection(
+  ctx: &Context,
+  interaction: &CI,
+  db: &Arc<Database>,
+  _manager: &Arc<tokio::sync::Mutex<Manager>>,
+  guild_id: GI,
+) -> Result<()> {
+  // Get the latest match for this guild
+  let match_id = match db.matches.get_latest_match_id_guild(guild_id).await? {
+    Some(id) => id,
+    None => {
+      let embed = CE::new().title("No matches found").description("There are no matches recorded for this guild.").color(0xFFAA00);
+      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+        CAR::Buttons(vec![Eph::back("runner_menu_back")])
+      ]));
+      interaction.create_response(&ctx.http, response).await?;
+      return Ok(());
+    }
+  };
+
+  // Get match details
+  let match_details = match db.matches.get_match_details(match_id).await? {
+    Some(details) => details,
+    None => {
+      let embed = CE::new().title("Match not found").description("Could not retrieve match details.").color(0xFF0000);
+      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+        CAR::Buttons(vec![Eph::back("runner_menu_back")])
+      ]));
+      interaction.create_response(&ctx.http, response).await?;
+      return Ok(());
+    }
+  };
+
+  // Get match players
+  let players = db.matches.get_match_players_with_elo(match_id).await?;
+
+  // Check if ELO changes were applied
+  let has_elo_changes = players.iter().any(|p| p.elo_after.is_some());
+
+  let current_result = match_details.result.as_deref().unwrap_or("not set");
+
+  let mut description = format!(
+    "**Match ID:** {}\n\
+     **Category ID:** {}\n\
+     **Format ID:** {}\n\
+     **Current result:** {}\n\
+     **Players:** {}\n",
+    match_id,
+    match_details.category_id,
+    match_details.format_id,
+    current_result,
+    players.len()
+  );
+
+  if has_elo_changes {
+    description.push_str("\n**ELO changes:** Yes (will be reverted if result is changed)");
+  } else {
+    description.push_str("\n**ELO changes:** No");
+  }
+
+  let embed = CE::new()
+    .title("Change last match result")
+    .description(description)
+    .color(CYAN);
+
+  let result_buttons = vec![
+    CB::new(format!("change_result_red_{}", match_id)).label("Red win").style(BS::Danger),
+    CB::new(format!("change_result_blu_{}", match_id)).label("Blue win").style(BS::Primary),
+    CB::new(format!("change_result_draw_{}", match_id)).label("Draw").style(BS::Secondary),
+  ];
+
+  let components = vec![
+    CAR::Buttons(result_buttons),
+    CAR::Buttons(vec![Eph::back("runner_menu_back")]),
+  ];
+
+  let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
   interaction.create_response(&ctx.http, response).await?;
 
   Ok(())
