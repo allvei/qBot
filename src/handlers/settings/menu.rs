@@ -358,6 +358,7 @@ impl AsSettingsMenu for ServerConfigDisplay {
     // Add action buttons
     menu = menu.row(SR::Buttons(vec![
       SB::action("server_settings_edit_post_game_confirm_time", "Edit post-game timeout", Sbs::Secondary),
+      SB::action("server_settings_migrate_elo", "Run ELO migration", Sbs::Primary),
       SB::action("server_settings_create_roles", "Create roles", Sbs::Primary),
       SB::action("server_settings_roles_back", "Back", Sbs::Secondary),
     ]));
@@ -408,6 +409,7 @@ impl ServerConfigDisplay {
     // Add action buttons
     components.push(CAR::Buttons(vec![
       CB::new("server_settings_edit_post_game_confirm_time").label("Edit post-game timeout").style(BS::Secondary),
+      CB::new("server_settings_migrate_elo").label("Run ELO migration").style(BS::Primary),
       CB::new("server_settings_create_roles").label("Create roles").style(BS::Primary),
       Eph::back("server_settings_roles_back"),
     ]));
@@ -883,11 +885,11 @@ impl FormatListDisplay {
     let mut buttons = Vec::new();
 
     if can_add {
-      buttons.push(CB::new(format!("category_fmt_add_{gid}")).label("Add format").style(BS::Primary));
+      buttons.push(CB::new(format!("category_fmt_add_{gid}")).label("Add a format").style(BS::Primary));
     }
 
     if self.formats.len() > 1 {
-      buttons.push(CB::new(format!("category_fmt_remove_{gid}")).label("Remove format").style(BS::Danger));
+      buttons.push(CB::new(format!("category_fmt_remove_{gid}")).label("Remove a format").style(BS::Danger));
     }
 
     buttons.push(Eph::back(format!("category_fmt_back_{gid}")));

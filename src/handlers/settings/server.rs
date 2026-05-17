@@ -310,6 +310,99 @@ pub async fn handle_server_settings_button(
 
       interaction.create_response(&ctx.http, CIR::Modal(modal)).await?;
     }
+    "server_settings_migrate_elo" => {
+      // Show confirmation prompt before running migration
+      let total_players: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ?")
+        .bind(guild_id.get() as i64)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap_or(0);
+      let without_dynamic_elo: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ? AND dynamic_elo IS NULL")
+        .bind(guild_id.get() as i64)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap_or(0);
+
+      let description = if total_players == 0 {
+        "No players found in this guild. Players need to join the queue before ELO can be migrated.".to_string()
+      } else {
+        format!(
+          "**ELO Migration Confirmation**\n\n\
+          This will migrate players from legacy ELO to the dynamic ELO system.\n\n\
+          **What this does:**\n\
+          • Calculates the guild's average legacy ELO\n\
+          • For each player without dynamic_elo, calculates: `1500 + (elo - guild_average) * 20`\n\
+          • This anchors the guild's ELO distribution to 1500 while preserving relative skill differences\n\n\
+          **Guild stats:**\n\
+          • Total players: {}\n\
+          • Players needing migration: {}\n\
+          • Players already migrated: {}\n\n\
+          **Note:** This only affects players without a dynamic_elo value. Players who already have dynamic_elo will not be changed.",
+          total_players,
+          without_dynamic_elo,
+          total_players - without_dynamic_elo
+        )
+      };
+
+      let components = if total_players > 0 && without_dynamic_elo > 0 {
+        vec![CAR::Buttons(vec![
+          CB::new("server_settings_migrate_elo_confirm").label("Confirm Migration").style(BS::Danger),
+          CB::new("server_settings_migrate_elo_cancel").label("Cancel").style(BS::Secondary),
+        ])]
+      } else {
+        vec![CAR::Buttons(vec![CB::new("server_settings_migrate_elo_cancel").label("Close").style(BS::Secondary)])]
+      };
+
+      let response = CIR::Message(CIRM::new().content(description).components(components).ephemeral(true));
+      interaction.create_response(&ctx.http, response).await?;
+    }
+    "server_settings_migrate_elo_confirm" => {
+      // User confirmed the migration
+      interaction.create_response(&ctx.http, CIR::Defer(CIRM::new().ephemeral(true))).await?;
+
+      let config = crate::models::dynamic_elo::DynamicEloConfig::default();
+      match db.elo.migrate_guild_to_dynamic_elo(guild_id, config.anchor, config.scaling).await {
+        Ok(count) => {
+          info!("Anchored {} players to dynamic ELO for guild {}", count, guild_id);
+          let msg = if count == 0 {
+            let total_players: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ?")
+              .bind(guild_id.get() as i64)
+              .fetch_one(&db.pool)
+              .await
+              .unwrap_or(0);
+            let with_dynamic_elo: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ? AND dynamic_elo IS NOT NULL")
+              .bind(guild_id.get() as i64)
+              .fetch_one(&db.pool)
+              .await
+              .unwrap_or(0);
+
+            if total_players == 0 {
+              "No players found in this guild. Players need to join the queue before ELO can be migrated.".to_string()
+            } else if with_dynamic_elo == total_players {
+              format!("All {} players already have dynamic_elo set. Migration only affects players with NULL dynamic_elo.", total_players)
+            } else {
+              format!("0 players migrated. Total: {}, with dynamic_elo: {}, without: {}", total_players, with_dynamic_elo, total_players - with_dynamic_elo)
+            }
+          } else {
+            format!("Successfully anchored {} players to dynamic ELO (anchored to 1500)", count)
+          };
+
+          interaction.create_followup(&ctx.http, CIRF::new().content(msg).ephemeral(true)).await?;
+          // After migration, navigate back to the main settings page
+          send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
+        }
+        Err(e) => {
+          warn!("Failed to anchor players to dynamic ELO: {}", e);
+          interaction.create_followup(&ctx.http, CIRF::new().content(format!("Failed to anchor ELO: {}", e)).ephemeral(true)).await?;
+          // After error, navigate back to the main settings page
+          send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
+        }
+      }
+    }
+    "server_settings_migrate_elo_cancel" => {
+      // User cancelled the migration - delete the ephemeral message
+      interaction.delete_response(&ctx.http).await.ok();
+    }
     "server_settings_create_roles" => {
       // Create runner, admin, and rank roles
       let guild_name = guild_name(ctx, guild_id);
@@ -2252,7 +2345,9 @@ pub async fn get_server_settings(db: &Arc<Database>, guild_id: GI) -> Result<Ser
 
   let mut toggle_states = Vec::with_capacity(SERVER_CONFIG_TOGGLES.len());
   for toggle in SERVER_CONFIG_TOGGLES {
-    toggle_states.push(db.config.get_bool(guild_id, toggle.column, toggle.default).await?);
+    let value = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
+    // Invert hide_elo since the column is named "hide_elo" but button shows "ELO is visible" when true
+    toggle_states.push(if toggle.column == "hide_elo" { !value } else { value });
   }
 
   let post_game_confirm_time = db.config.get_post_game_confirm_time(guild_id).await.unwrap_or(120);

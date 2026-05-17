@@ -624,7 +624,7 @@ pub async fn handle_category_settings_button(
         components.push(menu);
       }
       components.push(CAR::Buttons(vec![crate::models::embeds::Ephemeral::back(format!("category_fmt_back_{}", category_id))]));
-      let embed = CE::new().title("Remove format").description("Select a format to remove. The default format cannot be removed.").color(0xED4245);
+      let embed = CE::new().title("Remove a format").description("Select a format to remove. The default format cannot be removed.").color(0xED4245);
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
       interaction.create_response(&ctx.http, response).await?;
     }
