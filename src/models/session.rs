@@ -340,12 +340,12 @@ pub struct SessionPlayer {
 
 impl SessionPlayer {
   pub fn add(player: Player) -> Self {
-    Self { player,
+    Self { player: player.clone(),
       team: None,
       in_vc: false,
       in_queue: false,
       joined_at: SystemTime::now(),
-      queue_expiration: crate::DEFAULT_QUEUE_EXPIRATION,
+      queue_expiration: player.queue_expiration,
       vc_leave_grace_until: None }
   }
 
@@ -436,4 +436,54 @@ impl FromStr for Team {
       _ => Err(Error::msg(format!("Unknown : {s}"))),
     }
   }
+}
+
+/// Process match result with ELO calculations
+/// This is a shared function used by both dashboard and runner menu to ensure consistency
+///
+/// # Arguments
+/// * `db` - Database connection
+/// * `guild_id` - Guild ID
+/// * `category_id` - Category ID
+/// * `session_players` - Session player data for ELO processing
+/// * `result` - Match result ("red", "draw", or "blu")
+///
+/// # Returns
+/// * `Ok(Some(changes))` - ELO changes applied (if dynamic ELO enabled)
+/// * `Ok(None)` - No ELO changes (dynamic ELO disabled or no match found)
+/// * `Err(e)` if database operations fail
+pub async fn process_match_result_with_elo(
+  db: std::sync::Arc<crate::db::Database>,
+  guild_id: serenity::all::GuildId,
+  category_id: u8,
+  session_players: &[SessionPlayer],
+  result: &str,
+  ctx: &serenity::prelude::Context,
+) -> Result<Option<Vec<crate::models::dynamic_elo::EloChange>>> {
+  use tracing::error;
+
+  // Get latest match ID from database
+  if let Some(match_id) = db.matches.get_latest_match_id(guild_id, category_id as i64).await? {
+    // Update match result in database
+    if let Err(e) = db.matches.update_match_result(match_id, result).await {
+      error!("Failed to update match result in database: {e}");
+    }
+
+    // Apply dynamic ELO changes if enabled
+    return match crate::models::dynamic_elo::process_match_elo(
+      &db, guild_id, match_id, session_players, result, ctx,
+    ).await {
+      Ok(Some(changes)) => {
+        tracing::info!("Dynamic ELO applied: {} players updated", changes.len());
+        Ok(Some(changes))
+      }
+      Ok(None) => Ok(None), // Dynamic ELO not enabled
+      Err(e) => {
+        error!("Failed to process dynamic ELO: {e}");
+        Err(e.into())
+      }
+    };
+  }
+
+  Ok(None)
 }
