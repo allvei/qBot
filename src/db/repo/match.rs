@@ -119,6 +119,49 @@ impl MatchRepo {
     Ok(matches)
   }
 
+  /// Get the most recent match ID for a guild (any category)
+  pub async fn get_latest_match_id_guild(&self, guild_id: GI) -> Result<Option<i64>> {
+    let result: Option<i64> = sqlx::query_scalar(
+      "SELECT id FROM matches
+       WHERE guild_id = ?
+       ORDER BY ended_at DESC
+       LIMIT 1",
+    )
+    .bind(guild_id.get() as i64)
+    .fetch_optional(&self.pool)
+    .await?;
+
+    Ok(result)
+  }
+
+  /// Get match details by ID
+  pub async fn get_match_details(&self, match_id: i64) -> Result<Option<MatchDetails>> {
+    let result = sqlx::query_as::<_, MatchDetails>(
+      "SELECT id, guild_id, category_id, format_id, result, started_at, ended_at
+       FROM matches
+       WHERE id = ?",
+    )
+    .bind(match_id)
+    .fetch_optional(&self.pool)
+    .await?;
+
+    Ok(result)
+  }
+
+  /// Get all players for a match with their ELO data
+  pub async fn get_match_players_with_elo(&self, match_id: i64) -> Result<Vec<MatchPlayerElo>> {
+    let players = sqlx::query_as::<_, MatchPlayerElo>(
+      "SELECT mp.user_id, mp.team, mp.elo_before, mp.elo_after
+       FROM match_players mp
+       WHERE mp.match_id = ?",
+    )
+    .bind(match_id)
+    .fetch_all(&self.pool)
+    .await?;
+
+    Ok(players)
+  }
+
   /// Get player statistics for a guild
   pub async fn get_player_stats(&self, guild_id: GI, user_id: UI) -> Result<PlayerStats> {
     let total_matches: i64 = sqlx::query_scalar(
@@ -179,4 +222,23 @@ pub struct PlayerStats {
   pub total_matches: i64,
   pub wins: i64,
   pub losses: i64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct MatchDetails {
+  pub id: i64,
+  pub guild_id: i64,
+  pub category_id: u8,
+  pub format_id: i64,
+  pub result: Option<String>,
+  pub started_at: i64,
+  pub ended_at: i64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct MatchPlayerElo {
+  pub user_id: i64,
+  pub team: String,
+  pub elo_before: i64,
+  pub elo_after: Option<i64>,
 }
