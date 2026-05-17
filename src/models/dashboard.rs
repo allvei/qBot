@@ -182,7 +182,7 @@ pub enum ButtonType {
 
 impl ButtonType {
   /// Parse a custom_id string into a ButtonType
-  pub fn parse(custom_id: &str) -> Self {
+  pub fn parse_button(custom_id: &str) -> Self {
     match custom_id {
       // Setup buttons
       "setup_dashboard" => Self::SetupDashboard,
@@ -558,7 +558,7 @@ impl Category {
             } else if player.in_vc {
               timers_field.push_str("VC\n");
             } else {
-              let queue_expiration = if let Ok(settings) = db.players.get_prefs(player.player.user_id).await { settings.queue_expiration } else { player.queue_expiration };
+              let queue_expiration = player.queue_expiration;
 
               if queue_expiration > 0 {
                 if let Ok(join_time) = player.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
@@ -1106,10 +1106,10 @@ impl Category {
     }
   }
 
-  /// Handles the end match button - checks if score reporting is required
+  /// Handles the end match button - shows winner selection for consistency with runner menu
   async fn dash_end(&mut self, cc: &ComponentContext<'_>, fmt_id: u8) -> Result<()> {
-    use serenity::all::CreateMessage;
-    use std::time::SystemTime;
+    use crate::handlers::player::is_role_component;
+    use crate::models::Role;
 
     let active_session = self.format(fmt_id).and_then(|sg| {
       sg.sessions.iter().find(|s| s.status == SessionStatus::Live)
@@ -1126,78 +1126,205 @@ impl Category {
       return self.dash_report_score(cc).await;
     }
 
-    // Capture match info before pulling
-    let active_session = active_session.unwrap();
-    let match_time = active_session.started_at.and_then(|started| SystemTime::now().duration_since(started).ok()).map(|d| d.as_secs());
-    let quota = self.format(fmt_id).map(|sg| sg.quota as usize).unwrap_or(0);
-    let (team_red, team_blu) = get_sorted_teams(&active_session.pool, quota);
+    // Check if user is a runner (for consistency with runner menu)
+    if !is_role_component(cc, &Role::Runner).await? {
+      cc.reply_ephemeral("Only runners can end matches.").await?;
+      return Ok(());
+    }
+
+    // Show winner selection buttons as ephemeral message
+    let format_name = self.format(fmt_id).map(|sg| sg.name.clone()).unwrap_or_else(|| "Match".to_string());
+
+    let embed = CE::new()
+      .title(format!("End {} - Select winner", format_name))
+      .description("Choose the winning team to end the match:")
+      .color(0x00AAFF);
+
+    let buttons = vec![
+      CAR::Buttons(vec![
+        CB::new(format!("dash_end_red_{}_{}", self.id, fmt_id)).label("RED WON").style(BS::Danger),
+        CB::new(format!("dash_end_draw_{}_{}", self.id, fmt_id)).label("DRAW").style(BS::Secondary),
+        CB::new(format!("dash_end_blu_{}_{}", self.id, fmt_id)).label("BLU WON").style(BS::Primary),
+      ]),
+    ];
+
+    let response = CIR::Message(CIRM::new().embed(embed).components(buttons).ephemeral(true));
+    cc.component.create_response(&cc.ctx.http, response).await?;
+
+    Ok(())
+  }
+
+  /// Handle end match result button click (dash_end_red/draw/blu_{category_id}_{format_id})
+  async fn dash_handle_end_match_result(&mut self, cc: &ComponentContext<'_>) -> Result<()> {
+    use crate::handlers::player::is_role_component;
+    use crate::models::Role;
+
+    if !is_role_component(cc, &Role::Runner).await? {
+      cc.reply_ephemeral("Only runners can end matches.").await?;
+      return Ok(());
+    }
+
     let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
-    // Record match to database
-    Self::record_match_to_database(
+    // Parse result and IDs from custom_id (format: dash_end_{result}_{category_id}_{format_id})
+    let custom_id = &cc.component.data.custom_id;
+    let parts: Vec<&str> = custom_id.split('_').collect();
+    let result = parts.get(2).unwrap_or(&"");
+    let category_id = parts.get(3).and_then(|s| s.parse::<u8>().ok());
+    let format_id = parts.get(4).and_then(|s| s.parse::<u8>().ok());
+
+    if !matches!(*result, "red" | "draw" | "blu") || category_id.is_none() || format_id.is_none() {
+      cc.reply_ephemeral("Invalid action.").await?;
+      return Ok(());
+    }
+
+    let category_id = category_id.unwrap();
+    let format_id = format_id.unwrap();
+
+    // Check if someone is already submitting a score for this match
+    {
+      let mgr = cc.manager.lock().await;
+      if let Some(submitting_user_id) = mgr.get_active_score_submission(guild_id, category_id, format_id) {
+        if submitting_user_id != cc.component.user.id {
+          // Get the username of the user currently submitting
+          let submitting_user_tag = crate::log::get_user_tag(cc.ctx, submitting_user_id, &cc.db).await;
+          cc.reply_ephemeral(&format!("{} started reporting this match already", submitting_user_tag)).await?;
+          return Ok(());
+        }
+      }
+      drop(mgr);
+    }
+
+    // Mark this user as submitting
+    {
+      let mut mgr = cc.manager.lock().await;
+      mgr.set_active_score_submission(guild_id, category_id, format_id, cc.component.user.id);
+      drop(mgr);
+    }
+
+    let guild_name_str = guild_name(cc.ctx, guild_id);
+    let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
+    let format_name = self.format(format_id).map(|sg| sg.name.clone()).unwrap_or_else(|| "Match".to_string());
+
+    let result_text = match *result {
+      "red" => "RED team victory",
+      "draw" => "Draw",
+      "blu" => "BLU team victory",
+      _ => "Result",
+    };
+
+    info!("{} Runner {} ended match with result: {}",
+      log_prefix_category(&guild_name_str, &category_name),
+      cc.component.user.tag(),
+      result_text);
+
+    // Capture session player data for ELO processing before the session is ended
+    let session_players: Vec<crate::models::session::SessionPlayer> = self.format(format_id)
+      .and_then(|sg| sg.sessions.iter().find(|s| s.is_active()))
+      .map(|s| s.pool.clone())
+      .unwrap_or_default();
+
+    // Mark score as reported
+    if let Some(session) = self.format_mut(format_id)
+      .and_then(|sg| sg.sessions.iter_mut().find(|s| s.is_active()))
+    {
+      session.score_reported = true;
+    }
+
+    // Record match to database before ending
+    let active_session = self.format(format_id).and_then(|sg| {
+      sg.sessions.iter().find(|s| s.status == SessionStatus::Live)
+        .or_else(|| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot))
+    });
+
+    if let Some(active_session) = active_session {
+      let quota = self.format(format_id).map(|sg| sg.quota as usize).unwrap_or(0);
+      let (team_red, team_blu) = get_sorted_teams(&active_session.pool, quota);
+
+      Self::record_match_to_database(
         &cc.db,
         guild_id,
         self.id,
-        fmt_id,
+        format_id,
         active_session,
         &team_red,
         &team_blu,
-    ).await?;
-
-    // Build match summary embed
-    let mut embed = CE::new().title("Match ended").color(0x5865F2);
-    let hide_elo = cc.db.config.get_bool(guild_id, "hide_elo", false).await.unwrap_or(false);
-
-    // Format duration
-    if let Some(secs) = match_time {
-      let mins = secs / 60;
-      let remaining_secs = secs % 60;
-      embed = embed.field("Time", format!("{}m {}s", mins, remaining_secs), true);
+      ).await?;
     }
 
-    embed = TeamDisplay::new(team_red, team_blu, hide_elo).add_to_embed(embed, &cc.db, guild_id).await;
-
-    // Post match summary to queue chat only if match was 1+ minute
-    if let Some(secs) = match_time {
-      if secs >= 60 {
-        let queue_chat = self.channels.queue_chat;
-        
-        // Add score result buttons for runners with category_id and format_id embedded
-        use serenity::all::CreateActionRow;
-        let buttons = vec![
-          CB::new(format!("score_blu_{}_{}", self.id, fmt_id)).label("Blu won").style(BS::Primary),
-          CB::new(format!("score_draw_{}_{}", self.id, fmt_id)).label("Draw").style(BS::Secondary),
-          CB::new(format!("score_red_{}_{}", self.id, fmt_id)).label("Red won").style(BS::Danger),
-        ];
-        let components = vec![CreateActionRow::Buttons(buttons)];
-        
-        match queue_chat.send_message(&cc.ctx.http, CreateMessage::new().embed(embed).components(components)).await {
-          Ok(_) => info!("Posted match summary to queue chat ({}m {}s)", secs / 60, secs % 60),
-          Err(e) => warn!("Failed to post match summary: {}", e),
-        }
-      } else {
-        warn!("Match summary not posted: match too short ({}s < 60s minimum)", secs);
+    // Process match result with ELO using shared function
+    let elo_changes = match crate::models::session::process_match_result_with_elo(
+      cc.db.clone(), guild_id, category_id, &session_players, result, cc.ctx,
+    ).await {
+      Ok(changes) => changes,
+      Err(e) => {
+        error!("{} Failed to process match result with ELO: {e}",
+          log_prefix_category(&guild_name_str, &category_name));
+        None
       }
-    } else {
-      warn!(
-        "Match summary not posted: match time not available. Session started_at: {:?}, Current time: {:?}", 
-        active_session.started_at, 
-        SystemTime::now()
-      );
+    };
+
+    // Update session players' ELO values in memory if changes were applied
+    if let Some(changes) = elo_changes {
+      if let Some(session) = self.format_mut(format_id)
+        .and_then(|sg| sg.sessions.iter_mut().find(|s| s.is_active()))
+      {
+        for change in &changes {
+          if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == change.user_id) {
+            player.player.elo = change.new_elo;
+          }
+        }
+        info!("{} Updated {} players' ELO in session memory",
+          log_prefix_category(&guild_name_str, &category_name), changes.len());
+      }
     }
 
-    // Move players back to queue channel (Hot/Live → Pull → Idle)
-    match self.pull_fmt(fmt_id, cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await {
-      Ok(()) => {
+    // End the match
+    match self.pull_fmt(format_id, cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await {
+      Ok(_) => {
+        info!("{} Match ended with {}", log_prefix_category(&guild_name_str, &category_name), result_text);
         self.queue_dash_update_all(cc.ctx).await;
-        info!("Match ended, players moved back to queue");
-        Ok(())
+
+        // Clear the active score submission
+        {
+          let mut mgr = cc.manager.lock().await;
+          mgr.clear_active_score_submission(guild_id, category_id, format_id);
+          drop(mgr);
+        }
+
+        let result_color = match *result {
+          "red" => crate::RED,
+          "blu" => crate::BLUE,
+          _ => 0x888888,
+        };
+
+        let embed = CE::new()
+          .title("Match ended")
+          .description(format!("**{}** - {}", format_name, result_text))
+          .color(result_color);
+
+        cc.component.create_response(&cc.ctx.http, CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![]))).await?;
       }
       Err(e) => {
         error!("Failed to end match: {e}");
-        Ok(())
+
+        // Clear the active score submission on error
+        {
+          let mut mgr = cc.manager.lock().await;
+          mgr.clear_active_score_submission(guild_id, category_id, format_id);
+          drop(mgr);
+        }
+
+        let embed = CE::new()
+          .title("Failed to end match")
+          .description(format!("Error: {}", e))
+          .color(0xFF0000);
+
+        cc.component.create_response(&cc.ctx.http, CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![]))).await?;
       }
     }
+
+    Ok(())
   }
 
   /// Handles the report score button - shows modal for runners to input scores
@@ -1268,20 +1395,16 @@ impl Category {
         result
       }
       "change_expiry" => {
-        let result = self.dash_change_expiry(cc, fmt_id).await;
-        match &result {
-          Ok(_) => info!("{} {} requested expiry time change", log_prefix_category(&guild_name, &ctg_nm), user_tag),
-          Err(e) => warn!("{} {} failed to request expiry change: {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, e),
-        }
-        result
+        self.dash_change_expiry(cc, fmt_id).await
       }
       "set_expiry" => {
         let result = self.dash_set_expiry(cc, parts.get(1).copied()).await;
         match &result {
-          Ok(_) => info!("{} {} changed expiry time", log_prefix_category(&guild_name, &ctg_nm), user_tag),
+          Ok(Some(duration_str)) => info!("{} {} changed expiry time to {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, duration_str),
+          Ok(None) => {}
           Err(e) => warn!("{} {} failed to change expiry time: {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, e),
         }
-        result
+        result.map(|_| ())
       }
       "show_settings" => {
         let result = self.dash_show_settings(cc).await;
@@ -1344,6 +1467,14 @@ impl Category {
         }
         result
       }
+      action if action.starts_with("dash_end_") => {
+        let result = self.dash_handle_end_match_result(cc).await;
+        match &result {
+          Ok(_) => info!("{} {} ended match with result", log_prefix_category(&guild_name, &ctg_nm), user_tag),
+          Err(e) => warn!("{} {} failed to end match with result: {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, e),
+        }
+        result
+      }
       action if action.starts_with("report_score") => {
         let result = self.dash_report_score(cc).await;
         match &result {
@@ -1388,7 +1519,7 @@ impl Category {
   }
 
   /// Set expiry duration for user in current queue
-  async fn dash_set_expiry(&mut self, cc: &ComponentContext<'_>, duration_str: Option<&str>) -> Result<()> {
+  async fn dash_set_expiry(&mut self, cc: &ComponentContext<'_>, duration_str: Option<&str>) -> Result<Option<String>> {
     let user_id = cc.component.user.id;
 
     // Parse duration string
@@ -1400,37 +1531,48 @@ impl Category {
       Some("4h") => 240,
       _ => {
         cc.reply_ephemeral("Invalid expiry duration.").await?;
-        return Ok(());
+        return Ok(None);
       }
     };
 
     // Find and update the player's expiry duration in any session across all formats
-    let mut found = false;
+    let mut found_format_id = None;
+    let mut found_player = None;
     'outer: for sg in self.formats.iter_mut() {
       for session in sg.sessions.iter_mut() {
         if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
           player.queue_expiration = duration;
-          found = true;
+          found_format_id = Some(sg.id);
+          found_player = Some(player.player.clone());
           break 'outer;
         }
       }
     }
 
-    if !found {
+    if found_format_id.is_none() {
       cc.reply_ephemeral("You are not in the queue.").await?;
-      return Ok(());
+      return Ok(None);
+    }
+
+    // Cancel old timeout and schedule new one with updated duration
+    if let Some(guild_id) = cc.component.guild_id {
+      if let (Some(fmt_id), Some(player)) = (found_format_id, found_player) {
+        self.cancel_player_rejoin_expiration(cc.ctx, guild_id, fmt_id, user_id).await;
+        self.set_player_rejoin_expiration(cc.ctx, guild_id, player, duration).await;
+      }
     }
 
     // Delete the ephemeral message by updating it
+    let label = duration_str.unwrap_or("unknown");
     let response = CIR::UpdateMessage(
-      CIRM::new().content(format!("Expiry time set to {} for this queue instance.", duration_str.unwrap_or("unknown"))).components(vec![]), // Remove buttons
+      CIRM::new().content(format!("Expiry time set to {} for this queue instance.", label)).components(vec![]), // Remove buttons
     );
     cc.component.create_response(&cc.ctx.http, response).await?;
 
     // Update the dashboard
     self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
 
-    Ok(())
+    Ok(Some(label.to_string()))
   }
 
   /// Show user settings as ephemeral embed in dashboard channel
