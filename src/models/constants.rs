@@ -21,6 +21,15 @@ pub const MAX_QUEUE_EXPIRATION:          u8   = 240; // 4h max user queue expiry
 pub const MIN_QUEUE_EXPIRATION:          u8   = 30;  // 30m min user queue expiry
 pub const MAX_MATCH_SCORE:         u8   = 2;   // Maximum score per team in a match
 
+// Dynamic ELO configuration defaults
+pub const DYNAMIC_ELO_ANCHOR:           f64 = 1500.0; // Target center point of the bell curve
+pub const DYNAMIC_ELO_K_CEILING:        f64 = 300.0;  // Maximum K-factor for brand new players (high volatility)
+pub const DYNAMIC_ELO_K_FLOOR:          f64 = 30.0;   // Minimum K-factor for established players (low volatility)
+pub const DYNAMIC_ELO_DECAY_RATE:       f64 = 0.4;    // Exponential decay rate for K-factor
+pub const DYNAMIC_ELO_OFFSET_THRESHOLD: f64 = 50.0;   // Trigger normalization correction if avg drifts by this many points
+pub const DYNAMIC_ELO_OFFSET_AMOUNT:    f64 = 50.0;   // The correction shift size when normalization triggers
+pub const DYNAMIC_ELO_SCALING:          f64 = 20.0;   // ELO units per 1 legacy/manual point (for migration)
+
 /// `FileManager` struct provides cross-platform file operations.
 pub struct FileManager;
 
