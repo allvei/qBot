@@ -528,7 +528,7 @@ impl EventHandler for Handler {
       }
       Interaction::Component(ref itx) => {
         debug!("Component interaction received: '{}' from user {}", itx.data.custom_id, itx.user.id);
-        let button_type = ButtonType::parse(&itx.data.custom_id);
+        let button_type = ButtonType::parse_button(&itx.data.custom_id);
 
         if matches!(button_type, ButtonType::ConfirmPermissions) {
           let guild_id = itx.guild_id.unwrap();
@@ -806,6 +806,15 @@ impl EventHandler for Handler {
           let result = crate::handlers::runner_menu::handle_end_match_result(&ctx, itx, &self.db, &self.manager).await;
           if let Err(e) = result {
             error!("Error handling runner end match: {e}");
+          }
+          return;
+        }
+
+        // Handle change result buttons (change_result_red/blu/draw_{match_id})
+        if itx.data.custom_id.starts_with("change_result_") {
+          let result = crate::handlers::runner_menu::handle_change_result_button(&ctx, itx, &self.db, &self.manager, &itx.data.custom_id).await;
+          if let Err(e) = result {
+            error!("Error handling change result: {e}");
           }
           return;
         }
@@ -1421,10 +1430,24 @@ impl Handler {
               already_reported = true;
             } else {
               session.score_reported = true;
+              let session_players = session.pool.clone();
               drop(mgr);
               if let Some(match_id) = self.db.matches.get_latest_match_id(guild_id, cat_id).await? {
                 if let Err(e) = self.db.matches.update_match_result(match_id, result).await {
                   error!("Failed to update match result in database: {e}");
+                }
+
+                // Apply dynamic ELO changes if enabled
+                match crate::models::dynamic_elo::process_match_elo(
+                  &self.db, guild_id, match_id, &session_players, result, ctx,
+                ).await {
+                  Ok(Some(changes)) => {
+                    info!("Dynamic ELO applied: {} players updated", changes.len());
+                  }
+                  Ok(None) => {}
+                  Err(e) => {
+                    error!("Failed to process dynamic ELO: {e}");
+                  }
                 }
               }
             }
@@ -1482,7 +1505,7 @@ impl Handler {
 
   /// Handle report score modal submission
   async fn handle_report_score_modal(&self, ctx: &Context, interaction: &serenity::all::ModalInteraction) -> Result<(), anyhow::Error> {
-    use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage, EditMessage};
+    use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage};
 
     // Parse category_id and format_id from modal custom_id (format: report_score_modal_CATID_FMTID)
     let custom_id = &interaction.data.custom_id;
@@ -1571,12 +1594,26 @@ impl Handler {
               score_already_reported = true;
             } else {
               session.score_reported = true;
+              let session_players = session.pool.clone();
 
               // Update database immediately while holding the lock to prevent race condition
               drop(mgr);
               if let Some(match_id) = self.db.matches.get_latest_match_id(guild_id, cat_id).await? {
                 if let Err(e) = self.db.matches.update_match_result(match_id, result).await {
                   error!("Failed to update match result in database: {e}");
+                }
+
+                // Apply dynamic ELO changes if enabled
+                match crate::models::dynamic_elo::process_match_elo(
+                  &self.db, guild_id, match_id, &session_players, result, ctx,
+                ).await {
+                  Ok(Some(changes)) => {
+                    info!("Dynamic ELO applied: {} players updated", changes.len());
+                  }
+                  Ok(None) => {}
+                  Err(e) => {
+                    error!("Failed to process dynamic ELO: {e}");
+                  }
                 }
               }
             }
@@ -1591,39 +1628,9 @@ impl Handler {
       return Ok(());
     }
 
-    // Update the message embed with scores in team headers
-    if let Some(message) = &interaction.message {
-      if let Some(mut embed) = message.embeds.first().cloned() {
-        // Update team field headers to include scores
-        // Find and update the BLU and RED team fields
-        if embed.fields.len() >= 2 {
-          for field in &mut embed.fields {
-            if field.name.contains("🔵 BLU") {
-              // Extract ELO from existing header (format: "‹**elo**› 🔵 BLU")
-              let elo_part = field.name.split("›").next().unwrap_or("‹**0**");
-              field.name = format!("{} - **{}**", field.name.trim(), blu_score_num);
-            } else if field.name.contains("🔴 RED") {
-              // Extract ELO from existing header
-              let elo_part = field.name.split("›").next().unwrap_or("‹**0**");
-              field.name = format!("{} - **{}**", field.name.trim(), red_score_num);
-            }
-          }
-        }
-
-        // Update the message and remove the Report Score button
-        message.channel_id.edit_message(&ctx.http, message.id, EditMessage::new().embed(embed.into()).components(Vec::new())).await?;
-
-        // Send confirmation
-        let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Score reported successfully!").ephemeral(true));
-        interaction.create_response(&ctx.http, response).await?;
-      } else {
-        let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Failed to update score: no embed found.").ephemeral(true));
-        interaction.create_response(&ctx.http, response).await?;
-      }
-    } else {
-      let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Failed to update score: message not found.").ephemeral(true));
-      interaction.create_response(&ctx.http, response).await?;
-    }
+    // Send ephemeral confirmation
+    let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Score reported successfully!").ephemeral(true));
+    interaction.create_response(&ctx.http, response).await?;
 
     Ok(())
   }

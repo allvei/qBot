@@ -471,7 +471,7 @@ impl PlayerRepository {
                     join_alert_footer_img:    row.try_get::<String, _>("join_alert_footer_img")   .ok().filter(|s| !s.is_empty()),
                     vc_auto_leave:            row.try_get::<i64, _>   ("vc_auto_leave")           .unwrap_or(0) != 0,
                     leave_alert_title:        row.try_get::<String, _>("leave_alert_title")       .ok().filter(|s| !s.is_empty()),
-                    leave_alert_desc:         row.try_get::<String, _>("leave_alert_desc")        .ok().filter(|s| !s.is_empty()),
+                    leave_alert_desc:         leave_alert.clone(),
                     leave_alert_color:        row.try_get::<u32, _>   ("leave_alert_color")       .unwrap_or(DEFAULT_ALERT_COLOR),
                     leave_alert_img:          row.try_get::<String, _>("leave_alert_img")         .ok().filter(|s| !s.is_empty()),
                     leave_alert_footer:       row.try_get::<String, _>("leave_alert_footer")      .ok().filter(|s| !s.is_empty()),

@@ -487,7 +487,7 @@ fn create_role_options(roles: &[(RI, String)], prefix: &str) -> Vec<CSMO> {
 pub async fn handle_setup_interaction(ctx: &Context, interaction: &CX, db: &Arc<Database>, manager: &Arc<Mutex<Manager>>) -> Result<()> {
   use crate::models::ButtonType;
 
-  let button_type = ButtonType::parse(&interaction.data.custom_id);
+  let button_type = ButtonType::parse_button(&interaction.data.custom_id);
 
   // Extract selected value from dropdown
   let selected_values = match &interaction.data.kind {
@@ -1284,14 +1284,10 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
   // Get guild-specific ELO data
   let guild_elo = cc.db.elo.get(user_id, guild_id, &cc.db).await?;
 
-  // Get base player info for steam_id
+  // Get base player info for steam_id, create player if not found
   let player = match cc.db.players.get(user_id).await {
     Ok(p) => p,
-    Err(_) => {
-      let error_embed = CE::new().title("Player not found").description(format!("<@{}> is not in the database.", user_id)).color(RED);
-      cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
-      return Ok(());
-    }
+    Err(_) => cc.db.new_player(user_id, cc.ctx).await?,
   };
 
   let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
@@ -1310,7 +1306,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
   let show_elo = !hide_elo || caller_is_admin;
   if show_elo {
     if active_elo {
-      let dyn_value = guild_elo.dynamic_elo.unwrap_or(guild_elo.elo);
+      let dyn_value = guild_elo.dynamic_elo.unwrap_or(1500);
       embed = embed.field("Dynamic ELO", format!("**{}**", dyn_value), true);
     } else {
       embed = embed.field("ELO Rating", format!("**{}**", guild_elo.elo), true);
