@@ -31,13 +31,13 @@ pub struct DynamicEloConfig {
 impl Default for DynamicEloConfig {
     fn default() -> Self {
         Self {
-            anchor: 1500.0,
-            k_ceiling: 100.0,
-            k_floor: 15.0,
-            decay_rate: 0.05,
-            offset_threshold: 50.0,
-            offset_amount: 50.0,
-            scaling: 20.0,
+            anchor: crate::DYNAMIC_ELO_ANCHOR,
+            k_ceiling: crate::DYNAMIC_ELO_K_CEILING,
+            k_floor: crate::DYNAMIC_ELO_K_FLOOR,
+            decay_rate: crate::DYNAMIC_ELO_DECAY_RATE,
+            offset_threshold: crate::DYNAMIC_ELO_OFFSET_THRESHOLD,
+            offset_amount: crate::DYNAMIC_ELO_OFFSET_AMOUNT,
+            scaling: crate::DYNAMIC_ELO_SCALING,
         }
     }
 }
@@ -214,6 +214,7 @@ pub async fn process_match_elo(
     match_id: i64,
     session_players: &[SessionPlayer],
     result_str: &str,
+    ctx: &serenity::prelude::Context,
 ) -> Result<Option<Vec<EloChange>>> {
     // Check if dynamic ELO is enabled
     let is_enabled = db.config.get_active_elo(guild_id).await.unwrap_or(false);
@@ -291,14 +292,16 @@ pub async fn process_match_elo(
         match_id, changes.len(), total_change);
 
     for c in &changes {
-        info!("  {} {} -> {} ({:+}) K={:.1}",
-            c.user_id,
+        let user_tag = crate::log::get_user_tag(ctx, c.user_id, db).await;
+        let games = team_red.iter().chain(team_blu.iter())
+            .find(|p| p.user_id == c.user_id)
+            .map(|p| p.games)
+            .unwrap_or(0);
+        info!("  {} {} -> {} ({:+}) K={:.1} matches={}",
+            user_tag,
             c.old_elo, c.new_elo, c.change,
-            config.k_factor(
-                team_red.iter().chain(team_blu.iter())
-                    .find(|p| p.user_id == c.user_id)
-                    .map(|p| p.games).unwrap_or(0)
-            ));
+            config.k_factor(games),
+            games);
     }
 
     // Normalization check (operates on dynamic_elo column only)
