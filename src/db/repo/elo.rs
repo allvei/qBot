@@ -252,6 +252,33 @@ impl EloRepository {
         Ok(results)
     }
 
+    /// Revert ELO changes for a match (set dynamic_elo back to elo_before, decrement games/wins)
+    pub async fn revert_match_elo(&self, user_id: UI, guild_id: GI, elo_before: u16, won: bool) -> Result<()> {
+        let current = match self.get_if_exists(user_id, guild_id).await? {
+            Some(elo) => elo,
+            None => return Ok(()), // No ELO record to revert
+        };
+
+        let new_dynamic_elo = Some(elo_before);
+        let new_games = current.games.saturating_sub(1);
+        let new_wins = if won { current.wins.saturating_sub(1) } else { current.wins };
+
+        sqlx::query(
+            "UPDATE elo
+             SET dynamic_elo = ?, games = ?, wins = ?
+             WHERE guild_id = ? AND user_id = ?"
+        )
+        .bind(new_dynamic_elo.map(|e| e as i64))
+        .bind(new_games as i64)
+        .bind(new_wins as i64)
+        .bind(guild_id.get() as i64)
+        .bind(user_id.get() as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Get leaderboard for a guild (top N players by ELO)
     pub async fn get_leaderboard(&self, guild_id: GI, limit: u32) -> Result<Vec<(UI, GuildElo)>> {
         let rows = sqlx::query(
@@ -337,19 +364,40 @@ impl EloRepository {
     pub async fn migrate_guild_to_dynamic_elo(&self, guild_id: GI, anchor: f64, scaling: f64) -> Result<u32> {
         let avg = self.get_guild_average_elo(guild_id).await?;
 
-        let result = sqlx::query(
-            "UPDATE elo
-             SET dynamic_elo = MAX(0, MIN(65535, ROUND(?1 + (CAST(elo AS REAL) - ?2) * ?3)))
-             WHERE guild_id = ?4 AND dynamic_elo IS NULL"
+        // Fetch all players without dynamic_elo
+        let rows = sqlx::query(
+            "SELECT user_id, elo FROM elo WHERE guild_id = ? AND dynamic_elo IS NULL"
         )
-        .bind(anchor)
-        .bind(avg)
-        .bind(scaling)
         .bind(guild_id.get() as i64)
-        .execute(&self.pool)
+        .fetch_all(&self.pool)
         .await?;
 
-        Ok(result.rows_affected() as u32)
+        let config = crate::models::dynamic_elo::DynamicEloConfig {
+            anchor,
+            scaling,
+            ..Default::default()
+        };
+
+        let mut count = 0u32;
+        for row in rows {
+            let user_id: i64 = row.get("user_id");
+            let elo: i64 = row.get("elo");
+            
+            let migrated = config.migrate_elo(elo as u16, avg);
+            
+            sqlx::query(
+                "UPDATE elo SET dynamic_elo = ? WHERE guild_id = ? AND user_id = ?"
+            )
+            .bind(migrated as i64)
+            .bind(guild_id.get() as i64)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+            
+            count += 1;
+        }
+
+        Ok(count)
     }
 
     /// Validate and normalize player ELO based on their Discord rank
