@@ -196,13 +196,14 @@ pub struct Player {
   pub steam_id: Option<u64>,
   pub rank: Option<Rank>,
   pub elo: Elo,
+  pub dynamic_elo: Option<u16>,
   pub role: Option<Role>,
 }
 
 impl Player {
   pub fn add(user_id: UI, tag: String, queue_expiration: u8, steam_id: Option<u64>, rank: Option<Rank>) -> Player {
     let elo = rank.as_ref().map_or(50, |r| r.elo); // Default ELO if no rank
-    Player { user_id, tag, queue_expiration, steam_id, rank, elo, role: None }
+    Player { user_id, tag, queue_expiration, steam_id, rank, elo, dynamic_elo: None, role: None }
   }
 
   pub fn set_steam(&mut self, steam_id: Option<u64>) {

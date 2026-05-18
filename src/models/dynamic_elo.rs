@@ -48,6 +48,7 @@ pub struct MatchParticipant {
     pub user_id: UI,
     pub elo: u16,
     pub games: u32,
+    pub last_game_timestamp: Option<i64>,
 }
 
 /// Result of an ELO calculation for one player
@@ -69,12 +70,39 @@ impl DynamicEloConfig {
         1.0 / (1.0 + 10f64.powf((team_b_avg - team_a_avg) / 400.0))
     }
 
-    /// Dynamic K-factor for a player based on total matches played.
-    /// Decays exponentially from k_ceiling to k_floor.
+    /// Dynamic K-factor for a player based on total matches played and inactivity.
+    /// Decays exponentially from k_ceiling to k_floor, with a boost for returning players.
     ///
     /// K(n) = K_floor + (K_ceiling - K_floor) * e^(-decay_rate * n)
-    pub fn k_factor(&self, games: u32) -> f64 {
-        self.k_floor + (self.k_ceiling - self.k_floor) * (-self.decay_rate * games as f64).exp()
+    /// Hiatus boost: increases by (K_ceiling - K_floor) / 200 per day inactive, capped at (K_ceiling - K_floor) / 2
+    /// Diminishing returns: if base KF is already high, reduce the hiatus boost proportionally
+    pub fn k_factor(&self, games: u32, last_game_timestamp: Option<i64>) -> f64 {
+        let base_k = self.k_floor + (self.k_ceiling - self.k_floor) * (-self.decay_rate * games as f64).exp();
+
+        // Check for hiatus boost
+        if let Some(last_ts) = last_game_timestamp {
+            let now = chrono::Utc::now().timestamp();
+            let days_inactive = (now - last_ts) / 86400; // Convert seconds to days
+
+            if days_inactive > 0 {
+                let scope = self.k_ceiling - self.k_floor;
+                let daily_increase = scope / 200.0;
+                let max_boost = scope / 2.0;
+
+                // Calculate raw hiatus boost
+                let raw_boost = (days_inactive as f64 * daily_increase).min(max_boost);
+
+                // Apply diminishing returns based on how close base_k is to ceiling
+                // If base_k is close to ceiling, reduce the boost proportionally
+                let base_k_progress = (base_k - self.k_floor) / scope; // 0 to 1
+                let diminishing_factor = 1.0 - base_k_progress; // Reduce boost by this factor
+                let effective_boost = raw_boost * diminishing_factor.max(0.0);
+
+                return base_k + effective_boost;
+            }
+        }
+
+        base_k
     }
 
     /// Convert a legacy/manual ELO value to the dynamic scale.
@@ -120,7 +148,7 @@ impl DynamicEloConfig {
 
         // Total Match K across all players
         let all_players: Vec<&MatchParticipant> = team_red.iter().chain(team_blu.iter()).collect();
-        let total_k: f64 = all_players.iter().map(|p| self.k_factor(p.games)).sum();
+        let total_k: f64 = all_players.iter().map(|p| self.k_factor(p.games, p.last_game_timestamp)).sum();
 
         // Upset factor: scales the pool based on how unexpected the result was
         // Larger pool for upsets, smaller for expected results
@@ -131,7 +159,7 @@ impl DynamicEloConfig {
 
         // RED team changes
         for p in team_red {
-            let k = self.k_factor(p.games);
+            let k = self.k_factor(p.games, p.last_game_timestamp);
             let share = k / total_k;
             let delta = (match_pool * share * (s_red - e_red)).round() as i32;
             let new_elo = (p.elo as i32 + delta).clamp(0, u16::MAX as i32) as u16;
@@ -148,7 +176,7 @@ impl DynamicEloConfig {
         let s_blu = 1.0 - s_red;
         let e_blu = 1.0 - e_red;
         for p in team_blu {
-            let k = self.k_factor(p.games);
+            let k = self.k_factor(p.games, p.last_game_timestamp);
             let share = k / total_k;
             let delta = (match_pool * share * (s_blu - e_blu)).round() as i32;
             let new_elo = (p.elo as i32 + delta).clamp(0, u16::MAX as i32) as u16;
@@ -253,6 +281,7 @@ pub async fn process_match_elo(
             user_id: sp.player.user_id,
             elo,
             games: guild_elo.games,
+            last_game_timestamp: guild_elo.last_game_timestamp,
         });
     }
 
@@ -293,14 +322,14 @@ pub async fn process_match_elo(
 
     for c in &changes {
         let user_tag = crate::log::get_user_tag(ctx, c.user_id, db).await;
-        let games = team_red.iter().chain(team_blu.iter())
-            .find(|p| p.user_id == c.user_id)
-            .map(|p| p.games)
-            .unwrap_or(0);
+        let participant = team_red.iter().chain(team_blu.iter())
+            .find(|p| p.user_id == c.user_id);
+        let games = participant.map(|p| p.games).unwrap_or(0);
+        let last_game_timestamp = participant.and_then(|p| p.last_game_timestamp);
         info!("  {} {} -> {} ({:+}) K={:.1} matches={}",
             user_tag,
             c.old_elo, c.new_elo, c.change,
-            config.k_factor(games),
+            config.k_factor(games, last_game_timestamp),
             games);
     }
 
