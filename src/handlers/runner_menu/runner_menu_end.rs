@@ -352,21 +352,19 @@ pub async fn handle_end_match_result(
     interaction.user.tag(),
     result_text);
   
-  // Record result in database and end the match
-  {
+  // Capture data needed for ELO processing and mark score as reported, then release the lock.
+  let session_players = {
     let mut mgr = manager.lock().await;
     let server = mgr.get_qguild(guild_id)?;
     let category = server.categories.iter_mut().find(|c| c.id == category_id)
       .ok_or_else(|| anyhow::anyhow!("Category not found"))?;
-    
-    // Capture session player data for ELO processing before the session is ended
-    let session_players: Vec<crate::models::session::SessionPlayer> = category.formats.iter()
+
+    let players: Vec<crate::models::session::SessionPlayer> = category.formats.iter()
       .find(|f| f.id == format_id)
       .and_then(|f| f.sessions.iter().find(|s| s.is_active()))
       .map(|s| s.pool.clone())
       .unwrap_or_default();
 
-    // Mark score as reported
     if let Some(session) = category.formats.iter_mut()
       .find(|f| f.id == format_id)
       .and_then(|f| f.sessions.iter_mut().find(|s| s.is_active()))
@@ -374,19 +372,29 @@ pub async fn handle_end_match_result(
       session.score_reported = true;
     }
 
-    // Process match result with ELO using shared function
-    let elo_changes = match crate::models::session::process_match_result_with_elo(
-      db.clone(), guild_id, category_id, &session_players, result, ctx,
-    ).await {
-      Ok(changes) => changes,
-      Err(e) => {
-        error!("{} Failed to process match result with ELO: {e}",
-          log_prefix_category(&guild_name_str, &category_name));
-        None
-      }
-    };
+    players
+    // mgr lock released here
+  };
 
-    // Update session players' ELO values in memory if changes were applied
+  // Process ELO outside the manager lock (only needs db + ctx)
+  let elo_changes = match crate::models::session::process_match_result_with_elo(
+    db.clone(), guild_id, category_id, &session_players, result, ctx,
+  ).await {
+    Ok(changes) => changes,
+    Err(e) => {
+      error!("{} Failed to process match result with ELO: {e}",
+        log_prefix_category(&guild_name_str, &category_name));
+      None
+    }
+  };
+
+  // Apply ELO changes to in-memory session and call pull_fmt, then release the lock.
+  let pull_result = {
+    let mut mgr = manager.lock().await;
+    let server = mgr.get_qguild(guild_id)?;
+    let category = server.categories.iter_mut().find(|c| c.id == category_id)
+      .ok_or_else(|| anyhow::anyhow!("Category not found"))?;
+
     if let Some(changes) = elo_changes {
       if let Some(session) = category.formats.iter_mut()
         .find(|f| f.id == format_id)
@@ -402,53 +410,52 @@ pub async fn handle_end_match_result(
       }
     }
 
-    // End the match
-    match category.pull_fmt(format_id, ctx, guild_id, db, Some(manager.clone())).await {
-      Ok(_) => {
-        info!("{} Match ended with {}", log_prefix_category(&guild_name_str, &category_name), result_text);
-        category.queue_dash_update_all(ctx).await;
+    // pull_fmt takes &mut self (category) and may lock manager internally via the
+    // AfterExpiration spawn — pass None here so it doesn't try to re-lock manager.
+    let result = category.pull_fmt(format_id, ctx, guild_id, db, None).await;
+    if result.is_ok() {
+      category.queue_dash_update_all(ctx).await;
+    }
+    result
+    // mgr lock released here
+  };
 
-        // Clear the active score submission
-        {
-          let mut mgr = manager.lock().await;
-          mgr.clear_active_score_submission(guild_id, category_id, format_id);
-          drop(mgr);
-        }
+  // Clear the active score submission now that the lock is free
+  {
+    let mut mgr = manager.lock().await;
+    mgr.clear_active_score_submission(guild_id, category_id, format_id);
+  }
 
-        let result_color = match *result {
-          "red" => RED,
-          "blu" => BLUE,
-          _ => 0x888888,
-        };
+  match pull_result {
+    Ok(_) => {
+      info!("{} Match ended with {}", log_prefix_category(&guild_name_str, &category_name), result_text);
 
-        let embed = CE::new()
-          .title("Match ended")
-          .description(format!("**{}** - {}", format_name, result_text))
-          .color(result_color);
+      let result_color = match *result {
+        "red" => RED,
+        "blu" => BLUE,
+        _ => 0x888888,
+      };
 
-        let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![]));
-        interaction.create_response(&ctx.http, response).await?;
-      }
-      Err(e) => {
-        error!("Failed to end match: {e}");
+      let embed = CE::new()
+        .title("Match ended")
+        .description(format!("**{}** - {}", format_name, result_text))
+        .color(result_color);
 
-        // Clear the active score submission on error
-        {
-          let mut mgr = manager.lock().await;
-          mgr.clear_active_score_submission(guild_id, category_id, format_id);
-          drop(mgr);
-        }
+      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![]));
+      interaction.create_response(&ctx.http, response).await?;
+    }
+    Err(e) => {
+      error!("Failed to end match: {e}");
 
-        let embed = CE::new()
-          .title("Failed to end match")
-          .description(format!("Error: {}", e))
-          .color(0xFF0000);
+      let embed = CE::new()
+        .title("Failed to end match")
+        .description(format!("Error: {}", e))
+        .color(0xFF0000);
 
-        let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-          CAR::Buttons(vec![Eph::back("runner_menu_back")])
-        ]));
-        interaction.create_response(&ctx.http, response).await?;
-      }
+      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
+        CAR::Buttons(vec![Eph::back("runner_menu_back")])
+      ]));
+      interaction.create_response(&ctx.http, response).await?;
     }
   }
   
