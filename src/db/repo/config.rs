@@ -238,4 +238,29 @@ impl ConfigRepository {
             .await?;
         Ok(())
     }
+
+    /// Get gamemode string (e.g. "PASS Time", "Ultiduo")
+    pub async fn get_gamemode(&self, guild_id: GI) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT gamemode FROM config WHERE guild_id = ?")
+            .bind(guild_id.get() as i64)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.and_then(|row| {
+            row.try_get::<Option<String>, _>("gamemode")
+                .ok()
+                .flatten()
+                .filter(|s| !s.is_empty())
+        }))
+    }
+
+    /// Set gamemode string
+    pub async fn set_gamemode(&self, guild_id: GI, gamemode: Option<&str>) -> Result<()> {
+        sqlx::query("INSERT INTO config (guild_id, gamemode) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET gamemode = excluded.gamemode")
+            .bind(guild_id.get() as i64)
+            .bind(gamemode)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }

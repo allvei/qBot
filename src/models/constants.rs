@@ -30,6 +30,9 @@ pub const DYNAMIC_ELO_OFFSET_THRESHOLD: f64 = 50.0;   // Trigger normalization c
 pub const DYNAMIC_ELO_OFFSET_AMOUNT:    f64 = 50.0;   // The correction shift size when normalization triggers
 pub const DYNAMIC_ELO_SCALING:          f64 = 20.0;   // ELO units per 1 legacy/manual point (for migration)
 
+// Hiatus-based K-factor boost configuration
+pub const HIATUS_DAILY_INCREASE:        f64 = 1.35;   // (K_CEILING - K_FLOOR) / 200 = (300 - 30) / 200
+
 /// `FileManager` struct provides cross-platform file operations.
 pub struct FileManager;
 

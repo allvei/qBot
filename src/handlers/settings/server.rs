@@ -310,6 +310,16 @@ pub async fn handle_server_settings_button(
 
       interaction.create_response(&ctx.http, CIR::Modal(modal)).await?;
     }
+    "server_settings_edit_gamemode" => {
+      use serenity::all::{CreateInputText as CIT, InputTextStyle as ITS};
+      let current_gamemode = db.config.get_gamemode(guild_id).await.unwrap_or(None).unwrap_or_default();
+
+      let input = CAR::InputText(CIT::new(ITS::Short, "Gamemode name (leave blank to clear)", "gamemode_input").placeholder("e.g. PASS Time, Ultiduo").value(&current_gamemode).required(false).max_length(32));
+
+      let modal = CM::new("server_settings_modal_gamemode", "Edit gamemode").components(vec![input]);
+
+      interaction.create_response(&ctx.http, CIR::Modal(modal)).await?;
+    }
     "server_settings_migrate_elo" => {
       // Show confirmation prompt before running migration
       let total_players: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ?")
@@ -2252,6 +2262,25 @@ pub async fn handle_server_settings_modal(
         interaction.create_followup(&ctx.http, followup).await?;
       }
     }
+  } else if modal_id == "server_settings_modal_gamemode" {
+    let mut gamemode_value = String::new();
+
+    for row in &interaction.data.components {
+      for component in &row.components {
+        if let ARC::InputText(input) = component {
+          if input.custom_id == "gamemode_input" {
+            gamemode_value = input.value.clone().unwrap_or_default().trim().to_string();
+          }
+        }
+      }
+    }
+
+    let gamemode = if gamemode_value.is_empty() { None } else { Some(gamemode_value.as_str()) };
+    db.config.set_gamemode(guild_id, gamemode).await?;
+    let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+    info!("{} set gamemode to {:?}", user_tag, gamemode);
+
+    send_nav_modal!(interaction, ctx, db, nav_role_config, guild_id)?;
   } else if modal_id == "server_settings_post_game_confirm_time_modal" {
     // Handle post-game timeout modal
     let mut post_game_confirm_time_value = String::new();
