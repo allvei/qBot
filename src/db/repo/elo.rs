@@ -7,11 +7,12 @@ use crate::{Rank, db::helpers::RowHelpers};
 /// Guild-specific ELO data for a player
 #[derive(Debug, Clone)]
 pub struct GuildElo {
-    pub elo:         u16,
-    pub dynamic_elo: Option<u16>,
-    pub rank:        Rank,
-    pub games:       u32,
-    pub wins:        u32,
+    pub elo:                  u16,
+    pub dynamic_elo:          Option<u16>,
+    pub rank:                 Rank,
+    pub games:                u32,
+    pub wins:                 u32,
+    pub last_game_timestamp:  Option<i64>,
 }
 
 impl GuildElo {
@@ -25,13 +26,60 @@ impl GuildElo {
             .unwrap_or(None)
             .map(|v| v as u16);
 
+        // Extract last_game_timestamp (nullable column)
+        let last_game_timestamp: Option<i64> = row.try_get::<Option<i64>, _>("last_game_timestamp")
+            .unwrap_or(None);
+
         // Extract rank data
         let rank = match RowHelpers::extract_rank_data(row, guild_id)? {
             Some(rank) => rank,
             None => return Ok(None), // Incomplete rank data
         };
         
-        Ok(Some(GuildElo { elo, dynamic_elo, rank, games, wins }))
+        Ok(Some(GuildElo { elo, dynamic_elo, rank, games, wins, last_game_timestamp }))
+    }
+}
+
+/// Skill tier a new player self-selects on first queue join.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillTier {
+    Beginner,
+    Intermediate,
+    Expert,
+    Veteran,
+}
+
+impl SkillTier {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Beginner     => "Beginner",
+            Self::Intermediate => "Intermediate",
+            Self::Expert       => "Expert",
+            Self::Veteran      => "Veteran",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "beginner"     => Some(Self::Beginner),
+            "intermediate" => Some(Self::Intermediate),
+            "expert"       => Some(Self::Expert),
+            "veteran"      => Some(Self::Veteran),
+            _ => None,
+        }
+    }
+
+    /// Dynamic ELO value for this tier, anchored around the given center point.
+    ///
+    /// Tiers are evenly spaced at ±100 and ±300 from the anchor.
+    pub fn initial_elo(self, anchor: f64) -> u16 {
+        let offset: f64 = match self {
+            Self::Beginner     => -300.0,
+            Self::Intermediate => -100.0,
+            Self::Expert       =>  100.0,
+            Self::Veteran      =>  300.0,
+        };
+        (anchor + offset).clamp(0.0, u16::MAX as f64) as u16
     }
 }
 
@@ -48,7 +96,7 @@ impl EloRepository {
     /// Get a player's ELO for a specific guild (returns None if no record)
     pub async fn get_if_exists(&self, user_id: UI, guild_id: GI) -> Result<Option<GuildElo>> {
         let result = sqlx::query(
-            "SELECT e.elo, e.dynamic_elo, e.games, e.wins, r.name, r.elo as rank_elo, r.role_id
+            "SELECT e.elo, e.dynamic_elo, e.games, e.wins, e.last_game_timestamp, r.name, r.elo as rank_elo, r.role_id
              FROM elo e
              LEFT JOIN ranks r ON e.rank = r.id
              WHERE e.guild_id = ? AND e.user_id = ?"
@@ -78,6 +126,7 @@ impl EloRepository {
                     rank: default_rank,
                     games: 0,
                     wins: 0,
+                    last_game_timestamp: None,
                 })
             }
         }
@@ -113,6 +162,44 @@ impl EloRepository {
         .await?;
 
         Ok(())
+    }
+
+    /// Set the initial dynamic ELO for a new player based on their chosen skill tier.
+    ///
+    /// Only writes `dynamic_elo` when the player has no existing record or their
+    /// `dynamic_elo` is still NULL — never overwrites an already-established rating.
+    pub async fn set_initial_dynamic_elo(&self, user_id: UI, guild_id: GI, tier: SkillTier) -> Result<()> {
+        let anchor = crate::DYNAMIC_ELO_ANCHOR;
+        let initial_elo = tier.initial_elo(anchor);
+
+        sqlx::query(
+            "UPDATE elo SET dynamic_elo = ?
+             WHERE guild_id = ? AND user_id = ? AND dynamic_elo IS NULL"
+        )
+        .bind(initial_elo as i64)
+        .bind(guild_id.get() as i64)
+        .bind(user_id.get() as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Returns true when the player has no dynamic_elo value yet (NULL).
+    pub async fn needs_skill_selection(&self, user_id: UI, guild_id: GI) -> Result<bool> {
+        let result: Option<Option<i64>> = sqlx::query_scalar(
+            "SELECT dynamic_elo FROM elo WHERE guild_id = ? AND user_id = ?"
+        )
+        .bind(guild_id.get() as i64)
+        .bind(user_id.get() as i64)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(match result {
+            Some(None) => true,  // Row exists but dynamic_elo is NULL
+            None       => true,  // No row at all — also needs selection
+            Some(Some(_)) => false,
+        })
     }
 
     /// Batch set ELO and rank for multiple users in a single transaction
@@ -189,6 +276,7 @@ impl EloRepository {
             rank:        new_rank,
             games:       new_games,
             wins:        new_wins,
+            last_game_timestamp: current.last_game_timestamp,
         })
     }
 
@@ -199,14 +287,16 @@ impl EloRepository {
 
         let new_games = current.games + 1;
         let new_wins  = if won { current.wins + 1 } else { current.wins };
+        let now = chrono::Utc::now().timestamp();
 
         sqlx::query(
-            "INSERT INTO elo (guild_id, user_id, elo, rank, dynamic_elo, games, wins)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO elo (guild_id, user_id, elo, rank, dynamic_elo, games, wins, last_game_timestamp)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(guild_id, user_id) DO UPDATE SET
                 dynamic_elo = excluded.dynamic_elo,
                 games       = excluded.games,
-                wins        = excluded.wins"
+                wins        = excluded.wins,
+                last_game_timestamp = excluded.last_game_timestamp"
         )
         .bind(guild_id.get() as i64)
         .bind(user_id.get()  as i64)
@@ -215,6 +305,7 @@ impl EloRepository {
         .bind(new_dynamic_elo as i64)
         .bind(new_games       as i64)
         .bind(new_wins        as i64)
+        .bind(now)
         .execute(&self.pool)
         .await?;
 
@@ -224,13 +315,14 @@ impl EloRepository {
             rank:        current.rank,
             games:       new_games,
             wins:        new_wins,
+            last_game_timestamp: Some(now),
         })
     }
 
     /// Get all ELO records for a user across all guilds
     pub async fn get_all_for_user(&self, user_id: UI) -> Result<Vec<(u64, GuildElo)>> {
         let rows = sqlx::query(
-            "SELECT e.guild_id, e.elo, e.dynamic_elo, e.games, e.wins, r.name, r.elo as rank_elo, r.role_id
+            "SELECT e.guild_id, e.elo, e.dynamic_elo, e.games, e.wins, e.last_game_timestamp, r.name, r.elo as rank_elo, r.role_id
              FROM elo e
              LEFT JOIN ranks r ON e.rank = r.id
              WHERE e.user_id = ?"
@@ -282,7 +374,7 @@ impl EloRepository {
     /// Get leaderboard for a guild (top N players by ELO)
     pub async fn get_leaderboard(&self, guild_id: GI, limit: u32) -> Result<Vec<(UI, GuildElo)>> {
         let rows = sqlx::query(
-            "SELECT e.user_id, e.elo, e.dynamic_elo, e.games, e.wins, r.name, r.elo as rank_elo, r.role_id
+            "SELECT e.user_id, e.elo, e.dynamic_elo, e.games, e.wins, e.last_game_timestamp, r.name, r.elo as rank_elo, r.role_id
              FROM elo e
              LEFT JOIN ranks r ON e.rank = r.id
              WHERE e.guild_id = ? 
@@ -442,5 +534,20 @@ impl EloRepository {
                 Ok((rank_min_elo, true))
             }
         }
+    }
+
+    /// Set or update only the dynamic ELO value
+    pub async fn set_dynamic_elo(&self, user_id: UI, guild_id: GI, dynamic_elo: Option<u16>) -> Result<()> {
+        sqlx::query(
+            "UPDATE elo SET dynamic_elo = ?
+             WHERE guild_id = ? AND user_id = ?"
+        )
+        .bind(dynamic_elo.map(|e| e as i64))
+        .bind(guild_id.get() as i64)
+        .bind(user_id.get() as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 }

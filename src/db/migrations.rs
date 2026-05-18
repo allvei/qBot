@@ -115,12 +115,13 @@ impl DatabaseMigrations {
     Ok(())
   }
   async fn verify_config(&self) -> Result<()> {
-    let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank", "elo_ranks_linked", "post_game_auto_leave", "post_game_confirm_time", "team_balance_method", "hide_elo"];
+    let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank", "elo_ranks_linked", "post_game_auto_leave", "post_game_confirm_time", "team_balance_method", "hide_elo", "gamemode"];
     add_column!(self, "config", "elo_ranks_linked", "INTEGER", "1");
     add_column!(self, "config", "post_game_auto_leave", "INTEGER", "1");
     add_column!(self, "config", "post_game_confirm_time", "INTEGER", "120");
     add_column!(self, "config", "team_balance_method", "TEXT", "'bch'");
     add_column!(self, "config", "hide_elo", "INTEGER", "0");
+    add_column!(self, "config", "gamemode", "TEXT", "NULL");
     self.verify_columns("config", &required_columns).await?;
     Ok(())
   }
@@ -657,8 +658,9 @@ impl DatabaseMigrations {
   }
   async fn verify_elos(&self) -> Result<()> {
     add_column!(self, "elo", "dynamic_elo", "INTEGER", "NULL");
+    add_column!(self, "elo", "last_game_timestamp", "INTEGER", "NULL");
 
-    let required_columns = vec!["id", "guild_id", "user_id", "elo", "rank", "games", "wins", "dynamic_elo"];
+    let required_columns = vec!["id", "guild_id", "user_id", "elo", "rank", "games", "wins", "dynamic_elo", "last_game_timestamp"];
     self.verify_columns("elo", &required_columns).await?;
 
     // Check if we need to migrate the foreign key constraint
