@@ -6,6 +6,9 @@ __18.05.26__
 
 __Added__
 
+- __Dynamic ELO admin controls__ - Server admins can now view and edit player dynamic ELO ratings through the `/edit` command. Shows current dynamic ELO value alongside regular ELO with an edit button for manual adjustments.
+- __Skill selection for new players__ - First-time queue joiners are prompted to select their skill tier (Beginner, Intermediate, Expert, Veteran) to set their initial dynamic ELO rating.
+- __Hiatus boost system__ - Players returning after inactivity receive increased ELO mobility, making it easier to recover their rating after a break.
 - __Dynamic ELO system__ - Player ratings now adjust after each match based on team performance and opponent strength. Live toggle in server settings enables or disables the feature.
 - __Match result reporting__ - Runners can report match scores through the dashboard, with ELO adjustments automatically calculated based on the result.
 - __Match result correction__ - Incorrect match results can be changed through the runner menu, with automatic ELO re-calculation to correct player ratings.
@@ -25,6 +28,7 @@ __Improved__
 
 __Fixed__
 
+- __Match ending deadlock__ - Fixed bot freezing when attempting to end a game through the dashboard. Runners can now reliably end matches without the console becoming unresponsive.
 - __Queue button handling__ - Fixed double-acknowledgment errors when joining queue through dashboard buttons.
 - __Balance menu routing__ - Server settings balance selection menu now correctly routes to its handler.
 - __Unmigrated player ELO__ - Players without existing ELO data now default to 1500 instead of causing errors.
@@ -33,6 +37,10 @@ __Fixed__
 
 __Added__
 
+- __Inactivity tracking__ - Players now have last-game timestamps stored, enabling the hiatus boost calculation for returning players.
+- __Dynamic ELO admin editing__ - Admin interface for viewing and modifying player dynamic ELO values directly through Discord commands.
+- __Skill selection system__ - New player onboarding flow with tier-based initial ELO assignment.
+- __Double-end protection__ - Guard against duplicate match result submissions preventing race conditions when ending games.
 - __Dynamic ELO calculation__ - Complete ELO adjustment system with configurable K-factor, decay rate, and minimum/maximum bounds.
 - __Match result tracking__ - Data storage for match outcomes and ELO changes with rollback capability.
 - __GUI command system__ - Full command handler for desktop interface with queue, session, testing, and recovery operations.
