@@ -909,80 +909,86 @@ impl EventHandler for Handler {
           return;
         }
 
-        let mut manager = self.manager.lock().await;
         let guild_id = itx.guild_id.unwrap();
         let channel_id = itx.channel_id;
 
-        let category = match manager.get_category_by_channel(guild_id, channel_id) {
-          Ok(category) => category,
-          Err(_) => {
-            // Category not in manager - try to recover from database
-            let guild_name = guild_name(&ctx, guild_id);
-            let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{channel_id}"));
-            info!("[{}] Category not found in manager for #{}, attempting recovery from database", guild_name, channel_name);
+        // Handle dashboard button interaction - use a closure to scope the manager lock
+        // This prevents deadlock because dash_handle_button_interaction also tries to lock the manager
+        let result = {
+          let mut manager = self.manager.lock().await;
 
-            // Get the message ID from the interaction
-            let message_id = itx.message.id;
-            let guild_id_u64 = guild_id;
-            let channel_id_u64 = channel_id.get();
-            let message_id_u64 = message_id.get();
+          let category = match manager.get_category_by_channel(guild_id, channel_id) {
+            Ok(category) => category,
+            Err(_) => {
+              // Category not in manager - try to recover from database
+              let guild_name = guild_name(&ctx, guild_id);
+              let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{channel_id}"));
+              info!("[{}] Category not found in manager for #{}, attempting recovery from database", guild_name, channel_name);
 
-            // Load categories from database for this guild
-            let category_repo = CategoryRepository::new(self.db.pool().clone());
-            match category_repo.get_categories_for_guild(guild_id_u64).await {
-              Ok(categories) => {
-                // Find the category that matches this dashboard channel
-                if let Some(mut recovered_category) = categories.into_iter().find(|g| g.channels.dashboard.get() == channel_id_u64) {
-                  info!("[{}] Found category in database for #{}", guild_name, channel_name);
+              // Get the message ID from the interaction
+              let message_id = itx.message.id;
+              let guild_id_u64 = guild_id;
+              let channel_id_u64 = channel_id.get();
+              let message_id_u64 = message_id.get();
 
-                  // Update the dashboard message ID in the database
-                  if let Err(e) = category_repo.update_dashboard_msg(guild_id_u64, channel_id_u64, message_id_u64).await {
-                    error!("[{}] Failed to update dashboard message ID: {}", guild_name, e);
-                  } else {
-                    info!("[{}] Updated dashboard message ID in database", guild_name);
-                    // Update the in-memory category too
-                    recovered_category.dashboard_msg = message_id;
-                  }
+              // Load categories from database for this guild
+              let category_repo = CategoryRepository::new(self.db.pool().clone());
+              match category_repo.get_categories_for_guild(guild_id_u64).await {
+                Ok(categories) => {
+                  // Find the category that matches this dashboard channel
+                  if let Some(mut recovered_category) = categories.into_iter().find(|g| g.channels.dashboard.get() == channel_id_u64) {
+                    info!("[{}] Found category in database for #{}", guild_name, channel_name);
 
-                  // Add the recovered category to the manager
-                  let server = manager.get_qguild(guild_id);
-                  if let Ok(server) = server {
-                    if let Err(e) = server.add_category(recovered_category) {
-                      error!("[{}] Failed to add recovered category: {}", guild_name, e);
+                    // Update the dashboard message ID in the database
+                    if let Err(e) = category_repo.update_dashboard_msg(guild_id_u64, channel_id_u64, message_id_u64).await {
+                      error!("[{}] Failed to update dashboard message ID: {}", guild_name, e);
                     } else {
-                      info!("[{}] Recovered category added to manager", guild_name);
+                      info!("[{}] Updated dashboard message ID in database", guild_name);
+                      // Update the in-memory category too
+                      recovered_category.dashboard_msg = message_id;
                     }
 
-                    // Now get the category from the manager
-                    manager.get_category_by_channel(guild_id, channel_id).unwrap()
+                    // Add the recovered category to the manager
+                    let server = manager.get_qguild(guild_id);
+                    if let Ok(server) = server {
+                      if let Err(e) = server.add_category(recovered_category) {
+                        error!("[{}] Failed to add recovered category: {}", guild_name, e);
+                      } else {
+                        info!("[{}] Recovered category added to manager", guild_name);
+                      }
+
+                      // Now get the category from the manager
+                      manager.get_category_by_channel(guild_id, channel_id).unwrap()
+                    } else {
+                      error!("[{}] Could not get server from manager", guild_name);
+                      drop(manager);
+                      InteractionHelpers::send_component_error_embed(itx, &ctx, "Dashboard state was lost.").await;
+                      return;
+                    }
                   } else {
-                    error!("[{}] Could not get server from manager", guild_name);
-                    InteractionHelpers::send_component_error_embed(itx, &ctx, "Dashboard state was lost.").await;
+                    error!("[{}] No category found in database for #{}", guild_name, channel_name);
+                    drop(manager);
+                    InteractionHelpers::send_component_error_embed(itx, &ctx, "Dashboard configuration not found.").await;
                     return;
                   }
-                } else {
-                  error!("[{}] No category found in database for #{}", guild_name, channel_name);
-                  InteractionHelpers::send_component_error_embed(itx, &ctx, "Dashboard configuration not found.").await;
+                }
+                Err(e) => {
+                  error!("Failed to load categories from database: {e}");
+                  drop(manager);
+                  InteractionHelpers::send_component_error_embed(itx, &ctx, "Failed to access database. Please contact an administrator.").await;
                   return;
                 }
               }
-              Err(e) => {
-                error!("Failed to load categories from database: {e}");
-                InteractionHelpers::send_component_error_embed(itx, &ctx, "Failed to access database. Please contact an administrator.").await;
-                return;
-              }
             }
-          }
+          };
+
+          let comp_ctx = ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
+
+          debug!("Handling button interaction: '{}' | User: {} | Message: {} | Token: {:?}", itx.data.custom_id, itx.user.id, itx.message.id, itx.token);
+
+          // Call the handler - manager lock is dropped after this scope ends
+          category.dash_handle_button_interaction(&comp_ctx).await
         };
-
-        let comp_ctx = ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
-
-        let _button_id = &itx.data.custom_id;
-        let _user_id = itx.user.id;
-
-        debug!("Handling button interaction: '{}' | User: {} | Message: {} | Token: {:?}", itx.data.custom_id, itx.user.id, itx.message.id, itx.token);
-
-        let result = category.dash_handle_button_interaction(&comp_ctx).await;
 
         if let Err(e) = result {
           error!(

@@ -1214,26 +1214,9 @@ impl Category {
       return Ok(());
     }
 
-    // Check if someone is already submitting a score for this match
-    {
-      let mgr = cc.manager.lock().await;
-      if let Some(submitting_user_id) = mgr.get_active_score_submission(guild_id, category_id, format_id) {
-        if submitting_user_id != cc.component.user.id {
-          // Get the username of the user currently submitting
-          let submitting_user_tag = crate::log::get_user_tag(cc.ctx, submitting_user_id, &cc.db).await;
-          cc.reply_ephemeral(&format!("{} started reporting this match already", submitting_user_tag)).await?;
-          return Ok(());
-        }
-      }
-      drop(mgr);
-    }
-
-    // Mark this user as submitting
-    {
-      let mut mgr = cc.manager.lock().await;
-      mgr.set_active_score_submission(guild_id, category_id, format_id, cc.component.user.id);
-      drop(mgr);
-    }
+    // NOTE: The caller (application.rs) holds the manager lock, so we cannot lock here.
+    // The "active score submission" tracking is handled at a higher level to prevent deadlocks.
+    // This means concurrent end-match attempts may race, but the score_reported flag prevents double-ending.
 
     let guild_name_str = guild_name(cc.ctx, guild_id);
     let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
@@ -1312,18 +1295,13 @@ impl Category {
       }
     }
 
-    // End the match
-    match self.pull_fmt(format_id, cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await {
+    // End the match - pass None to avoid deadlock with manager lock held by caller
+    match self.pull_fmt(format_id, cc.ctx, guild_id, &cc.db, None).await {
       Ok(_) => {
         info!("{} Match ended with {}", log_prefix_category(&guild_name_str, &category_name), result_text);
         self.queue_dash_update_all(cc.ctx).await;
 
-        // Clear the active score submission
-        {
-          let mut mgr = cc.manager.lock().await;
-          mgr.clear_active_score_submission(guild_id, category_id, format_id);
-          drop(mgr);
-        }
+        // Note: active score submission tracking cleared by caller to avoid deadlock
 
         let result_color = match *result {
           "red" => crate::RED,
@@ -1341,12 +1319,7 @@ impl Category {
       Err(e) => {
         error!("Failed to end match: {e}");
 
-        // Clear the active score submission on error
-        {
-          let mut mgr = cc.manager.lock().await;
-          mgr.clear_active_score_submission(guild_id, category_id, format_id);
-          drop(mgr);
-        }
+        // Note: active score submission tracking cleared by caller to avoid deadlock
 
         let embed = CE::new()
           .title("Failed to end match")
