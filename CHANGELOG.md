@@ -1,3 +1,51 @@
+# v0.13.0
+
+__18.05.26__
+
+## Users & Admins
+
+__Added__
+
+- __Dynamic ELO system__ - Player ratings now adjust after each match based on team performance and opponent strength. Live toggle in server settings enables or disables the feature.
+- __Match result reporting__ - Runners can report match scores through the dashboard, with ELO adjustments automatically calculated based on the result.
+- __Match result correction__ - Incorrect match results can be changed through the runner menu, with automatic ELO re-calculation to correct player ratings.
+- __ELO privacy option__ - Server setting to hide ELO values from dashboards while still using them internally for team balancing.
+- __GUI admin panel__ - Complete desktop interface for managing queues, sessions, and testing. Includes buttons for all queue operations, session state controls, and recovery tools.
+- __GUI queue panel__ - Desktop interface showing all categories and formats with live updates. Right-click players for quick actions like Remove, Buffer, or Fatkid.
+- __Copy to clipboard__ - Right-click on guilds or players in the GUI to copy their identifiers. Hover tooltips show additional information.
+- __Live dashboard sync__ - GUI actions immediately update Discord dashboard embeds, keeping both interfaces in sync.
+
+__Improved__
+
+- __Queue rank handling__ - Rank assignment now works even when Discord access is missing or not configured, falling back to the lowest rank automatically.
+- __Admin access__ - Admins can now use runner menu commands and buttons without needing explicit runner access.
+- __Channel creation reliability__ - Voice channels can now be created even when the bot lacks permission overwrite capabilities, preventing setup failures.
+- __Dashboard responsiveness__ - Discord dashboard updates instantly after any GUI action, removing previous delay.
+- __Player move logging__ - Consolidated log messages for player movement between voice channels for clearer tracking.
+
+__Fixed__
+
+- __Queue button handling__ - Fixed double-acknowledgment errors when joining queue through dashboard buttons.
+- __Balance menu routing__ - Server settings balance selection menu now correctly routes to its handler.
+- __Unmigrated player ELO__ - Players without existing ELO data now default to 1500 instead of causing errors.
+
+## Developers
+
+__Added__
+
+- __Dynamic ELO calculation__ - Complete ELO adjustment system with configurable K-factor, decay rate, and minimum/maximum bounds.
+- __Match result tracking__ - Data storage for match outcomes and ELO changes with rollback capability.
+- __GUI command system__ - Full command handler for desktop interface with queue, session, testing, and recovery operations.
+- __Live ELO toggle__ - Runtime toggle for dynamic ELO system without requiring restart.
+- __Headless mode__ - Command-line flag (-nogui) to run bot without desktop GUI.
+
+__Refactored__
+
+- __Guild config storage__ - Moved guild_name and team_balance_method to appropriate data storage for better data organization.
+- __Queue panel structure__ - GUI queue panel restructured to show categories in main content instead of sidebar.
+- __Logging consolidation__ - Player movement logs unified across different code paths for consistency.
+- __Dynamic ELO constants__ - Configuration values extracted to dedicated constants module.
+
 # v0.12.0
 
 __25.03.26__
