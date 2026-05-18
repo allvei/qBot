@@ -358,6 +358,7 @@ impl AsSettingsMenu for ServerConfigDisplay {
     // Add action buttons
     menu = menu.row(SR::Buttons(vec![
       SB::action("server_settings_edit_post_game_confirm_time", "Edit post-game timeout", Sbs::Secondary),
+      SB::action("server_settings_edit_gamemode", "Edit gamemode", Sbs::Secondary),
       SB::action("server_settings_migrate_elo", "Run ELO migration", Sbs::Primary),
       SB::action("server_settings_create_roles", "Create roles", Sbs::Primary),
       SB::action("server_settings_roles_back", "Back", Sbs::Secondary),
@@ -919,6 +920,7 @@ pub struct PlayerSettingsDisplay {
   pub username: String,
   pub steam_id: Option<u64>,
   pub elo: u16,
+  pub dynamic_elo: Option<u16>,
   pub rank: String,
   pub games: u32,
   pub wins: u32,
@@ -935,12 +937,17 @@ impl AsSettingsMenu for PlayerSettingsDisplay {
     SettingsMenu::new(format!("{} - Player Settings", self.username))
       .field(SF::new("Steam ID", steam_display))
       .field(SF::new("ELO", format!("{}", self.elo)))
+      .field(SF::new("Dynamic ELO", self.dynamic_elo.map(|e| e.to_string()).unwrap_or_else(|| "Not set".to_string())))
       .field(SF::new("Rank", &self.rank))
       .field(SF::new("Games", format!("{}", self.games)))
       .field(SF::new("Wins", format!("{}", self.wins)))
       .field(SF::new("Winrate", winrate))
       .color(0x5865F2)
-      .row(SR::Buttons(vec![SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit Steam ID"), SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO")]))
+      .row(SR::Buttons(vec![
+        SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit Steam ID"),
+        SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO"),
+        SB::edit(format!("player_settings_edit_dynamic_elo_{uid}"), "Edit Dynamic ELO"),
+      ]))
       .row(SR::Buttons(vec![SB::edit(format!("player_settings_edit_alerts_{uid}"), "Edit alerts")]))
   }
 }
@@ -959,12 +966,17 @@ pub async fn build_player_settings_menu(settings: &PlayerSettingsDisplay, db: &c
   let mut menu = SettingsMenu::new(format!("{} - Player Settings", settings.username))
     .field(SF::new("Steam ID", steam_display))
     .field(SF::new("ELO", format!("{}", settings.elo)))
+    .field(SF::new("Dynamic ELO", settings.dynamic_elo.map(|e| e.to_string()).unwrap_or_else(|| "Not set".to_string())))
     .field(SF::new("Rank", &settings.rank))
     .field(SF::new("Games", format!("{}", settings.games)))
     .field(SF::new("Wins", format!("{}", settings.wins)))
     .field(SF::new("Winrate", winrate))
     .color(0x5865F2)
-    .row(SR::Buttons(vec![SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit Steam ID"), SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO")]));
+    .row(SR::Buttons(vec![
+      SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit Steam ID"),
+      SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO"),
+      SB::edit(format!("player_settings_edit_dynamic_elo_{uid}"), "Edit Dynamic ELO"),
+    ]));
 
   if !ranks.is_empty() {
     // Detect duplicate rank names

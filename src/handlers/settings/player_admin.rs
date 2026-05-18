@@ -19,6 +19,7 @@ pub struct PlayerSettings {
   pub username: String,
   pub steam_id: Option<u64>,
   pub elo: u16,
+  pub dynamic_elo: Option<u16>,
   pub rank: String,
   pub games: u32,
   pub wins: u32,
@@ -31,6 +32,7 @@ impl PlayerSettings {
       username: self.username.clone(),
       steam_id: self.steam_id,
       elo: self.elo,
+      dynamic_elo: self.dynamic_elo,
       rank: self.rank.clone(),
       games: self.games,
       wins: self.wins,
@@ -178,6 +180,7 @@ pub async fn handle_player_settings_rank_select(
     username,
     steam_id: player.steam_id,
     elo: updated_guild_elo.elo,
+    dynamic_elo: updated_guild_elo.dynamic_elo,
     rank: updated_guild_elo.rank.name.clone(),
     games: updated_guild_elo.games,
     wins: updated_guild_elo.wins,
@@ -226,6 +229,18 @@ pub async fn handle_player_settings_button(ctx: &Context, interaction: &CI, db: 
       &guild_elo.elo.to_string(),
       1,
       3,
+    )]);
+
+    let response = CIR::Modal(modal);
+    interaction.create_response(&ctx.http, response).await?;
+  } else if button_id.starts_with("player_settings_edit_dynamic_elo_") {
+    let modal = CM::new(format!("player_settings_modal_dynamic_elo_{target_user_id}"), "Edit Dynamic ELO").components(vec![create_value_input_sh_cap(
+      "Dynamic ELO",
+      "dynamic_elo",
+      "e.g., 1500",
+      &guild_elo.dynamic_elo.map(|e| e.to_string()).unwrap_or_default(),
+      1,
+      5,
     )]);
 
     let response = CIR::Modal(modal);
@@ -388,6 +403,55 @@ pub async fn handle_player_settings_modal(
       } else {
         let guild_name = crate::models::constants::guild_name(ctx, guild_id);
         warn!("[{}] Failed to get server when checking if player {} is queued", guild_name, target_tag);
+      }
+    }
+
+    // Refresh the settings menu
+    let settings = get_player_settings!(db, ctx, target_uid, guild_id, target_user_id);
+
+    let (embed, components) = nav_player_settings(&settings, db, guild_id).await;
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
+    interaction.create_response(&ctx.http, response).await?;
+  } else if modal_id.starts_with("player_settings_modal_dynamic_elo_") {
+    let dynamic_elo_str = get_modal_input!(interaction);
+
+    let dynamic_elo: Option<u16> = if dynamic_elo_str.trim().is_empty() {
+      None
+    } else {
+      match dynamic_elo_str.trim().parse() {
+        Ok(e) => Some(e),
+        _ => {
+          send_modal_error_response(interaction, ctx, "Invalid Dynamic ELO. Must be a valid number.").await;
+          return Ok(());
+        }
+      }
+    };
+
+    db.elo.set_dynamic_elo(target_uid, guild_id, dynamic_elo).await?;
+    info!("Updated Dynamic ELO for {} to {:?}", target_tag, dynamic_elo);
+
+    // Update in-memory player data and dashboards where this player is queued
+    {
+      let mut manager_lock = manager.lock().await;
+      if let Ok(server) = manager_lock.get_qguild(guild_id) {
+        let mut found_in_queue = false;
+        for category in &mut server.categories {
+          // Update in-memory player dynamic_elo for all sessions
+          for session in &mut category.formats[0].sessions {
+            if let Some(session_player) = session.pool.iter_mut().find(|p| p.player.user_id == target_uid) {
+              session_player.player.dynamic_elo = dynamic_elo;
+            }
+          }
+
+          let player_in_queue = category.formats[0].sessions.iter().any(|session| session.pool.iter().any(|p| p.player.user_id == target_uid));
+          if player_in_queue {
+            found_in_queue = true;
+            category.queue_dash_update(ctx, guild_id).await;
+          }
+        }
+        if found_in_queue {
+          info!("Player {} Dynamic ELO changed, dashboard updated", target_tag);
+        }
       }
     }
 

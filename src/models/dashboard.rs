@@ -767,9 +767,6 @@ impl Category {
 
     let user_id = cc.component.user.id;
     let guild_id = cc.component.guild_id.unwrap();
-    
-    // Get user tag from database (primary source)
-    let _tag = cc.db.get_player(user_id, cc.ctx).await?.tag;
 
     // Store channel IDs before any borrows
     let _dashboard_channel = self.channels.dashboard;
@@ -801,6 +798,31 @@ impl Category {
     // Use resolve_player_for_queue for consistent player resolution
     use crate::handlers::player::resolve_player_for_queue;
     if let Some(guild_id) = cc.component.guild_id {
+
+      // When dynamic ELO is enabled, check if this player needs skill selection first.
+      let dynamic_elo_active = cc.db.config.get_active_elo(guild_id).await.unwrap_or(false);
+      if dynamic_elo_active {
+        let needs_selection = cc.db.elo.needs_skill_selection(user_id, guild_id).await.unwrap_or(false);
+        if needs_selection {
+          let gamemode = cc.db.config.get_gamemode(guild_id).await.unwrap_or(None);
+          let prompt = match &gamemode {
+            Some(gm) => format!("For balancing reasons, please describe your experience with **{}**:", gm),
+            None     => "For balancing reasons, please describe your skill level:".to_string(),
+          };
+
+          use serenity::all::CreateInteractionResponseFollowup as CIRF;
+          let buttons = vec![CAR::Buttons(vec![
+            CB::new(format!("skill_select_beginner_{}_{}", self.id, fmt_id)).label("Beginner").style(BS::Secondary),
+            CB::new(format!("skill_select_intermediate_{}_{}", self.id, fmt_id)).label("Intermediate").style(BS::Secondary),
+            CB::new(format!("skill_select_expert_{}_{}", self.id, fmt_id)).label("Expert").style(BS::Secondary),
+            CB::new(format!("skill_select_veteran_{}_{}", self.id, fmt_id)).label("Veteran").style(BS::Secondary),
+          ])];
+          let followup = CIRF::new().content(prompt).components(buttons).ephemeral(true);
+          cc.component.create_followup(&cc.ctx.http, followup).await?;
+          return Ok(());
+        }
+      }
+
       let (mut player, discord_rank, _rank_mismatch) = match resolve_player_for_queue(cc.ctx, &cc.db, guild_id, user_id).await {
         Ok(result) => result,
         Err(e) => {
@@ -1180,6 +1202,17 @@ impl Category {
 
     let category_id = category_id.unwrap();
     let format_id = format_id.unwrap();
+
+    // Guard against double-end: if the session already has score_reported set, silently acknowledge and return
+    let already_reported = self.format(format_id)
+      .and_then(|sg| sg.sessions.iter().find(|s| s.is_active()))
+      .map(|s| s.score_reported)
+      .unwrap_or(false);
+
+    if already_reported {
+      cc.reply_acknowledge().await?;
+      return Ok(());
+    }
 
     // Check if someone is already submitting a score for this match
     {

@@ -27,6 +27,7 @@ macro_rules! get_player_settings {
       username,
       steam_id: player.steam_id,
       elo: guild_elo.elo,
+      dynamic_elo: guild_elo.dynamic_elo,
       rank: guild_elo.rank.name.clone(),
       games: guild_elo.games,
       wins: guild_elo.wins,

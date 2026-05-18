@@ -837,6 +837,78 @@ impl EventHandler for Handler {
           return;
         }
 
+        // Handle skill tier selection (skill_select_{tier}_{category_id}_{format_id})
+        if itx.data.custom_id.starts_with("skill_select_") {
+          let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
+          // parts: ["skill", "select", tier, category_id, format_id]
+          if let (Some(tier_str), Some(cat_id), Some(fmt_id)) = (
+            parts.get(2).copied(),
+            parts.get(3).and_then(|s| s.parse::<u8>().ok()),
+            parts.get(4).and_then(|s| s.parse::<u8>().ok()),
+          ) {
+            let guild_id = itx.guild_id.unwrap();
+            let user_id  = itx.user.id;
+
+            use crate::db::repo::elo::SkillTier;
+            if let Some(tier) = SkillTier::from_str(tier_str) {
+              // Ensure the player has an ELO record before we try to set dynamic_elo.
+              // resolve_player_for_queue creates one if missing.
+              match crate::handlers::player::resolve_player_for_queue(&ctx, &self.db, guild_id, user_id).await {
+                Ok((mut player, discord_rank, _)) => {
+                  player.tag = itx.user.tag();
+
+                  if let Err(e) = self.db.elo.set_initial_dynamic_elo(user_id, guild_id, tier).await {
+                    error!("Failed to set initial dynamic ELO for {}: {e}", user_id);
+                  } else {
+                    // Update in-memory player ELO to the chosen tier value
+                    let anchor = crate::DYNAMIC_ELO_ANCHOR;
+                    player.elo = tier.initial_elo(anchor);
+
+                    let user_tag = crate::log::get_user_tag(&ctx, user_id, &self.db).await;
+                    info!("{} selected skill tier {:?} (dynamic_elo={})", user_tag, tier, player.elo);
+                  }
+
+                  // Acknowledge the ephemeral selection message
+                  let ack = serenity::all::CreateInteractionResponse::UpdateMessage(
+                    serenity::all::CreateInteractionResponseMessage::new()
+                      .content(format!("Skill level set to **{}**. Joining queue...", tier.label()))
+                      .components(vec![]),
+                  );
+                  let _ = itx.create_response(&ctx.http, ack).await;
+
+                  // Now queue the player using the category found by cat_id
+                  let mut manager = self.manager.lock().await;
+                  if let Ok(server) = manager.get_qguild(guild_id) {
+                    if let Some(category) = server.categories.iter_mut().find(|c| c.id == cat_id) {
+                      let is_user_in_vc = category.is_user_in_queue_vc(&ctx.http, user_id).await;
+                      let queue_context = QueueContext::new(&ctx, Some(guild_id), Some(&self.db), Some(self.manager.clone()));
+                      let fmt_name_owned = category.format(fmt_id).map(|sg| sg.name.to_string());
+                      let player_rank_name = discord_rank.name.clone();
+
+                      if let Err(e) = category.queue_player_with_vc_status_fmt(fmt_id, player.clone(), discord_rank, queue_context, is_user_in_vc).await {
+                        warn!("Failed to queue player after skill selection: {e}");
+                      } else {
+                        if let Some(format) = category.format(fmt_id) {
+                          if let Err(e) = crate::log_queue_toggle(&ctx, &self.db, guild_id, category.id, format, &player, "joined", None).await {
+                            warn!("Failed to log queue toggle: {e}");
+                          }
+                        }
+                        use crate::models::alert_limiter::{schedule_alert, AlertType};
+                        schedule_alert(ctx.clone(), category.channels.queue_chat, guild_id, user_id, self.db.clone(), cat_id, fmt_id, AlertType::Join, fmt_name_owned, player_rank_name);
+                      }
+                      category.queue_dash_update(&ctx, guild_id).await;
+                    }
+                  }
+                }
+                Err(e) => {
+                  error!("Failed to resolve player after skill selection for {}: {e}", user_id);
+                }
+              }
+            }
+          }
+          return;
+        }
+
         let mut manager = self.manager.lock().await;
         let guild_id = itx.guild_id.unwrap();
         let channel_id = itx.channel_id;
@@ -1263,7 +1335,7 @@ impl Handler {
     let ctg_nm = category.name.as_deref().unwrap_or("Unknown").to_string();
     let fmt_nm = category.get_user_fmt_name(user_id);
     let quota = category.quota() as usize;
-    let player = category.get_player(user_id).unwrap();
+    let player = category.get_player(user_id).ok();
 
     let category_id = category.id; // Capture category_id before mutable borrow
 
@@ -1309,7 +1381,8 @@ impl Handler {
                 if let Some(session_player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                   let grace_until = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
                   session_player.vc_leave_grace_until = Some(grace_until);
-                  info!("{} #{} {} left VC post-game, 10s grace period started", log_prefix_format(&guild_name, &ctg_nm, &fmt_nm), position + 1, player.tag);
+                  let tag = player.as_ref().map(|p| p.tag.as_str()).unwrap_or("unknown");
+                  info!("{} #{} {} left VC post-game, 10s grace period started", log_prefix_format(&guild_name, &ctg_nm, &fmt_nm), position + 1, tag);
                 }
                 false // Don't remove immediately
               } else {
@@ -1393,8 +1466,10 @@ impl Handler {
       }
     } else if should_schedule_queue_expiration {
       // Player left VC but is still in queue - schedule expiration
-      let duration = queue_ctx.db.unwrap().players.get_prefs(user_id).await.unwrap().queue_expiration;
-      category.set_player_rejoin_expiration(ctx, guild_id, player, duration).await;
+      if let Some(player) = player {
+        let duration = queue_ctx.db.unwrap().players.get_prefs(user_id).await.unwrap().queue_expiration;
+        category.set_player_rejoin_expiration(ctx, guild_id, player, duration).await;
+      }
     }
 
     if should_regenerate {
