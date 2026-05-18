@@ -17,11 +17,12 @@ A comprehensive Discord bot for managing PUGs, built with Rust using the Serenit
 ## Features
 
 - **Queue Management**:          Players can join/leave queue and check status from the dashboard
-- **Automatic Team Generation**: Generates balanced 4v4 teams when queue is full
-- **Voice Channel Management**:  Automatically moves players to team-specific voice channels
+- **Automatic Team Generation**: Generates balanced teams when queue is full
+- **Voice Channel Management**:  Automatically moves players to team-specific voice channels when starting a game.
 - **Match Lifecycle**:           Complete match flow from queue → teams → confirmation → play → end
-- **Admin Controls**:            Buffer players, configure bot settings, view logs
+- **Admin Controls**:            Player queue management, configure bot settings, view logs
 - **Role-based Permissions**:    Separate permissions for runners and admins
+- **Balancing**:                 Choose between ELO-based matchmaking or manual point-based balancing.
 
 ## Planned Features
 
@@ -31,10 +32,7 @@ A comprehensive Discord bot for managing PUGs, built with Rust using the Serenit
   - Automatically assign players to the right teams.
   - Track server and player statistics.
   - Automatically move players back to the queue when a team wins.
-- ELO
-  - Dynamic elo based on Win/Loss or other metrics.
-  - Class and region specific elo ratings.
-- Schedule based player queueing.
+- Class and region specific elo ratings.
 
 ### Minor
 
@@ -42,4 +40,3 @@ A comprehensive Discord bot for managing PUGs, built with Rust using the Serenit
 - Methods for requesting substitutions when a player becomes unavailable.
 - Pre-game class selection.
 - Captain mode for manual team creation.
-- Show the queue status in the voice channels name.
