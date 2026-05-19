@@ -9,29 +9,29 @@ pub fn guild_name(ctx: &Context, guild_id: GuildId) -> String {
   ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string())
 }
 
-pub const DEFAULT_ALERT_COLOR:     u32  = 3447003;
-pub const DEFAULT_ACTIVE_ELO:      bool = false;
-pub const DEFAULT_QUOTA:           u8   = 8;
-pub const DEFAULT_CONFIRM_TIME:    u16  = 300; // Seconds for players to join VC when queue goes hot
+pub const DEFAULT_ALERT_COLOR: u32 = 3447003;
+pub const DEFAULT_ACTIVE_ELO: bool = false;
+pub const DEFAULT_QUOTA: u8 = 8;
+pub const DEFAULT_CONFIRM_TIME: u16 = 300; // Seconds for players to join VC when queue goes hot
 pub const DEFAULT_POST_GAME_CONFIRM_TIME: u16 = 120;
-pub const CLEANUP_INTERVAL_SECS:   u64  = 60;  // Check every minute
-pub const INACTIVITY_TIMEOUT_SECS: u64  = 600; // 10m
-pub const DEFAULT_QUEUE_EXPIRATION:      u8   = 120; // 2h default user queue expiry
-pub const MAX_QUEUE_EXPIRATION:          u8   = 240; // 4h max user queue expiry
-pub const MIN_QUEUE_EXPIRATION:          u8   = 30;  // 30m min user queue expiry
-pub const MAX_MATCH_SCORE:         u8   = 2;   // Maximum score per team in a match
+pub const CLEANUP_INTERVAL_SECS: u64 = 60; // Check every minute
+pub const INACTIVITY_TIMEOUT_SECS: u64 = 600; // 10m
+pub const DEFAULT_QUEUE_EXPIRATION: u8 = 120; // 2h default user queue expiry
+pub const MAX_QUEUE_EXPIRATION: u8 = 240; // 4h max user queue expiry
+pub const MIN_QUEUE_EXPIRATION: u8 = 30; // 30m min user queue expiry
+pub const MAX_MATCH_SCORE: u8 = 2; // Maximum score per team in a match
 
 // Dynamic ELO configuration defaults
-pub const DYNAMIC_ELO_ANCHOR:           f64 = 1500.0; // Target center point of the bell curve
-pub const DYNAMIC_ELO_K_CEILING:        f64 = 300.0;  // Maximum K-factor for brand new players (high volatility)
-pub const DYNAMIC_ELO_K_FLOOR:          f64 = 30.0;   // Minimum K-factor for established players (low volatility)
-pub const DYNAMIC_ELO_DECAY_RATE:       f64 = 0.4;    // Exponential decay rate for K-factor
-pub const DYNAMIC_ELO_OFFSET_THRESHOLD: f64 = 50.0;   // Trigger normalization correction if avg drifts by this many points
-pub const DYNAMIC_ELO_OFFSET_AMOUNT:    f64 = 50.0;   // The correction shift size when normalization triggers
-pub const DYNAMIC_ELO_SCALING:          f64 = 20.0;   // ELO units per 1 legacy/manual point (for migration)
+pub const DYNAMIC_ELO_ANCHOR: f64 = 1500.0; // Target center point of the bell curve
+pub const DYNAMIC_ELO_K_CEILING: f64 = 300.0; // Maximum K-factor for brand new players (high volatility)
+pub const DYNAMIC_ELO_K_FLOOR: f64 = 30.0; // Minimum K-factor for established players (low volatility)
+pub const DYNAMIC_ELO_DECAY_RATE: f64 = 0.4; // Exponential decay rate for K-factor
+pub const DYNAMIC_ELO_OFFSET_THRESHOLD: f64 = 50.0; // Trigger normalization correction if avg drifts by this many points
+pub const DYNAMIC_ELO_OFFSET_AMOUNT: f64 = 50.0; // The correction shift size when normalization triggers
+pub const DYNAMIC_ELO_SCALING: f64 = 20.0; // ELO units per 1 legacy/manual point (for migration)
 
 // Hiatus-based K-factor boost configuration
-pub const HIATUS_DAILY_INCREASE:        f64 = 1.35;   // (K_CEILING - K_FLOOR) / 200 = (300 - 30) / 200
+pub const HIATUS_DAILY_INCREASE: f64 = 1.35; // (K_CEILING - K_FLOOR) / 200 = (300 - 30) / 200
 
 /// `FileManager` struct provides cross-platform file operations.
 pub struct FileManager;

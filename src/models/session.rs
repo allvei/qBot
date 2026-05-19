@@ -1,6 +1,6 @@
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::SystemTime;
-use std::collections::HashMap;
 
 use anyhow::{Error, Result};
 use egui::RichText;
@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId as CI, CreateEmbed as CE, CreateEmbedFooter as CEF, UserId as UI};
 use sqlx::FromRow;
 
-use crate::{models::Player};
+use crate::models::Player;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -186,10 +186,7 @@ impl Session {
     let teams: Vec<_> = swapped_teams.values().collect();
     if teams.len() == 2 && teams[0] != teams[1] {
       debug!("Detected valid team switch: {} players swapped teams", swapped_teams.len());
-      self.pending_team_switch = Some(PendingTeamSwitch {
-        detected_at: SystemTime::now(),
-        swapped_teams,
-      });
+      self.pending_team_switch = Some(PendingTeamSwitch { detected_at: SystemTime::now(), swapped_teams });
       return true;
     }
 
@@ -198,7 +195,7 @@ impl Session {
 
   /// Check if pending team switch has been stable for 2+ minutes and commit it
   pub fn validate_and_commit_team_switch(&mut self, ctx: &serenity::all::Context, guild_id: serenity::all::GuildId) -> bool {
-    use tracing::{info, debug};
+    use tracing::{debug, info};
 
     let Some(pending) = &self.pending_team_switch else {
       return false;
@@ -234,12 +231,7 @@ impl Session {
         Team::Unassigned => continue,
       };
 
-      let still_in_correct_vc = guild
-        .voice_states
-        .get(&user_id)
-        .and_then(|vs| vs.channel_id)
-        .map(|ch| ch == expected_vc)
-        .unwrap_or(false);
+      let still_in_correct_vc = guild.voice_states.get(&user_id).and_then(|vs| vs.channel_id).map(|ch| ch == expected_vc).unwrap_or(false);
 
       if !still_in_correct_vc {
         debug!("Team switch invalidated - player {} not in expected VC", user_id);
@@ -263,7 +255,17 @@ impl Session {
 
   /// Create an empty session
   pub fn empty() -> Self {
-    Self { status: SessionStatus::Idle, pool: Vec::new(), ready_at: None, started_at: None, match_ended_at: None, team_channels: None, pending_team_switch: None, last_action_at: None, score_reported: false }
+    Self {
+      status: SessionStatus::Idle,
+      pool: Vec::new(),
+      ready_at: None,
+      started_at: None,
+      match_ended_at: None,
+      team_channels: None,
+      pending_team_switch: None,
+      last_action_at: None,
+      score_reported: false,
+    }
   }
 
   /// Check if this Hot session has timed out (players didn't join VC in time)
@@ -340,13 +342,7 @@ pub struct SessionPlayer {
 
 impl SessionPlayer {
   pub fn add(player: Player) -> Self {
-    Self { player: player.clone(),
-      team: None,
-      in_vc: false,
-      in_queue: false,
-      joined_at: SystemTime::now(),
-      queue_expiration: player.queue_expiration,
-      vc_leave_grace_until: None }
+    Self { player: player.clone(), team: None, in_vc: false, in_queue: false, joined_at: SystemTime::now(), queue_expiration: player.queue_expiration, vc_leave_grace_until: None }
   }
 
   pub fn set_team(&mut self, team: Team) {
@@ -470,9 +466,7 @@ pub async fn process_match_result_with_elo(
     }
 
     // Apply dynamic ELO changes if enabled
-    return match crate::models::dynamic_elo::process_match_elo(
-      &db, guild_id, match_id, session_players, result, ctx,
-    ).await {
+    return match crate::models::dynamic_elo::process_match_elo(&db, guild_id, match_id, session_players, result, ctx).await {
       Ok(Some(changes)) => {
         tracing::info!("Dynamic ELO applied: {} players updated", changes.len());
         Ok(Some(changes))

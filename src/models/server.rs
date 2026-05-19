@@ -486,7 +486,10 @@ impl Category {
     // Delete team VCs from previous run in parallel (they are ephemeral)
     let start_time = Instant::now();
     let orphan_count = self.channels.teams.len() * 2; // Each pair has RED + BLU
-    let delete_tasks: Vec<_> = self.channels.teams.iter()
+    let delete_tasks: Vec<_> = self
+      .channels
+      .teams
+      .iter()
       .flat_map(|tc| [tc.red_vc, tc.blu_vc])
       .filter(|vc_id| guild.channels.contains_key(vc_id))
       .map(|vc_id| {
@@ -511,11 +514,8 @@ impl Category {
     }
 
     // Clean up orphaned database entries first
-    let existing_channel_ids: Vec<CI> = guild.channels.values()
-      .filter(|c| c.kind == ChannelType::Voice)
-      .map(|c| c.id)
-      .collect();
-    
+    let existing_channel_ids: Vec<CI> = guild.channels.values().filter(|c| c.kind == ChannelType::Voice).map(|c| c.id).collect();
+
     if let Ok(orphaned_db_teams) = db.teams.get_orphaned_teams(self.guild_id, &existing_channel_ids).await {
       if !orphaned_db_teams.is_empty() {
         info!("[{}] Cleaning up {} orphaned database team entries", guild.name, orphaned_db_teams.len());
@@ -569,10 +569,7 @@ impl Category {
 
       // Collect users to move back to queue VC
       if let Some(queue_vc) = queue_vc_id {
-        let members_in_vc: Vec<_> = guild.voice_states.iter()
-          .filter(|(_, vs)| vs.channel_id == Some(channel.id))
-          .map(|(uid, _)| *uid)
-          .collect();
+        let members_in_vc: Vec<_> = guild.voice_states.iter().filter(|(_, vs)| vs.channel_id == Some(channel.id)).map(|(uid, _)| *uid).collect();
         for user_id in members_in_vc {
           users_to_move.push((user_id, queue_vc));
         }
@@ -584,16 +581,19 @@ impl Category {
       let start_time = Instant::now();
       let user_count = users_to_move.len();
       use serenity::all::EditMember;
-      let move_tasks: Vec<_> = users_to_move.into_iter().map(|(user_id, queue_vc)| {
-        let http = ctx.http.clone();
-        let gid = guild.id;
-        tokio::spawn(async move {
-          match http.edit_member(gid, user_id, &EditMember::new().voice_channel(queue_vc), Some("Moving user back to queue VC during cleanup")).await {
-            Ok(_) => info!("Moved user {} back to queue VC during team VC cleanup", user_id),
-            Err(e) => warn!("Failed to move user {} back to queue VC: {}", user_id, e),
-          }
+      let move_tasks: Vec<_> = users_to_move
+        .into_iter()
+        .map(|(user_id, queue_vc)| {
+          let http = ctx.http.clone();
+          let gid = guild.id;
+          tokio::spawn(async move {
+            match http.edit_member(gid, user_id, &EditMember::new().voice_channel(queue_vc), Some("Moving user back to queue VC during cleanup")).await {
+              Ok(_) => info!("Moved user {} back to queue VC during team VC cleanup", user_id),
+              Err(e) => warn!("Failed to move user {} back to queue VC: {}", user_id, e),
+            }
+          })
         })
-      }).collect();
+        .collect();
 
       for task in move_tasks {
         let _ = task.await;
@@ -604,15 +604,18 @@ impl Category {
     // Delete all channels in parallel
     let start_time = Instant::now();
     let delete_count = channels_to_delete.len();
-    let delete_tasks: Vec<_> = channels_to_delete.iter().map(|(channel_id, channel_name)| {
-      let http = ctx.http.clone();
-      let cid = *channel_id;
-      let cname = channel_name.clone();
-      tokio::spawn(async move {
-        let result = cid.delete(&http).await;
-        (cid, cname, result)
+    let delete_tasks: Vec<_> = channels_to_delete
+      .iter()
+      .map(|(channel_id, channel_name)| {
+        let http = ctx.http.clone();
+        let cid = *channel_id;
+        let cname = channel_name.clone();
+        tokio::spawn(async move {
+          let result = cid.delete(&http).await;
+          (cid, cname, result)
+        })
       })
-    }).collect();
+      .collect();
 
     for task in delete_tasks {
       if let Ok((channel_id, channel_name, result)) = task.await {
@@ -722,12 +725,12 @@ impl Category {
     // Verify session has enough players before transitioning to Hot
     let quota = self.format(format_id).ok_or_else(|| anyhow!("Format {} not found", format_id))?.quota as usize;
     let session = self.get_queue_fmt(format_id).await?;
-    
+
     if session.pool.len() < quota {
       // Not enough players, don't transition to Hot
       return Ok(());
     }
-    
+
     let _ = session.hot();
 
     // Create team VCs if policy is OnHot
@@ -807,7 +810,8 @@ impl Category {
         .enumerate()
         .filter_map(|(idx, s)| {
           // Use post-game timeout if this is a post-game scenario and post_game_confirm_time is provided
-          let confirm_time_seconds = if s.match_ended_at.is_some() { post_game_confirm_time.map(|t| t as u64).unwrap_or(self.confirm_time as u64) } else { self.confirm_time as u64 };
+          let confirm_time_seconds =
+            if s.match_ended_at.is_some() { post_game_confirm_time.map(|t| t as u64).unwrap_or(self.confirm_time as u64) } else { self.confirm_time as u64 };
 
           if s.is_hot_confirm_time(confirm_time_seconds) {
             Some(idx)
@@ -866,11 +870,11 @@ impl Category {
   /// Returns true if any changes were made that require dashboard update
   pub async fn check_confirm_time(&mut self, db: &DB, ctx: &Context, guild_id: GI) -> bool {
     let mut changes_made = false;
-    
+
     // Collect all active game players first (outside the format loop)
     let mut active_game_players = std::collections::HashSet::new();
     let mut player_tags = std::collections::HashMap::new();
-    
+
     for fmt in &self.formats {
       for session in &fmt.sessions {
         if session.status == SessionStatus::Live || session.status == SessionStatus::Hot {
@@ -897,11 +901,7 @@ impl Category {
             let now = SystemTime::now();
             if now >= grace_until {
               // Calculate how long the grace period actually was
-              let elapsed = if let Ok(duration) = now.duration_since(grace_until) {
-                format!("{}s ago", duration.as_secs())
-              } else {
-                "unknown".to_string()
-              };
+              let elapsed = if let Ok(duration) = now.duration_since(grace_until) { format!("{}s ago", duration.as_secs()) } else { "unknown".to_string() };
               info!("VC leave grace period expired for {} (expired {}), removing from queue", player.player.tag, elapsed);
               players_to_remove.push(player.player.user_id);
             }
@@ -973,7 +973,12 @@ impl Category {
     // Now find the free pair (recently freed pairs are available for reuse)
     let occupied_teams: Vec<TeamChannel> = self.actively_occupied_teams();
 
-    let team_pair = self.channels.teams.iter().find(|t| !occupied_teams.iter().any(|o| o.red_vc == t.red_vc && o.blu_vc == t.blu_vc)).cloned()
+    let team_pair = self
+      .channels
+      .teams
+      .iter()
+      .find(|t| !occupied_teams.iter().any(|o| o.red_vc == t.red_vc && o.blu_vc == t.blu_vc))
+      .cloned()
       .ok_or_else(|| anyhow!("No free team VC pair available after ensure"))?;
 
     let red_vc = team_pair.red_vc;
@@ -985,12 +990,12 @@ impl Category {
       let game = format.sessions.iter().find(|s| s.status == SessionStatus::Hot).ok_or(anyhow!("No hot session found for push in format {}", format_id))?;
       game.pool.iter().map(|p| p.player.user_id).collect()
     };
-    
+
     // Cancel timeouts for all players in this game (game is starting)
     for user_id in player_ids_for_queue_expiration {
       self.cancel_player_rejoin_expiration(ctx, guild_id, format_id, user_id).await;
     }
-    
+
     // Now get mutable reference for the rest of the operation
     let sg = self.format_mut(format_id).ok_or_else(|| anyhow!("Format {} not found for push", format_id))?;
     let game = sg.sessions.iter_mut().find(|s| s.status == SessionStatus::Hot).ok_or(anyhow!("No hot session found for push in format {}", format_id))?;
@@ -1000,7 +1005,7 @@ impl Category {
 
     // Set status to Push and extract player moves
     game.push();
-    
+
     let player_moves: Vec<(UI, CI, String)> = game
       .pool
       .iter()
@@ -1020,19 +1025,23 @@ impl Category {
     // Move users to team channels in parallel
     let start_time = Instant::now();
     let player_count = player_moves.len();
-    let move_tasks: Vec<_> = player_moves.into_iter().map(|(user_id, channel_id, tag)| {
-      let http = ctx.http.clone();
-      tokio::spawn(async move {
-        let result = async {
-          let member = guild_id.member(&http, user_id).await?;
-          member.move_to_voice_channel(&http, channel_id).await
-        }.await;
-        if let Err(ref e) = result {
-          warn!("Failed to move user {}: {}", tag, e);
-        }
-        (tag, result)
+    let move_tasks: Vec<_> = player_moves
+      .into_iter()
+      .map(|(user_id, channel_id, tag)| {
+        let http = ctx.http.clone();
+        tokio::spawn(async move {
+          let result = async {
+            let member = guild_id.member(&http, user_id).await?;
+            member.move_to_voice_channel(&http, channel_id).await
+          }
+          .await;
+          if let Err(ref e) = result {
+            warn!("Failed to move user {}: {}", tag, e);
+          }
+          (tag, result)
+        })
       })
-    }).collect();
+      .collect();
 
     let mut moved_tags = Vec::new();
     for task in move_tasks {
@@ -1169,7 +1178,7 @@ impl Category {
     let guild_name = crate::models::constants::guild_name(ctx, guild_id);
     let category_name = self.name.as_deref().unwrap_or("Unknown");
     let prefix = crate::log::log_prefix_category(&guild_name, category_name);
-    
+
     info!("{} Added set {} of team channels to database.", prefix, pair_num);
 
     Ok(Some(pair))
@@ -1196,25 +1205,24 @@ impl Category {
     // Delete all team VCs in parallel
     let start_time = Instant::now();
     let delete_count = to_delete.len() * 2; // Each pair has RED + BLU
-    let delete_tasks: Vec<_> = to_delete.iter().flat_map(|tc| {
-      let http = ctx.http.clone();
-      let red_vc = tc.red_vc;
-      let blu_vc = tc.blu_vc;
-      let set_idx = tc.set_index;
-      let red_name = ctx.cache.channel(red_vc).map(|c| c.name.clone()).unwrap_or_else(|| red_vc.to_string());
-      let blu_name = ctx.cache.channel(blu_vc).map(|c| c.name.clone()).unwrap_or_else(|| blu_vc.to_string());
-      vec![
-        tokio::spawn(async move { 
-          (red_vc, red_vc.delete(&http).await, "RED", red_name, set_idx) 
-        }),
-        tokio::spawn({
-          let http = ctx.http.clone();
-          async move { 
-            (blu_vc, blu_vc.delete(&http).await, "BLU", blu_name, set_idx) 
-          }
-        }),
-      ]
-    }).collect();
+    let delete_tasks: Vec<_> = to_delete
+      .iter()
+      .flat_map(|tc| {
+        let http = ctx.http.clone();
+        let red_vc = tc.red_vc;
+        let blu_vc = tc.blu_vc;
+        let set_idx = tc.set_index;
+        let red_name = ctx.cache.channel(red_vc).map(|c| c.name.clone()).unwrap_or_else(|| red_vc.to_string());
+        let blu_name = ctx.cache.channel(blu_vc).map(|c| c.name.clone()).unwrap_or_else(|| blu_vc.to_string());
+        vec![
+          tokio::spawn(async move { (red_vc, red_vc.delete(&http).await, "RED", red_name, set_idx) }),
+          tokio::spawn({
+            let http = ctx.http.clone();
+            async move { (blu_vc, blu_vc.delete(&http).await, "BLU", blu_name, set_idx) }
+          }),
+        ]
+      })
+      .collect();
 
     for task in delete_tasks {
       if let Ok((_, result, team, name, set_idx)) = task.await {
@@ -1324,7 +1332,10 @@ impl Category {
 
     // Find the active game to end - prefer Live sessions over Hot (Live games should be ended first)
     let sg = self.format_mut(fmt_id).ok_or_else(|| anyhow!("Format {} not found for pull", fmt_id))?;
-    let active_session_idx = sg.sessions.iter().position(|s| s.status == SessionStatus::Live)
+    let active_session_idx = sg
+      .sessions
+      .iter()
+      .position(|s| s.status == SessionStatus::Live)
       .or_else(|| sg.sessions.iter().position(|s| s.status == SessionStatus::Hot))
       .ok_or(anyhow!("No active game to pull in format {}", fmt_id))?;
     let game = &mut sg.sessions[active_session_idx];
@@ -1352,21 +1363,18 @@ impl Category {
 
     // Collect all users in team VCs
     let mut users_to_move: Vec<UI> = Vec::new();
-    
+
     // Add players from the game
     for player in &players_to_requeue {
       users_to_move.push(player.user_id);
     }
-    
+
     // Add any other users in THIS game's team VCs (spectators, etc.) - they get moved to VC but NOT added to queue
     // Only scan the ending game's team channels, not all team channels (avoids pulling players from concurrent games)
     let mut spectators_to_move: Vec<UI> = Vec::new();
     if let Some(tc) = &game.team_channels {
       for vc_id in [tc.red_vc, tc.blu_vc] {
-        let users_in_vc: Vec<_> = guild.voice_states.iter()
-          .filter(|(_, vs)| vs.channel_id == Some(vc_id))
-          .map(|(uid, _)| *uid)
-          .collect();
+        let users_in_vc: Vec<_> = guild.voice_states.iter().filter(|(_, vs)| vs.channel_id == Some(vc_id)).map(|(uid, _)| *uid).collect();
         for user_id in users_in_vc {
           if !users_to_move.contains(&user_id) {
             spectators_to_move.push(user_id);
@@ -1374,46 +1382,47 @@ impl Category {
         }
       }
     }
-    
+
     // Combine players and spectators for VC move
     users_to_move.extend(spectators_to_move.iter().cloned());
     let player_ids: std::collections::HashSet<_> = players_to_requeue.iter().map(|p| p.user_id).collect();
 
     // Build tag lookup for readable log messages
-    let tag_map: std::collections::HashMap<UI, String> = players_to_requeue.iter()
-      .map(|p| (p.user_id, p.tag.clone()))
-      .collect();
+    let tag_map: std::collections::HashMap<UI, String> = players_to_requeue.iter().map(|p| (p.user_id, p.tag.clone())).collect();
 
     // Move all users to queue VC in parallel
-    let move_tasks: Vec<_> = users_to_move.into_iter().map(|user_id| {
-      let http = ctx.http.clone();
-      let gid = guild_id;
-      let qvc = queue_vc;
-      let cache = ctx.cache.clone();
-      let tag = tag_map.get(&user_id).cloned().unwrap_or_else(|| user_id.to_string());
-      tokio::spawn(async move {
-        // Check if already in queue VC
-        if let Some(guild) = cache.guild(gid) {
-          if let Some(vs) = guild.voice_states.get(&user_id) {
-            if vs.channel_id == Some(qvc) {
-              info!("User {} already in queue VC", tag);
-              return (user_id, true);
+    let move_tasks: Vec<_> = users_to_move
+      .into_iter()
+      .map(|user_id| {
+        let http = ctx.http.clone();
+        let gid = guild_id;
+        let qvc = queue_vc;
+        let cache = ctx.cache.clone();
+        let tag = tag_map.get(&user_id).cloned().unwrap_or_else(|| user_id.to_string());
+        tokio::spawn(async move {
+          // Check if already in queue VC
+          if let Some(guild) = cache.guild(gid) {
+            if let Some(vs) = guild.voice_states.get(&user_id) {
+              if vs.channel_id == Some(qvc) {
+                info!("User {} already in queue VC", tag);
+                return (user_id, true);
+              }
             }
           }
-        }
-        
-        match http.edit_member(gid, user_id, &EditMember::new().voice_channel(qvc), Some("Moving user back to queue VC after game end")).await {
-          Ok(_) => {
-            info!("Moved user {} back to queue VC after game end", tag);
-            (user_id, true)
-          },
-          Err(e) => {
-            warn!("Failed to move user {} back to queue VC: {}", tag, e);
-            (user_id, false)
+
+          match http.edit_member(gid, user_id, &EditMember::new().voice_channel(qvc), Some("Moving user back to queue VC after game end")).await {
+            Ok(_) => {
+              info!("Moved user {} back to queue VC after game end", tag);
+              (user_id, true)
+            }
+            Err(e) => {
+              warn!("Failed to move user {} back to queue VC: {}", tag, e);
+              (user_id, false)
+            }
           }
-        }
+        })
       })
-    }).collect();
+      .collect();
 
     let mut successfully_moved = std::collections::HashSet::new();
     for task in move_tasks {
@@ -1423,7 +1432,7 @@ impl Category {
         }
       }
     }
-    
+
     // Log spectators moved (they go to VC but not queue)
     let spectators_moved: Vec<_> = spectators_to_move.iter().filter(|uid| successfully_moved.contains(uid)).collect();
     if !spectators_moved.is_empty() {
@@ -1542,8 +1551,7 @@ impl Category {
     if total_after_readd > quota {
       // Need to apply fatkid immunity - select who gets added
       let available_slots = quota.saturating_sub(current_queue_size);
-      let (selected_players, fatkidded_players) = 
-          Self::select_players_with_fatkid_immunity(players_to_add, available_slots, guild_id, db).await?;
+      let (selected_players, fatkidded_players) = Self::select_players_with_fatkid_immunity(players_to_add, available_slots, guild_id, db).await?;
 
       // Record fatkid events for players who were not selected
       for player in &fatkidded_players {
@@ -1597,73 +1605,62 @@ impl Category {
   /// Selection priority:
   /// 1. Immune players sorted by immunity_level descending (most-fatkidded get priority)
   /// 2. Non-immune players sorted by immunity_level ascending (least-fatkidded get priority)
-  async fn select_players_with_fatkid_immunity(
-      players: Vec<Player>,
-      available_slots: usize,
-      guild_id: GI,
-      db: &DB,
-  ) -> Result<(Vec<Player>, Vec<Player>)> {
-      use crate::models::fatkid_immunity;
+  async fn select_players_with_fatkid_immunity(players: Vec<Player>, available_slots: usize, guild_id: GI, db: &DB) -> Result<(Vec<Player>, Vec<Player>)> {
+    use crate::models::fatkid_immunity;
 
-      let mut players_with_immunity: Vec<(Player, fatkid_immunity::PlayerImmunityInfo)> = Vec::new();
-      
-      for player in &players {
-          let info = fatkid_immunity::get_player_immunity_info(db, player.user_id, guild_id).await?;
-          players_with_immunity.push((player.clone(), info));
+    let mut players_with_immunity: Vec<(Player, fatkid_immunity::PlayerImmunityInfo)> = Vec::new();
+
+    for player in &players {
+      let info = fatkid_immunity::get_player_immunity_info(db, player.user_id, guild_id).await?;
+      players_with_immunity.push((player.clone(), info));
+    }
+
+    // Log immunity status for each player
+    for (player, info) in &players_with_immunity {
+      debug!("  Fatkid immunity: {} immune={} level={}", player.tag, info.has_immunity, info.immunity_level);
+    }
+
+    // Separate into immune and non-immune groups
+    let mut immune: Vec<(&Player, u32)> = players_with_immunity.iter().filter(|(_, info)| info.has_immunity).map(|(p, info)| (p, info.immunity_level)).collect();
+
+    let mut non_immune: Vec<(&Player, u32)> = players_with_immunity.iter().filter(|(_, info)| !info.has_immunity).map(|(p, info)| (p, info.immunity_level)).collect();
+
+    // Sort immune by level descending: players fatkidded most get priority for slots
+    immune.sort_by(|a, b| b.1.cmp(&a.1));
+    // Sort non-immune by level ascending: least-fatkidded get priority for remaining slots
+    non_immune.sort_by_key(|(_, level)| *level);
+
+    // Fill slots: immune first, then non-immune
+    let mut selected_players: Vec<Player> = Vec::with_capacity(available_slots);
+
+    for (player, _) in &immune {
+      if selected_players.len() >= available_slots {
+        break;
       }
+      selected_players.push((*player).clone());
+    }
 
-      // Log immunity status for each player
-      for (player, info) in &players_with_immunity {
-          debug!("  Fatkid immunity: {} immune={} level={}", player.tag, info.has_immunity, info.immunity_level);
+    for (player, _) in &non_immune {
+      if selected_players.len() >= available_slots {
+        break;
       }
+      selected_players.push((*player).clone());
+    }
 
-      // Separate into immune and non-immune groups
-      let mut immune: Vec<(&Player, u32)> = players_with_immunity
-          .iter()
-          .filter(|(_, info)| info.has_immunity)
-          .map(|(p, info)| (p, info.immunity_level))
-          .collect();
+    info!(
+      "  Fatkid selection: {}/{} immune, {} slots → {} selected, {} fatkidded",
+      immune.len(),
+      players_with_immunity.len(),
+      available_slots,
+      selected_players.len(),
+      players_with_immunity.len() - selected_players.len()
+    );
 
-      let mut non_immune: Vec<(&Player, u32)> = players_with_immunity
-          .iter()
-          .filter(|(_, info)| !info.has_immunity)
-          .map(|(p, info)| (p, info.immunity_level))
-          .collect();
+    // Determine fatkidded players (preserve original order)
+    let selected_ids: std::collections::HashSet<_> = selected_players.iter().map(|p| p.user_id).collect();
+    let fatkidded_players: Vec<Player> = players.into_iter().filter(|p| !selected_ids.contains(&p.user_id)).collect();
 
-      // Sort immune by level descending: players fatkidded most get priority for slots
-      immune.sort_by(|a, b| b.1.cmp(&a.1));
-      // Sort non-immune by level ascending: least-fatkidded get priority for remaining slots
-      non_immune.sort_by_key(|(_, level)| *level);
-
-      // Fill slots: immune first, then non-immune
-      let mut selected_players: Vec<Player> = Vec::with_capacity(available_slots);
-
-      for (player, _) in &immune {
-          if selected_players.len() >= available_slots {
-              break;
-          }
-          selected_players.push((*player).clone());
-      }
-
-      for (player, _) in &non_immune {
-          if selected_players.len() >= available_slots {
-              break;
-          }
-          selected_players.push((*player).clone());
-      }
-
-      info!("  Fatkid selection: {}/{} immune, {} slots → {} selected, {} fatkidded",
-          immune.len(), players_with_immunity.len(), available_slots,
-          selected_players.len(), players_with_immunity.len() - selected_players.len());
-
-      // Determine fatkidded players (preserve original order)
-      let selected_ids: std::collections::HashSet<_> = selected_players.iter().map(|p| p.user_id).collect();
-      let fatkidded_players: Vec<Player> = players
-          .into_iter()
-          .filter(|p| !selected_ids.contains(&p.user_id))
-          .collect();
-
-      Ok((selected_players, fatkidded_players))
+    Ok((selected_players, fatkidded_players))
   }
 
   /// Update player ranks from Discord roles for all players in the session
@@ -1857,7 +1854,7 @@ impl Category {
   pub async fn queue_player_fmt(&mut self, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
     let was_empty = self.get_queue().await?.pool.is_empty();
     let session = self.get_queue().await?;
-    
+
     let user_id = player.user_id;
     let ply_tg = player.tag.clone();
     let player_queue_expiration = player.queue_expiration;
@@ -1865,7 +1862,7 @@ impl Category {
     let usr_prefs = db.players.get_prefs(user_id).await?;
 
     session.add_ply(player.clone(), in_vc)?;
-    
+
     // Schedule timeout for this player
     if let Some(guild_id) = queue_ctx.guild_id {
       self.set_player_rejoin_expiration(queue_ctx.ctx, guild_id, player, player_queue_expiration).await;
@@ -1892,7 +1889,7 @@ impl Category {
     let session = self.get_queue_fmt(fmt_id).await?;
     let was_empty = session.pool.is_empty();
     let was_idle = session.is_idle();
-    
+
     let user_id = player.user_id;
     let player_tag = player.tag.clone();
     let player_queue_expiration = player.queue_expiration;
@@ -1900,7 +1897,7 @@ impl Category {
     let user_prefs = db.players.get_prefs(user_id).await?;
 
     session.add_ply(player.clone(), in_vc)?;
-    
+
     // Schedule timeout for this player
     if let Some(guild_id) = queue_ctx.guild_id {
       self.set_player_rejoin_expiration(queue_ctx.ctx, guild_id, player, player_queue_expiration).await;
@@ -1995,32 +1992,32 @@ impl Category {
     let user_id = player.user_id;
     let player_tag = player.tag.clone();
     let player_queue_expiration = player.queue_expiration;
-    
+
     session.add_ply(player.clone(), false)?;
     let db = queue_ctx.db.unwrap();
     let user_prefs = db.players.get_prefs(user_id).await?;
-    
+
     // Schedule timeout for this player
     self.set_player_rejoin_expiration(queue_ctx.ctx, guild_id, player, player_queue_expiration).await;
-    
+
     self.queue_dash_update(queue_ctx.ctx, guild_id).await;
     Ok(())
   }
-  
+
   /// Schedule a timeout task for a player
   pub async fn set_player_rejoin_expiration(&self, ctx: &Context, guild_id: GI, player: Player, rejoin_expiration_minutes: u8) {
     use crate::models::QueueExpirationSchedulerKey;
-    
+
     if let Some(scheduler) = ctx.data.read().await.get::<QueueExpirationSchedulerKey>() {
       let mut sched = scheduler.lock().await;
       sched.schedule_queue_expiration(guild_id, self.id, self.formats[0].id, player, rejoin_expiration_minutes);
     }
   }
-  
+
   /// Cancel a player's timeout task
   pub async fn cancel_player_rejoin_expiration(&self, ctx: &Context, guild_id: GI, format_id: u8, user_id: UI) {
     use crate::models::QueueExpirationSchedulerKey;
-    
+
     if let Some(scheduler) = ctx.data.read().await.get::<QueueExpirationSchedulerKey>() {
       let mut sched = scheduler.lock().await;
       sched.cancel_queue_expiration(guild_id, self.id, format_id, user_id);
@@ -2076,12 +2073,12 @@ impl Category {
     self.verify_vc(ctx, guild_id).await;
     let mut player_mentions = Vec::new();
     let mut players_to_dm = Vec::new();
-    
+
     let Some(format) = self.format(fmt_id) else {
       warn!("Format {} not found when trying to notify players", fmt_id);
       return;
     };
-    
+
     let quota = format.quota as usize;
 
     // Get the HOT session specifically, not the last session
@@ -2093,10 +2090,7 @@ impl Category {
         if post_game {
           // Check if player is specifically in the queue VC
           let in_queue_vc = if let Some(guild) = ctx.cache.guild(guild_id) {
-            guild.voice_states.get(&player.player.user_id)
-              .and_then(|vs| vs.channel_id)
-              .map(|ch_id| ch_id == self.channels.queue_vc)
-              .unwrap_or(false)
+            guild.voice_states.get(&player.player.user_id).and_then(|vs| vs.channel_id).map(|ch_id| ch_id == self.channels.queue_vc).unwrap_or(false)
           } else {
             false
           };
@@ -2109,10 +2103,7 @@ impl Category {
         } else {
           // Normal pre-game behavior: only ping players NOT already in queue VC
           let in_queue_vc = if let Some(guild) = ctx.cache.guild(guild_id) {
-            guild.voice_states.get(&player.player.user_id)
-              .and_then(|vs| vs.channel_id)
-              .map(|ch_id| ch_id == self.channels.queue_vc)
-              .unwrap_or(false)
+            guild.voice_states.get(&player.player.user_id).and_then(|vs| vs.channel_id).map(|ch_id| ch_id == self.channels.queue_vc).unwrap_or(false)
           } else {
             false
           };
@@ -2176,9 +2167,7 @@ impl Category {
               .footer(serenity::all::CreateEmbedFooter::new("Don't want to be messaged directly? Press the button below"))
               .color(GREEN);
 
-            let disable_button = serenity::all::CreateButton::new("disable_dm_notifications")
-              .label("Disable DM notifications")
-              .style(serenity::all::ButtonStyle::Secondary);
+            let disable_button = serenity::all::CreateButton::new("disable_dm_notifications").label("Disable DM notifications").style(serenity::all::ButtonStyle::Secondary);
 
             let components = vec![serenity::all::CreateActionRow::Buttons(vec![disable_button])];
 
@@ -2213,9 +2202,9 @@ impl Category {
       // Check if this user was in the pending list
       if let Some(pos) = pending_users.iter().position(|&u| u == user_id) {
         pending_users.remove(pos);
-        
+
         let dashboard = self.channels.dashboard;
-        
+
         if pending_users.is_empty() {
           // All players have joined - delete the notification
           if let Err(e) = dashboard.delete_message(&ctx.http, msg_id).await {
@@ -2225,11 +2214,9 @@ impl Category {
         } else {
           // Edit the message to show remaining players
           let remaining_mentions: Vec<String> = pending_users.iter().map(|u| format!("<@{}>", u)).collect();
-          let embed = CreateEmbed::new()
-            .title("PUG Starting")
-            .description("Please join the queue channel!");
+          let embed = CreateEmbed::new().title("PUG Starting").description("Please join the queue channel!");
           let content = remaining_mentions.join(" ");
-          
+
           let edit = serenity::all::EditMessage::new().embed(embed).content(content);
           if let Err(e) = dashboard.edit_message(&ctx.http, msg_id, edit).await {
             warn!("Failed to edit VC notification message: {}", e);
@@ -2348,7 +2335,11 @@ impl Channels {
 
   /// Checks if this struct contains the given channel_id
   pub fn contains_channel(&self, channel_id: CI) -> bool {
-    self.queue_chat == channel_id || self.queue_vc == channel_id || self.ping_channel == channel_id || self.dashboard == channel_id || self.teams.iter().any(|team| team.contains_channel(channel_id))
+    self.queue_chat == channel_id
+      || self.queue_vc == channel_id
+      || self.ping_channel == channel_id
+      || self.dashboard == channel_id
+      || self.teams.iter().any(|team| team.contains_channel(channel_id))
   }
 
   /// Returns all known static channel IDs (category, chat, queue, dashboard, team VCs)

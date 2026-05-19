@@ -32,7 +32,7 @@ impl GuildRepository {
   pub async fn exists(&self, guild_id: &serenity::all::GuildId) -> Result<bool> {
     match sqlx::query("SELECT * FROM guilds WHERE guild_id = ?").bind(guild_id.get() as i64).execute(&self.pool).await {
       Ok(_) => Ok(true),
-      Err(e) => Err(anyhow::anyhow!("{e}"))
+      Err(e) => Err(anyhow::anyhow!("{e}")),
     }
   }
 }

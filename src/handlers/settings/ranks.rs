@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use serenity::all::{Context, ChannelId as CI, PermissionOverwrite as PO, PermissionOverwriteType as POT, Permissions, RoleId as RI, GuildId as GI};
-use tracing::info;
 use crate::{db::Database, handlers::settings::menu::RANK_CONFIG_TOGGLES};
 use anyhow::Result;
+use serenity::all::{ChannelId as CI, Context, GuildId as GI, PermissionOverwrite as PO, PermissionOverwriteType as POT, Permissions, RoleId as RI};
+use tracing::info;
 
 /// Get rank settings from database (for rank configuration menu)
 pub async fn get_rank_settings(db: &Arc<Database>, guild_id: GI) -> Result<(Vec<bool>, Option<RI>)> {

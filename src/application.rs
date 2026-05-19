@@ -11,20 +11,20 @@ use serenity::all::{
 use serenity::async_trait;
 use serenity::builder::{CreateCommand as CC, CreateCommandOption as CCO, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
 use serenity::prelude::TypeMapKey;
-use tokio::sync::{Mutex, oneshot, mpsc};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tracing::{debug, error, info, warn};
 
 use crate::commands;
 use crate::db::migrations::DatabaseMigrations;
 use crate::db::repo::CategoryRepository;
-use crate::handlers::{admin, InteractionHelpers};
 use crate::gui::command_handler;
 use crate::gui::commands::GuiCommand;
+use crate::handlers::{admin, InteractionHelpers};
 use crate::models::server::QueueContext;
 use crate::repo::GuildRepository;
 use crate::{
-  guild_name, log_prefix_category, log_prefix_format, log_queue_toggle, ButtonType, Category, CommandContext, ComponentContext, DashboardQueueKey,
-  DashboardUpdateQueue, Database, DmMessageTracker, DmTrackerKey, Manager, QGuild, Roles, SessionStatus, VoiceStateUpdate, RED,
+  guild_name, log_prefix_category, log_prefix_format, log_queue_toggle, ButtonType, Category, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database,
+  DmMessageTracker, DmTrackerKey, Manager, QGuild, Roles, SessionStatus, VoiceStateUpdate, RED,
 };
 
 // Helper macros and functions that need to be available
@@ -192,7 +192,7 @@ impl Application {
       let db = self.db.clone();
       let shutdown_flag_cmd = shutdown_flag.clone();
       // Clone refs so the command task can update the snapshot and refresh the Discord dashboard
-      let latest_manager_cmd  = self.latest_manager.clone();
+      let latest_manager_cmd = self.latest_manager.clone();
       let dashboard_queue_cmd = self.dashboard_queue.clone();
 
       tokio::spawn(async move {
@@ -841,13 +841,11 @@ impl EventHandler for Handler {
         if itx.data.custom_id.starts_with("skill_select_") {
           let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
           // parts: ["skill", "select", tier, category_id, format_id]
-          if let (Some(tier_str), Some(cat_id), Some(fmt_id)) = (
-            parts.get(2).copied(),
-            parts.get(3).and_then(|s| s.parse::<u8>().ok()),
-            parts.get(4).and_then(|s| s.parse::<u8>().ok()),
-          ) {
+          if let (Some(tier_str), Some(cat_id), Some(fmt_id)) =
+            (parts.get(2).copied(), parts.get(3).and_then(|s| s.parse::<u8>().ok()), parts.get(4).and_then(|s| s.parse::<u8>().ok()))
+          {
             let guild_id = itx.guild_id.unwrap();
-            let user_id  = itx.user.id;
+            let user_id = itx.user.id;
 
             use crate::db::repo::elo::SkillTier;
             if let Some(tier) = SkillTier::from_str(tier_str) {
@@ -870,9 +868,7 @@ impl EventHandler for Handler {
 
                   // Acknowledge the ephemeral selection message
                   let ack = serenity::all::CreateInteractionResponse::UpdateMessage(
-                    serenity::all::CreateInteractionResponseMessage::new()
-                      .content(format!("Skill level set to **{}**. Joining queue...", tier.label()))
-                      .components(vec![]),
+                    serenity::all::CreateInteractionResponseMessage::new().content(format!("Skill level set to **{}**. Joining queue...", tier.label())).components(vec![]),
                   );
                   let _ = itx.create_response(&ctx.http, ack).await;
 
@@ -894,7 +890,18 @@ impl EventHandler for Handler {
                           }
                         }
                         use crate::models::alert_limiter::{schedule_alert, AlertType};
-                        schedule_alert(ctx.clone(), category.channels.queue_chat, guild_id, user_id, self.db.clone(), cat_id, fmt_id, AlertType::Join, fmt_name_owned, player_rank_name);
+                        schedule_alert(
+                          ctx.clone(),
+                          category.channels.queue_chat,
+                          guild_id,
+                          user_id,
+                          self.db.clone(),
+                          cat_id,
+                          fmt_id,
+                          AlertType::Join,
+                          fmt_name_owned,
+                          player_rank_name,
+                        );
                       }
                       category.queue_dash_update(&ctx, guild_id).await;
                     }
@@ -1519,9 +1526,7 @@ impl Handler {
                 }
 
                 // Apply dynamic ELO changes if enabled
-                match crate::models::dynamic_elo::process_match_elo(
-                  &self.db, guild_id, match_id, &session_players, result, ctx,
-                ).await {
+                match crate::models::dynamic_elo::process_match_elo(&self.db, guild_id, match_id, &session_players, result, ctx).await {
                   Ok(Some(changes)) => {
                     info!("Dynamic ELO applied: {} players updated", changes.len());
                   }
@@ -1685,9 +1690,7 @@ impl Handler {
                 }
 
                 // Apply dynamic ELO changes if enabled
-                match crate::models::dynamic_elo::process_match_elo(
-                  &self.db, guild_id, match_id, &session_players, result, ctx,
-                ).await {
+                match crate::models::dynamic_elo::process_match_elo(&self.db, guild_id, match_id, &session_players, result, ctx).await {
                   Ok(Some(changes)) => {
                     info!("Dynamic ELO applied: {} players updated", changes.len());
                   }

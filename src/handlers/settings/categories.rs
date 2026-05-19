@@ -1,31 +1,30 @@
-use std::sync::Arc;
-use crate::Database;
-use crate::RED;
 use crate::create_input_sh;
+use crate::create_input_sh_cap;
 use crate::create_paragraph_input_with_value;
+use crate::create_short_input_opt;
 use crate::create_value_input_sh;
 use crate::create_value_input_sh_cap;
-use crate::create_short_input_opt;
-use crate::create_input_sh_cap;
 use crate::guild_name;
 use crate::handlers::settings::apply_elo_gate;
 use crate::handlers::settings::build_category_settings_buttons;
 use crate::handlers::settings::build_category_settings_embed;
 use crate::handlers::settings::clear_elo_gate;
-use crate::handlers::settings::parse_mid;
-use crate::handlers::settings::menu::FormatListDisplay;
 use crate::handlers::settings::menu::create_selection_menu;
-use crate::handlers::settings::utils::send_modal_error_response;
+use crate::handlers::settings::menu::FormatListDisplay;
+use crate::handlers::settings::parse_mid;
 use crate::handlers::settings::utils::send_embed_button_response_modal;
+use crate::handlers::settings::utils::send_modal_error_response;
 use crate::send_component_error_response;
+use crate::Database;
+use crate::RED;
+use crate::{get_modal_input, refresh_category_settings};
 use anyhow::Result;
 use serenity::all::{
-  ActionRowComponent as ARC, Context, ComponentInteraction as CI, ModalInteraction as MI, CreateModal as CM, CreateInteractionResponse as CIR,
-  CreateActionRow as CAR, CreateButton as CB, ComponentInteractionDataKind as CIDK,
-  ButtonStyle as BS, CreateInteractionResponseMessage as CIRM, CreateEmbed as CE, GuildId as GI, GetMessages as GM,
+  ActionRowComponent as ARC, ButtonStyle as BS, ComponentInteraction as CI, ComponentInteractionDataKind as CIDK, Context, CreateActionRow as CAR, CreateButton as CB,
+  CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateModal as CM, GetMessages as GM, GuildId as GI, ModalInteraction as MI,
 };
-use tracing::{info, warn, error};
-use crate::{get_modal_input, refresh_category_settings};
+use std::sync::Arc;
+use tracing::{error, info, warn};
 
 /// Macro to refresh category settings and send response for modal interactions
 macro_rules! refresh_category_settings_modal {
@@ -67,12 +66,7 @@ impl CategorySettings {
 }
 
 /// Handle category settings button interactions
-pub async fn handle_category_settings_button(
-  ctx: &Context,
-  interaction: &CI,
-  db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
-) -> Result<()> {
+pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) -> Result<()> {
   let guild_id = interaction.guild_id.expect("Guild ID not found");
   let button_id = &interaction.data.custom_id;
 
@@ -110,8 +104,7 @@ pub async fn handle_category_settings_button(
         // Update dashboard
         category.queue_dash_update(ctx, guild_id).await;
 
-        let display =
-          FormatListDisplay { category_id, category_name: category.name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
+        let display = FormatListDisplay { category_id, category_name: category.name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
         drop(manager_lock);
         let response = CIR::UpdateMessage(CIRM::new().embed(display.build_embed()).components(display.build_components()));
         interaction.create_response(&ctx.http, response).await?;
@@ -495,11 +488,11 @@ pub async fn handle_category_settings_button(
         for (i, (msg_id, timestamp)) in existing_dashboard_msgs.iter().take(5).enumerate() {
           let state = format!("{}_{:x}", category_id, msg_id.get());
           let time_str = timestamp.unix_timestamp();
-          let label = if i == 0 { 
-        format!("Most recent ({})", crate::timestamp_from_unix(time_str, crate::Style::ShortDateTime)) 
-      } else { 
-        format!("Message {} ({})", i + 1, crate::timestamp_from_unix(time_str, crate::Style::ShortDateTime)) 
-      };
+          let label = if i == 0 {
+            format!("Most recent ({})", crate::timestamp_from_unix(time_str, crate::Style::ShortDateTime))
+          } else {
+            format!("Message {} ({})", i + 1, crate::timestamp_from_unix(time_str, crate::Style::ShortDateTime))
+          };
 
           buttons.push(CB::new(format!("category_link_msg_confirm_{}", state)).label(label).style(BS::Success));
         }
@@ -590,8 +583,7 @@ pub async fn handle_category_settings_button(
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("category_settings_formats_") {
     // Show formats list screen
-    let display =
-      FormatListDisplay { category_id, category_name: category.name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
+    let display = FormatListDisplay { category_id, category_name: category.name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
     let response = CIR::UpdateMessage(CIRM::new().embed(display.build_embed()).components(display.build_components()));
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("category_fmt_back_") {
@@ -649,12 +641,7 @@ pub async fn handle_category_settings_button(
 }
 
 /// Handle category selection from the selector menu
-pub async fn handle_category_settings_select(
-  ctx: &Context,
-  interaction: &CI,
-  _db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
-) -> Result<()> {
+pub async fn handle_category_settings_select(ctx: &Context, interaction: &CI, _db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) -> Result<()> {
   let guild_id = interaction.guild_id.expect("Guild ID not found");
 
   let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, _db).await;
@@ -686,12 +673,7 @@ pub async fn handle_category_settings_select(
 }
 
 /// Handle manual dashboard message link modal submissions
-pub async fn handle_category_link_msg_modal(
-  ctx: &Context,
-  interaction: &MI,
-  db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
-) -> Result<()> {
+pub async fn handle_category_link_msg_modal(ctx: &Context, interaction: &MI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) -> Result<()> {
   let guild_id = interaction.guild_id.expect("Guild ID not found");
   let modal_id = &interaction.data.custom_id;
 
@@ -787,12 +769,7 @@ pub async fn handle_category_link_msg_modal(
 }
 
 /// Handle category settings modal submissions
-pub async fn handle_category_settings_modal(
-  ctx: &Context,
-  interaction: &MI,
-  db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
-) -> Result<()> {
+pub async fn handle_category_settings_modal(ctx: &Context, interaction: &MI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) -> Result<()> {
   let guild_id = interaction.guild_id.expect("Guild ID not found");
   let modal_id = &interaction.data.custom_id;
 
@@ -956,8 +933,7 @@ async fn handle_format_modal(
     category.queue_dash_update(ctx, guild_id).await;
 
     // Show updated formats list
-    let display =
-      FormatListDisplay { category_id, category_name: category.name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
+    let display = FormatListDisplay { category_id, category_name: category.name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
     let response = CIR::UpdateMessage(CIRM::new().embed(display.build_embed()).components(display.build_components()));
     interaction.create_response(&ctx.http, response).await?;
   } else if modal_id.starts_with("category_fmt_modal_add_") {
@@ -978,8 +954,7 @@ async fn handle_format_modal(
         category.queue_dash_update(ctx, guild_id).await;
 
         // Show updated formats list
-        let display =
-          FormatListDisplay { category_id, category_name: category.name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
+        let display = FormatListDisplay { category_id, category_name: category.name(), formats: category.formats.iter().map(|sg| (sg.id, sg.name.clone(), sg.quota)).collect() };
         let response = CIR::UpdateMessage(CIRM::new().embed(display.build_embed()).components(display.build_components()));
         interaction.create_response(&ctx.http, response).await?;
       }

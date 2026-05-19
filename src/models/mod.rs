@@ -8,10 +8,10 @@ pub mod dynamic_elo;
 pub mod embeds;
 pub mod fatkid_immunity;
 pub mod manager;
+pub mod queue_expiration_scheduler;
 pub mod server;
 pub mod session;
 pub mod setup_state;
-pub mod queue_expiration_scheduler;
 pub mod types;
 
 pub use buttons::*;
@@ -21,10 +21,10 @@ pub use dashboard::*;
 pub use dm_tracker::*;
 pub use embeds::*;
 pub use manager::*;
+pub use queue_expiration_scheduler::*;
 pub use server::*;
 pub use session::*;
 pub use setup_state::*;
-pub use queue_expiration_scheduler::*;
 pub use types::*;
 
 // TypeMapKey for DashboardUpdateQueue (needed globally across crate)

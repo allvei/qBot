@@ -5,7 +5,7 @@ use serenity::all::{Context as Ctx, GuildId as GI, Member, UserId as UI};
 
 use tracing::{debug, error, info, warn};
 
-use crate::models::{CommandContext as CmC, Rank, Role, QGuild, SessionPlayer as SP, SessionStatus as SS, Team};
+use crate::models::{CommandContext as CmC, QGuild, Rank, Role, SessionPlayer as SP, SessionStatus as SS, Team};
 use crate::{guild_name, ComponentContext as CC, Database as DB};
 
 /// Helper: Get member with cache → DB → Discord API fallback strategy

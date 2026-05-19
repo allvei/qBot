@@ -1,11 +1,5 @@
-use serenity::all::{
-  UserId as UI,
-  GuildId as GI,
-  CreateEmbed as CE,
-  CreateEmbedFooter as CEF,
-};
+use serenity::all::{CreateEmbed as CE, CreateEmbedFooter as CEF, GuildId as GI, UserId as UI};
 use serenity::prelude::Context;
-
 
 /// Messages to replace description spam with
 const SPAM_REPLACEMENT_MESSAGES: &[&str] = &[

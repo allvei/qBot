@@ -63,22 +63,13 @@ impl MatchRepo {
 
   /// Update match result ('red', 'blu', or 'draw')
   pub async fn update_match_result(&self, match_id: i64, result: &str) -> Result<()> {
-    sqlx::query("UPDATE matches SET result = ? WHERE id = ?")
-      .bind(result)
-      .bind(match_id)
-      .execute(&self.pool)
-      .await?;
+    sqlx::query("UPDATE matches SET result = ? WHERE id = ?").bind(result).bind(match_id).execute(&self.pool).await?;
     Ok(())
   }
 
   /// Update elo_after for a specific player in a match
   pub async fn update_player_elo_after(&self, match_id: i64, user_id: UI, elo_after: i64) -> Result<()> {
-    sqlx::query("UPDATE match_players SET elo_after = ? WHERE match_id = ? AND user_id = ?")
-      .bind(elo_after)
-      .bind(match_id)
-      .bind(user_id.get() as i64)
-      .execute(&self.pool)
-      .await?;
+    sqlx::query("UPDATE match_players SET elo_after = ? WHERE match_id = ? AND user_id = ?").bind(elo_after).bind(match_id).bind(user_id.get() as i64).execute(&self.pool).await?;
     Ok(())
   }
 
@@ -186,11 +177,7 @@ impl MatchRepo {
     .fetch_one(&self.pool)
     .await?;
 
-    Ok(PlayerStats {
-      total_matches,
-      wins,
-      losses: total_matches - wins,
-    })
+    Ok(PlayerStats { total_matches, wins, losses: total_matches - wins })
   }
 }
 

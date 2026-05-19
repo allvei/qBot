@@ -28,23 +28,21 @@ pub struct DatabaseMigrations {
 }
 
 impl MigrationHelpers for DatabaseMigrations {
-    /// Add a column if it doesn't exist
-    async fn add_column_if_missing(&self, table: &str, column: &str, column_type: &str, default: &str) -> Result<()> {
-        if !self.check_column(table, column).await? {
-            sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {} {} DEFAULT {}", table, column, column_type, default))
-                .execute(&self.pool)
-                .await?;
-        }
-        Ok(())
+  /// Add a column if it doesn't exist
+  async fn add_column_if_missing(&self, table: &str, column: &str, column_type: &str, default: &str) -> Result<()> {
+    if !self.check_column(table, column).await? {
+      sqlx::query(&format!("ALTER TABLE {} ADD COLUMN {} {} DEFAULT {}", table, column, column_type, default)).execute(&self.pool).await?;
     }
-    
-    /// Add multiple columns from a list of (column, type, default) tuples
-    async fn add_columns_if_missing(&self, table: &str, columns: &[(&str, &str, &str)]) -> Result<()> {
-        for (column, column_type, default) in columns {
-            self.add_column_if_missing(table, column, column_type, default).await?;
-        }
-        Ok(())
+    Ok(())
+  }
+
+  /// Add multiple columns from a list of (column, type, default) tuples
+  async fn add_columns_if_missing(&self, table: &str, columns: &[(&str, &str, &str)]) -> Result<()> {
+    for (column, column_type, default) in columns {
+      self.add_column_if_missing(table, column, column_type, default).await?;
     }
+    Ok(())
+  }
 }
 
 impl DatabaseMigrations {
@@ -115,7 +113,19 @@ impl DatabaseMigrations {
     Ok(())
   }
   async fn verify_config(&self) -> Result<()> {
-    let required_columns = vec!["guild_id", "runner_id", "admin_id", "active_elo", "default_rank", "elo_ranks_linked", "post_game_auto_leave", "post_game_confirm_time", "team_balance_method", "hide_elo", "gamemode"];
+    let required_columns = vec![
+      "guild_id",
+      "runner_id",
+      "admin_id",
+      "active_elo",
+      "default_rank",
+      "elo_ranks_linked",
+      "post_game_auto_leave",
+      "post_game_confirm_time",
+      "team_balance_method",
+      "hide_elo",
+      "gamemode",
+    ];
     add_column!(self, "config", "elo_ranks_linked", "INTEGER", "1");
     add_column!(self, "config", "post_game_auto_leave", "INTEGER", "1");
     add_column!(self, "config", "post_game_confirm_time", "INTEGER", "120");
@@ -125,7 +135,7 @@ impl DatabaseMigrations {
     self.verify_columns("config", &required_columns).await?;
     Ok(())
   }
-  
+
   async fn create_users_table(&self) -> Result<()> {
     if !self.check_table("users").await? {
       sqlx::query(
@@ -341,18 +351,18 @@ impl DatabaseMigrations {
 
         // Restore backed up data
         for row in backup_data {
-          let category_id:    i64            = row.try_get("category_id").unwrap_or(0);
-          let guild_id:       i64            = row.get("guild_id");
-          let name:           Option<String> = row.try_get("name").ok();
-          let confirm_time:   i64            = row.try_get("confirm_time").unwrap_or(DEFAULT_CONFIRM_TIME as i64);
-          let dashboard:      i64            = row.get("dashboard");
-          let chat:           i64            = row.get("chat");
-          let queue:          i64            = row.get("queue");
-          let dashboard_msg:  i64            = row.try_get("dashboard_msg").unwrap_or(0);
-          let game:           i64            = row.try_get("game").unwrap_or(0);
-          let game_increment: i64            = row.try_get("game_increment").unwrap_or(0);
-          let quota:          i64            = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
-          let connect_info:   Option<String> = row.try_get("connect_info").ok();
+          let category_id: i64 = row.try_get("category_id").unwrap_or(0);
+          let guild_id: i64 = row.get("guild_id");
+          let name: Option<String> = row.try_get("name").ok();
+          let confirm_time: i64 = row.try_get("confirm_time").unwrap_or(DEFAULT_CONFIRM_TIME as i64);
+          let dashboard: i64 = row.get("dashboard");
+          let chat: i64 = row.get("chat");
+          let queue: i64 = row.get("queue");
+          let dashboard_msg: i64 = row.try_get("dashboard_msg").unwrap_or(0);
+          let game: i64 = row.try_get("game").unwrap_or(0);
+          let game_increment: i64 = row.try_get("game_increment").unwrap_or(0);
+          let quota: i64 = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
+          let connect_info: Option<String> = row.try_get("connect_info").ok();
 
           sqlx::query(
             "INSERT INTO categories (guild_id, category_id, name, confirm_time, dashboard, chat, queue, dashboard_msg, game, game_increment, quota, connect_info)
@@ -469,23 +479,23 @@ impl DatabaseMigrations {
 
             // Restore data
             for row in backup_data {
-              let id:                  i64            = row.get("id");
-              let category_id:         i64            = row.try_get("category_id").unwrap_or(0);
-              let guild_id:            i64            = row.get("guild_id");
-              let name:                Option<String> = row.try_get("name").ok();
-              let confirm_time:        i64            = row.try_get("confirm_time").unwrap_or(DEFAULT_CONFIRM_TIME as i64);
-              let dashboard:           i64            = row.get("dashboard");
-              let chat:                i64            = row.get("chat");
-              let queue:               i64            = row.get("queue");
-              let dashboard_msg:       i64            = row.try_get("dashboard_msg").unwrap_or(0);
-              let game:                i64            = row.try_get("game").unwrap_or(0);
-              let game_increment:      i64            = row.try_get("game_increment").unwrap_or(0);
-              let quota:               i64            = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
-              let connect_info:        Option<String> = row.try_get("connect_info").ok();
-              let category:            i64            = row.try_get("category").unwrap_or(0);
-              let dm_alert_enabled:    i64            = row.try_get("dm_alert_enabled").unwrap_or(0);
-              let dm_alert_threshold:  i64            = row.try_get("dm_alert_threshold").unwrap_or(0);
-              let dm_alert_users:      String         = row.try_get("dm_alert_users").unwrap_or_else(|_| "[]".to_string());
+              let id: i64 = row.get("id");
+              let category_id: i64 = row.try_get("category_id").unwrap_or(0);
+              let guild_id: i64 = row.get("guild_id");
+              let name: Option<String> = row.try_get("name").ok();
+              let confirm_time: i64 = row.try_get("confirm_time").unwrap_or(DEFAULT_CONFIRM_TIME as i64);
+              let dashboard: i64 = row.get("dashboard");
+              let chat: i64 = row.get("chat");
+              let queue: i64 = row.get("queue");
+              let dashboard_msg: i64 = row.try_get("dashboard_msg").unwrap_or(0);
+              let game: i64 = row.try_get("game").unwrap_or(0);
+              let game_increment: i64 = row.try_get("game_increment").unwrap_or(0);
+              let quota: i64 = row.try_get("quota").unwrap_or(DEFAULT_QUOTA as i64);
+              let connect_info: Option<String> = row.try_get("connect_info").ok();
+              let category: i64 = row.try_get("category").unwrap_or(0);
+              let dm_alert_enabled: i64 = row.try_get("dm_alert_enabled").unwrap_or(0);
+              let dm_alert_threshold: i64 = row.try_get("dm_alert_threshold").unwrap_or(0);
+              let dm_alert_users: String = row.try_get("dm_alert_users").unwrap_or_else(|_| "[]".to_string());
 
               sqlx::query(
                 "INSERT INTO categories (id, guild_id, category_id, name, confirm_time, category, dashboard, chat, queue,
@@ -749,16 +759,11 @@ impl DatabaseMigrations {
     }
 
     // Check if there are any NULL dynamic_elo values
-    let null_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE dynamic_elo IS NULL")
-      .fetch_optional(&self.pool)
-      .await?
-      .unwrap_or(0);
+    let null_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE dynamic_elo IS NULL").fetch_optional(&self.pool).await?.unwrap_or(0);
 
     if null_count > 0 {
       info!("Found {} players with NULL dynamic_elo, setting to 1500", null_count);
-      sqlx::query("UPDATE elo SET dynamic_elo = 1500 WHERE dynamic_elo IS NULL")
-        .execute(&self.pool)
-        .await?;
+      sqlx::query("UPDATE elo SET dynamic_elo = 1500 WHERE dynamic_elo IS NULL").execute(&self.pool).await?;
       info!("Updated {} players to default dynamic_elo of 1500", null_count);
     }
 
@@ -866,7 +871,7 @@ impl DatabaseMigrations {
     if !self.check_column("matches", "result").await? {
       // Add result column
       sqlx::query("ALTER TABLE matches ADD COLUMN result TEXT").execute(&self.pool).await?;
-      
+
       // Convert existing scores to result
       if self.check_column("matches", "red_score").await? {
         sqlx::query(
@@ -875,22 +880,14 @@ impl DatabaseMigrations {
             WHEN blu_score > red_score THEN 'blu'
             WHEN red_score IS NOT NULL AND blu_score IS NOT NULL THEN 'draw'
             ELSE NULL
-          END"
-        ).execute(&self.pool).await?;
+          END",
+        )
+        .execute(&self.pool)
+        .await?;
       }
     }
-    
-    let required_columns = vec![
-      "id",
-      "guild_id",
-      "category_id",
-      "format_id",
-      "session_id",
-      "started_at",
-      "ended_at",
-      "duration_secs",
-      "result",
-    ];
+
+    let required_columns = vec!["id", "guild_id", "category_id", "format_id", "session_id", "started_at", "ended_at", "duration_secs", "result"];
     self.verify_columns("matches", &required_columns).await?;
     Ok(())
   }
@@ -932,7 +929,7 @@ impl DatabaseMigrations {
           UNIQUE(guild_id, user_id),
           FOREIGN KEY (user_id)  REFERENCES users(user_id)  ON DELETE CASCADE,
           FOREIGN KEY (guild_id) REFERENCES guilds(guild_d) ON DELETE CASCADE,
-        )"
+        )",
       )
       .execute(&self.pool)
       .await?;

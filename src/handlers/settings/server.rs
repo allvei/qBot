@@ -1,22 +1,25 @@
-use serenity::all::{
-  Context, ComponentInteraction as CoI, ChannelId as CI, ModalInteraction, MessageId as MI, CreateActionRow as CAR, CreateInteractionResponse as CIR,
-  CreateButton as CB, ButtonStyle as BS, CreateInteractionResponseMessage as CIRM,
-  CreateEmbed as CE, CreateModal as CM,
-  CreateSelectMenu as CSM, CreateSelectMenuOption as CSMO, CreateSelectMenuKind as CSMK,
-  ComponentInteractionDataKind as CIDK, GuildId as GI, RoleId as RoleId,
-  ActionRowComponent as ARC, ChannelType, GetMessages as GM, Permissions, Color,
-  CreateInteractionResponseFollowup as CIRF, EditRole as ER,
+use crate::handlers::settings::core::{parse_cid, parse_mid, parse_opt_cid};
+use crate::handlers::settings::menu::{CategoryListDisplay, RankRoleConfigDisplay, RANK_CONFIG_TOGGLES, SERVER_CONFIG_TOGGLES};
+use crate::handlers::settings::utils::{
+  create_input_sh, create_input_sh_cap, create_paragraph_input_with_value, create_value_input_sh, create_value_input_sh_cap, get_role_name_with_fallback,
+  send_component_error_response, send_modal_error_response, send_nav_response, send_nav_response_modal,
 };
-use tracing::{info, warn, error};
-use anyhow::{anyhow, Result};
-use std::sync::Arc;
-use sqlx::Row;
-use crate::Database;
-use crate::handlers::settings::utils::{send_nav_response, send_nav_response_modal, send_component_error_response, send_modal_error_response, create_input_sh, create_input_sh_cap, create_value_input_sh, create_value_input_sh_cap, create_paragraph_input_with_value, get_role_name_with_fallback};
-use crate::handlers::settings::core::{parse_cid, parse_opt_cid, parse_mid};
-use crate::handlers::settings::menu::{SERVER_CONFIG_TOGGLES, RANK_CONFIG_TOGGLES, RankRoleConfigDisplay, CategoryListDisplay};
-use crate::handlers::settings::{CategorySettings, build_category_settings_buttons, build_category_settings_embed, build_server_settings_buttons, build_server_settings_embed, nav_category_list, nav_rank_config, nav_role_config, nav_server_settings};
+use crate::handlers::settings::{
+  build_category_settings_buttons, build_category_settings_embed, build_server_settings_buttons, build_server_settings_embed, nav_category_list, nav_rank_config, nav_role_config,
+  nav_server_settings, CategorySettings,
+};
 use crate::models::guild_name;
+use crate::Database;
+use anyhow::{anyhow, Result};
+use serenity::all::{
+  ActionRowComponent as ARC, ButtonStyle as BS, ChannelId as CI, ChannelType, Color, ComponentInteraction as CoI, ComponentInteractionDataKind as CIDK, Context,
+  CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseFollowup as CIRF,
+  CreateInteractionResponseMessage as CIRM, CreateModal as CM, CreateSelectMenu as CSM, CreateSelectMenuKind as CSMK, CreateSelectMenuOption as CSMO, EditRole as ER,
+  GetMessages as GM, GuildId as GI, MessageId as MI, ModalInteraction, Permissions, RoleId,
+};
+use sqlx::Row;
+use std::sync::Arc;
+use tracing::{error, info, warn};
 
 // Import macros from utils
 use crate::{send_nav, send_nav_modal};
@@ -31,12 +34,7 @@ pub struct ServerSettings {
 }
 
 /// Handle server settings button interactions
-pub async fn handle_server_settings_button(
-  ctx: &Context,
-  interaction: &CoI,
-  db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
-) -> Result<()> {
+pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) -> Result<()> {
   let guild_id = interaction.guild_id.expect("Guild ID not found");
   let button_id = &interaction.data.custom_id;
 
@@ -65,10 +63,7 @@ pub async fn handle_server_settings_button(
       // When dynamic ELO is toggled, update in-memory player ELOs and refresh dashboards
       if toggle.column == "active_elo" {
         // Batch-fetch all player ELOs for this guild
-        let elo_rows = sqlx::query("SELECT user_id, elo, dynamic_elo FROM elo WHERE guild_id = ?")
-          .bind(guild_id.get() as i64)
-          .fetch_all(&db.pool)
-          .await?;
+        let elo_rows = sqlx::query("SELECT user_id, elo, dynamic_elo FROM elo WHERE guild_id = ?").bind(guild_id.get() as i64).fetch_all(&db.pool).await?;
 
         let mut legacy_elo_map = std::collections::HashMap::new();
         let mut dyn_elo_map = std::collections::HashMap::new();
@@ -314,7 +309,13 @@ pub async fn handle_server_settings_button(
       use serenity::all::{CreateInputText as CIT, InputTextStyle as ITS};
       let current_gamemode = db.config.get_gamemode(guild_id).await.unwrap_or(None).unwrap_or_default();
 
-      let input = CAR::InputText(CIT::new(ITS::Short, "Gamemode name (leave blank to clear)", "gamemode_input").placeholder("e.g. PASS Time, Ultiduo").value(&current_gamemode).required(false).max_length(32));
+      let input = CAR::InputText(
+        CIT::new(ITS::Short, "Gamemode name (leave blank to clear)", "gamemode_input")
+          .placeholder("e.g. PASS Time, Ultiduo")
+          .value(&current_gamemode)
+          .required(false)
+          .max_length(32),
+      );
 
       let modal = CM::new("server_settings_modal_gamemode", "Edit gamemode").components(vec![input]);
 
@@ -322,16 +323,9 @@ pub async fn handle_server_settings_button(
     }
     "server_settings_migrate_elo" => {
       // Show confirmation prompt before running migration
-      let total_players: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ?")
-        .bind(guild_id.get() as i64)
-        .fetch_one(&db.pool)
-        .await
-        .unwrap_or(0);
-      let without_dynamic_elo: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ? AND dynamic_elo IS NULL")
-        .bind(guild_id.get() as i64)
-        .fetch_one(&db.pool)
-        .await
-        .unwrap_or(0);
+      let total_players: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ?").bind(guild_id.get() as i64).fetch_one(&db.pool).await.unwrap_or(0);
+      let without_dynamic_elo: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ? AND dynamic_elo IS NULL").bind(guild_id.get() as i64).fetch_one(&db.pool).await.unwrap_or(0);
 
       let description = if total_players == 0 {
         "No players found in this guild. Players need to join the queue before ELO can be migrated.".to_string()
@@ -375,16 +369,9 @@ pub async fn handle_server_settings_button(
         Ok(count) => {
           info!("Anchored {} players to dynamic ELO for guild {}", count, guild_id);
           let msg = if count == 0 {
-            let total_players: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ?")
-              .bind(guild_id.get() as i64)
-              .fetch_one(&db.pool)
-              .await
-              .unwrap_or(0);
-            let with_dynamic_elo: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ? AND dynamic_elo IS NOT NULL")
-              .bind(guild_id.get() as i64)
-              .fetch_one(&db.pool)
-              .await
-              .unwrap_or(0);
+            let total_players: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ?").bind(guild_id.get() as i64).fetch_one(&db.pool).await.unwrap_or(0);
+            let with_dynamic_elo: i64 =
+              sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ? AND dynamic_elo IS NOT NULL").bind(guild_id.get() as i64).fetch_one(&db.pool).await.unwrap_or(0);
 
             if total_players == 0 {
               "No players found in this guild. Players need to join the queue before ELO can be migrated.".to_string()
@@ -574,13 +561,16 @@ pub async fn handle_server_settings_button(
 
                   // Red team voice channel
                   if red_channel.is_none() && channel.kind == ChannelType::Voice && (name_lower == "red" || name_lower == "red team" || name_lower == "team red") {
-                      red_channel = Some(*channel_id);
-                    }
+                    red_channel = Some(*channel_id);
+                  }
 
                   // Blue team voice channel
-                  if blue_channel.is_none() && channel.kind == ChannelType::Voice && (name_lower == "blue" || name_lower == "blue team" || name_lower == "team blue" || name_lower == "blu") {
-                      blue_channel = Some(*channel_id);
-                    }
+                  if blue_channel.is_none()
+                    && channel.kind == ChannelType::Voice
+                    && (name_lower == "blue" || name_lower == "blue team" || name_lower == "team blue" || name_lower == "blu")
+                  {
+                    blue_channel = Some(*channel_id);
+                  }
                 }
               }
 
@@ -588,7 +578,8 @@ pub async fn handle_server_settings_button(
             };
 
             // Check if any channels are missing
-            let has_all_channels = dashboard_channel.is_some() && queue_channel.is_some() && ping_channel.is_some() && queue_vc_channel.is_some() && red_channel.is_some() && blue_channel.is_some();
+            let has_all_channels =
+              dashboard_channel.is_some() && queue_channel.is_some() && ping_channel.is_some() && queue_vc_channel.is_some() && red_channel.is_some() && blue_channel.is_some();
 
             if !has_all_channels {
               // Start manual channel selection flow
@@ -635,7 +626,7 @@ pub async fn handle_server_settings_button(
                   CIRM::new()
                     .content(
                       "No suitable channels found in this category.\n\n\
-                                            Please create the required channels first."
+                                            Please create the required channels first.",
                     )
                     .ephemeral(true),
                 );
@@ -901,9 +892,8 @@ pub async fn handle_server_settings_button(
           let categories = db.categories.get_categories_for_guild(guild_id).await?;
           let display = CategoryListDisplay { guild_name: guild_name.clone(), categories };
 
-          let response = CIR::UpdateMessage(
-            CIRM::new().content("Successfully linked category to existing dashboard!").embed(display.build_embed()).components(display.build_components()),
-          );
+          let response =
+            CIR::UpdateMessage(CIRM::new().content("Successfully linked category to existing dashboard!").embed(display.build_embed()).components(display.build_components()));
           interaction.create_response(&ctx.http, response).await?;
         }
         Err(e) => {
@@ -1051,8 +1041,9 @@ pub async fn handle_server_settings_button(
             }
 
             // Check if all channels are now selected
-            if let (Some(dashboard_chan), Some(queue_chan), Some(ping_chan), Some(queue_vc_chan), Some(red_chan), Some(blue_chan)) = 
-              (dashboard_channel, queue_channel, ping_channel, queue_vc_channel, red_channel, blue_channel) {
+            if let (Some(dashboard_chan), Some(queue_chan), Some(ping_chan), Some(queue_vc_chan), Some(red_chan), Some(blue_chan)) =
+              (dashboard_channel, queue_channel, ping_channel, queue_vc_channel, red_channel, blue_channel)
+            {
               // All channels selected - create the category
               let guild_name = guild_name(ctx, guild_id);
 
@@ -2318,12 +2309,7 @@ pub async fn handle_server_settings_modal(
 }
 
 /// Handle server-level team balance method selection
-pub async fn handle_server_settings_balance_select(
-  ctx: &Context,
-  interaction: &CoI,
-  db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
-) -> Result<()> {
+pub async fn handle_server_settings_balance_select(ctx: &Context, interaction: &CoI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) -> Result<()> {
   let guild_id = interaction.guild_id.expect("Guild ID not found");
 
   let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;

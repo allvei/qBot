@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serenity::all::{
-  ButtonStyle as BS, ComponentInteraction as CI, Context, CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE,
-  CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, GuildId as GI, UserId as UI,
+  ButtonStyle as BS, ComponentInteraction as CI, Context, CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR,
+  CreateInteractionResponseMessage as CIRM, GuildId as GI, UserId as UI,
 };
 use std::sync::Arc;
 use tracing::info;
@@ -14,22 +14,14 @@ use crate::models::{ComponentContext as CC, Role};
 use crate::{guild_name, log_prefix_guild, Manager, CYAN};
 
 mod runner_menu_end;
-pub use runner_menu_end::{handle_end_without_score, show_end_match_selection, handle_end_match_result};
+pub use runner_menu_end::{handle_end_match_result, handle_end_without_score, show_end_match_selection};
 
-pub async fn handle_change_result_button(
-  ctx: &Context,
-  interaction: &CI,
-  db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<Manager>>,
-  button_id: &str,
-) -> Result<()> {
+pub async fn handle_change_result_button(ctx: &Context, interaction: &CI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<Manager>>, button_id: &str) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
 
   if !is_role_component(&cc, &Role::Runner).await? {
     let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
-    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-      CAR::Buttons(vec![Eph::back("runner_menu_back")])
-    ]));
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
     interaction.create_response(&ctx.http, response).await?;
     return Ok(());
   }
@@ -39,9 +31,7 @@ pub async fn handle_change_result_button(
   let parts: Vec<&str> = button_id.split('_').collect();
   if parts.len() < 4 {
     let embed = CE::new().title("Invalid button ID").color(0xFF0000);
-    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-      CAR::Buttons(vec![Eph::back("runner_menu_back")])
-    ]));
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
     interaction.create_response(&ctx.http, response).await?;
     return Ok(());
   }
@@ -56,9 +46,7 @@ pub async fn handle_change_result_button(
     Some(details) => details,
     None => {
       let embed = CE::new().title("Match not found").description("Could not retrieve match details.").color(0xFF0000);
-      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-        CAR::Buttons(vec![Eph::back("runner_menu_back")])
-      ]));
+      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
       interaction.create_response(&ctx.http, response).await?;
       return Ok(());
     }
@@ -117,20 +105,19 @@ pub async fn handle_change_result_button(
     }
   }
 
-  if let Err(e) = crate::models::dynamic_elo::process_match_elo(
-    db,
-    guild_id,
-    match_id,
-    &session_players,
-    new_result,
-    ctx,
-  ).await {
+  if let Err(e) = crate::models::dynamic_elo::process_match_elo(db, guild_id, match_id, &session_players, new_result, ctx).await {
     tracing::warn!("Failed to recalculate ELO for new result: {}", e);
   }
 
   let guild_name = guild_name(ctx, guild_id);
-  info!("{} Runner changed match {} result from {:?} to {} (reverted ELO for {} players)",
-    log_prefix_guild(&guild_name), match_id, match_details.result, new_result, reverted_count);
+  info!(
+    "{} Runner changed match {} result from {:?} to {} (reverted ELO for {} players)",
+    log_prefix_guild(&guild_name),
+    match_id,
+    match_details.result,
+    new_result,
+    reverted_count
+  );
 
   let embed = CE::new()
     .title("Match result updated")
@@ -139,17 +126,11 @@ pub async fn handle_change_result_button(
       match_id,
       match_details.result,
       new_result,
-      if reverted_count > 0 {
-        format!(" Reverted ELO for {} player(s).", reverted_count)
-      } else {
-        String::new()
-      }
+      if reverted_count > 0 { format!(" Reverted ELO for {} player(s).", reverted_count) } else { String::new() }
     ))
     .color(0x00FF00);
 
-  let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-    CAR::Buttons(vec![Eph::back("runner_menu_back")])
-  ]));
+  let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
   interaction.create_response(&ctx.http, response).await?;
 
   Ok(())
@@ -230,20 +211,12 @@ pub async fn update_runner_menu(cc: &CC<'_>) -> Result<()> {
   Ok(())
 }
 
-pub async fn handle_runner_action(
-  ctx: &Context,
-  interaction: &CI,
-  db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<Manager>>,
-  action: &str,
-) -> Result<()> {
+pub async fn handle_runner_action(ctx: &Context, interaction: &CI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<Manager>>, action: &str) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
 
   if !is_role_component(&cc, &Role::Runner).await? {
     let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
-    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-      CAR::Buttons(vec![Eph::back("runner_menu_back")])
-    ]));
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
     interaction.create_response(&ctx.http, response).await?;
     return Ok(());
   }
@@ -251,57 +224,27 @@ pub async fn handle_runner_action(
   let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
 
   match action {
-    "accept" => {
-      handle_direct_action(ctx, interaction, db, manager, guild_id, action).await
-    }
-    "end_match" => {
-      show_end_match_selection(ctx, interaction, db, manager, guild_id).await
-    }
-    "end_no_score" => {
-      handle_end_without_score(ctx, interaction, db, manager, guild_id).await
-    }
-    "change_result" => {
-      show_change_result_selection(ctx, interaction, db, manager, guild_id).await
-    }
-    "clear_queue" => {
-      handle_clear_queue(ctx, interaction, db, manager, guild_id).await
-    }
-    "remove" | "buffer" | "fatkid" => {
-      show_player_selection(ctx, interaction, db, manager, guild_id, action).await
-    }
+    "accept" => handle_direct_action(ctx, interaction, db, manager, guild_id, action).await,
+    "end_match" => show_end_match_selection(ctx, interaction, db, manager, guild_id).await,
+    "end_no_score" => handle_end_without_score(ctx, interaction, db, manager, guild_id).await,
+    "change_result" => show_change_result_selection(ctx, interaction, db, manager, guild_id).await,
+    "clear_queue" => handle_clear_queue(ctx, interaction, db, manager, guild_id).await,
+    "remove" | "buffer" | "fatkid" => show_player_selection(ctx, interaction, db, manager, guild_id, action).await,
     _ => Ok(()),
   }
 }
 
-async fn handle_direct_action(
-  _ctx: &Context,
-  interaction: &CI,
-  _db: &Arc<Database>,
-  _manager: &Arc<tokio::sync::Mutex<Manager>>,
-  _guild_id: GI,
-  action: &str,
-) -> Result<()> {
+async fn handle_direct_action(_ctx: &Context, interaction: &CI, _db: &Arc<Database>, _manager: &Arc<tokio::sync::Mutex<Manager>>, _guild_id: GI, action: &str) -> Result<()> {
   // Note: accept function expects CommandContext with CommandInteraction
   // We need to defer this response and use a different approach
-  let error_embed = CE::new()
-    .title(format!("The '{}' action must be triggered via slash command", action))
-    .color(0xFFAA00);
-  let response = CIR::UpdateMessage(CIRM::new().embed(error_embed).components(vec![
-    CAR::Buttons(vec![Eph::back("runner_menu_back")])
-  ]));
+  let error_embed = CE::new().title(format!("The '{}' action must be triggered via slash command", action)).color(0xFFAA00);
+  let response = CIR::UpdateMessage(CIRM::new().embed(error_embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
   interaction.create_response(&_ctx.http, response).await?;
-  
+
   Ok(())
 }
 
-async fn show_player_selection(
-  ctx: &Context,
-  interaction: &CI,
-  _db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<Manager>>,
-  guild_id: GI,
-  action: &str,
-) -> Result<()> {
+async fn show_player_selection(ctx: &Context, interaction: &CI, _db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<Manager>>, guild_id: GI, action: &str) -> Result<()> {
   let mut mgr = manager.lock().await;
   let server = mgr.get_qguild(guild_id)?;
 
@@ -309,25 +252,18 @@ async fn show_player_selection(
 
   // Use cache for member nicknames (much faster than API calls)
   // Extract member display names from cache before dropping the reference
-  let member_names: std::collections::HashMap<UI, String> = ctx.cache.guild(guild_id)
-    .map(|g| {
-      g.members.iter()
-        .map(|(uid, m)| (*uid, m.display_name().to_string()))
-        .collect()
-    })
-    .unwrap_or_default();
+  let member_names: std::collections::HashMap<UI, String> =
+    ctx.cache.guild(guild_id).map(|g| g.members.iter().map(|(uid, m)| (*uid, m.display_name().to_string())).collect()).unwrap_or_default();
 
   for category in &server.categories {
     for format in &category.formats {
       for session in &format.sessions {
         for session_player in &session.pool {
           let user_id = session_player.player.user_id;
-          
+
           // Try to get server nickname from extracted cache data, fallback to Discord username
-          let display_name = member_names.get(&user_id)
-            .cloned()
-            .unwrap_or_else(|| session_player.player.tag.clone());
-          
+          let display_name = member_names.get(&user_id).cloned().unwrap_or_else(|| session_player.player.tag.clone());
+
           if !players.iter().any(|(_, id)| *id == format!("{}", user_id.get())) {
             players.push((display_name, format!("{}", user_id.get())));
           }
@@ -340,9 +276,7 @@ async fn show_player_selection(
 
   if players.is_empty() {
     let embed = CE::new().title("No players are currently in any queue").color(0xFFAA00);
-    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-      CAR::Buttons(vec![Eph::back("runner_menu_back")])
-    ]));
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
     interaction.create_response(&ctx.http, response).await?;
     return Ok(());
   }
@@ -357,7 +291,7 @@ async fn show_player_selection(
   let embed = CE::new().title(title).color(CYAN);
 
   let mut components = Vec::new();
-  
+
   if let Some(menu) = create_selection_menu(&format!("runner_player_{}", action), "Select player", players) {
     components.push(menu);
   }
@@ -369,14 +303,19 @@ async fn show_player_selection(
   Ok(())
 }
 
-pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<Manager>>, action: &str, user_id_str: &str ) -> Result<()> {
+pub async fn handle_player_selection(
+  ctx: &Context,
+  interaction: &CI,
+  db: &Arc<Database>,
+  manager: &Arc<tokio::sync::Mutex<Manager>>,
+  action: &str,
+  user_id_str: &str,
+) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
 
   if !is_role_component(&cc, &Role::Runner).await? {
     let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
-    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-      CAR::Buttons(vec![Eph::back("runner_menu_back")])
-    ]));
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
     interaction.create_response(&ctx.http, response).await?;
     return Ok(());
   }
@@ -392,7 +331,7 @@ pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<
   // Track which category index and what action description to set
   let mut last_action_info: Option<(usize, String)> = None;
   // Track if we need to cancel a queue expiration (for remove action)
-  
+
   let result = match action {
     "remove" => {
       // Find and remove the player from all sessions
@@ -414,11 +353,14 @@ pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<
               let format_name = &format.name;
               info!("{} Runner removed player {} from queue", crate::log::log_prefix_format(&guild_name, category_name, format_name), player_tag);
               last_action_info = Some((cat_idx, format!("removed {}", player_tag)));
-              
+
               // If this was a Hot session and now below quota, transition back to Idle
               if session.is_hot() && session.pool.len() < quota {
                 session.idle();
-                info!("{} Hot session dropped below quota after removing player, transitioning back to Idle", crate::log::log_prefix_format(&guild_name, category_name, format_name));
+                info!(
+                  "{} Hot session dropped below quota after removing player, transitioning back to Idle",
+                  crate::log::log_prefix_format(&guild_name, category_name, format_name)
+                );
               }
             }
           }
@@ -484,7 +426,7 @@ pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<
     }
     _ => Ok(()),
   };
-  
+
   // Set last action after the loops to avoid borrow issues
   if let Some((cat_idx, action_desc)) = last_action_info {
     if let Some(category) = server.categories.get_mut(cat_idx) {
@@ -505,13 +447,10 @@ pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<
         // Validate VC status to sync in_queue_vc flags with actual Discord state
         // This ensures the dashboard shows correct VC status after player reordering
         category.verify_vc(ctx, guild_id).await;
-        
+
         // Collect format IDs that need team regeneration
-        let hot_fmt_ids: Vec<u8> = category.formats.iter()
-          .filter(|f| f.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= f.quota as usize))
-          .map(|f| f.id)
-          .collect();
-        
+        let hot_fmt_ids: Vec<u8> = category.formats.iter().filter(|f| f.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= f.quota as usize)).map(|f| f.id).collect();
+
         // Regenerate teams for each hot format
         for fmt_id in hot_fmt_ids {
           category.generate_teams_fmt(fmt_id, ctx, guild_id, Some(db)).await;
@@ -519,7 +458,7 @@ pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<
       }
       drop(mgr);
     }
-    
+
     // Update dashboard for all affected categories
     let mut mgr = manager.lock().await;
     let server = mgr.get_qguild(guild_id)?;
@@ -542,29 +481,19 @@ pub async fn handle_player_selection( ctx: &Context, interaction: &CI, db: &Arc<
   };
 
   let embed = CE::new().title(title).color(color);
-  let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-    CAR::Buttons(vec![Eph::back("runner_menu_back")])
-  ]));
+  let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
   interaction.create_response(&ctx.http, response).await?;
 
   Ok(())
 }
 
-async fn show_change_result_selection(
-  ctx: &Context,
-  interaction: &CI,
-  db: &Arc<Database>,
-  _manager: &Arc<tokio::sync::Mutex<Manager>>,
-  guild_id: GI,
-) -> Result<()> {
+async fn show_change_result_selection(ctx: &Context, interaction: &CI, db: &Arc<Database>, _manager: &Arc<tokio::sync::Mutex<Manager>>, guild_id: GI) -> Result<()> {
   // Get the latest match for this guild
   let match_id = match db.matches.get_latest_match_id_guild(guild_id).await? {
     Some(id) => id,
     None => {
       let embed = CE::new().title("No matches found").description("There are no matches recorded for this guild.").color(0xFFAA00);
-      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-        CAR::Buttons(vec![Eph::back("runner_menu_back")])
-      ]));
+      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
       interaction.create_response(&ctx.http, response).await?;
       return Ok(());
     }
@@ -575,9 +504,7 @@ async fn show_change_result_selection(
     Some(details) => details,
     None => {
       let embed = CE::new().title("Match not found").description("Could not retrieve match details.").color(0xFF0000);
-      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-        CAR::Buttons(vec![Eph::back("runner_menu_back")])
-      ]));
+      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
       interaction.create_response(&ctx.http, response).await?;
       return Ok(());
     }
@@ -610,10 +537,7 @@ async fn show_change_result_selection(
     description.push_str("\n**ELO changes:** No");
   }
 
-  let embed = CE::new()
-    .title("Change last match result")
-    .description(description)
-    .color(CYAN);
+  let embed = CE::new().title("Change last match result").description(description).color(CYAN);
 
   let result_buttons = vec![
     CB::new(format!("change_result_red_{}", match_id)).label("Red win").style(BS::Danger),
@@ -621,10 +545,7 @@ async fn show_change_result_selection(
     CB::new(format!("change_result_draw_{}", match_id)).label("Draw").style(BS::Secondary),
   ];
 
-  let components = vec![
-    CAR::Buttons(result_buttons),
-    CAR::Buttons(vec![Eph::back("runner_menu_back")]),
-  ];
+  let components = vec![CAR::Buttons(result_buttons), CAR::Buttons(vec![Eph::back("runner_menu_back")])];
 
   let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
   interaction.create_response(&ctx.http, response).await?;
@@ -632,20 +553,12 @@ async fn show_change_result_selection(
   Ok(())
 }
 
-async fn handle_clear_queue(
-  ctx: &Context,
-  interaction: &CI,
-  db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<Manager>>,
-  guild_id: GI,
-) -> Result<()> {
+async fn handle_clear_queue(ctx: &Context, interaction: &CI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<Manager>>, guild_id: GI) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
 
   if !is_role_component(&cc, &Role::Runner).await? {
     let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
-    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-      CAR::Buttons(vec![Eph::back("runner_menu_back")])
-    ]));
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
     interaction.create_response(&ctx.http, response).await?;
     return Ok(());
   }
@@ -687,34 +600,22 @@ async fn handle_clear_queue(
   let guild_name = guild_name(ctx, guild_id);
   info!("{} Runner cleared queue ({} players)", log_prefix_guild(&guild_name), removed_count);
 
-  let title = if removed_count > 0 {
-    format!("Cleared queue: removed {} player{}", removed_count, if removed_count == 1 { "" } else { "s" })
-  } else {
-    "Queue was already empty".to_string()
-  };
+  let title =
+    if removed_count > 0 { format!("Cleared queue: removed {} player{}", removed_count, if removed_count == 1 { "" } else { "s" }) } else { "Queue was already empty".to_string() };
 
   let embed = CE::new().title(title).color(0x00FF00);
-  let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-    CAR::Buttons(vec![Eph::back("runner_menu_back")])
-  ]));
+  let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
   interaction.create_response(&ctx.http, response).await?;
 
   Ok(())
 }
 
-pub async fn handle_remove_all(
-  ctx: &Context,
-  interaction: &CI,
-  db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<Manager>>,
-) -> Result<()> {
+pub async fn handle_remove_all(ctx: &Context, interaction: &CI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<Manager>>) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
 
   if !is_role_component(&cc, &Role::Runner).await? {
     let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
-    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-      CAR::Buttons(vec![Eph::back("runner_menu_back")])
-    ]));
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
     interaction.create_response(&ctx.http, response).await?;
     return Ok(());
   }
@@ -758,9 +659,7 @@ pub async fn handle_remove_all(
   };
 
   let embed = CE::new().title(title).color(0x00FF00);
-  let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![
-    CAR::Buttons(vec![Eph::back("runner_menu_back")])
-  ]));
+  let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
   interaction.create_response(&ctx.http, response).await?;
 
   Ok(())

@@ -1,11 +1,14 @@
-use serenity::all::{EditMessage, Context, ComponentInteraction as CI, ModalInteraction as MI, UserId as UI, CreateActionRow as CAR, CreateInteractionResponse as CIR, CreateButton as CB, ButtonStyle as BS, CreateEmbed as CE, CreateInteractionResponseMessage as CIRM, ActionRowComponent as ARC, CreateModal, GetMessages as GM, ChannelId as CHID};
-use anyhow::Result;
-use tracing::{warn, debug};
-use std::sync::Arc;
-use crate::Database;
-use crate::handlers::settings::utils::{track_dm_activity, create_short_input_opt, create_paragraph_input_with_value};
-use crate::handlers::{build_settings_buttons, build_settings_embed};
 use crate::handlers::settings::alerts::{build_join_alert_embed, build_leave_alert_embed};
+use crate::handlers::settings::utils::{create_paragraph_input_with_value, create_short_input_opt, track_dm_activity};
+use crate::handlers::{build_settings_buttons, build_settings_embed};
+use crate::Database;
+use anyhow::Result;
+use serenity::all::{
+  ActionRowComponent as ARC, ButtonStyle as BS, ChannelId as CHID, ComponentInteraction as CI, Context, CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE,
+  CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateModal, EditMessage, GetMessages as GM, ModalInteraction as MI, UserId as UI,
+};
+use std::sync::Arc;
+use tracing::{debug, warn};
 
 /// Handle settings button interactions in DMs
 pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Database>) -> Result<()> {

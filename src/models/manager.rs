@@ -8,7 +8,7 @@ use serenity::all::{Cache, ChannelId as CI, GuildId as GI, UserId as UI};
 use std::collections::HashMap;
 use std::time::SystemTime;
 
-use crate::models::{Category, Roles, QGuild, SessionStatus};
+use crate::models::{Category, QGuild, Roles, SessionStatus};
 
 /// Manages multiple servers and their associated categories/games
 #[derive(Default, Clone)]
@@ -25,10 +25,7 @@ impl Manager {
   /// ### Returns
   /// * A new Manager instance
   pub fn new(guild_id: GI) -> Self {
-    Self {
-      qguilds: vec![QGuild::new(guild_id, "Unknown".to_string(), Roles::empty())],
-      active_score_submissions: HashMap::new(),
-    }
+    Self { qguilds: vec![QGuild::new(guild_id, "Unknown".to_string(), Roles::empty())], active_score_submissions: HashMap::new() }
   }
 
   /// Pull server list from Discord cache
@@ -44,10 +41,7 @@ impl Manager {
       let guild_name = cache.guild(*g).map(|guild| guild.name.clone()).unwrap_or_else(|| "Unknown".to_string());
       qguilds.push(QGuild::new(*g, guild_name, Roles::empty()));
     });
-    Self {
-      qguilds,
-      active_score_submissions: HashMap::new(),
-    }
+    Self { qguilds, active_score_submissions: HashMap::new() }
   }
 
   /// Find a server by its guild ID
@@ -115,14 +109,18 @@ impl Manager {
   /// * `Option<UI>` - The user ID currently submitting, or None if no active submission
   pub fn get_active_score_submission(&self, guild_id: GI, category_id: u8, format_id: u8) -> Option<UI> {
     let key = (guild_id, category_id, format_id);
-    self.active_score_submissions.get(&key).map(|(user_id, start_time)| {
-      // Remove stale submissions older than 5 minutes
-      if start_time.elapsed().unwrap_or(std::time::Duration::from_secs(0)) > std::time::Duration::from_secs(300) {
-        None
-      } else {
-        Some(*user_id)
-      }
-    }).flatten()
+    self
+      .active_score_submissions
+      .get(&key)
+      .map(|(user_id, start_time)| {
+        // Remove stale submissions older than 5 minutes
+        if start_time.elapsed().unwrap_or(std::time::Duration::from_secs(0)) > std::time::Duration::from_secs(300) {
+          None
+        } else {
+          Some(*user_id)
+        }
+      })
+      .flatten()
   }
 
   /// Set a score submission as in progress
@@ -152,8 +150,6 @@ impl Manager {
   pub fn cleanup_stale_score_submissions(&mut self) {
     let now = SystemTime::now();
     let timeout = std::time::Duration::from_secs(300);
-    self.active_score_submissions.retain(|_, (_, start_time)| {
-      start_time.elapsed().unwrap_or(timeout) < timeout
-    });
+    self.active_score_submissions.retain(|_, (_, start_time)| start_time.elapsed().unwrap_or(timeout) < timeout);
   }
 }

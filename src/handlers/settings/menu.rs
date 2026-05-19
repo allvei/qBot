@@ -56,12 +56,7 @@ type SB = SettingsButton;
 
 impl SettingsButton {
   pub fn toggle(id: impl Into<String>, label: impl Into<String>, enabled: bool) -> Self {
-    Self {
-      id: id.into(),
-      label: label.into(),
-      style: if enabled { SettingsButtonStyle::Success } else { SettingsButtonStyle::Danger },
-      disabled: false,
-    }
+    Self { id: id.into(), label: label.into(), style: if enabled { SettingsButtonStyle::Success } else { SettingsButtonStyle::Danger }, disabled: false }
   }
 
   pub fn edit(id: impl Into<String>, label: impl Into<String>) -> Self {
@@ -268,13 +263,7 @@ pub const SERVER_CONFIG_TOGGLES: &[ConfigToggle] = &[
     label_off: "Post-game auto-remove is disabled",
     default: true,
   },
-  ConfigToggle {
-    column: "hide_elo",
-    button_id: "server_cfg_hide_elo",
-    label_on: "ELO is visible",
-    label_off: "ELO is hidden",
-    default: false,
-  },
+  ConfigToggle { column: "hide_elo", button_id: "server_cfg_hide_elo", label_on: "ELO is visible", label_off: "ELO is hidden", default: false },
 ];
 
 /// Server settings with guild name for display
@@ -323,26 +312,15 @@ impl AsSettingsMenu for ServerConfigDisplay {
       .footer("Configure server-wide settings below");
 
     // Add role selects
-    menu = menu.row(SR::RoleSelect {
-      id: "server_settings_runner_role".to_string(),
-      placeholder: "Select runner role".to_string(),
-      default: runner_default,
-    });
+    menu = menu.row(SR::RoleSelect { id: "server_settings_runner_role".to_string(), placeholder: "Select runner role".to_string(), default: runner_default });
 
-    menu = menu.row(SR::RoleSelect {
-      id: "server_settings_admin_role".to_string(),
-      placeholder: "Select admin role".to_string(),
-      default: admin_default,
-    });
+    menu = menu.row(SR::RoleSelect { id: "server_settings_admin_role".to_string(), placeholder: "Select admin role".to_string(), default: admin_default });
 
     // Add balance method select
     menu = menu.row(SR::StringSelect {
       id: "server_settings_balance".to_string(),
       placeholder: "Team balance method...".to_string(),
-      options: vec![
-        ("Custom distribution algorithm".to_string(), "bch".to_string()),
-        ("Average distribution".to_string(), "average".to_string()),
-      ],
+      options: vec![("Custom distribution algorithm".to_string(), "bch".to_string()), ("Average distribution".to_string(), "average".to_string())],
     });
 
     // Add ELO toggles
@@ -485,22 +463,16 @@ impl AsSettingsMenu for RankConfigDisplay {
       desc
     };
 
-    let mut menu = SettingsMenu::new(format!("{} - Manage Ranks", self.guild_name))
-      .description(description)
-      .color(0x5865F2)
-      .footer(if self.rank_roles.is_empty() {
-        "Configure ranks by adding new ones below"
-      } else {
-        "Select a rank below to edit its name, ELO, or linked role"
-      });
+    let mut menu = SettingsMenu::new(format!("{} - Manage Ranks", self.guild_name)).description(description).color(0x5865F2).footer(if self.rank_roles.is_empty() {
+      "Configure ranks by adding new ones below"
+    } else {
+      "Select a rank below to edit its name, ELO, or linked role"
+    });
 
     // Add toggle buttons if any
     if !self.toggle_states.is_empty() {
-      let toggle_buttons: Vec<SB> = RANK_CONFIG_TOGGLES
-        .iter()
-        .zip(self.toggle_states.iter())
-        .map(|(toggle, &state)| SB::toggle(toggle.button_id, toggle.label_on, state))
-        .collect();
+      let toggle_buttons: Vec<SB> =
+        RANK_CONFIG_TOGGLES.iter().zip(self.toggle_states.iter()).map(|(toggle, &state)| SB::toggle(toggle.button_id, toggle.label_on, state)).collect();
       menu = menu.row(SR::Buttons(toggle_buttons));
     }
 
@@ -528,31 +500,19 @@ impl AsSettingsMenu for RankConfigDisplay {
         })
         .collect();
 
-      menu = menu.row(SR::StringSelect {
-        id: "server_settings_default_rank_select".to_string(),
-        placeholder: "Set default rank".to_string(),
-        options: default_options,
-      });
+      menu = menu.row(SR::StringSelect { id: "server_settings_default_rank_select".to_string(), placeholder: "Set default rank".to_string(), options: default_options });
 
       // Add rank edit select
       let edit_options: Vec<(String, String)> = self
         .rank_roles
         .iter()
         .map(|(name, _, role_id)| {
-          let label = if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
-            format!("{} (ID {})", name, role_id.get())
-          } else {
-            name.clone()
-          };
+          let label = if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 { format!("{} (ID {})", name, role_id.get()) } else { name.clone() };
           (label, role_id.to_string())
         })
         .collect();
 
-      menu = menu.row(SR::StringSelect {
-        id: "server_settings_rank_select".to_string(),
-        placeholder: "Select rank to configure".to_string(),
-        options: edit_options,
-      });
+      menu = menu.row(SR::StringSelect { id: "server_settings_rank_select".to_string(), placeholder: "Select rank to configure".to_string(), options: edit_options });
     }
 
     // Add action buttons
@@ -635,11 +595,7 @@ impl RankConfigDisplay {
                 .rank_roles
                 .iter()
                 .map(|(name, _, role_id)| {
-                  let label = if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
-                    format!("{} (ID {})", name, role_id.get())
-                  } else {
-                    name.clone()
-                  };
+                  let label = if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 { format!("{} (ID {})", name, role_id.get()) } else { name.clone() };
                   CSMO::new(label, role_id.to_string())
                 })
                 .collect(),
@@ -723,10 +679,7 @@ impl AsSettingsMenu for CategoryListDisplay {
       }
     }
 
-    let mut menu = SettingsMenu::new(format!("{} - Manage Categories", self.guild_name))
-      .description(description)
-      .color(0x5865F2)
-      .footer("Select a category below to edit");
+    let mut menu = SettingsMenu::new(format!("{} - Manage Categories", self.guild_name)).description(description).color(0x5865F2).footer("Select a category below to edit");
 
     // Add category selector if there are categories
     if !self.categories.is_empty() {
@@ -740,11 +693,7 @@ impl AsSettingsMenu for CategoryListDisplay {
         })
         .collect();
 
-      menu = menu.row(SR::StringSelect {
-        id: "server_settings_category_select".to_string(),
-        placeholder: "Select category to configure".to_string(),
-        options,
-      });
+      menu = menu.row(SR::StringSelect { id: "server_settings_category_select".to_string(), placeholder: "Select category to configure".to_string(), options });
     }
 
     // Add action buttons
@@ -838,7 +787,11 @@ impl AsSettingsMenu for CategorySettingsDisplay {
       .field(SF::new("Team VC destroy", &self.vc_destroy))
       .field(SF::new("Keep minimum VCs", if self.vc_keep_min { "Yes" } else { "No" }))
       .color(0x5865F2)
-      .row(SR::Buttons(vec![SB::category_edit("edit_name", "Name", gid), SB::category_edit("edit_quota", "Quota", gid), SB::category_edit("edit_confirm_time", "Confirm expiry", gid)]))
+      .row(SR::Buttons(vec![
+        SB::category_edit("edit_name", "Name", gid),
+        SB::category_edit("edit_quota", "Quota", gid),
+        SB::category_edit("edit_confirm_time", "Confirm expiry", gid),
+      ]))
       .row(SR::Buttons(vec![
         SB::category_edit("edit_connect", "Connect info", gid),
         SB::category_action("formats", "Formats", Sbs::Primary, gid),

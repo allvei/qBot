@@ -1,11 +1,10 @@
 use serenity::all::{
-  Context, CreateActionRow as CAR, CreateEmbed as CE,
-  CreateInputText as CIT, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateSelectMenu as CSM, CreateSelectMenuKind as CSMK,
-  CreateSelectMenuOption as CSMO, GuildId as GI, InputTextStyle as ITS,
+  Context, CreateActionRow as CAR, CreateEmbed as CE, CreateInputText as CIT, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateSelectMenu as CSM,
+  CreateSelectMenuKind as CSMK, CreateSelectMenuOption as CSMO, GuildId as GI, InputTextStyle as ITS,
 };
 
-use crate::handlers::CategorySettings;
 use crate::handlers::settings::{get_all_rank_roles, get_rank_settings, get_server_settings, ServerSettings};
+use crate::handlers::CategorySettings;
 
 use crate::handlers::settings::menu::{AsSettingsMenu, CategoryListDisplay, CategorySettingsDisplay, RankConfigDisplay, ServerConfigDisplay, ServerSettingsDisplay};
 use crate::{guild_name, Database};

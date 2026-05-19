@@ -1,17 +1,15 @@
-use serenity::all::{
-  ModalInteraction as MI, UserId as UI, RoleId as RI, GuildId as GI,
-  CreateModal as CM, ComponentInteraction as CI, Context, CreateActionRow as CAR,
-  CreateInteractionResponse as CIR, ComponentInteractionDataKind as CIDK,
-  ActionRowComponent as ARC, CreateInteractionResponseMessage as CIRM,
-  CreateEmbed as CE, CreateButton as CB, ButtonStyle as BS
-};
+use crate::handlers::settings::menu::{build_player_settings_menu, PlayerSettingsDisplay};
+use crate::handlers::settings::utils::{create_paragraph_input_with_value, create_short_input_opt, create_value_input_sh, create_value_input_sh_cap, send_modal_error_response};
+use crate::{get_modal_input, get_player_settings};
+use crate::{get_user_tag, guild_name, log_prefix_guild, Database, RED};
 use anyhow::{anyhow, Result};
-use tracing::{info, warn};
+use serenity::all::{
+  ActionRowComponent as ARC, ButtonStyle as BS, ComponentInteraction as CI, ComponentInteractionDataKind as CIDK, Context, CreateActionRow as CAR, CreateButton as CB,
+  CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateModal as CM, GuildId as GI, ModalInteraction as MI, RoleId as RI,
+  UserId as UI,
+};
 use std::sync::Arc;
-use crate::{Database, RED, get_user_tag, guild_name, log_prefix_guild};
-use crate::handlers::settings::utils::{send_modal_error_response, create_short_input_opt, create_value_input_sh_cap, create_value_input_sh, create_paragraph_input_with_value};
-use crate::handlers::settings::menu::{PlayerSettingsDisplay, build_player_settings_menu};
-use crate::{get_player_settings, get_modal_input};
+use tracing::{info, warn};
 
 /// Player settings structure for admin editing
 pub struct PlayerSettings {
@@ -41,12 +39,7 @@ impl PlayerSettings {
 }
 
 /// Handle player settings rank selection dropdown
-pub async fn handle_player_settings_rank_select(
-  ctx: &Context,
-  interaction: &CI,
-  db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
-) -> Result<()> {
+pub async fn handle_player_settings_rank_select(ctx: &Context, interaction: &CI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) -> Result<()> {
   let custom_id = &interaction.data.custom_id;
   let user_tag = get_user_tag(ctx, interaction.user.id, db).await;
   // Extract user_id from custom_id (format: player_settings_rank_select_<user_id>)
@@ -110,7 +103,14 @@ pub async fn handle_player_settings_rank_select(
   }
 
   if guild_elo.rank.name != new_rank.name {
-    info!("{} Updated rank for {}: {} -> {}{}", log_prefix_guild(&guild_name), target_tag, guild_elo.rank.name, new_rank.name, if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" });
+    info!(
+      "{} Updated rank for {}: {} -> {}{}",
+      log_prefix_guild(&guild_name),
+      target_tag,
+      guild_elo.rank.name,
+      new_rank.name,
+      if elo_ranks_linked { "" } else { " (ELO unchanged, independent)" }
+    );
   }
 
   // Update Discord roles
@@ -276,12 +276,7 @@ pub async fn handle_player_settings_button(ctx: &Context, interaction: &CI, db: 
 }
 
 /// Handle player settings modal submissions
-pub async fn handle_player_settings_modal(
-  ctx: &Context,
-  interaction: &MI,
-  db: &Arc<Database>,
-  manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>,
-) -> Result<()> {
+pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) -> Result<()> {
   let guild_id = interaction.guild_id.expect("Guild ID not found");
   let modal_id = &interaction.data.custom_id;
 

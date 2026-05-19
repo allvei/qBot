@@ -20,12 +20,7 @@ pub struct QueueExpirationKey {
 
 impl QueueExpirationKey {
   pub fn new(guild_id: GI, category_id: u8, format_id: u8, user_id: UI) -> Self {
-    Self {
-      guild_id,
-      category_id,
-      format_id,
-      user_id,
-    }
+    Self { guild_id, category_id, format_id, user_id }
   }
 }
 
@@ -39,25 +34,13 @@ pub struct QueueExpirationScheduler {
 
 impl QueueExpirationScheduler {
   pub fn new(manager: Arc<Mutex<Manager>>, db: Arc<Database>, ctx: Context) -> Self {
-    Self {
-      tasks: HashMap::new(),
-      manager,
-      db,
-      ctx,
-    }
+    Self { tasks: HashMap::new(), manager, db, ctx }
   }
 
   /// Schedule a timeout for a player. Cancels any existing timeout for this player.
-  pub fn schedule_queue_expiration(
-    &mut self,
-    guild_id: GI,
-    category_id: u8,
-    format_id: u8,
-    player: Player,
-    queue_expiration_minutes: u8,
-  ) {
+  pub fn schedule_queue_expiration(&mut self, guild_id: GI, category_id: u8, format_id: u8, player: Player, queue_expiration_minutes: u8) {
     let key = QueueExpirationKey::new(guild_id, category_id, format_id, player.user_id);
-    
+
     // Cancel existing timeout if any
     if let Some(handle) = self.tasks.remove(&key) {
       handle.abort();
@@ -72,7 +55,7 @@ impl QueueExpirationScheduler {
     let manager = self.manager.clone();
     let db = self.db.clone();
     let ctx = self.ctx.clone();
-    
+
     // Capture player data for the async block
     let player_user_id = player.user_id;
     let player_tag = player.tag.clone();
@@ -83,11 +66,11 @@ impl QueueExpirationScheduler {
 
       // Remove the player from the queue
       let mut mgr = manager.lock().await;
-      
+
       if let Ok(server) = mgr.get_qguild(guild_id) {
         let mut removed = false;
         let mut should_update_dashboard = false;
-        
+
         for category in &mut server.categories {
           let category_clone = category.clone();
           for format in &mut category.formats {
@@ -100,7 +83,7 @@ impl QueueExpirationScheduler {
                 session.pool.remove(pos);
                 removed = true;
                 should_update_dashboard = true;
-                
+
                 let guild_name = crate::models::constants::guild_name(&ctx, guild_id);
                 info!(
                   "{} Timeout {} after {}m",
@@ -108,7 +91,7 @@ impl QueueExpirationScheduler {
                   player_tag,
                   queue_expiration_minutes
                 );
-                
+
                 // Check if hot session dropped below quota
                 if session.is_hot() && session.pool.len() < format.quota as usize {
                   session.idle();
@@ -121,12 +104,12 @@ impl QueueExpirationScheduler {
               }
             }
           }
-          
+
           if should_update_dashboard {
             category.queue_dash_update(&ctx, guild_id).await;
           }
         }
-        
+
         if !removed {
           // Player was already removed (left queue, game started, etc.)
           // This is normal - the task just didn't get cancelled in time
@@ -147,11 +130,8 @@ impl QueueExpirationScheduler {
 
   /// Cancel all timeouts for a guild (e.g., when a game starts)
   pub fn cancel_all_for_guild(&mut self, guild_id: GI) {
-    let keys_to_remove: Vec<_> = self.tasks.keys()
-      .filter(|k| k.guild_id == guild_id)
-      .cloned()
-      .collect();
-    
+    let keys_to_remove: Vec<_> = self.tasks.keys().filter(|k| k.guild_id == guild_id).cloned().collect();
+
     for key in keys_to_remove {
       if let Some(handle) = self.tasks.remove(&key) {
         handle.abort();
@@ -160,14 +140,7 @@ impl QueueExpirationScheduler {
   }
 
   /// Reschedule a timeout with a new duration (e.g., when player changes their timeout setting)
-  pub fn reschedule_queue_expiration(
-    &mut self,
-    guild_id: GI,
-    category_id: u8,
-    format_id: u8,
-    player: Player,
-    new_expiration_duration_minutes: u8,
-  ) {
+  pub fn reschedule_queue_expiration(&mut self, guild_id: GI, category_id: u8, format_id: u8, player: Player, new_expiration_duration_minutes: u8) {
     self.schedule_queue_expiration(guild_id, category_id, format_id, player, new_expiration_duration_minutes);
   }
 }

@@ -1,17 +1,8 @@
-use serenity::all::{
-  ComponentInteraction as CI,
-  ModalInteraction as MI,
-  Context,
-  CreateActionRow as CAR,
-  CreateInteractionResponse as CIR,
-  CreateEmbed as CE,
-  GuildId as GI, RoleId as RoleId,
-  UserId as UI,
-  CreateInteractionResponseMessage as CIRM,
-  InputTextStyle as ITS,
-  CreateInputText as CIT
-};
 use anyhow::Result;
+use serenity::all::{
+  ComponentInteraction as CI, Context, CreateActionRow as CAR, CreateEmbed as CE, CreateInputText as CIT, CreateInteractionResponse as CIR,
+  CreateInteractionResponseMessage as CIRM, GuildId as GI, InputTextStyle as ITS, ModalInteraction as MI, RoleId, UserId as UI,
+};
 use tracing::error;
 
 #[macro_export]

@@ -7,9 +7,7 @@ use crate::models::embeds::Ephemeral;
 use crate::models::CommandContext as CC;
 use crate::{CYAN, GREEN, RED, YELLOW};
 use anyhow::Result;
-use serenity::all::{
-  ComponentInteraction as CX, Context, CreateActionRow as CAR, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM,
-};
+use serenity::all::{ComponentInteraction as CX, Context, CreateActionRow as CAR, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
 
 /// Common embed creation helpers
 pub struct EmbedHelpers;
@@ -197,7 +195,7 @@ impl InteractionHelpers {
       tracing::error!("Failed to send error response: {e}");
     }
   }
-  
+
   /// Send error response with embed for component interactions
   pub async fn send_component_error_embed(interaction: &CX, ctx: &Context, message: &str) {
     let embed = EmbedHelpers::error("Error", message);
@@ -206,7 +204,7 @@ impl InteractionHelpers {
       tracing::error!("Failed to send error response: {e}");
     }
   }
-  
+
   /// Send success response with embed for component interactions
   pub async fn send_component_success_embed(interaction: &CX, ctx: &Context, message: &str) {
     let embed = EmbedHelpers::success("Success", message);

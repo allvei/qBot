@@ -7,7 +7,7 @@ pub mod ansi {
   pub const RESET: &str = "\x1b[0m";
   pub const BOLD: &str = "\x1b[1m";
   pub const DIM: &str = "\x1b[2m";
-  
+
   // Colors
   pub const RED: &str = "\x1b[31m";
   pub const GREEN: &str = "\x1b[32m";
@@ -16,7 +16,7 @@ pub mod ansi {
   pub const MAGENTA: &str = "\x1b[35m";
   pub const CYAN: &str = "\x1b[36m";
   pub const WHITE: &str = "\x1b[37m";
-  
+
   // Bright colors
   pub const BRIGHT_RED: &str = "\x1b[91m";
   pub const BRIGHT_GREEN: &str = "\x1b[92m";
@@ -25,7 +25,7 @@ pub mod ansi {
   pub const BRIGHT_MAGENTA: &str = "\x1b[95m";
   pub const BRIGHT_CYAN: &str = "\x1b[96m";
   pub const BRIGHT_WHITE: &str = "\x1b[97m";
-  
+
   // Background colors
   pub const BG_RED: &str = "\x1b[41m";
   pub const BG_GREEN: &str = "\x1b[42m";
@@ -92,7 +92,7 @@ pub async fn log_queue_toggle(
   category_id: u8,
   format: &crate::models::Format,
   player: &crate::models::Player,
-  action: &str, // "joined" or "left"
+  action: &str,                            // "joined" or "left"
   rank_mismatch: Option<(String, String)>, // (old_rank, new_rank)
 ) -> Result<(), anyhow::Error> {
   // Get format info from database using guild_id, category_id, and format_id
@@ -116,10 +116,8 @@ pub async fn log_queue_toggle(
   // Get pool size from all joinable sessions (Idle + Hot) to show accurate count with concurrent games
   // For joins: log is called AFTER add, so pool already contains the player
   // For leaves: log is called AFTER remove, so pool no longer contains the player
-  let total_queued: usize = format.sessions.iter()
-    .filter(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot)
-    .map(|s| s.pool.len())
-    .sum();
+  let total_queued: usize =
+    format.sessions.iter().filter(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot).map(|s| s.pool.len()).sum();
   let pool_size = if total_queued > 0 || format.sessions.iter().any(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot) {
     Some((total_queued, format.quota as usize))
   } else {
@@ -129,20 +127,21 @@ pub async fn log_queue_toggle(
   // Calculate position based on actual player position in session
   let position = if action == "joined" {
     // For joins, find the player's actual position in the session after they would be added
-    format.sessions.iter()
+    format
+      .sessions
+      .iter()
       .find(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot)
       .and_then(|s| s.pool.iter().position(|p| p.player.user_id == player.user_id))
       .map(|pos| pos + 1)
       .unwrap_or_else(|| {
         // If not found (race condition), use pool length + 1 as fallback
-        format.sessions.iter()
-          .find(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot)
-          .map(|s| s.pool.len() + 1)
-          .unwrap_or(1)
+        format.sessions.iter().find(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot).map(|s| s.pool.len() + 1).unwrap_or(1)
       })
   } else {
     // For leaves, look up their current position before removal
-    format.sessions.iter()
+    format
+      .sessions
+      .iter()
       .find(|s| s.status == crate::models::SessionStatus::Idle || s.status == crate::models::SessionStatus::Hot)
       .and_then(|s| s.pool.iter().position(|p| p.player.user_id == player.user_id))
       .map(|pos| pos + 1)
@@ -181,18 +180,14 @@ pub fn log_queue_toggle_sync(
 
   let pos_part = if action != "left" { format!("#{} ", position) } else { String::new() };
   let prefix = log_prefix_format(guild_name, category_name, fmt_name.unwrap_or(""));
-  
-  let rank_suffix = if let Some((old_rank, new_rank)) = rank_mismatch {
-    format!(" Corrected rank from {} to {} in database", old_rank, new_rank)
-  } else {
-    String::new()
-  };
+
+  let rank_suffix = if let Some((old_rank, new_rank)) = rank_mismatch { format!(" Corrected rank from {} to {} in database", old_rank, new_rank) } else { String::new() };
 
   match (pool_size, source) {
     (Some((current, quota)), Some(src)) => info!("{} {}{} {} ({}) [{}/{}]{}", prefix, pos_part, tag, action, src, current, quota, rank_suffix),
-    (Some((current, quota)), None) =>      info!("{} {}{} {} [{}/{}]{}",      prefix, pos_part, tag, action, current, quota, rank_suffix),
-    (None, Some(src)) =>                   info!("{} {}{} {} ({}){}",         prefix, pos_part, tag, action, src, rank_suffix),
-    (None, None) =>                        info!("{} {}{} {}{}",              prefix, pos_part, tag, action, rank_suffix),
+    (Some((current, quota)), None) => info!("{} {}{} {} [{}/{}]{}", prefix, pos_part, tag, action, current, quota, rank_suffix),
+    (None, Some(src)) => info!("{} {}{} {} ({}){}", prefix, pos_part, tag, action, src, rank_suffix),
+    (None, None) => info!("{} {}{} {}{}", prefix, pos_part, tag, action, rank_suffix),
   }
 }
 

@@ -136,7 +136,14 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
 /// Flow: Create category -> Create dashboard -> Test message send -> Create other channels
 /// If dashboard message send fails, cleanup and abort
 /// Returns: (category_id, dashboard_id, queue_chat_id, queue_vc_id, ping_channel_id)
-pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name: &str, channel_prefix: &str, bot_only_dashboard: bool, runner_role: Option<RI>) -> Result<(CI, CI, CI, CI, CI)> {
+pub async fn create_category_channels(
+  ctx: &Context,
+  guild_id: GI,
+  category_name: &str,
+  channel_prefix: &str,
+  bot_only_dashboard: bool,
+  runner_role: Option<RI>,
+) -> Result<(CI, CI, CI, CI, CI)> {
   use serenity::all::{CreateChannel, CreateEmbed, CreateMessage, PermissionOverwrite, PermissionOverwriteType, Permissions};
 
   let guild = guild_id.to_partial_guild(&ctx.http).await?;
@@ -208,9 +215,7 @@ pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name
   let category_id = category.id;
 
   // Step 2: Create dashboard text channel with proper permissions
-  let mut dash_perms = vec![
-    PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Member(bot_user_id) },
-  ];
+  let mut dash_perms = vec![PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Member(bot_user_id) }];
   if let Some(role_id) = bot_role {
     dash_perms.push(PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Role(role_id) });
   }
@@ -225,10 +230,8 @@ pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name
     dash_perms.push(PermissionOverwrite { allow: Permissions::empty(), deny: everyone_deny, kind: PermissionOverwriteType::Role(guild_id.everyone_role()) });
   }
 
-  let dash_builder = CreateChannel::new(format!("{channel_prefix}-dashboard"))
-    .kind(ChannelType::Text)
-    .category(category_id)
-    .topic("PUG queue dashboard - use buttons to join/leave");
+  let dash_builder =
+    CreateChannel::new(format!("{channel_prefix}-dashboard")).kind(ChannelType::Text).category(category_id).topic("PUG queue dashboard - use buttons to join/leave");
 
   let dashboard_channel = match guild_id.create_channel(&ctx.http, dash_builder.clone().permissions(dash_perms)).await {
     Ok(ch) => ch,
@@ -292,9 +295,7 @@ pub async fn create_category_channels(ctx: &Context, guild_id: GI, category_name
   };
 
   // Step 5: Create ping channel with Runner-only send permissions
-  let mut ping_permissions = vec![
-    PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Member(bot_user_id) },
-  ];
+  let mut ping_permissions = vec![PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Member(bot_user_id) }];
   if let Some(role_id) = bot_role {
     ping_permissions.push(PermissionOverwrite { allow: bot_channel_perms, deny: Permissions::empty(), kind: PermissionOverwriteType::Role(role_id) });
   }
@@ -1624,17 +1625,17 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut QGuild, user_option: Opt
 
             if let Some(sg) = category.formats.get_mut(fmt_idx) {
               let quota = sg.quota as usize;
-              
+
               for session in &mut sg.sessions {
                 if !session.is_active() {
                   let initial_len = session.pool.len();
                   session.pool.retain(|p| p.player.user_id != user_id.get());
                   let removed_count = initial_len - session.pool.len();
-                  
+
                   if removed_count > 0 {
                     total_removed += removed_count;
                     removed_from_formats.push((fmt_idx, sg.name.clone()));
-                    
+
                     if session.is_hot() {
                       if session.pool.len() < quota {
                         // If this was a Hot session and now below quota, transition back to Idle
