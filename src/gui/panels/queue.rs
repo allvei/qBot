@@ -33,7 +33,17 @@ pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     ui.separator();
     for (g_idx, guild) in manager.qguilds.iter().enumerate() {
       let selected = g_idx == sel_guild;
-      let resp = ui.selectable_label(selected, &guild.name).on_hover_text(format!("ID: {}", guild.id.get()));
+      let has_active = guild.categories.iter().any(|cat| cat.formats.iter().any(|fmt| fmt.sessions.iter().any(|s| !s.is_idle())));
+      let has_queue = guild.categories.iter().any(|cat| cat.formats.iter().any(|fmt| fmt.sessions.iter().any(|s| s.is_idle() && !s.pool.is_empty())));
+      let text_color = if has_active {
+        egui::Color32::from_rgb(100, 220, 100) // green
+      } else if has_queue {
+        egui::Color32::from_rgb(255, 220, 80) // yellow
+      } else {
+        ui.visuals().text_color()
+      };
+      let label = egui::SelectableLabel::new(selected, egui::RichText::new(&guild.name).color(text_color));
+      let resp = ui.add(label).on_hover_text(format!("ID: {}", guild.id.get()));
       if resp.clicked() {
         sel_guild = g_idx;
       }
@@ -220,6 +230,11 @@ fn player_row(ui: &mut egui::Ui, sp: &crate::models::SessionPlayer, guild_id: u6
     }
     if ui.button("Fatkid (move to end)").clicked() {
       state.send_cmd(GuiCommand::FatkidPlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
+      ui.close_menu();
+    }
+    ui.separator();
+    if ui.button("Delete from database").on_hover_text("Remove from all queues in this guild and delete guild ELO record").clicked() {
+      state.send_cmd(GuiCommand::DeletePlayerFromDb { guild_id, user_id: uid });
       ui.close_menu();
     }
     ui.separator();
