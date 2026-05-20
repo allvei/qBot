@@ -4,7 +4,7 @@
 //! The Manager is responsible for managing multiple servers and their categories/games.
 
 use anyhow::{anyhow, Result};
-use serenity::all::{Cache, ChannelId as CI, GuildId as GI, UserId as UI};
+use serenity::all::{Cache, ChannelId as CI, Context, GuildId as GI, UserId as UI};
 use std::collections::HashMap;
 use std::time::SystemTime;
 
@@ -151,5 +151,23 @@ impl Manager {
     let now = SystemTime::now();
     let timeout = std::time::Duration::from_secs(300);
     self.active_score_submissions.retain(|_, (_, start_time)| start_time.elapsed().unwrap_or(timeout) < timeout);
+  }
+
+  /// Queue dashboard updates for every category that contains the player.
+  /// Returns the number of dashboards that were queued for update.
+  pub async fn queue_dash_updates_for_player(&mut self, ctx: &Context, guild_id: GI, user_id: UI) -> usize {
+    match self.get_qguild(guild_id) {
+      Ok(server) => {
+        let mut updated = 0;
+        for category in &mut server.categories {
+          if category.contains_player(user_id) {
+            category.queue_dash_update(ctx, guild_id).await;
+            updated += 1;
+          }
+        }
+        updated
+      }
+      Err(_) => 0,
+    }
   }
 }

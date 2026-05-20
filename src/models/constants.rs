@@ -23,8 +23,8 @@ pub const MAX_MATCH_SCORE: u8 = 2; // Maximum score per team in a match
 
 // Dynamic ELO configuration defaults
 pub const DYNAMIC_ELO_ANCHOR: f64 = 1500.0; // Target center point of the bell curve
-pub const DYNAMIC_ELO_K_CEILING: f64 = 300.0; // Maximum K-factor for brand new players (high volatility)
-pub const DYNAMIC_ELO_K_FLOOR: f64 = 30.0; // Minimum K-factor for established players (low volatility)
+pub const DYNAMIC_ELO_K_CEILING: f64 = 100.0; // Maximum K-factor for brand new players (high volatility)
+pub const DYNAMIC_ELO_K_FLOOR: f64 = 15.0; // Minimum K-factor for established players (low volatility)
 pub const DYNAMIC_ELO_DECAY_RATE: f64 = 0.4; // Exponential decay rate for K-factor
 pub const DYNAMIC_ELO_OFFSET_THRESHOLD: f64 = 50.0; // Trigger normalization correction if avg drifts by this many points
 pub const DYNAMIC_ELO_OFFSET_AMOUNT: f64 = 50.0; // The correction shift size when normalization triggers

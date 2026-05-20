@@ -379,6 +379,31 @@ impl Category {
     &mut self.formats[0].sessions
   }
 
+  /// Returns true if the player exists in any session across all formats
+  pub fn contains_player(&self, user_id: UI) -> bool {
+    self.formats.iter().any(|format| format.sessions.iter().any(|session| session.pool.iter().any(|player| player.player.user_id == user_id)))
+  }
+
+  /// Applies the closure to every occurrence of the player across all sessions.
+  /// Returns true if the player was found in at least one session.
+  pub fn for_each_player_mut<F>(&mut self, user_id: UI, mut f: F) -> bool
+  where
+    F: FnMut(&mut SessionPlayer),
+  {
+    let mut found = false;
+
+    for format in &mut self.formats {
+      for session in &mut format.sessions {
+        if let Some(session_player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+          f(session_player);
+          found = true;
+        }
+      }
+    }
+
+    found
+  }
+
   /// Quota of the default format (format 0)
   pub fn quota(&self) -> u8 {
     self.formats[0].quota
@@ -465,8 +490,7 @@ impl Category {
   }
 
   /// Delete any orphaned dynamic VCs left under the category from a previous bot run.
-  /// Also cleans up stale team VC pairs from `channels.teams`.
-  /// Only deletes channels that are tracked in the database as team channels.
+  /// Only deletes channel pairs that are empty; pairs with users are kept intact.
   pub async fn clean_orphaned_vcs(&mut self, ctx: &Context, db: &DB) {
     use serenity::all::ChannelType;
 
@@ -475,45 +499,12 @@ impl Category {
       return;
     }
 
-    // Static channel IDs that should never be deleted (excludes team VCs)
-    let static_ids = [self.channels.category, self.channels.queue_chat, self.channels.queue_vc, self.channels.dashboard];
-
     let guild = match ctx.cache.guild(self.guild_id) {
       Some(g) => g.clone(),
       None => return,
     };
 
-    // Delete team VCs from previous run in parallel (they are ephemeral)
-    let start_time = Instant::now();
-    let orphan_count = self.channels.teams.len() * 2; // Each pair has RED + BLU
-    let delete_tasks: Vec<_> = self
-      .channels
-      .teams
-      .iter()
-      .flat_map(|tc| [tc.red_vc, tc.blu_vc])
-      .filter(|vc_id| guild.channels.contains_key(vc_id))
-      .map(|vc_id| {
-        let http = ctx.http.clone();
-        let guild_name = guild.name.clone();
-        tokio::spawn(async move {
-          if let Err(e) = vc_id.delete(&http).await {
-            warn!("[{}] Failed to delete team VC {}: {}", guild_name, vc_id, e);
-          } else {
-            info!("[{}] Cleaned up orphaned team voice channel from previous run", guild_name);
-          }
-        })
-      })
-      .collect();
-
-    for task in delete_tasks {
-      let _ = task.await;
-    }
-    self.channels.teams.clear();
-    if orphan_count > 0 {
-      info!("[{}] Cleaned up {} orphaned team VCs", guild.name, orphan_count);
-    }
-
-    // Clean up orphaned database entries first
+    // Clean up orphaned database entries first (teams where channels no longer exist)
     let existing_channel_ids: Vec<CI> = guild.channels.values().filter(|c| c.kind == ChannelType::Voice).map(|c| c.id).collect();
 
     if let Ok(orphaned_db_teams) = db.teams.get_orphaned_teams(self.guild_id, &existing_channel_ids).await {
@@ -527,113 +518,60 @@ impl Category {
       }
     }
 
-    // Load tracked team channels from database
-    let tracked_teams = match db.teams.get_teams_for_category(self.guild_id, self.id).await {
-      Ok(teams) => teams,
-      Err(e) => {
-        warn!("Failed to load tracked team channels from database: {}", e);
-        return;
-      }
-    };
+    let mut surviving_teams = Vec::new();
+    let mut deleted_count = 0usize;
 
-    // Create a set of all tracked team channel IDs
-    let mut tracked_channel_ids = std::collections::HashSet::new();
-    for (red_vc, blu_vc) in &tracked_teams {
-      tracked_channel_ids.insert(*red_vc);
-      tracked_channel_ids.insert(*blu_vc);
-    }
+    for team in &self.channels.teams {
+      let red_exists = guild.channels.contains_key(&team.red_vc);
+      let blu_exists = guild.channels.contains_key(&team.blu_vc);
 
-    // Collect channels to delete and users to move
-    let queue_vc_id = guild.channels.get(&self.channels.queue_vc).map(|c| c.id);
-    let mut channels_to_delete: Vec<(CI, String)> = Vec::new();
-    let mut users_to_move: Vec<(UI, CI)> = Vec::new();
-
-    for channel in guild.channels.values() {
-      if channel.kind != ChannelType::Voice {
-        continue;
-      }
-      if channel.parent_id != Some(category_id) {
-        continue;
-      }
-      if static_ids.contains(&channel.id) {
-        continue;
-      }
-      // IMPORTANT: Only delete if it's tracked in the database as a team channel
-      if !tracked_channel_ids.contains(&channel.id) {
-        info!("[{}] Skipping untracked VC: {} (not in database)", guild.name, channel.name);
+      if !red_exists && !blu_exists {
+        // Both channels are gone - DB already cleaned up by get_orphaned_teams above
         continue;
       }
 
-      info!("[{}] Cleaning up tracked team voice channel: {}", guild.name, channel.name);
-      channels_to_delete.push((channel.id, channel.name.clone()));
+      // Check if users are currently in either channel
+      let red_occupied = guild.voice_states.values().any(|vs| vs.channel_id == Some(team.red_vc));
+      let blu_occupied = guild.voice_states.values().any(|vs| vs.channel_id == Some(team.blu_vc));
+      let has_users = red_occupied || blu_occupied;
 
-      // Collect users to move back to queue VC
-      if let Some(queue_vc) = queue_vc_id {
-        let members_in_vc: Vec<_> = guild.voice_states.iter().filter(|(_, vs)| vs.channel_id == Some(channel.id)).map(|(uid, _)| *uid).collect();
-        for user_id in members_in_vc {
-          users_to_move.push((user_id, queue_vc));
-        }
+      if has_users {
+        info!("[{}] Keeping team channel pair with active users: set {}", guild.name, team.set_index);
+        surviving_teams.push(team.clone());
+        continue;
       }
-    }
 
-    // Move all users in parallel first
-    if !users_to_move.is_empty() {
-      let start_time = Instant::now();
-      let user_count = users_to_move.len();
-      use serenity::all::EditMember;
-      let move_tasks: Vec<_> = users_to_move
-        .into_iter()
-        .map(|(user_id, queue_vc)| {
-          let http = ctx.http.clone();
-          let gid = guild.id;
-          tokio::spawn(async move {
-            match http.edit_member(gid, user_id, &EditMember::new().voice_channel(queue_vc), Some("Moving user back to queue VC during cleanup")).await {
-              Ok(_) => info!("Moved user {} back to queue VC during team VC cleanup", user_id),
-              Err(e) => warn!("Failed to move user {} back to queue VC: {}", user_id, e),
-            }
-          })
-        })
-        .collect();
-
-      for task in move_tasks {
-        let _ = task.await;
-      }
-      info!("[{}] Moved {} users back to queue VC", guild.name, user_count);
-    }
-
-    // Delete all channels in parallel
-    let start_time = Instant::now();
-    let delete_count = channels_to_delete.len();
-    let delete_tasks: Vec<_> = channels_to_delete
-      .iter()
-      .map(|(channel_id, channel_name)| {
-        let http = ctx.http.clone();
-        let cid = *channel_id;
-        let cname = channel_name.clone();
-        tokio::spawn(async move {
-          let result = cid.delete(&http).await;
-          (cid, cname, result)
-        })
-      })
-      .collect();
-
-    for task in delete_tasks {
-      if let Ok((channel_id, channel_name, result)) = task.await {
-        if let Err(e) = result {
+      // No users - safe to delete the pair
+      if red_exists {
+        if let Err(e) = team.red_vc.delete(&ctx.http).await {
           if !e.to_string().contains("Unknown Channel") {
-            warn!("Failed to delete tracked team VC {} ({}): {}", channel_name, channel_id, e);
-          }
-        } else {
-          // Remove from database after successful deletion
-          let guild_name = guild.name.clone();
-          if let Err(e) = db.teams.remove_team(self.guild_id, channel_id, CI::new(0), &guild_name, &self.name()).await {
-            warn!("Failed to remove team channel from database: {}", e);
+            warn!("[{}] Failed to delete RED team VC {}: {}", guild.name, team.red_vc, e);
+            surviving_teams.push(team.clone());
+            continue;
           }
         }
       }
+      if blu_exists {
+        if let Err(e) = team.blu_vc.delete(&ctx.http).await {
+          if !e.to_string().contains("Unknown Channel") {
+            warn!("[{}] Failed to delete BLU team VC {}: {}", guild.name, team.blu_vc, e);
+            surviving_teams.push(team.clone());
+            continue;
+          }
+        }
+      }
+
+      if let Err(e) = db.teams.remove_team(self.guild_id, team.red_vc, team.blu_vc, &guild.name, &self.name()).await {
+        warn!("[{}] Failed to remove team pair {} from database: {}", guild.name, team.set_index, e);
+      }
+
+      deleted_count += 1;
     }
-    if delete_count > 0 {
-      info!("[{}] Deleted {} tracked team VCs", guild.name, delete_count);
+
+    self.channels.teams = surviving_teams;
+
+    if deleted_count > 0 {
+      info!("[{}] Cleaned up {} empty team VC pairs on startup", guild.name, deleted_count);
     }
   }
 
@@ -1107,6 +1045,16 @@ impl Category {
     occupied
   }
 
+  /// Returns true if any users are currently connected to the given voice channel in Discord.
+  pub fn has_players_in_vc(&self, ctx: &Context, channel_id: CI) -> bool {
+    ctx.cache.guild(self.guild_id).map(|g| g.voice_states.values().any(|vs| vs.channel_id == Some(channel_id))).unwrap_or(false)
+  }
+
+  /// Returns true if any users are currently in either channel of a team pair.
+  pub fn has_players_in_team(&self, ctx: &Context, team: &TeamChannel) -> bool {
+    self.has_players_in_vc(ctx, team.red_vc) || self.has_players_in_vc(ctx, team.blu_vc)
+  }
+
   /// Ensure at least one free team VC pair exists under the category.
   /// Called at the lifecycle point determined by `team_vc_settings.create_policy`.
   /// Returns the newly created pair, or None if a free pair already exists.
@@ -1189,7 +1137,18 @@ impl Category {
   /// When `force` is false, `keep_minimum` is respected (preserving at least one free pair).
   pub async fn cleanup_team_vcs(&mut self, ctx: &Context, force: bool) {
     // Collect occupied pairs from active sessions across all formats
-    let occupied: Vec<TeamChannel> = self.all_occupied_teams();
+    let session_occupied: Vec<TeamChannel> = self.all_occupied_teams();
+
+    // Also check Discord voice states - any pair with actual users is occupied
+    let discord_occupied: Vec<TeamChannel> = self.channels.teams.iter().filter(|tc| self.has_players_in_team(ctx, tc)).cloned().collect();
+
+    // Merge both occupied sets
+    let mut occupied = session_occupied;
+    for tc in &discord_occupied {
+      if !occupied.iter().any(|o| o.red_vc == tc.red_vc && o.blu_vc == tc.blu_vc) {
+        occupied.push(tc.clone());
+      }
+    }
 
     // Partition into occupied and free
     let (keep, mut removable): (Vec<_>, Vec<_>) = self.channels.teams.iter().cloned().partition(|t| occupied.iter().any(|o| o.red_vc == t.red_vc && o.blu_vc == t.blu_vc));
