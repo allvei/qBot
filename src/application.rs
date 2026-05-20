@@ -24,7 +24,7 @@ use crate::models::server::QueueContext;
 use crate::repo::GuildRepository;
 use crate::{
   guild_name, log_prefix_category, log_prefix_format, log_queue_toggle, ButtonType, Category, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database,
-  DmMessageTracker, DmTrackerKey, Manager, QGuild, Roles, SessionStatus, VoiceStateUpdate, RED,
+  DmMessageTracker, DmTrackerKey, Manager, Player, QGuild, Roles, SessionStatus, VoiceStateUpdate, RED,
 };
 
 // Helper macros and functions that need to be available
@@ -98,6 +98,8 @@ pub struct Application {
   pub dashboard_queue: Arc<Mutex<Option<DashboardUpdateQueue>>>,
   pub cmd_rx: Option<mpsc::Receiver<GuiCommand>>,
   pub latest_manager: Option<Arc<tokio::sync::RwLock<Option<Manager>>>>,
+  pub user_search_results: Option<Arc<tokio::sync::RwLock<Vec<Player>>>>,
+  pub user_guild_data: Option<Arc<tokio::sync::RwLock<Vec<(u64, crate::db::repo::GuildElo)>>>>,
   pub gui_shutdown_rx: Option<oneshot::Receiver<()>>,
 }
 
@@ -116,7 +118,7 @@ impl Application {
     // Initialize dashboard queue
     let dashboard_queue = Arc::new(Mutex::new(None));
 
-    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None, gui_shutdown_rx: None })
+    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None, user_search_results: None, user_guild_data: None, gui_shutdown_rx: None })
   }
 
   /// Initialize the application with pre-created manager and db (for GUI integration)
@@ -124,7 +126,7 @@ impl Application {
     // Initialize dashboard queue
     let dashboard_queue = Arc::new(Mutex::new(None));
 
-    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None, gui_shutdown_rx: None })
+    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None, user_search_results: None, user_guild_data: None, gui_shutdown_rx: None })
   }
 
   /// Set the command receiver for GUI commands
@@ -136,6 +138,18 @@ impl Application {
   /// Set the latest_manager snapshot target for GUI
   pub fn with_latest_manager(mut self, latest_manager: Arc<tokio::sync::RwLock<Option<Manager>>>) -> Self {
     self.latest_manager = Some(latest_manager);
+    self
+  }
+
+  /// Set the user search results target for GUI
+  pub fn with_user_search_results(mut self, user_search_results: Arc<tokio::sync::RwLock<Vec<Player>>>) -> Self {
+    self.user_search_results = Some(user_search_results);
+    self
+  }
+
+  /// Set the user guild data target for GUI
+  pub fn with_user_guild_data(mut self, user_guild_data: Arc<tokio::sync::RwLock<Vec<(u64, crate::db::repo::GuildElo)>>>) -> Self {
+    self.user_guild_data = Some(user_guild_data);
     self
   }
 
@@ -193,6 +207,8 @@ impl Application {
       let shutdown_flag_cmd = shutdown_flag.clone();
       // Clone refs so the command task can update the snapshot and refresh the Discord dashboard
       let latest_manager_cmd = self.latest_manager.clone();
+      let user_search_results_cmd = self.user_search_results.clone();
+      let user_guild_data_cmd = self.user_guild_data.clone();
       let dashboard_queue_cmd = self.dashboard_queue.clone();
 
       tokio::spawn(async move {
@@ -207,12 +223,24 @@ impl Application {
             cmd = cmd_rx.recv() => {
               match cmd {
                 Some(command) => {
-                  let snapshot = {
+                  let (snapshot, affected_guild) = {
                     let mut manager_lock = manager.lock().await;
-                    if let Err(e) = command_handler::handle_command(command, &mut manager_lock, &db).await {
-                      error!("Error handling GUI command: {}", e);
-                    }
-                    manager_lock.clone() // snapshot taken while lock is still held
+                    let affected_guild = match command_handler::handle_command(
+                      command,
+                      &mut manager_lock,
+                      &db,
+                      user_search_results_cmd.clone().unwrap_or_default(),
+                      user_guild_data_cmd.clone().unwrap_or_default(),
+                    )
+                    .await
+                    {
+                      Ok(guild_id) => guild_id,
+                      Err(e) => {
+                        error!("Error handling GUI command: {}", e);
+                        None
+                      }
+                    };
+                    (manager_lock.clone(), affected_guild) // snapshot taken while lock is still held
                   };
 
                   // Immediately push updated state to the GUI
@@ -220,9 +248,12 @@ impl Application {
                     *lm.write().await = Some(snapshot);
                   }
 
-                  // Trigger Discord dashboard refresh for all categories
-                  if let Some(ref queue) = *dashboard_queue_cmd.lock().await {
-                    queue.request_update_all_deferred();
+                  // Trigger Discord dashboard refresh for affected guild only
+                  if let Some(guild_id) = affected_guild {
+                    if let Some(ref queue) = *dashboard_queue_cmd.lock().await {
+                      let manager_lock = manager.lock().await;
+                      queue.request_update_guild(&manager_lock, GuildId::new(guild_id));
+                    }
                   }
                 }
                 None => break, // Channel closed
@@ -919,58 +950,51 @@ impl EventHandler for Handler {
         let guild_id = itx.guild_id.unwrap();
         let channel_id = itx.channel_id;
 
-        // Handle dashboard button interaction - use a closure to scope the manager lock
-        // This prevents deadlock because dash_handle_button_interaction also tries to lock the manager
-        let result = {
+        // Clone the category out of the manager so the lock can be released before the handler runs.
+        // The handler does async HTTP/DB work and also re-locks the manager internally, so holding
+        // the lock across it causes deadlocks and blocks every other interaction.
+        let mut category = {
           let mut manager = self.manager.lock().await;
 
-          let category = match manager.get_category_by_channel(guild_id, channel_id) {
-            Ok(category) => category,
+          match manager.get_category_by_channel(guild_id, channel_id) {
+            Ok(category) => category.clone(),
             Err(_) => {
               // Category not in manager - try to recover from database
               let guild_name = guild_name(&ctx, guild_id);
               let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{channel_id}"));
               info!("[{}] Category not found in manager for #{}, attempting recovery from database", guild_name, channel_name);
 
-              // Get the message ID from the interaction
               let message_id = itx.message.id;
-              let guild_id_u64 = guild_id;
               let channel_id_u64 = channel_id.get();
-              let message_id_u64 = message_id.get();
 
-              // Load categories from database for this guild
               let category_repo = CategoryRepository::new(self.db.pool().clone());
-              match category_repo.get_categories_for_guild(guild_id_u64).await {
+              match category_repo.get_categories_for_guild(guild_id).await {
                 Ok(categories) => {
-                  // Find the category that matches this dashboard channel
                   if let Some(mut recovered_category) = categories.into_iter().find(|g| g.channels.dashboard.get() == channel_id_u64) {
                     info!("[{}] Found category in database for #{}", guild_name, channel_name);
 
-                    // Update the dashboard message ID in the database
-                    if let Err(e) = category_repo.update_dashboard_msg(guild_id_u64, channel_id_u64, message_id_u64).await {
+                    if let Err(e) = category_repo.update_dashboard_msg(guild_id, channel_id_u64, message_id.get()).await {
                       error!("[{}] Failed to update dashboard message ID: {}", guild_name, e);
                     } else {
                       info!("[{}] Updated dashboard message ID in database", guild_name);
-                      // Update the in-memory category too
                       recovered_category.dashboard_msg = message_id;
                     }
 
-                    // Add the recovered category to the manager
-                    let server = manager.get_qguild(guild_id);
-                    if let Ok(server) = server {
-                      if let Err(e) = server.add_category(recovered_category) {
-                        error!("[{}] Failed to add recovered category: {}", guild_name, e);
-                      } else {
-                        info!("[{}] Recovered category added to manager", guild_name);
+                    match manager.get_qguild(guild_id) {
+                      Ok(server) => {
+                        if let Err(e) = server.add_category(recovered_category.clone()) {
+                          error!("[{}] Failed to add recovered category: {}", guild_name, e);
+                        } else {
+                          info!("[{}] Recovered category added to manager", guild_name);
+                        }
+                        recovered_category
                       }
-
-                      // Now get the category from the manager
-                      manager.get_category_by_channel(guild_id, channel_id).unwrap()
-                    } else {
-                      error!("[{}] Could not get server from manager", guild_name);
-                      drop(manager);
-                      InteractionHelpers::send_component_error_embed(itx, &ctx, "Dashboard state was lost.").await;
-                      return;
+                      Err(_) => {
+                        error!("[{}] Could not get server from manager", guild_name);
+                        drop(manager);
+                        InteractionHelpers::send_component_error_embed(itx, &ctx, "Dashboard state was lost.").await;
+                        return;
+                      }
                     }
                   } else {
                     error!("[{}] No category found in database for #{}", guild_name, channel_name);
@@ -987,15 +1011,26 @@ impl EventHandler for Handler {
                 }
               }
             }
-          };
-
-          let comp_ctx = ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
-
-          debug!("Handling button interaction: '{}' | User: {} | Message: {} | Token: {:?}", itx.data.custom_id, itx.user.id, itx.message.id, itx.token);
-
-          // Call the handler - manager lock is dropped after this scope ends
-          category.dash_handle_button_interaction(&comp_ctx).await
+          }
+          // manager lock released here
         };
+
+        let comp_ctx = ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
+
+        debug!("Handling button interaction: '{}' | User: {} | Message: {} | Token: {:?}", itx.data.custom_id, itx.user.id, itx.message.id, itx.token);
+
+        // Run the handler without holding the manager lock
+        let result = category.dash_handle_button_interaction(&comp_ctx).await;
+
+        // Write the updated category state back into the manager
+        {
+          let mut manager = self.manager.lock().await;
+          if let Ok(server) = manager.get_qguild(guild_id) {
+            if let Some(existing) = server.categories.iter_mut().find(|c| c.contains_channel(channel_id)) {
+              *existing = category;
+            }
+          }
+        }
 
         if let Err(e) = result {
           error!(
@@ -1057,7 +1092,7 @@ impl EventHandler for Handler {
         }
         // Handle modal submissions for score reporting
         if itx.data.custom_id.starts_with("report_score_modal") {
-          let result = self.handle_report_score_modal(&ctx, &itx).await;
+          let result = self.handle_report_score_ephemeral(&ctx, &itx).await;
           if let Err(e) = result {
             error!("Error handling report score modal: {}", e);
           }
@@ -1406,16 +1441,13 @@ impl Handler {
               // Player not found in pool, use post_game_auto_leave setting
               self.db.config.get_bool(guild_id, "post_game_auto_leave", true).await.unwrap_or(true)
             }
-          } else if sesh.is_hot() {
-            // Hot game behavior: check user's vc_auto_leave preference
+          } else {
+            // Idle or hot session: check user's vc_leave_queue preference
             if let Ok(settings) = self.db.players.get_prefs(user_id).await {
-              settings.vc_auto_leave
+              settings.vc_leave_queue
             } else {
               false
             }
-          } else {
-            // Regular idle session: don't auto-remove
-            false
           }
         }
       };
@@ -1590,7 +1622,7 @@ impl Handler {
   }
 
   /// Handle report score modal submission
-  async fn handle_report_score_modal(&self, ctx: &Context, interaction: &serenity::all::ModalInteraction) -> Result<(), anyhow::Error> {
+  async fn handle_report_score_ephemeral(&self, ctx: &Context, interaction: &serenity::all::ModalInteraction) -> Result<(), anyhow::Error> {
     use serenity::all::{CreateInteractionResponse, CreateInteractionResponseMessage};
 
     // Parse category_id and format_id from modal custom_id (format: report_score_modal_CATID_FMTID)
@@ -1715,6 +1747,16 @@ impl Handler {
     // Send ephemeral confirmation
     let response = CreateInteractionResponse::Message(CreateInteractionResponseMessage::new().content("Score reported successfully!").ephemeral(true));
     interaction.create_response(&ctx.http, response).await?;
+
+    // Update dashboard after score reporting
+    if let Some(cat_id) = category_id {
+      let mut mgr = self.manager.lock().await;
+      if let Ok(server) = mgr.get_qguild(guild_id) {
+        if let Some(category) = server.categories.iter_mut().find(|c| c.id == cat_id as u8) {
+          category.queue_dash_update(ctx, guild_id).await;
+        }
+      }
+    }
 
     Ok(())
   }
