@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serenity::all::{GuildId as GI, UserId as UI};
+use serenity::all::{GuildId as GI, RoleId, UserId as UI};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use crate::{db::helpers::RowHelpers, Rank};
@@ -27,10 +27,10 @@ impl GuildElo {
     // Extract last_game_timestamp (nullable column)
     let last_game_timestamp: Option<i64> = row.try_get::<Option<i64>, _>("last_game_timestamp").unwrap_or(None);
 
-    // Extract rank data
+    // Extract rank data (use default if missing)
     let rank = match RowHelpers::extract_rank_data(row, guild_id)? {
       Some(rank) => rank,
-      None => return Ok(None), // Incomplete rank data
+      None => Rank { guild_id, role_id: RoleId::new(0), name: "Unranked".to_string(), elo: 0 },
     };
 
     Ok(Some(GuildElo { elo, dynamic_elo, rank, games, wins, last_game_timestamp }))
@@ -71,10 +71,10 @@ impl SkillTier {
   /// Tiers are evenly spaced at ±100 and ±300 from the anchor.
   pub fn initial_elo(self, anchor: f64) -> u16 {
     let offset: f64 = match self {
-      Self::Beginner => -300.0,
-      Self::Intermediate => -100.0,
-      Self::Expert => 100.0,
-      Self::Veteran => 300.0,
+      Self::Beginner => -600.0,
+      Self::Intermediate => -300.0,
+      Self::Expert => 300.0,
+      Self::Veteran => 600.0,
     };
     (anchor + offset).clamp(0.0, u16::MAX as f64) as u16
   }
@@ -466,6 +466,12 @@ impl EloRepository {
         Ok((rank_min_elo, true))
       }
     }
+  }
+
+  /// Delete a player's ELO record for a specific guild
+  pub async fn delete_for_guild(&self, user_id: UI, guild_id: GI) -> Result<()> {
+    sqlx::query("DELETE FROM elo WHERE guild_id = ? AND user_id = ?").bind(guild_id.get() as i64).bind(user_id.get() as i64).execute(&self.pool).await?;
+    Ok(())
   }
 
   /// Set or update only the dynamic ELO value
