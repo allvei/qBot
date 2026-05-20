@@ -17,13 +17,28 @@ use crate::models::{Category, ComponentContext, DashboardQueueKey, Session, Sess
 // Helper methods to reduce code duplication
 
 /// Format team display for embed fields
-async fn format_team_display(embed: serenity::all::CreateEmbed, pool: &[crate::models::SessionPlayer], label: &str, hide_elo: bool) -> serenity::all::CreateEmbed {
+async fn format_team_display(
+  embed: serenity::all::CreateEmbed,
+  pool: &[crate::models::SessionPlayer],
+  label: &str,
+  hide_elo: bool,
+  dynamic_elo_active: bool,
+) -> serenity::all::CreateEmbed {
   if pool.is_empty() {
     return embed;
   }
 
-  let formatted_players: Vec<_> =
-    pool.iter().map(|p| if hide_elo { format!("<@{}>", p.player.user_id) } else { format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id) }).collect();
+  let formatted_players: Vec<_> = pool
+    .iter()
+    .map(|p| {
+      if hide_elo {
+        format!("<@{}>", p.player.user_id)
+      } else {
+        let elo = if dynamic_elo_active { p.player.dynamic_elo.unwrap_or(p.player.elo) } else { p.player.elo };
+        format!("‹**{}**› <@{}>", elo, p.player.user_id)
+      }
+    })
+    .collect();
 
   embed.field(format!("{} ({})", label, pool.len()), formatted_players.join("\n"), false)
 }
@@ -57,18 +72,19 @@ struct TeamDisplay {
   red: Vec<crate::models::SessionPlayer>,
   blu: Vec<crate::models::SessionPlayer>,
   hide_elo: bool,
+  dynamic_elo_active: bool,
 }
 
 impl TeamDisplay {
   /// Create new team display from sorted teams
-  fn new(red: Vec<crate::models::SessionPlayer>, blu: Vec<crate::models::SessionPlayer>, hide_elo: bool) -> Self {
-    Self { red, blu, hide_elo }
+  fn new(red: Vec<crate::models::SessionPlayer>, blu: Vec<crate::models::SessionPlayer>, hide_elo: bool, dynamic_elo_active: bool) -> Self {
+    Self { red, blu, hide_elo, dynamic_elo_active }
   }
 
   /// Build team field headers with average ELO
   fn build_headers(&self) -> (String, String) {
-    let red_header = if self.hide_elo { "🔴 RED".to_string() } else { format!("‹**{}**› 🔴 RED", get_avg_elo(&self.red)) };
-    let blu_header = if self.hide_elo { "🔵 BLU".to_string() } else { format!("‹**{}**› 🔵 BLU", get_avg_elo(&self.blu)) };
+    let red_header = if self.hide_elo { "🔴 RED".to_string() } else { format!("‹**{}**› 🔴 RED", get_avg_elo(&self.red, self.dynamic_elo_active)) };
+    let blu_header = if self.hide_elo { "🔵 BLU".to_string() } else { format!("‹**{}**› 🔵 BLU", get_avg_elo(&self.blu, self.dynamic_elo_active)) };
     (red_header, blu_header)
   }
 
@@ -85,18 +101,27 @@ impl TeamDisplay {
 }
 
 /// Helper function to calculate average ELO for a team
-fn get_avg_elo(team: &[crate::models::SessionPlayer]) -> f64 {
-  (team.iter().map(|p| p.player.elo as f64).sum::<f64>() / team.len() as f64 * 10.0).round() / 10.0
+fn get_avg_elo(team: &[crate::models::SessionPlayer], dynamic_elo_active: bool) -> f64 {
+  let sum: f64 = team
+    .iter()
+    .map(|p| {
+      let elo = if dynamic_elo_active { p.player.dynamic_elo.unwrap_or(p.player.elo) } else { p.player.elo };
+      elo as f64
+    })
+    .sum();
+  (sum / team.len() as f64 * 10.0).round() / 10.0
 }
 
 /// Helper function to format team players as a string for embed fields
-async fn format_team_field(team: &[crate::models::SessionPlayer], _db: &crate::Database, _guild_id: GI, hide_elo: bool) -> String {
+async fn format_team_field(team: &[crate::models::SessionPlayer], db: &crate::Database, guild_id: GI, hide_elo: bool) -> String {
+  let dynamic_elo_active = db.config.get_active_elo(guild_id).await.unwrap_or(false);
   let mut lines = Vec::new();
   for player in team {
     if hide_elo {
       lines.push(format!("<@{}>", player.player.user_id));
     } else {
-      lines.push(format!("‹**{}**› <@{}>", player.player.elo, player.player.user_id));
+      let elo = if dynamic_elo_active { player.player.dynamic_elo.unwrap_or(player.player.elo) } else { player.player.elo };
+      lines.push(format!("‹**{}**› <@{}>", elo, player.player.user_id));
     }
   }
   lines.join("\n")
@@ -410,6 +435,7 @@ impl Category {
     let confirm_time_seconds = self.confirm_time as u64;
     let post_game_confirm_time = db.config.get_post_game_confirm_time(guild_id).await.unwrap_or(120) as u64;
     let hide_elo = db.config.get_bool(guild_id, "hide_elo", false).await.unwrap_or(false);
+    let dynamic_elo_active = db.config.get_active_elo(guild_id).await.unwrap_or(false);
     let has_multiple = self.formats.len() > 1;
 
     let mut embed = CE::new().title(self.name());
@@ -444,7 +470,7 @@ impl Category {
 
         if session.pool.len() >= quota {
           let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
-          embed = TeamDisplay::new(team_red, team_blu, hide_elo).add_to_embed(embed, db, guild_id).await;
+          embed = TeamDisplay::new(team_red, team_blu, hide_elo, dynamic_elo_active).add_to_embed(embed, db, guild_id).await;
         }
       }
 
@@ -470,7 +496,8 @@ impl Category {
             if hide_elo {
               hot_info.push_str(&format!("  • <@{}>\n", player.player.user_id));
             } else {
-              hot_info.push_str(&format!("  • ‹**{}**› <@{}>\n", player.player.elo, player.player.user_id));
+              let elo = if dynamic_elo_active { player.player.dynamic_elo.unwrap_or(player.player.elo) } else { player.player.elo };
+              hot_info.push_str(&format!("  • ‹**{}**› <@{}>\n", elo, player.player.user_id));
             }
           }
         } else if !session.pool.is_empty() {
@@ -481,7 +508,7 @@ impl Category {
 
         if session.pool.len() >= quota {
           let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
-          embed = TeamDisplay::new(team_red, team_blu, hide_elo).add_to_embed(embed, db, guild_id).await;
+          embed = TeamDisplay::new(team_red, team_blu, hide_elo, dynamic_elo_active).add_to_embed(embed, db, guild_id).await;
 
           // Overflow players in the hot session
           if session.pool.len() > quota {
@@ -490,7 +517,14 @@ impl Category {
               .pool
               .iter()
               .skip(quota)
-              .map(|p| if hide_elo { format!("<@{}>", p.player.user_id) } else { format!("‹**{}**› <@{}>", p.player.elo, p.player.user_id) })
+              .map(|p| {
+                if hide_elo {
+                  format!("<@{}>", p.player.user_id)
+                } else {
+                  let elo = if dynamic_elo_active { p.player.dynamic_elo.unwrap_or(p.player.elo) } else { p.player.elo };
+                  format!("‹**{}**› <@{}>", elo, p.player.user_id)
+                }
+              })
               .collect();
             embed = embed.field(format!("Waiting for next game ({overflow_count}/{quota})"), fatkid.join("\n"), false);
           }
@@ -503,7 +537,7 @@ impl Category {
 
         if queue_players > 0 && (has_concurrent || !live_sessions.is_empty()) {
           // There are active/hot games — show idle players as waiting for next game
-          embed = format_team_display(embed, &idle_session.pool, "Waiting for next game", hide_elo).await;
+          embed = format_team_display(embed, &idle_session.pool, "Waiting for next game", hide_elo, dynamic_elo_active).await;
         } else if queue_players == 0 && live_sessions.is_empty() && hot_sessions.is_empty() {
           // No games at all — show empty queue
           embed = add_waiting_field(embed, &fmt_label, 0, quota, "*Join to get started!*");
@@ -513,7 +547,8 @@ impl Category {
           let mut timers_field = String::new();
 
           for player in idle_session.pool.iter() {
-            let elo_str = if hide_elo { String::new() } else { format!("‹**{}**› ", player.player.elo) };
+            let elo_to_display = if dynamic_elo_active { player.player.dynamic_elo.unwrap_or(player.player.elo) } else { player.player.elo };
+            let elo_str = if hide_elo { String::new() } else { format!("‹**{}**› ", elo_to_display) };
             players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
 
             if let Some((game_guild_id, fmt_name)) = in_game_players.get(&player.player.user_id) {
@@ -698,18 +733,6 @@ impl Category {
     // Note: This function is deprecated and should not be called directly
     // Use the dashboard queue processor which has access to db and guild_id
     Err(anyhow!("dash_update requires db and guild_id - use dashboard queue"))
-  }
-
-  /// Queue dashboard updates for all categories across all servers (non-blocking, batched)
-  /// Used when game state changes (live/end) affect in-game status on other dashboards
-  pub async fn queue_dash_update_all(&self, ctx: &Context) -> Result<(), Error> {
-    let data = ctx.data.read().await;
-    if let Some(queue) = data.get::<DashboardQueueKey>() {
-      queue.lock().await.request_update_all_deferred();
-      Ok(())
-    } else {
-      Err(anyhow!("Dashboard queue not initialized in Context"))
-    }
   }
 
   /// Queue a dashboard update (non-blocking, batched)
@@ -1072,8 +1095,7 @@ impl Category {
     match self.push_fmt(fmt_id, cc.ctx, cc.component.guild_id.unwrap(), &cc.db, Some(cc.manager.clone())).await {
       Ok(_) => {
         info!("Players moved to team channels and game is now live");
-        // Update all dashboards to reflect in-game status for match players
-        self.queue_dash_update_all(cc.ctx).await;
+        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
         Ok(())
       }
       Err(e) => {
@@ -1159,9 +1181,23 @@ impl Category {
       return Ok(());
     }
 
-    // NOTE: The caller (application.rs) holds the manager lock, so we cannot lock here.
-    // The "active score submission" tracking is handled at a higher level to prevent deadlocks.
-    // This means concurrent end-match attempts may race, but the score_reported flag prevents double-ending.
+    // Check if someone is already submitting a score for this match
+    {
+      let mgr = cc.manager.lock().await;
+      if let Some(submitting_user_id) = mgr.get_active_score_submission(guild_id, category_id, format_id) {
+        if submitting_user_id != cc.component.user.id {
+          let submitting_user_tag = crate::log::get_user_tag(cc.ctx, submitting_user_id, &cc.db).await;
+          cc.reply_ephemeral(&format!("{} started reporting this match already", submitting_user_tag)).await?;
+          return Ok(());
+        }
+      }
+    }
+
+    // Mark this user as submitting
+    {
+      let mut mgr = cc.manager.lock().await;
+      mgr.set_active_score_submission(guild_id, category_id, format_id, cc.component.user.id);
+    }
 
     let guild_name_str = guild_name(cc.ctx, guild_id);
     let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
@@ -1221,9 +1257,12 @@ impl Category {
     match self.pull_fmt(format_id, cc.ctx, guild_id, &cc.db, None).await {
       Ok(_) => {
         info!("{} Match ended with {}", log_prefix_category(&guild_name_str, &category_name), result_text);
-        self.queue_dash_update_all(cc.ctx).await;
+        self.queue_dash_update(cc.ctx, guild_id).await;
 
-        // Note: active score submission tracking cleared by caller to avoid deadlock
+        {
+          let mut mgr = cc.manager.lock().await;
+          mgr.clear_active_score_submission(guild_id, category_id, format_id);
+        }
 
         let result_color = match *result {
           "red" => crate::RED,
@@ -1238,7 +1277,10 @@ impl Category {
       Err(e) => {
         error!("Failed to end match: {e}");
 
-        // Note: active score submission tracking cleared by caller to avoid deadlock
+        {
+          let mut mgr = cc.manager.lock().await;
+          mgr.clear_active_score_submission(guild_id, category_id, format_id);
+        }
 
         let embed = CE::new().title("Failed to end match").description(format!("Error: {}", e)).color(0xFF0000);
 
@@ -1782,6 +1824,15 @@ impl DashboardUpdateQueue {
     }
   }
 
+  /// Request dashboard updates for all categories in a specific guild
+  pub fn request_update_guild(&self, manager: &crate::models::Manager, guild_id: GI) {
+    if let Some(srv) = manager.qguilds.iter().find(|s| s.id == guild_id) {
+      for group in &srv.categories {
+        self.request_update(srv.id, group.id);
+      }
+    }
+  }
+
   /// Request dashboard updates for all categories without needing the manager lock.
   /// Sends a sentinel that the batch processor expands once it acquires the lock.
   pub fn request_update_all_deferred(&self) {
@@ -1966,10 +2017,9 @@ impl DashboardUpdateQueue {
         // Update the dashboard message WITHOUT holding any locks
         use serenity::all::EditMessage;
         let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{channel_id}"));
-        //
         match channel_id.edit_message(&ctx.http, message_id, EditMessage::new().embed(embed.clone()).components(buttons.clone())).await {
           Ok(_) => {
-            //
+            // Dashboard updated successfully
           }
           Err(e) => {
             // Check if message was deleted (404 error)
