@@ -274,6 +274,23 @@ impl PlayerRepository {
   }
 
   /// Update user's discord tag in database
+  /// Search users by tag or user_id substring (case-insensitive)
+  pub async fn search(&self, query: &str, limit: i64) -> Result<Vec<Player>> {
+    let rows = sqlx::query(
+      "SELECT user_id, steam_id, discord_tag, queue_expiration
+             FROM users
+             WHERE discord_tag LIKE ? OR CAST(user_id AS TEXT) LIKE ?
+             LIMIT ?",
+    )
+    .bind(format!("%{}%", query))
+    .bind(format!("%{}%", query))
+    .bind(limit)
+    .fetch_all(&self.pool)
+    .await?;
+
+    Ok(rows.into_iter().map(Self::get_player).collect())
+  }
+
   pub async fn update_discord_tag(&self, user_id: UserId, discord_tag: &str) -> Result<()> {
     sqlx::query("UPDATE users SET discord_tag = ? WHERE user_id = ?").bind(discord_tag).bind(user_id.get() as i64).execute(&self.pool).await?;
     Ok(())
@@ -342,7 +359,7 @@ impl PlayerRepository {
   /// Get user settings
   pub async fn get_prefs(&self, user_id: UserId) -> Result<UserPreferences> {
     let result = sqlx::query(
-      "SELECT queue_expiration, vc_auto_leave, vc_auto_join,
+      "SELECT queue_expiration, vc_auto_leave, vc_leave_queue, vc_auto_join,
                     join_alert_color, pm_hot_alert, pm_queue_alert_threshold,
                     join_alert_title, join_alert, join_alert_footer,
                     join_alert_footer_img, join_alert_img,
@@ -440,6 +457,7 @@ impl PlayerRepository {
           join_alert_footer: row.try_get::<String, _>("join_alert_footer").ok().filter(|s| !s.is_empty()),
           join_alert_footer_img: row.try_get::<String, _>("join_alert_footer_img").ok().filter(|s| !s.is_empty()),
           vc_auto_leave: row.try_get::<i64, _>("vc_auto_leave").unwrap_or(0) != 0,
+          vc_leave_queue: row.try_get::<i64, _>("vc_leave_queue").unwrap_or(0) != 0,
           leave_alert_title: row.try_get::<String, _>("leave_alert_title").ok().filter(|s| !s.is_empty()),
           leave_alert_desc: leave_alert.clone(),
           leave_alert_color: row.try_get::<u32, _>("leave_alert_color").unwrap_or(DEFAULT_ALERT_COLOR),
@@ -492,6 +510,7 @@ impl PlayerRepository {
                 join_alert_footer      = ?,
                 join_alert_footer_img  = ?,
                 vc_auto_leave          = ?,
+                vc_leave_queue         = ?,
                 leave_alert_title      = ?,
                 leave_alert            = ?,
                 leave_alert_color      = ?,
@@ -510,6 +529,7 @@ impl PlayerRepository {
     .bind(&prefs.join_alert_footer)
     .bind(&prefs.join_alert_footer_img)
     .bind(prefs.vc_auto_leave)
+    .bind(prefs.vc_leave_queue)
     .bind(&prefs.leave_alert_title)
     .bind(&prefs.leave_alert_desc)
     .bind(prefs.leave_alert_color)
@@ -554,6 +574,7 @@ pub struct UserPreferences {
   pub join_alert_footer: Option<String>,
   pub join_alert_footer_img: Option<String>,
   pub vc_auto_leave: bool,
+  pub vc_leave_queue: bool,
   pub leave_alert_title: Option<String>,
   pub leave_alert_desc: Option<String>,
   pub leave_alert_color: u32,
@@ -575,6 +596,7 @@ impl Default for UserPreferences {
       join_alert_footer: None,
       join_alert_footer_img: None,
       vc_auto_leave: false,
+      vc_leave_queue: false,
       leave_alert_title: None,
       leave_alert_desc: None,
       leave_alert_color: DEFAULT_ALERT_COLOR,

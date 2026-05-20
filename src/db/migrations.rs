@@ -154,6 +154,7 @@ impl DatabaseMigrations {
           join_alert_footer        TEXT    DEFAULT NULL,
           join_alert_footer_img    TEXT    DEFAULT NULL,
           vc_auto_leave            INTEGER DEFAULT 0,
+          vc_leave_queue           INTEGER DEFAULT 0,
           post_game_auto_leave     INTEGER DEFAULT 1,
           leave_alert_title        TEXT    DEFAULT NULL,
           leave_alert              TEXT    DEFAULT NULL,
@@ -191,6 +192,7 @@ impl DatabaseMigrations {
         add_column!(self, "users", "join_alert_footer", "TEXT", "NULL");
         add_column!(self, "users", "join_alert_footer_img", "TEXT", "NULL");
         add_column!(self, "users", "vc_auto_leave", "INTEGER", "0");
+        add_column!(self, "users", "vc_leave_queue", "INTEGER", "0");
         add_column!(self, "users", "post_game_auto_leave", "INTEGER", "1");
         add_column!(self, "users", "leave_alert_title", "TEXT", "NULL");
         add_column!(self, "users", "leave_alert", "TEXT", "NULL");
@@ -228,6 +230,7 @@ impl DatabaseMigrations {
                         join_alert_footer        TEXT    DEFAULT NULL,
                         join_alert_footer_img    TEXT    DEFAULT NULL,
                         vc_auto_leave            INTEGER DEFAULT 0,
+                        vc_leave_queue           INTEGER DEFAULT 0,
                         post_game_auto_leave    INTEGER DEFAULT 1,
                         leave_alert_title        TEXT    DEFAULT NULL,
                         leave_alert              TEXT    DEFAULT NULL,
@@ -272,6 +275,7 @@ impl DatabaseMigrations {
       "join_alert_footer",
       "join_alert_footer_img",
       "vc_auto_leave",
+      "vc_leave_queue",
       "leave_alert_title",
       "leave_alert",
       "leave_alert_color",
