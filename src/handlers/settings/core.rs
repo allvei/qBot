@@ -102,6 +102,19 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
       interaction.create_response(&ctx.http, response).await?;
     }
+    "settings_vc_leave_queue" => {
+      // Toggle leave queue on VC disconnect preference
+      let mut settings = db.players.get_prefs(user_id).await?;
+      settings.vc_leave_queue = !settings.vc_leave_queue;
+      db.players.update_prefs(user_id, &settings).await?;
+
+      // Acknowledge and update the settings menu directly (no popup)
+      let embed = build_settings_embed(&settings);
+      let buttons = build_settings_buttons(&settings);
+
+      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
+      interaction.create_response(&ctx.http, response).await?;
+    }
     "settings_vc_auto_join" => {
       // Toggle VC auto-queue preference
       let mut settings = db.players.get_prefs(user_id).await?;

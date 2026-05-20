@@ -242,7 +242,11 @@ impl AsSettingsMenu for crate::db::repo::UserPreferences {
       .color(self.join_alert_color)
       .row(SR::Buttons(vec![SB::edit("settings_queue_expiration", format!("Timeout: {}", queue_expiration_text.as_str()))]))
       .row(SR::Buttons(vec![SB::toggle("settings_toggle_dm", "DM alerts", self.pm_hot_alert)]))
-      .row(SR::Buttons(vec![SB::toggle("settings_vc_auto_join", "VC auto-join", self.vc_auto_join), SB::toggle("settings_vc_auto_leave", "VC auto-leave", self.vc_auto_leave)]))
+      .row(SR::Buttons(vec![
+        SB::toggle("settings_vc_auto_join", "VC auto-join", self.vc_auto_join),
+        SB::toggle("settings_vc_auto_leave", "Leave VC when leaving queue", self.vc_auto_leave),
+      ]))
+      .row(SR::Buttons(vec![SB::toggle("settings_vc_leave_queue", "Leave queue when leaving VC", self.vc_leave_queue)]))
       .row(SR::Buttons(vec![SB::edit("settings_edit_alert", "Edit join alert"), SB::edit("settings_edit_leave_alert", "Edit leave alert")]))
   }
 }
@@ -896,11 +900,7 @@ impl AsSettingsMenu for PlayerSettingsDisplay {
       .field(SF::new("Wins", format!("{}", self.wins)))
       .field(SF::new("Winrate", winrate))
       .color(0x5865F2)
-      .row(SR::Buttons(vec![
-        SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit Steam ID"),
-        SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO"),
-        SB::edit(format!("player_settings_edit_dynamic_elo_{uid}"), "Edit Dynamic ELO"),
-      ]))
+      .row(SR::Buttons(vec![SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit Steam ID"), SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO")]))
       .row(SR::Buttons(vec![SB::edit(format!("player_settings_edit_alerts_{uid}"), "Edit alerts")]))
   }
 }
