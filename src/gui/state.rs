@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
 use crate::gui::commands::GuiCommand;
+use crate::models::Player;
 use crate::{Database, Manager};
 
 /// Shared state accessible from both GUI (main thread) and tokio thread
@@ -21,6 +22,10 @@ pub struct GuiSharedState {
   pub shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
   /// Latest snapshot of Manager state for GUI (updated periodically)
   pub latest_manager: Arc<RwLock<Option<Manager>>>,
+  /// Latest user search results (updated by tokio thread)
+  pub user_search_results: Arc<RwLock<Vec<Player>>>,
+  /// Per-guild ELO data for the selected user (updated by tokio thread)
+  pub user_guild_data: Arc<RwLock<Vec<(u64, crate::db::repo::GuildElo)>>>,
 }
 
 impl GuiSharedState {
@@ -31,7 +36,16 @@ impl GuiSharedState {
     cmd_tx: mpsc::Sender<GuiCommand>,
     shutdown_tx: oneshot::Sender<()>,
   ) -> Self {
-    Self { manager, db, log_buffer, cmd_tx: Arc::new(Mutex::new(Some(cmd_tx))), shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))), latest_manager: Arc::new(RwLock::new(None)) }
+    Self {
+      manager,
+      db,
+      log_buffer,
+      cmd_tx: Arc::new(Mutex::new(Some(cmd_tx))),
+      shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
+      latest_manager: Arc::new(RwLock::new(None)),
+      user_search_results: Arc::new(RwLock::new(Vec::new())),
+      user_guild_data: Arc::new(RwLock::new(Vec::new())),
+    }
   }
 
   /// Send a command to the bot thread. Silently ignores errors (channel closed).

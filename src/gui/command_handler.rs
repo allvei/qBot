@@ -1,7 +1,10 @@
 //! Handler for GUI commands
 
+use std::sync::Arc;
+
 use anyhow::{anyhow, Result};
 use serenity::all::{GuildId as GI, UserId as UI};
+use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::gui::commands::GuiCommand;
@@ -50,13 +53,21 @@ fn bch_assign_teams(players: &mut [SessionPlayer]) {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
-/// Handle a command from the GUI
-pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Database) -> Result<()> {
-  match command {
+/// Handle a command from the GUI.
+/// Returns the affected guild ID for state-mutating commands, or None for read-only commands.
+pub async fn handle_command(
+  command: GuiCommand,
+  manager: &mut Manager,
+  db: &Database,
+  user_search_results: Arc<RwLock<Vec<Player>>>,
+  user_guild_data: Arc<RwLock<Vec<(u64, crate::db::repo::GuildElo)>>>,
+) -> Result<Option<u64>> {
+  let affected_guild = command.guild_id();
+  let result: Result<Option<u64>, anyhow::Error> = match command {
     // ── Snapshot ──────────────────────────────────────────────────────────
     GuiCommand::RefreshSnapshot => {
       info!("[GUI] RefreshSnapshot — snapshot updated by periodic task");
-      Ok(())
+      Ok(None)
     }
 
     // ── Queue Management ──────────────────────────────────────────────────
@@ -68,7 +79,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         session.pool.clear();
       }
       info!("[GUI] ClearQueue g={} c={} f={} — removed {} players", guild_id, category_id, fmt_id, cleared);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::RemovePlayer { guild_id, category_id, fmt_id, user_id } => {
@@ -78,11 +89,40 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         if session.pool.iter().any(|p| p.player.user_id == uid) {
           session.remove_player(uid);
           info!("[GUI] RemovePlayer {} from g={} c={} f={}", user_id, guild_id, category_id, fmt_id);
-          return Ok(());
+          return Ok(None);
         }
       }
       warn!("[GUI] RemovePlayer {} not found in g={} c={} f={}", user_id, guild_id, category_id, fmt_id);
-      Ok(())
+      Ok(None)
+    }
+
+    GuiCommand::DeletePlayerFromDb { guild_id, user_id } => {
+      let uid = UI::new(user_id);
+      let guild = manager.get_qguild(GI::new(guild_id))?;
+
+      // Remove player from all queues in the guild first
+      let mut removed_count = 0;
+      for cat in &mut guild.categories {
+        for fmt in &mut cat.formats {
+          for session in &mut fmt.sessions {
+            if session.pool.iter().any(|p| p.player.user_id == uid) {
+              session.remove_player(uid);
+              removed_count += 1;
+            }
+          }
+        }
+      }
+
+      // Delete guild-specific ELO record
+      match db.elo.delete_for_guild(uid, GI::new(guild_id)).await {
+        Ok(_) => {
+          info!("[GUI] DeletePlayerFromDb {} g={} — removed from {} queue(s) and deleted guild ELO record", user_id, guild_id, removed_count);
+        }
+        Err(e) => {
+          warn!("[GUI] DeletePlayerFromDb {} g={} — removed from {} queue(s) but failed to delete guild ELO record: {}", user_id, guild_id, removed_count, e);
+        }
+      }
+      Ok(None)
     }
 
     GuiCommand::BufferPlayer { guild_id, category_id, fmt_id, user_id } => {
@@ -93,11 +133,11 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
           let sp = session.pool.remove(pos);
           session.pool.insert(0, sp);
           info!("[GUI] BufferPlayer {} → front g={} c={} f={}", user_id, guild_id, category_id, fmt_id);
-          return Ok(());
+          return Ok(None);
         }
       }
       warn!("[GUI] BufferPlayer {} not found in idle sessions", user_id);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::FatkidPlayer { guild_id, category_id, fmt_id, user_id } => {
@@ -108,11 +148,11 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
           let sp = session.pool.remove(pos);
           session.pool.push(sp);
           info!("[GUI] FatkidPlayer {} → end g={} c={} f={}", user_id, guild_id, category_id, fmt_id);
-          return Ok(());
+          return Ok(None);
         }
       }
       warn!("[GUI] FatkidPlayer {} not found in idle sessions", user_id);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::ReorderQueue { guild_id, category_id, fmt_id, user_id, new_position } => {
@@ -124,11 +164,11 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
           let insert_at = new_position.min(session.pool.len());
           session.pool.insert(insert_at, sp);
           info!("[GUI] ReorderQueue {} → pos {} g={} c={} f={}", user_id, insert_at, guild_id, category_id, fmt_id);
-          return Ok(());
+          return Ok(None);
         }
       }
       warn!("[GUI] ReorderQueue {} not found in idle sessions", user_id);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::MovePlayerBetweenSessions { guild_id, category_id, fmt_id, user_id, from_session, to_session } => {
@@ -145,7 +185,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
       let dst = fmt.sessions.get_mut(to_session).ok_or_else(|| anyhow!("to_session {} out of range", to_session))?;
       dst.pool.push(sp);
       info!("[GUI] MovePlayer {} from session {} to {}", user_id, from_session, to_session);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::ForceSessionState { guild_id, category_id, fmt_id, session_index, new_state } => {
@@ -160,14 +200,14 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         SessionStatus::Pull => session.pull(),
       }
       info!("[GUI] ForceSessionState session {} → {:?}", session_index, new_state);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::ResetSessionTimer { guild_id, category_id, fmt_id, session_index } => {
       let session = find_session(manager, guild_id, category_id, fmt_id, session_index)?;
       session.ready_at = None;
       info!("[GUI] ResetSessionTimer session {}", session_index);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::ForceTeamRegeneration { guild_id, category_id, fmt_id, session_index } => {
@@ -177,7 +217,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
       let pool_len = session.pool.len().min(quota);
       bch_assign_teams(&mut session.pool[..pool_len]);
       info!("[GUI] ForceTeamRegeneration session {} — {} players assigned", session_index, pool_len);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::SwapTeams { guild_id, category_id, fmt_id, session_index } => {
@@ -190,7 +230,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         };
       }
       info!("[GUI] SwapTeams session {}", session_index);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::ForceEndGame { guild_id, category_id, fmt_id, session_index } => {
@@ -199,7 +239,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
       session.pool.clear();
       session.idle();
       info!("[GUI] ForceEndGame session {} — cleared {} players, reset to Idle", session_index, players);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::AddPlayer { guild_id, category_id, fmt_id, user_id } => {
@@ -213,11 +253,11 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
       let session = fmt.sessions.iter_mut().find(|s| s.is_idle()).ok_or_else(|| anyhow!("No idle session to add player to"))?;
       if session.pool.iter().any(|p| p.player.user_id == uid) {
         warn!("[GUI] AddPlayer {} already in session", user_id);
-        return Ok(());
+        return Ok(None);
       }
       session.add_ply(player, false)?;
       info!("[GUI] AddPlayer {} added to g={} c={} f={}", user_id, guild_id, category_id, fmt_id);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::ForceQuotaMet { guild_id, category_id, fmt_id } => {
@@ -228,7 +268,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
       } else {
         warn!("[GUI] ForceQuotaMet — no idle session found");
       }
-      Ok(())
+      Ok(None)
     }
 
     // ── Testing ───────────────────────────────────────────────────────────
@@ -244,7 +284,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         session.pool.push(sp);
       }
       info!("[GUI] AddDummyPlayers — added {} to g={} c={} f={}", count, guild_id, category_id, fmt_id);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::SimulateGameFlow { guild_id, category_id, fmt_id } => {
@@ -264,7 +304,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
       bch_assign_teams(&mut session.pool[..pool_len]);
       session.live();
       info!("[GUI] SimulateGameFlow — session is now Live with {} players", session.pool.len());
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::SimulateVCTimeout { guild_id, category_id, fmt_id } => {
@@ -273,7 +313,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         session.pool.retain(|p| p.in_vc);
         info!("[GUI] SimulateVCTimeout — removed non-VC players from hot session");
       }
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::TriggerConcurrentGames { guild_id, category_id, fmt_id, count } => {
@@ -292,7 +332,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         fmt.sessions.push(new_session);
       }
       info!("[GUI] TriggerConcurrentGames — created {} live sessions", count);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::TestBalanceMethods { guild_id, category_id, fmt_id } => {
@@ -310,7 +350,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         info!("[GUI] Red: {:?}", red.iter().map(|(_, p)| p.0.as_str()).collect::<Vec<_>>());
         info!("[GUI] Blu: {:?}", blu.iter().map(|(_, p)| p.0.as_str()).collect::<Vec<_>>());
       }
-      Ok(())
+      Ok(None)
     }
 
     // ── Recovery ──────────────────────────────────────────────────────────
@@ -322,7 +362,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         fmt.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
       }
       info!("[GUI] ResetCategoryState g={} c={} — all sessions cleared", guild_id, category_id);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::RemoveOrphanedSessions { guild_id, category_id } => {
@@ -339,7 +379,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         }
       }
       info!("[GUI] RemoveOrphanedSessions g={} c={} — removed {}", guild_id, category_id, removed);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::ClearPendingTeamSwitches { guild_id, category_id, fmt_id } => {
@@ -348,7 +388,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         session.pending_team_switch = None;
       }
       info!("[GUI] ClearPendingTeamSwitches g={} c={} f={}", guild_id, category_id, fmt_id);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::FixPlayerVCState { guild_id, category_id, user_id } => {
@@ -360,12 +400,12 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
           if let Some(sp) = session.pool.iter_mut().find(|p| p.player.user_id == uid) {
             sp.vc_off();
             info!("[GUI] FixPlayerVCState {} — in_vc cleared", user_id);
-            return Ok(());
+            return Ok(None);
           }
         }
       }
       warn!("[GUI] FixPlayerVCState {} not found", user_id);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::ResetVoiceStateTracking { guild_id } => {
@@ -380,7 +420,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         }
       }
       info!("[GUI] ResetVoiceStateTracking g={} — all in_vc cleared", guild_id);
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::RecoverFromDatabase { guild_id, category_id } => {
@@ -404,7 +444,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
       } else {
         warn!("[GUI] RecoverFromDatabase — category {} not found in DB", category_id);
       }
-      Ok(())
+      Ok(None)
     }
 
     // ── Debugging ─────────────────────────────────────────────────────────
@@ -427,7 +467,7 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         }
         Err(e) => warn!("[GUI] DumpState guild {} not found: {}", guild_id, e),
       }
-      Ok(())
+      Ok(None)
     }
 
     GuiCommand::ViewSessionDetails { guild_id, category_id, fmt_id, session_index } => {
@@ -441,33 +481,118 @@ pub async fn handle_command(command: GuiCommand, manager: &mut Manager, db: &Dat
         }
         None => warn!("[GUI] ViewSessionDetails — session {} not found", session_index),
       }
-      Ok(())
+      Ok(None)
+    }
+
+    // ── User Management ────────────────────────────────────────────────
+    GuiCommand::QueryUsers { search_term } => {
+      match db.players.search(&search_term, 50).await {
+        Ok(results) => {
+          let count = results.len();
+          let mut lock = user_search_results.write().await;
+          *lock = results;
+          info!("[GUI] QueryUsers '{}' — {} result(s)", search_term, count);
+        }
+        Err(e) => {
+          warn!("[GUI] QueryUsers '{}' failed: {}", search_term, e);
+          let mut lock = user_search_results.write().await;
+          lock.clear();
+        }
+      }
+      Ok(None)
+    }
+
+    GuiCommand::UpdateUserTag { user_id, tag } => {
+      let uid = UI::new(user_id);
+      match db.players.update_discord_tag(uid, &tag).await {
+        Ok(_) => info!("[GUI] UpdateUserTag {} → '{}'", user_id, tag),
+        Err(e) => warn!("[GUI] UpdateUserTag {} failed: {}", user_id, e),
+      }
+      Ok(None)
+    }
+
+    GuiCommand::UpdateUserSteamId { user_id, steam_id } => {
+      let uid = UI::new(user_id);
+      match db.players.update_steam_id(&uid, steam_id).await {
+        Ok(_) => info!("[GUI] UpdateUserSteamId {} → {:?}", user_id, steam_id),
+        Err(e) => warn!("[GUI] UpdateUserSteamId {} failed: {}", user_id, e),
+      }
+      Ok(None)
+    }
+
+    GuiCommand::UpdateUserQueueExpiration { user_id, queue_expiration } => {
+      let uid = UI::new(user_id);
+      match db.players.update_prefs_field(uid, "queue_expiration", queue_expiration as i64).await {
+        Ok(_) => info!("[GUI] UpdateUserQueueExpiration {} → {}", user_id, queue_expiration),
+        Err(e) => warn!("[GUI] UpdateUserQueueExpiration {} failed: {}", user_id, e),
+      }
+      Ok(None)
+    }
+
+    GuiCommand::GetUserGuildData { user_id } => {
+      let uid = UI::new(user_id);
+      match db.elo.get_all_for_user(uid).await {
+        Ok(results) => {
+          let count = results.len();
+          let mut gd_lock = user_guild_data.write().await;
+          *gd_lock = results;
+          info!("[GUI] GetUserGuildData {} — {} guild(s)", user_id, count);
+        }
+        Err(e) => {
+          warn!("[GUI] GetUserGuildData {} failed: {}", user_id, e);
+          let mut gd_lock = user_guild_data.write().await;
+          gd_lock.clear();
+        }
+      }
+      Ok(None)
+    }
+
+    GuiCommand::UpdateUserElo { user_id, guild_id, elo } => {
+      let uid = UI::new(user_id);
+      let gid = GI::new(guild_id);
+      match db.elo.update_elo(uid, gid, elo, db).await {
+        Ok(_) => info!("[GUI] UpdateUserElo {} g={} → {}", user_id, guild_id, elo),
+        Err(e) => warn!("[GUI] UpdateUserElo {} g={} failed: {}", user_id, guild_id, e),
+      }
+      Ok(None)
+    }
+
+    GuiCommand::UpdateUserDynamicElo { user_id, guild_id, dynamic_elo } => {
+      let uid = UI::new(user_id);
+      let gid = GI::new(guild_id);
+      match db.elo.set_dynamic_elo(uid, gid, dynamic_elo).await {
+        Ok(_) => info!("[GUI] UpdateUserDynamicElo {} g={} → {:?}", user_id, guild_id, dynamic_elo),
+        Err(e) => warn!("[GUI] UpdateUserDynamicElo {} g={} failed: {}", user_id, guild_id, e),
+      }
+      Ok(None)
     }
 
     // ── Voice Channel (needs Discord API — log only) ───────────────────────
     GuiCommand::MovePlayerToVC { guild_id, user_id, channel_id } => {
       info!("[GUI] MovePlayerToVC u={} → ch={} g={} — requires Discord HTTP, not implemented in GUI handler", user_id, channel_id, guild_id);
-      Ok(())
+      Ok(None)
     }
     GuiCommand::KickFromVC { guild_id, user_id } => {
       info!("[GUI] KickFromVC u={} g={} — requires Discord HTTP, not implemented in GUI handler", user_id, guild_id);
-      Ok(())
+      Ok(None)
     }
     GuiCommand::SyncVCState { guild_id, category_id } => {
       info!("[GUI] SyncVCState g={} c={} — requires Discord cache, not implemented in GUI handler", guild_id, category_id);
-      Ok(())
+      Ok(None)
     }
     GuiCommand::ClearAllTeamVCs { guild_id, category_id } => {
       info!("[GUI] ClearAllTeamVCs g={} c={} — requires Discord HTTP, not implemented in GUI handler", guild_id, category_id);
-      Ok(())
+      Ok(None)
     }
     GuiCommand::TestDiscordApi => {
       info!("[GUI] TestDiscordApi — requires Discord HTTP, not implemented in GUI handler");
-      Ok(())
+      Ok(None)
     }
     GuiCommand::ToggleDebugMode { guild_id, category_id, enabled } => {
       info!("[GUI] ToggleDebugMode g={} c={} enabled={} — not implemented", guild_id, category_id, enabled);
-      Ok(())
+      Ok(None)
     }
-  }
+  };
+  result?;
+  Ok(affected_guild)
 }

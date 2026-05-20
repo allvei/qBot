@@ -4,7 +4,7 @@ use eframe::egui;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use crate::gui::panels::{admin, log, queue, settings};
+use crate::gui::panels::{admin, log, queue, settings, users};
 use crate::gui::state::GuiSharedState;
 
 /// Main egui application struct
@@ -19,6 +19,7 @@ pub struct MyApp {
 enum PanelTab {
   Logs,
   Queue,
+  Users,
   Admin,
   Settings,
 }
@@ -104,6 +105,7 @@ impl eframe::App for MyApp {
       ui.horizontal(|ui| {
         ui.selectable_value(&mut self.selected_tab, PanelTab::Logs, "Logs");
         ui.selectable_value(&mut self.selected_tab, PanelTab::Queue, "Queues");
+        ui.selectable_value(&mut self.selected_tab, PanelTab::Users, "Users");
         ui.selectable_value(&mut self.selected_tab, PanelTab::Admin, "Admin");
         ui.selectable_value(&mut self.selected_tab, PanelTab::Settings, "Settings");
 
@@ -123,6 +125,7 @@ impl eframe::App for MyApp {
     egui::CentralPanel::default().show(ctx, |ui| match self.selected_tab {
       PanelTab::Logs => log::show_log_panel(ui, &self.state),
       PanelTab::Queue => queue::show_queue_panel(ui, &self.state),
+      PanelTab::Users => users::show_users_panel(ui, &self.state),
       PanelTab::Admin => admin::show_admin_panel(ui, &self.state),
       PanelTab::Settings => settings::show_settings_panel(ui, &self.state),
     });
