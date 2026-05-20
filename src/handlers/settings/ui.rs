@@ -3,7 +3,7 @@ use serenity::all::{
   CreateSelectMenuKind as CSMK, CreateSelectMenuOption as CSMO, GuildId as GI, InputTextStyle as ITS,
 };
 
-use crate::handlers::settings::{get_all_rank_roles, get_rank_settings, get_server_settings, ServerSettings};
+use crate::handlers::settings::{get_all_rank_roles, get_rank_settings, get_guild_config, ServerSettings};
 use crate::handlers::CategorySettings;
 
 use crate::handlers::settings::menu::{AsSettingsMenu, CategoryListDisplay, CategorySettingsDisplay, RankConfigDisplay, ServerConfigDisplay, ServerSettingsDisplay};
@@ -23,8 +23,8 @@ pub fn build_settings_buttons(settings: &crate::db::repo::UserPreferences) -> Ve
   settings.as_settings_menu().build_components()
 }
 
-/// Build server settings embed
-pub fn build_server_settings_embed(settings: &ServerSettings, guild_name: &str) -> CE {
+/// Build guild config embed
+pub fn build_guild_config_embed(settings: &ServerSettings, guild_name: &str) -> CE {
   use {AsSettingsMenu, ServerSettingsDisplay};
   let display = ServerSettingsDisplay {
     guild_name: guild_name.to_string(),
@@ -37,8 +37,8 @@ pub fn build_server_settings_embed(settings: &ServerSettings, guild_name: &str) 
   display.as_settings_menu().build_embed()
 }
 
-/// Build server settings buttons and select menus
-pub fn build_server_settings_buttons(settings: &ServerSettings, guild_name: &str) -> Vec<CAR> {
+/// Build guild config buttons and select menus
+pub fn build_guild_config_buttons(settings: &ServerSettings, guild_name: &str) -> Vec<CAR> {
   use {AsSettingsMenu, ServerSettingsDisplay};
   let display = ServerSettingsDisplay {
     guild_name: guild_name.to_string(),
@@ -139,19 +139,19 @@ fn create_paragraph_input_constrained(label: &str, id: &str, placeholder: &str, 
   CAR::InputText(CIT::new(ITS::Paragraph, label, id).placeholder(placeholder).required(false).max_length(max_len))
 }
 
-/// Build a CIR navigating back to the main server settings page
-pub async fn nav_server_settings(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
-  let settings = get_server_settings(db, guild_id).await?;
+/// Build a CIR navigating back to the main guild config page
+pub async fn nav_guild_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
+  let settings = get_guild_config(db, guild_id).await?;
   let guild_name = guild_name(ctx, guild_id);
-  let embed = build_server_settings_embed(&settings, &guild_name);
-  let buttons = build_server_settings_buttons(&settings, &guild_name);
+  let embed = build_guild_config_embed(&settings, &guild_name);
+  let buttons = build_guild_config_buttons(&settings, &guild_name);
   Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
 }
 
 /// Build a CIR navigating back to the server configuration page
 pub async fn nav_role_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
   let guild_name = guild_name(ctx, guild_id);
-  let settings = get_server_settings(db, guild_id).await?;
+  let settings = get_guild_config(db, guild_id).await?;
   let display = ServerConfigDisplay {
     guild_name: guild_name.clone(),
     runner_role: settings.runner_role.clone(),

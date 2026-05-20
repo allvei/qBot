@@ -409,7 +409,7 @@ impl EventHandler for Handler {
       cmd!("remove", "Remove all players from the queue, or a specific player").op_user("user", "User to remove (optional)", false),
       cmd!("elo", "View ELO and rank information for a player").op_user("user", "The Discord user (mention or ID, optional)", false),
       cmd!("prefs", "Open your preferences"),
-      cmd!("config", "Open server settings"),
+      cmd!("config", "Open guild config"),
       cmd!("edit", "Open player menu").op_user("user", "The Discord user to edit", true),
       cmd!("migrate", "Bulk-assign ELO to all members with a role").op_role("role", "The role to migrate", true).op_int("elo", "The ELO value to assign", true),
     ];
@@ -668,20 +668,20 @@ impl EventHandler for Handler {
           return;
         }
 
-        // Handle server-level team balance method select (must be before server_settings_ prefix)
-        if itx.data.custom_id == "server_settings_balance" {
-          let result = crate::handlers::handle_server_settings_balance_select(&ctx, itx, &self.db, &self.manager).await;
+        // Handle server-level team balance method select (must be before guild_config_ prefix)
+        if itx.data.custom_id == "guild_config_balance" {
+          let result = crate::handlers::handle_guild_config_balance_select(&ctx, itx, &self.db, &self.manager).await;
           if let Err(e) = result {
-            error!("Error handling server settings balance select: {e}");
+            error!("Error handling guild config balance select: {e}");
           }
           return;
         }
 
-        // Handle server settings buttons (including link channel flow)
-        if itx.data.custom_id.starts_with("server_settings_") || itx.data.custom_id.starts_with("server_cfg_") || itx.data.custom_id.starts_with("link_ch_") {
-          let result = crate::handlers::handle_server_settings_button(&ctx, itx, &self.db, &self.manager).await;
+        // Handle guild config buttons (including link channel flow)
+        if itx.data.custom_id.starts_with("guild_config_") || itx.data.custom_id.starts_with("server_cfg_") || itx.data.custom_id.starts_with("link_ch_") {
+          let result = crate::handlers::handle_guild_config_button(&ctx, itx, &self.db, &self.manager).await;
           if let Err(e) = result {
-            error!("Error handling server settings interaction: {e}");
+            error!("Error handling guild config interaction: {e}");
           }
           return;
         }
@@ -1059,14 +1059,14 @@ impl EventHandler for Handler {
             error!("Error handling settings modal '{}': {}", itx.data.custom_id, e);
           }
         }
-        // Handle modal submissions for server settings
-        if itx.data.custom_id.starts_with("server_settings_modal_")
-          || itx.data.custom_id.starts_with("server_settings_rank_modal_")
-          || itx.data.custom_id.starts_with("server_settings_category_modal_")
+        // Handle modal submissions for guild config
+        if itx.data.custom_id.starts_with("guild_config_modal_")
+          || itx.data.custom_id.starts_with("guild_config_rank_modal_")
+          || itx.data.custom_id.starts_with("guild_config_category_modal_")
         {
-          let result = crate::handlers::handle_server_settings_modal(&ctx, &itx, &self.db, &self.manager).await;
+          let result = crate::handlers::handle_guild_config_modal(&ctx, &itx, &self.db, &self.manager).await;
           if let Err(e) = result {
-            error!("Error handling server settings modal '{}': {}", itx.data.custom_id, e);
+            error!("Error handling guild config modal '{}': {}", itx.data.custom_id, e);
           }
         }
         // Handle modal submissions for category settings (including format modals)

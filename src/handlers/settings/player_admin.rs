@@ -71,7 +71,7 @@ pub async fn handle_player_settings_rank_select(ctx: &Context, interaction: &CI,
       // Send error message to user
       let error_embed = CE::new()
         .title("Rank Not Found")
-        .description(format!("The rank for role <@&{}> was not found in the database. Please ensure ranks are properly configured in server settings.", selected_role_id))
+        .description(format!("The rank for role <@&{}> was not found in the database. Please ensure ranks are properly configured in guild config.", selected_role_id))
         .color(RED);
       let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
       interaction.create_response(&ctx.http, response).await?;
@@ -257,13 +257,13 @@ pub async fn handle_player_settings_button(ctx: &Context, interaction: &CI, db: 
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("player_settings_edit_alerts_") {
     // Get target user's current alert settings
-    let user_settings = db.players.get_prefs(target_uid).await?;
+    let user_prefs = db.players.get_prefs(target_uid).await?;
 
     let modal = CM::new(format!("player_settings_modal_alerts_{target_user_id}"), "Edit player alerts").components(vec![
-      create_short_input_opt("HEX color", "join_alert_color", "e.g., 3447003 or FF5733", &format!("{:06X}", user_settings.join_alert_color)),
-      create_paragraph_input_with_value("Join alert message", "join_alert", "e.g., Kafri: defense", &user_settings.join_alert_desc.unwrap_or_default()),
-      create_short_input_opt("Join alert footer", "join_alert_footer", "e.g., Good luck!", &user_settings.join_alert_footer.unwrap_or_default()),
-      create_paragraph_input_with_value("Leave alert message", "leave_alert", "e.g., See you next time!", &user_settings.leave_alert_desc.unwrap_or_default()),
+      create_short_input_opt("HEX color", "join_alert_color", "e.g., 3447003 or FF5733", &format!("{:06X}", user_prefs.join_alert_color)),
+      create_paragraph_input_with_value("Join alert message", "join_alert", "e.g., Kafri: defense", &user_prefs.join_alert_desc.unwrap_or_default()),
+      create_short_input_opt("Join alert footer", "join_alert_footer", "e.g., Good luck!", &user_prefs.join_alert_footer.unwrap_or_default()),
+      create_paragraph_input_with_value("Leave alert message", "leave_alert", "e.g., See you next time!", &user_prefs.leave_alert_desc.unwrap_or_default()),
     ]);
 
     let response = CIR::Modal(modal);
@@ -524,7 +524,7 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
     interaction.create_response(&ctx.http, response).await?;
   } else if modal_id.starts_with("player_settings_modal_alerts_") {
     // Extract values from modal components
-    let mut user_settings = db.players.get_prefs(target_uid).await?;
+    let mut user_prefs = db.players.get_prefs(target_uid).await?;
 
     for (idx, action_row) in interaction.data.components.iter().enumerate() {
       if let Some(ARC::InputText(input)) = action_row.components.first() {
@@ -537,14 +537,14 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
                 let hex_str = trimmed.trim_start_matches('#');
                 if let Ok(color) = u32::from_str_radix(hex_str, 16) {
                   if (0..=0xFFFFFF).contains(&color) {
-                    user_settings.join_alert_color = color;
+                    user_prefs.join_alert_color = color;
                   }
                 }
               }
             }
-            1 => user_settings.join_alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
-            2 => user_settings.join_alert_footer = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
-            3 => user_settings.leave_alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+            1 => user_prefs.join_alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+            2 => user_prefs.join_alert_footer = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
+            3 => user_prefs.leave_alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
             _ => {}
           }
         }
@@ -552,7 +552,7 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
     }
 
     // Update target user's settings
-    db.players.update_prefs(target_uid, &user_settings).await?;
+    db.players.update_prefs(target_uid, &user_prefs).await?;
 
     // Refresh the settings menu
     let settings = get_player_settings!(db, ctx, target_uid, guild_id, target_user_id);

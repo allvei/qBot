@@ -166,7 +166,7 @@ pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db
       if ranks.is_empty() {
         let embed = CE::new()
           .title("No ranks configured")
-          .description("You need to configure ranks before setting up an ELO gate.\nGo to server settings and set up ranks first.")
+          .description("You need to configure ranks before setting up an ELO gate.\nGo to guild config and set up ranks first.")
           .color(RED);
         let response = CIR::UpdateMessage(
           CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![CB::new(format!("category_settings_back_{category_id}")).label("Back").style(BS::Secondary)])]),

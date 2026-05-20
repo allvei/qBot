@@ -5,8 +5,8 @@ use crate::handlers::settings::utils::{
   send_component_error_response, send_modal_error_response, send_nav_response, send_nav_response_modal,
 };
 use crate::handlers::settings::{
-  build_category_settings_buttons, build_category_settings_embed, build_server_settings_buttons, build_server_settings_embed, nav_category_list, nav_rank_config, nav_role_config,
-  nav_server_settings, CategorySettings,
+  build_category_settings_buttons, build_category_settings_embed, build_guild_config_buttons, build_guild_config_embed, nav_category_list, nav_rank_config, nav_role_config,
+  nav_guild_config, CategorySettings,
 };
 use crate::models::guild_name;
 use crate::Database;
@@ -24,7 +24,7 @@ use tracing::{error, info, warn};
 // Import macros from utils
 use crate::{send_nav, send_nav_modal};
 
-/// Server settings structure for display
+/// Guild config structure for display
 pub struct ServerSettings {
   pub runner_role: Option<String>,
   pub admin_role: Option<String>,
@@ -33,8 +33,8 @@ pub struct ServerSettings {
   pub post_game_confirm_time: u16,
 }
 
-/// Handle server settings button interactions
-pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) -> Result<()> {
+/// Handle guild config button interactions
+pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) -> Result<()> {
   let guild_id = interaction.guild_id.expect("Guild ID not found");
   let button_id = &interaction.data.custom_id;
 
@@ -122,13 +122,13 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
       db.config.set_bool(guild_id, toggle.column, !current).await?;
       send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?;
     }
-    "server_settings_roles" => {
+    "guild_config_roles" => {
       send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
     }
-    "server_settings_roles_back" => {
-      send_nav!(interaction, ctx, db, nav_server_settings, guild_id)?;
+    "guild_config_roles_back" => {
+      send_nav!(interaction, ctx, db, nav_guild_config, guild_id)?;
     }
-    "server_settings_runner_role" => {
+    "guild_config_runner_role" => {
       if let CIDK::RoleSelect { values } = &interaction.data.kind {
         if let Some(role_id) = values.first() {
           db.config.set_runner_role_id(guild_id, *role_id).await?;
@@ -136,7 +136,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
       }
     }
-    "server_settings_admin_role" => {
+    "guild_config_admin_role" => {
       if let CIDK::RoleSelect { values } = &interaction.data.kind {
         if let Some(role_id) = values.first() {
           db.config.set_admin_role_id(guild_id, *role_id).await?;
@@ -144,13 +144,13 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
       }
     }
-    "server_settings_ranks" => {
+    "guild_config_ranks" => {
       send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?;
     }
-    "server_settings_ranks_back" => {
-      send_nav!(interaction, ctx, db, nav_server_settings, guild_id)?;
+    "guild_config_ranks_back" => {
+      send_nav!(interaction, ctx, db, nav_guild_config, guild_id)?;
     }
-    "server_settings_rank_select" => {
+    "guild_config_rank_select" => {
       // Handle rank selection from dropdown (value is role ID)
       if let CIDK::StringSelect { values } = &interaction.data.kind {
         if let Some(role_id_str) = values.first() {
@@ -169,7 +169,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         }
       }
     }
-    "server_settings_rank_link_role" => {
+    "guild_config_rank_link_role" => {
       // Handle role selection for linking existing rank
       let selected_role_id = if let CIDK::RoleSelect { values } = &interaction.data.kind {
         values.first().copied().ok_or_else(|| anyhow!("No role selected"))?
@@ -182,7 +182,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
 
       // Show modal to specify rank name and ELO for the selected role
 
-      let modal = CM::new(format!("server_settings_rank_modal_link_{}", selected_role_id.get()), "Link existing rank").components(vec![
+      let modal = CM::new(format!("guild_config_rank_modal_link_{}", selected_role_id.get()), "Link existing rank").components(vec![
         create_value_input_sh("Rank name", "name", "e.g., Bronze, Gold, Platinum", &role_name),
         create_input_sh_cap("ELO Threshold", "elo", "Minimum ELO for this rank", 1, 3),
       ]);
@@ -190,14 +190,14 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
       let response = CIR::Modal(modal);
       interaction.create_response(&ctx.http, response).await?;
     }
-    "server_settings_rank_back" => {
+    "guild_config_rank_back" => {
       send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?;
     }
-    _ if button_id.starts_with("server_settings_rank_edit_") => {
+    _ if button_id.starts_with("guild_config_rank_edit_") => {
       // Handle rank name/ELO edit button
-      let rank_name = button_id.strip_prefix("server_settings_rank_edit_").unwrap();
+      let rank_name = button_id.strip_prefix("guild_config_rank_edit_").unwrap();
       if let Ok(Some(guild_rank)) = db.ranks.get_rank_by_name(guild_id, rank_name).await {
-        let modal = CM::new(format!("server_settings_rank_modal_{}", rank_name), format!("Edit {} rank", guild_rank.name)).components(vec![
+        let modal = CM::new(format!("guild_config_rank_modal_{}", rank_name), format!("Edit {} rank", guild_rank.name)).components(vec![
           create_value_input_sh("Rank name", "name", "e.g., Beginner, Expert, Champion", &guild_rank.name),
           create_value_input_sh_cap("ELO Threshold", "elo", "Minimum ELO for this rank", &guild_rank.elo.to_string(), 1, 3),
         ]);
@@ -206,16 +206,16 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         interaction.create_response(&ctx.http, response).await?;
       }
     }
-    "server_settings_rank_add" => {
+    "guild_config_rank_add" => {
       // Show modal to add a new rank
 
-      let modal = CM::new("server_settings_rank_modal_add", "Add new rank")
+      let modal = CM::new("guild_config_rank_modal_add", "Add new rank")
         .components(vec![create_input_sh("Rank name", "name", "e.g., Champion, Legend, Elite"), create_input_sh_cap("ELO Threshold", "elo", "Minimum ELO for this rank", 1, 3)]);
 
       let response = CIR::Modal(modal);
       interaction.create_response(&ctx.http, response).await?;
     }
-    "server_settings_rank_link" => {
+    "guild_config_rank_link" => {
       // Show role selector for linking existing rank
       let response = CIR::UpdateMessage(
         CIRM::new()
@@ -227,23 +227,23 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
           )
           .components(vec![
             CAR::SelectMenu(
-              CSM::new("server_settings_rank_link_role", CSMK::Role { default_roles: None }).placeholder("Select a Discord role to link").min_values(1).max_values(1),
+              CSM::new("guild_config_rank_link_role", CSMK::Role { default_roles: None }).placeholder("Select a Discord role to link").min_values(1).max_values(1),
             ),
-            CAR::Buttons(vec![CB::new("server_settings_ranks_back").label("Back to ranks").style(BS::Secondary)]),
+            CAR::Buttons(vec![CB::new("guild_config_ranks_back").label("Back to ranks").style(BS::Secondary)]),
           ]),
       );
       interaction.create_response(&ctx.http, response).await?;
     }
-    _ if button_id.starts_with("server_settings_rank_delete_") => {
-      let rank_name = button_id.strip_prefix("server_settings_rank_delete_").unwrap();
+    _ if button_id.starts_with("guild_config_rank_delete_") => {
+      let rank_name = button_id.strip_prefix("guild_config_rank_delete_").unwrap();
       db.ranks.delete_rank(guild_id, rank_name).await?;
       let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
       info!("{} deleted rank {}", user_tag, rank_name);
       send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?;
     }
-    _ if button_id.starts_with("server_settings_rank_role_") => {
+    _ if button_id.starts_with("guild_config_rank_role_") => {
       // Handle role selector for linking Discord role to rank
-      let rank_name = button_id.strip_prefix("server_settings_rank_role_").unwrap();
+      let rank_name = button_id.strip_prefix("guild_config_rank_role_").unwrap();
 
       // Get selected role from interaction
       let selected_role_id = if let CIDK::RoleSelect { values } = &interaction.data.kind {
@@ -268,7 +268,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         interaction.create_response(&ctx.http, response).await?;
       }
     }
-    "server_settings_default_rank_select" => {
+    "guild_config_default_rank_select" => {
       if let CIDK::StringSelect { values } = &interaction.data.kind {
         if let Some(role_id_str) = values.first() {
           // Parse role ID from string
@@ -283,18 +283,18 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         }
       }
     }
-    "server_settings_categories" => {
+    "guild_config_categories" => {
       send_nav!(interaction, ctx, db, nav_category_list, guild_id)?;
     }
-    "server_settings_categories_back" => {
-      send_nav!(interaction, ctx, db, nav_server_settings, guild_id)?;
+    "guild_config_categories_back" => {
+      send_nav!(interaction, ctx, db, nav_guild_config, guild_id)?;
     }
-    "server_settings_edit_post_game_confirm_time" => {
+    "guild_config_edit_post_game_confirm_time" => {
       // Show modal to edit post-game timeout
 
       let current_confirm_time = db.config.get_post_game_confirm_time(guild_id).await.unwrap_or(120);
 
-      let modal = CM::new("server_settings_post_game_confirm_time_modal", "Edit post-game confirm time").components(vec![create_value_input_sh_cap(
+      let modal = CM::new("guild_config_post_game_confirm_time_modal", "Edit post-game confirm time").components(vec![create_value_input_sh_cap(
         "Post-game confirm time (seconds)",
         "post_game_confirm_time_input",
         "Enter time in seconds (30-300)",
@@ -305,7 +305,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
 
       interaction.create_response(&ctx.http, CIR::Modal(modal)).await?;
     }
-    "server_settings_edit_gamemode" => {
+    "guild_config_edit_gamemode" => {
       use serenity::all::{CreateInputText as CIT, InputTextStyle as ITS};
       let current_gamemode = db.config.get_gamemode(guild_id).await.unwrap_or(None).unwrap_or_default();
 
@@ -317,11 +317,11 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
           .max_length(32),
       );
 
-      let modal = CM::new("server_settings_modal_gamemode", "Edit gamemode").components(vec![input]);
+      let modal = CM::new("guild_config_modal_gamemode", "Edit gamemode").components(vec![input]);
 
       interaction.create_response(&ctx.http, CIR::Modal(modal)).await?;
     }
-    "server_settings_migrate_elo" => {
+    "guild_config_migrate_elo" => {
       // Show confirmation prompt before running migration
       let total_players: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM elo WHERE guild_id = ?").bind(guild_id.get() as i64).fetch_one(&db.pool).await.unwrap_or(0);
       let without_dynamic_elo: i64 =
@@ -350,17 +350,17 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
 
       let components = if total_players > 0 && without_dynamic_elo > 0 {
         vec![CAR::Buttons(vec![
-          CB::new("server_settings_migrate_elo_confirm").label("Confirm Migration").style(BS::Danger),
-          CB::new("server_settings_migrate_elo_cancel").label("Cancel").style(BS::Secondary),
+          CB::new("guild_config_migrate_elo_confirm").label("Confirm Migration").style(BS::Danger),
+          CB::new("guild_config_migrate_elo_cancel").label("Cancel").style(BS::Secondary),
         ])]
       } else {
-        vec![CAR::Buttons(vec![CB::new("server_settings_migrate_elo_cancel").label("Close").style(BS::Secondary)])]
+        vec![CAR::Buttons(vec![CB::new("guild_config_migrate_elo_cancel").label("Close").style(BS::Secondary)])]
       };
 
       let response = CIR::Message(CIRM::new().content(description).components(components).ephemeral(true));
       interaction.create_response(&ctx.http, response).await?;
     }
-    "server_settings_migrate_elo_confirm" => {
+    "guild_config_migrate_elo_confirm" => {
       // User confirmed the migration
       interaction.create_response(&ctx.http, CIR::Defer(CIRM::new().ephemeral(true))).await?;
 
@@ -396,11 +396,11 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         }
       }
     }
-    "server_settings_migrate_elo_cancel" => {
+    "guild_config_migrate_elo_cancel" => {
       // User cancelled the migration - delete the ephemeral message
       interaction.delete_response(&ctx.http).await.ok();
     }
-    "server_settings_create_roles" => {
+    "guild_config_create_roles" => {
       // Create runner, admin, and rank roles
       let guild_name = guild_name(ctx, guild_id);
 
@@ -445,10 +445,10 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
 
       send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
     }
-    "server_settings_create_category" => {
+    "guild_config_create_category" => {
       // Show modal to collect category settings before creating channels
 
-      let modal = CM::new("server_settings_modal_create_category", "Create a new category").components(vec![
+      let modal = CM::new("guild_config_modal_create_category", "Create a new category").components(vec![
         create_input_sh("Category name", "category_name", "e.g., NA PUGs, EU Competitive"),
         create_input_sh("Channel prefix", "channel_prefix", "e.g., pug, na, eu"),
         create_value_input_sh("Category name", "discord_category", "e.g., PUG Queue", "PUG Queue"),
@@ -459,7 +459,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
       let response = CIR::Modal(modal);
       interaction.create_response(&ctx.http, response).await?;
     }
-    "server_settings_link_category" => {
+    "guild_config_link_category" => {
       // Show category selection dropdown to link existing category
 
       let guild_name = guild_name(ctx, guild_id);
@@ -486,7 +486,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         .map(|(id, name)| CSMO::new(name.clone(), id.get().to_string()).description(format!("Category ID: {}", id.get())))
         .collect();
 
-      let select_menu = CSM::new("server_settings_link_category_select", CSMK::String { options }).placeholder("Select a category to link");
+      let select_menu = CSM::new("guild_config_link_category_select", CSMK::String { options }).placeholder("Select a category to link");
 
       let embed = CE::new()
         .title(format!("{} - Link Existing Category", guild_name))
@@ -503,12 +503,12 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         )
         .color(0x5865F2);
 
-      let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("server_settings_link_cancel").label("Cancel").style(BS::Secondary)])];
+      let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("guild_config_link_cancel").label("Cancel").style(BS::Secondary)])];
 
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
       interaction.create_response(&ctx.http, response).await?;
     }
-    "server_settings_link_category_select" => {
+    "guild_config_link_category_select" => {
       // Handle category selection - verify channels and link
       if let CIDK::StringSelect { values } = &interaction.data.kind {
         if let Some(category_id_str) = values.first() {
@@ -676,7 +676,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
                 .description(format!("{}\n\n**Next:** Select the {} channel from the dropdown below.", status, next_channel_name))
                 .color(0x5865F2);
 
-              let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("server_settings_link_cancel").label("Cancel").style(BS::Secondary)])];
+              let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("guild_config_link_cancel").label("Cancel").style(BS::Secondary)])];
 
               let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
               interaction.create_response(&ctx.http, response).await?;
@@ -831,7 +831,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
               buttons.push(CB::new(format!("link_manual_msg_{}", state)).label("Provide message ID").style(BS::Secondary));
             }
 
-            buttons.push(CB::new("server_settings_link_cancel").label("Cancel").style(BS::Danger));
+            buttons.push(CB::new("guild_config_link_cancel").label("Cancel").style(BS::Danger));
 
             let embed = CE::new().title(format!("{} - Link Category Options", guild_name)).description(description).color(0x5865F2);
 
@@ -842,7 +842,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         }
       }
     }
-    "server_settings_link_cancel" => {
+    "guild_config_link_cancel" => {
       send_nav!(interaction, ctx, db, nav_category_list, guild_id)?;
     }
     _ if button_id.starts_with("link_use_existing_") => {
@@ -1202,7 +1202,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
                 .description(format!("{}\n\n**Next:** Select the {} channel from the dropdown below.", status, next_channel_name))
                 .color(0x5865F2);
 
-              let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("server_settings_link_cancel").label("Cancel").style(BS::Secondary)])];
+              let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("guild_config_link_cancel").label("Cancel").style(BS::Secondary)])];
 
               let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
               interaction.create_response(&ctx.http, response).await?;
@@ -1425,7 +1425,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
             );
       interaction.create_response(&ctx.http, response).await?;
     }
-    "server_settings_remove_category" => {
+    "guild_config_remove_category" => {
       // Show category selection dropdown for removal
 
       let guild_name = guild_name(ctx, guild_id);
@@ -1446,7 +1446,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         })
         .collect();
 
-      let select_menu = CSM::new("server_settings_remove_category_select", CSMK::String { options }).placeholder("Select a category to remove");
+      let select_menu = CSM::new("guild_config_remove_category_select", CSMK::String { options }).placeholder("Select a category to remove");
 
       let embed = CE::new()
         .title(format!("{} - Remove Category", guild_name))
@@ -1460,12 +1460,12 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         )
         .color(0xFF0000);
 
-      let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("server_settings_remove_cancel").label("Cancel").style(BS::Secondary)])];
+      let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("guild_config_remove_cancel").label("Cancel").style(BS::Secondary)])];
 
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
       interaction.create_response(&ctx.http, response).await?;
     }
-    "server_settings_remove_category_select" => {
+    "guild_config_remove_category_select" => {
       // Show confirmation prompt asking about channel deletion
       if let CIDK::StringSelect { values } = &interaction.data.kind {
         if let Some(category_id_str) = values.first() {
@@ -1513,9 +1513,9 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
               .color(0xFF0000);
 
             let components = vec![CAR::Buttons(vec![
-              CB::new(format!("server_settings_remove_confirm_delete_{}", category_id)).label("Yes, delete channels").style(BS::Danger),
-              CB::new(format!("server_settings_remove_confirm_keep_{}", category_id)).label("No, keep channels").style(BS::Success),
-              CB::new("server_settings_remove_cancel").label("Cancel").style(BS::Secondary),
+              CB::new(format!("guild_config_remove_confirm_delete_{}", category_id)).label("Yes, delete channels").style(BS::Danger),
+              CB::new(format!("guild_config_remove_confirm_keep_{}", category_id)).label("No, keep channels").style(BS::Success),
+              CB::new("guild_config_remove_cancel").label("Cancel").style(BS::Secondary),
             ])];
 
             let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
@@ -1524,9 +1524,9 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         }
       }
     }
-    _ if button_id.starts_with("server_settings_remove_confirm_delete_") => {
+    _ if button_id.starts_with("guild_config_remove_confirm_delete_") => {
       // Confirm removal with channel deletion
-      let category_id_str = button_id.strip_prefix("server_settings_remove_confirm_delete_").unwrap();
+      let category_id_str = button_id.strip_prefix("guild_config_remove_confirm_delete_").unwrap();
       if let Ok(category_id) = category_id_str.parse::<u8>() {
         let guild_name = guild_name(ctx, guild_id);
 
@@ -1602,9 +1602,9 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         }
       }
     }
-    _ if button_id.starts_with("server_settings_remove_confirm_keep_") => {
+    _ if button_id.starts_with("guild_config_remove_confirm_keep_") => {
       // Confirm removal without channel deletion
-      let category_id_str = button_id.strip_prefix("server_settings_remove_confirm_keep_").unwrap();
+      let category_id_str = button_id.strip_prefix("guild_config_remove_confirm_keep_").unwrap();
       if let Ok(category_id) = category_id_str.parse::<u8>() {
         let guild_name = guild_name(ctx, guild_id);
 
@@ -1650,10 +1650,10 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         }
       }
     }
-    "server_settings_remove_cancel" => {
+    "guild_config_remove_cancel" => {
       send_nav!(interaction, ctx, db, nav_category_list, guild_id)?;
     }
-    "server_settings_category_select" => {
+    "guild_config_category_select" => {
       // Handle category selection from dropdown - show settings screen with buttons
       if let CIDK::StringSelect { values } = &interaction.data.kind {
         if let Some(value_str) = values.first() {
@@ -1678,7 +1678,7 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         }
       }
     }
-    "server_settings_category_back" => {
+    "guild_config_category_back" => {
       send_nav!(interaction, ctx, db, nav_category_list, guild_id)?;
     }
     _ if button_id.starts_with("category_settings_link_message_") => {
@@ -1824,9 +1824,9 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
         }
       }
     }
-    _ if button_id.starts_with("server_settings_category_select_") => {
+    _ if button_id.starts_with("guild_config_category_select_") => {
       // Handle category selection from button - show settings screen with Link Message button
-      let value_str = button_id.strip_prefix("server_settings_category_select_").unwrap();
+      let value_str = button_id.strip_prefix("guild_config_category_select_").unwrap();
 
       // Parse format "categoryid_queueid" to handle duplicate category_id values
       let parts: Vec<&str> = value_str.split('_').collect();
@@ -1854,15 +1854,15 @@ pub async fn handle_server_settings_button(ctx: &Context, interaction: &CoI, db:
       }
     }
     _ => {
-      warn!("Unknown server settings button: {}", button_id);
+      warn!("Unknown guild config button: {}", button_id);
     }
   }
 
   Ok(())
 }
 
-/// Handle server settings modal submissions
-pub async fn handle_server_settings_modal(
+/// Handle guild config modal submissions
+pub async fn handle_guild_config_modal(
   ctx: &Context,
   interaction: &ModalInteraction,
   db: &Arc<Database>,
@@ -1874,7 +1874,7 @@ pub async fn handle_server_settings_modal(
   let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
   info!("{} submitted modal {}", user_tag, modal_id);
 
-  if modal_id == "server_settings_rank_modal_add" {
+  if modal_id == "guild_config_rank_modal_add" {
     // Handle add new rank modal
     let mut name_value = String::new();
     let mut elo_value = String::new();
@@ -1936,9 +1936,9 @@ pub async fn handle_server_settings_modal(
     info!("{} added rank '{}' with ELO {} and role {}", user_tag, name, elo, role_id.get());
 
     send_nav_modal!(interaction, ctx, db, nav_rank_config, guild_id)?;
-  } else if modal_id.starts_with("server_settings_rank_modal_link_") {
+  } else if modal_id.starts_with("guild_config_rank_modal_link_") {
     // Handle link existing rank modal
-    let role_id_str = modal_id.strip_prefix("server_settings_rank_modal_link_").unwrap();
+    let role_id_str = modal_id.strip_prefix("guild_config_rank_modal_link_").unwrap();
     let role_id = match role_id_str.parse::<u64>() {
       Ok(id) => RoleId::new(id),
       Err(_) => {
@@ -1988,9 +1988,9 @@ pub async fn handle_server_settings_modal(
     info!("{} linked rank '{}' with ELO {} to role {}", user_tag, name, elo, role_id.get());
 
     send_nav_modal!(interaction, ctx, db, nav_rank_config, guild_id)?;
-  } else if modal_id.starts_with("server_settings_rank_modal_") {
+  } else if modal_id.starts_with("guild_config_rank_modal_") {
     // Handle rank name/ELO edit modal
-    let old_rank_name = modal_id.strip_prefix("server_settings_rank_modal_").ok_or_else(|| anyhow::anyhow!("Invalid modal ID format: {}", modal_id))?;
+    let old_rank_name = modal_id.strip_prefix("guild_config_rank_modal_").ok_or_else(|| anyhow::anyhow!("Invalid modal ID format: {}", modal_id))?;
 
     let mut name_value = String::new();
     let mut elo_value = String::new();
@@ -2034,10 +2034,10 @@ pub async fn handle_server_settings_modal(
     db.ranks.update_rank_elo(guild_id, new_name, elo).await?;
 
     send_nav_modal!(interaction, ctx, db, nav_rank_config, guild_id)?;
-  } else if modal_id.starts_with("server_settings_category_modal_") {
+  } else if modal_id.starts_with("guild_config_category_modal_") {
     // Handle category settings modal submission
     let category_id: u8 =
-      modal_id.strip_prefix("server_settings_category_modal_").and_then(|s| s.parse().ok()).ok_or_else(|| anyhow::anyhow!("Invalid modal ID format: {}", modal_id))?;
+      modal_id.strip_prefix("guild_config_category_modal_").and_then(|s| s.parse().ok()).ok_or_else(|| anyhow::anyhow!("Invalid modal ID format: {}", modal_id))?;
 
     // Extract all values from the modal
     let mut name_value = String::new();
@@ -2115,7 +2115,7 @@ pub async fn handle_server_settings_modal(
 
     // Fallback if category not found
     send_modal_error_response(interaction, ctx, "Category not found").await;
-  } else if modal_id == "server_settings_modal_create_category" {
+  } else if modal_id == "guild_config_modal_create_category" {
     // Extract modal fields
     let mut category_name = String::new();
     let mut channel_prefix = String::new();
@@ -2253,7 +2253,7 @@ pub async fn handle_server_settings_modal(
         interaction.create_followup(&ctx.http, followup).await?;
       }
     }
-  } else if modal_id == "server_settings_modal_gamemode" {
+  } else if modal_id == "guild_config_modal_gamemode" {
     let mut gamemode_value = String::new();
 
     for row in &interaction.data.components {
@@ -2272,7 +2272,7 @@ pub async fn handle_server_settings_modal(
     info!("{} set gamemode to {:?}", user_tag, gamemode);
 
     send_nav_modal!(interaction, ctx, db, nav_role_config, guild_id)?;
-  } else if modal_id == "server_settings_post_game_confirm_time_modal" {
+  } else if modal_id == "guild_config_post_game_confirm_time_modal" {
     // Handle post-game timeout modal
     let mut post_game_confirm_time_value = String::new();
 
@@ -2302,18 +2302,18 @@ pub async fn handle_server_settings_modal(
 
     send_nav_modal!(interaction, ctx, db, nav_role_config, guild_id)?;
   } else {
-    warn!("Unknown server settings modal: {}", modal_id);
+    warn!("Unknown guild config modal: {}", modal_id);
   }
 
   Ok(())
 }
 
 /// Handle server-level team balance method selection
-pub async fn handle_server_settings_balance_select(ctx: &Context, interaction: &CoI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) -> Result<()> {
+pub async fn handle_guild_config_balance_select(ctx: &Context, interaction: &CoI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) -> Result<()> {
   let guild_id = interaction.guild_id.expect("Guild ID not found");
 
   let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
-  info!("[Server Settings] {} selected team balance method", user_tag);
+  info!("[Guild config] {} selected team balance method", user_tag);
 
   // Extract selected value
   let method_str = match &interaction.data.kind {
@@ -2337,11 +2337,11 @@ pub async fn handle_server_settings_balance_select(ctx: &Context, interaction: &
   }
   drop(manager_lock);
 
-  // Return to server settings
-  let settings = get_server_settings(db, guild_id).await?;
+  // Return to guild config
+  let settings = get_guild_config(db, guild_id).await?;
   let guild_name = guild_name(ctx, guild_id);
-  let embed = build_server_settings_embed(&settings, &guild_name);
-  let buttons = build_server_settings_buttons(&settings, &guild_name);
+  let embed = build_guild_config_embed(&settings, &guild_name);
+  let buttons = build_guild_config_buttons(&settings, &guild_name);
 
   let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
   interaction.create_response(&ctx.http, response).await?;
@@ -2349,8 +2349,8 @@ pub async fn handle_server_settings_balance_select(ctx: &Context, interaction: &
   Ok(())
 }
 
-/// Get server settings from database
-pub async fn get_server_settings(db: &Arc<Database>, guild_id: GI) -> Result<ServerSettings> {
+/// Get guild config from database
+pub async fn get_guild_config(db: &Arc<Database>, guild_id: GI) -> Result<ServerSettings> {
   use SERVER_CONFIG_TOGGLES;
 
   let config_map = db.config.get_config_map(guild_id).await?;

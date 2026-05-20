@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use serenity::all::{CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
 use tracing::info;
 
-use super::settings::get_server_settings;
+use super::settings::get_guild_config;
 use crate::models::CommandContext as CC;
 use crate::models::Ephemeral;
 use crate::player::is_admin;
@@ -23,7 +23,7 @@ pub async fn cmd_prefs(cc: &CC<'_>) -> Result<()> {
   Ok(())
 }
 
-/// `/config` - Open server settings menu as ephemeral message (admin only)
+/// `/config` - Open guild config menu as ephemeral message (admin only)
 pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
   // Check admin permissions
   if !is_admin(cc).await? {
@@ -33,14 +33,14 @@ pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
   let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
   let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
 
-  // Get current server settings
-  let settings = get_server_settings(&cc.db, guild_id).await?;
+  // Get current guild config
+  let settings = get_guild_config(&cc.db, guild_id).await?;
 
   // Send ephemeral message in the current channel
   cc.intax.create_response(&cc.ctx.http, Ephemeral::send_config(&settings, &guild_name)).await?;
 
   let user_tag = crate::log::get_user_tag(cc.ctx, cc.intax.user.id, &cc.db).await;
-  info!("Sent server settings menu to {} (ephemeral)", user_tag);
+  info!("Sent guild config menu to {} (ephemeral)", user_tag);
   Ok(())
 }
 
@@ -160,7 +160,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     Err(e) if e.to_string().contains("Failed to get default rank") => {
       let error_embed = CE::new()
         .title("Configuration Error")
-        .description("A default rank has not been set for this server.\n\nPlease configure a default rank in the server settings before editing players.")
+        .description("A default rank has not been set for this server.\n\nPlease configure a default rank in the guild config before editing players.")
         .color(RED);
       cc.reply_embed(error_embed).await?;
       return Ok(());

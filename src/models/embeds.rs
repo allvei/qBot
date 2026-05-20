@@ -1,4 +1,4 @@
-use crate::handlers::settings::{build_server_settings_buttons, build_server_settings_embed, ServerSettings};
+use crate::handlers::settings::{build_guild_config_buttons, build_guild_config_embed, ServerSettings};
 use crate::handlers::{build_settings_buttons, build_settings_embed};
 use crate::repo::UserPreferences;
 use serenity::all::{ButtonStyle as BS, CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
@@ -17,8 +17,8 @@ impl Ephemeral {
   }
 
   pub fn send_config(settings: &ServerSettings, guild_name: &str) -> CIR {
-    let embed = build_server_settings_embed(settings, guild_name);
-    let buttons = build_server_settings_buttons(settings, guild_name);
+    let embed = build_guild_config_embed(settings, guild_name);
+    let buttons = build_guild_config_buttons(settings, guild_name);
     CIR::Message(CIRM::new().embed(embed).components(buttons).ephemeral(true))
   }
 

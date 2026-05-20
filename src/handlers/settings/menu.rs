@@ -255,11 +255,11 @@ impl AsSettingsMenu for crate::db::repo::UserPreferences {
 // ServerSettings implementation
 // ============================================================================
 
-/// All boolean toggles shown on the main server settings page.
+/// All boolean toggles shown on the main guild config page.
 /// To add a new toggle: add a DB column, migration, and an entry here.
 pub const SERVER_CONFIG_TOGGLES: &[ConfigToggle] = &[
   ConfigToggle { column: "elo_ranks_linked", button_id: "server_cfg_elo_ranks_linked", label_on: "ELO-Rank linked", label_off: "ELO-Rank independent", default: true },
-  ConfigToggle { column: "active_elo", button_id: "server_settings_dynamic_elo", label_on: "Dynamic ELO enabled", label_off: "Dynamic ELO disabled", default: false },
+  ConfigToggle { column: "active_elo", button_id: "guild_config_dynamic_elo", label_on: "Dynamic ELO enabled", label_off: "Dynamic ELO disabled", default: false },
   ConfigToggle {
     column: "post_game_auto_leave",
     button_id: "server_cfg_post_game_auto_leave",
@@ -270,7 +270,7 @@ pub const SERVER_CONFIG_TOGGLES: &[ConfigToggle] = &[
   ConfigToggle { column: "hide_elo", button_id: "server_cfg_hide_elo", label_on: "ELO is visible", label_off: "ELO is hidden", default: false },
 ];
 
-/// Server settings with guild name for display
+/// Guild config with guild name for display
 pub struct ServerSettingsDisplay {
   pub guild_name: String,
   pub runner_role: Option<String>,
@@ -282,19 +282,19 @@ pub struct ServerSettingsDisplay {
 
 impl AsSettingsMenu for ServerSettingsDisplay {
   fn as_settings_menu(&self) -> SettingsMenu {
-    SettingsMenu::new(format!("{} - Server settings", self.guild_name))
+    SettingsMenu::new(format!("{} - Guild config", self.guild_name))
             .color(0x5865F2)
             .description("**Configuration Overview:**\n\n**Server-wide settings**\n• Roles (runner/admin permissions)\n• Team balance method\n• ELO & Rank linking\n\n**Rank management**\n• Add, remove & link ranks\n• Set default rank\n\n**Category management**\n• Queue channels & voice channels\n• Team channels & game settings")
             .row(SR::Buttons(vec![
-                SB::action("server_settings_roles",  "Server", Sbs::Secondary),
-                SB::action("server_settings_ranks",  "Ranks", Sbs::Secondary),
-                SB::action("server_settings_categories", "Categories", Sbs::Secondary),
+                SB::action("guild_config_roles",  "Server", Sbs::Secondary),
+                SB::action("guild_config_ranks",  "Ranks", Sbs::Secondary),
+                SB::action("guild_config_categories", "Categories", Sbs::Secondary),
             ]))
             .footer("Select a category to manage:")
   }
 }
 
-/// Server configuration display for server settings sub-menu (roles, balance, ELO)
+/// Server configuration display for guild config sub-menu (roles, balance, ELO)
 pub struct ServerConfigDisplay {
   pub guild_name: String,
   pub runner_role: Option<String>,
@@ -309,20 +309,20 @@ impl AsSettingsMenu for ServerConfigDisplay {
     let runner_default = self.runner_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
     let admin_default = self.admin_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
 
-    let mut menu = SettingsMenu::new(format!("{} - Server Settings", self.guild_name))
+    let mut menu = SettingsMenu::new(format!("{} - Guild config", self.guild_name))
       .description("Configure server-wide settings including roles, team balance method, and ELO settings")
       .field(SF::new("Post-game confirm time", format!("{} seconds", self.post_game_confirm_time)))
       .color(0x5865F2)
       .footer("Configure server-wide settings below");
 
     // Add role selects
-    menu = menu.row(SR::RoleSelect { id: "server_settings_runner_role".to_string(), placeholder: "Select runner role".to_string(), default: runner_default });
+    menu = menu.row(SR::RoleSelect { id: "guild_config_runner_role".to_string(), placeholder: "Select runner role".to_string(), default: runner_default });
 
-    menu = menu.row(SR::RoleSelect { id: "server_settings_admin_role".to_string(), placeholder: "Select admin role".to_string(), default: admin_default });
+    menu = menu.row(SR::RoleSelect { id: "guild_config_admin_role".to_string(), placeholder: "Select admin role".to_string(), default: admin_default });
 
     // Add balance method select
     menu = menu.row(SR::StringSelect {
-      id: "server_settings_balance".to_string(),
+      id: "guild_config_balance".to_string(),
       placeholder: "Team balance method...".to_string(),
       options: vec![("Custom distribution algorithm".to_string(), "bch".to_string()), ("Average distribution".to_string(), "average".to_string())],
     });
@@ -339,11 +339,11 @@ impl AsSettingsMenu for ServerConfigDisplay {
 
     // Add action buttons
     menu = menu.row(SR::Buttons(vec![
-      SB::action("server_settings_edit_post_game_confirm_time", "Edit post-game timeout", Sbs::Secondary),
-      SB::action("server_settings_edit_gamemode", "Edit gamemode", Sbs::Secondary),
-      SB::action("server_settings_migrate_elo", "Run ELO migration", Sbs::Primary),
-      SB::action("server_settings_create_roles", "Create roles", Sbs::Primary),
-      SB::action("server_settings_roles_back", "Back", Sbs::Secondary),
+      SB::action("guild_config_edit_post_game_confirm_time", "Edit post-game timeout", Sbs::Secondary),
+      SB::action("guild_config_edit_gamemode", "Edit gamemode", Sbs::Secondary),
+      SB::action("guild_config_migrate_elo", "Run ELO migration", Sbs::Primary),
+      SB::action("guild_config_create_roles", "Create roles", Sbs::Primary),
+      SB::action("guild_config_roles_back", "Back", Sbs::Secondary),
     ]));
 
     menu
@@ -360,13 +360,13 @@ impl ServerConfigDisplay {
     let admin_default = self.admin_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
 
     let mut components = vec![
-      CAR::SelectMenu(CSM::new("server_settings_runner_role", CSMK::Role { default_roles: runner_default.map(|r| vec![r]) }).placeholder("Select runner role")),
-      CAR::SelectMenu(CSM::new("server_settings_admin_role", CSMK::Role { default_roles: admin_default.map(|r| vec![r]) }).placeholder("Select admin role")),
+      CAR::SelectMenu(CSM::new("guild_config_runner_role", CSMK::Role { default_roles: runner_default.map(|r| vec![r]) }).placeholder("Select runner role")),
+      CAR::SelectMenu(CSM::new("guild_config_admin_role", CSMK::Role { default_roles: admin_default.map(|r| vec![r]) }).placeholder("Select admin role")),
     ];
 
     // Add team balance method
     components.push(CAR::SelectMenu(
-      CSM::new("server_settings_balance", CSMK::String { options: vec![CSMO::new("Custom distribution algorithm", "bch"), CSMO::new("Average distribution", "average")] })
+      CSM::new("guild_config_balance", CSMK::String { options: vec![CSMO::new("Custom distribution algorithm", "bch"), CSMO::new("Average distribution", "average")] })
         .placeholder("Team balance method..."),
     ));
 
@@ -391,10 +391,10 @@ impl ServerConfigDisplay {
 
     // Add action buttons
     components.push(CAR::Buttons(vec![
-      CB::new("server_settings_edit_post_game_confirm_time").label("Edit post-game timeout").style(BS::Secondary),
-      CB::new("server_settings_migrate_elo").label("Run ELO migration").style(BS::Primary),
-      CB::new("server_settings_create_roles").label("Create roles").style(BS::Primary),
-      Eph::back("server_settings_roles_back"),
+      CB::new("guild_config_edit_post_game_confirm_time").label("Edit post-game timeout").style(BS::Secondary),
+      CB::new("guild_config_migrate_elo").label("Run ELO migration").style(BS::Primary),
+      CB::new("guild_config_create_roles").label("Create roles").style(BS::Primary),
+      Eph::back("guild_config_roles_back"),
     ]));
 
     components
@@ -409,7 +409,7 @@ impl ServerConfigDisplay {
 pub struct ConfigToggle {
   /// DB column name in the config table
   pub column: &'static str,
-  /// Button custom_id prefix (e.g. "server_settings_dynamic_elo")
+  /// Button custom_id prefix (e.g. "guild_config_dynamic_elo")
   pub button_id: &'static str,
   /// Label shown when enabled
   pub label_on: &'static str,
@@ -426,7 +426,7 @@ pub const RANK_CONFIG_TOGGLES: &[ConfigToggle] = &[
     // Note: Dynamic ELO moved to Server menu
 ];
 
-/// Rank configuration display for server settings sub-menu
+/// Rank configuration display for guild config sub-menu
 pub struct RankConfigDisplay {
   pub guild_name: String,
   pub rank_roles: Vec<(String, u16, RoleId)>, // (rank_name, elo, role_id)
@@ -504,7 +504,7 @@ impl AsSettingsMenu for RankConfigDisplay {
         })
         .collect();
 
-      menu = menu.row(SR::StringSelect { id: "server_settings_default_rank_select".to_string(), placeholder: "Set default rank".to_string(), options: default_options });
+      menu = menu.row(SR::StringSelect { id: "guild_config_default_rank_select".to_string(), placeholder: "Set default rank".to_string(), options: default_options });
 
       // Add rank edit select
       let edit_options: Vec<(String, String)> = self
@@ -516,14 +516,14 @@ impl AsSettingsMenu for RankConfigDisplay {
         })
         .collect();
 
-      menu = menu.row(SR::StringSelect { id: "server_settings_rank_select".to_string(), placeholder: "Select rank to configure".to_string(), options: edit_options });
+      menu = menu.row(SR::StringSelect { id: "guild_config_rank_select".to_string(), placeholder: "Select rank to configure".to_string(), options: edit_options });
     }
 
     // Add action buttons
     menu = menu.row(SR::Buttons(vec![
-      SB::action("server_settings_rank_add", "Add rank", Sbs::Success),
-      SB::action("server_settings_rank_link", "Link ranks", Sbs::Primary),
-      SB::action("server_settings_ranks_back", "Back", Sbs::Secondary),
+      SB::action("guild_config_rank_add", "Add rank", Sbs::Success),
+      SB::action("guild_config_rank_link", "Link ranks", Sbs::Primary),
+      SB::action("guild_config_ranks_back", "Back", Sbs::Secondary),
     ]));
 
     menu
@@ -561,7 +561,7 @@ impl RankConfigDisplay {
 
         CAR::SelectMenu(
           CSM::new(
-            "server_settings_default_rank_select",
+            "guild_config_default_rank_select",
             CSMK::String {
               options: self
                 .rank_roles
@@ -593,7 +593,7 @@ impl RankConfigDisplay {
 
         CAR::SelectMenu(
           CSM::new(
-            "server_settings_rank_select",
+            "guild_config_rank_select",
             CSMK::String {
               options: self
                 .rank_roles
@@ -611,9 +611,9 @@ impl RankConfigDisplay {
     }
 
     components.push(CAR::Buttons(vec![
-      CB::new("server_settings_rank_add").label("Add rank").style(BS::Success),
-      CB::new("server_settings_rank_link").label("Link ranks").style(BS::Primary),
-      Eph::back("server_settings_ranks_back"),
+      CB::new("guild_config_rank_add").label("Add rank").style(BS::Success),
+      CB::new("guild_config_rank_link").label("Link ranks").style(BS::Primary),
+      Eph::back("guild_config_ranks_back"),
     ]));
 
     components
@@ -645,15 +645,15 @@ impl RankRoleConfigDisplay {
   pub fn build_components(&self) -> Vec<CAR> {
     vec![
       CAR::SelectMenu(
-        CSM::new(format!("server_settings_rank_role_{}", self.rank_key), CSMK::Role { default_roles: Some(vec![self.role_id]) })
+        CSM::new(format!("guild_config_rank_role_{}", self.rank_key), CSMK::Role { default_roles: Some(vec![self.role_id]) })
           .placeholder("Link discord Role")
           .min_values(0)
           .max_values(1),
       ),
       CAR::Buttons(vec![
-        CB::new(format!("server_settings_rank_edit_{}", self.rank_key)).label("Edit name & ELO").style(BS::Primary),
-        CB::new(format!("server_settings_rank_delete_{}", self.rank_key)).label("Remove rank").style(BS::Danger),
-        CB::new("server_settings_rank_back").label("Back to ranks").style(BS::Secondary),
+        CB::new(format!("guild_config_rank_edit_{}", self.rank_key)).label("Edit name & ELO").style(BS::Primary),
+        CB::new(format!("guild_config_rank_delete_{}", self.rank_key)).label("Remove rank").style(BS::Danger),
+        CB::new("guild_config_rank_back").label("Back to ranks").style(BS::Secondary),
       ]),
     ]
   }
@@ -663,7 +663,7 @@ impl RankRoleConfigDisplay {
 // CategoryList implementation
 // ============================================================================
 
-/// Category list display for server settings sub-menu
+/// Category list display for guild config sub-menu
 pub struct CategoryListDisplay {
   pub guild_name: String,
   pub categories: Vec<crate::models::Category>,
@@ -697,15 +697,15 @@ impl AsSettingsMenu for CategoryListDisplay {
         })
         .collect();
 
-      menu = menu.row(SR::StringSelect { id: "server_settings_category_select".to_string(), placeholder: "Select category to configure".to_string(), options });
+      menu = menu.row(SR::StringSelect { id: "guild_config_category_select".to_string(), placeholder: "Select category to configure".to_string(), options });
     }
 
     // Add action buttons
-    let mut buttons = vec![SB::action("server_settings_create_category", "Create a category", Sbs::Primary)];
+    let mut buttons = vec![SB::action("guild_config_create_category", "Create a category", Sbs::Primary)];
     if !self.categories.is_empty() {
-      buttons.push(SB::action("server_settings_remove_category", "Remove a category", Sbs::Danger));
+      buttons.push(SB::action("guild_config_remove_category", "Remove a category", Sbs::Danger));
     }
-    buttons.push(SB::action("server_settings_categories_back", "Back", Sbs::Secondary));
+    buttons.push(SB::action("guild_config_categories_back", "Back", Sbs::Secondary));
     menu = menu.row(SR::Buttons(buttons));
 
     menu
@@ -734,20 +734,20 @@ impl CategoryListDisplay {
         })
         .collect();
 
-      if let Some(selection_menu) = create_selection_menu("server_settings_category_select", "Select category to configure", options) {
+      if let Some(selection_menu) = create_selection_menu("guild_config_category_select", "Select category to configure", options) {
         components.push(selection_menu);
       }
     }
 
     // Add create category, remove category, and back buttons
-    let mut buttons = vec![CB::new("server_settings_create_category").label("Create a category").style(BS::Primary)];
+    let mut buttons = vec![CB::new("guild_config_create_category").label("Create a category").style(BS::Primary)];
 
     // Only show remove button if there are categories to remove
     if !self.categories.is_empty() {
-      buttons.push(CB::new("server_settings_remove_category").label("Remove a category").style(BS::Danger));
+      buttons.push(CB::new("guild_config_remove_category").label("Remove a category").style(BS::Danger));
     }
 
-    buttons.push(Eph::back("server_settings_categories_back"));
+    buttons.push(Eph::back("guild_config_categories_back"));
     components.push(CAR::Buttons(buttons));
 
     components
@@ -806,7 +806,7 @@ impl AsSettingsMenu for CategorySettingsDisplay {
         SB::category_edit("edit_vc_destroy", "VC destroy", gid),
         SB::category_edit("edit_vc_keepmin", "Keep min VCs", gid),
       ]))
-      .row(SR::Buttons(vec![SB::category_action("elo_gate", "ELO gate", Sbs::Primary, gid), SB::action("server_settings_categories", "Back", Sbs::Secondary)]))
+      .row(SR::Buttons(vec![SB::category_action("elo_gate", "ELO gate", Sbs::Primary, gid), SB::action("guild_config_categories", "Back", Sbs::Secondary)]))
   }
 }
 
