@@ -88,7 +88,9 @@ impl ShutdownHandler {
     self.mark_dashboards_offline().await;
   }
 
-  /// Clean up empty team voice channels
+  /// Clean up empty team voice channels.
+  /// Respects `keep_minimum` - preserves at least one empty pair per category when the setting is enabled.
+  /// Skips deletion of channels that currently have players in them.
   async fn cleanup_team_vcs(&self) {
     if let Ok(mut manager_lock) = self.manager.try_lock() {
       let mut deleted_count = 0;
@@ -103,25 +105,38 @@ impl ShutdownHandler {
 
         for category in &mut server.categories {
           let category_name = category.name();
-          let mut kept = Vec::new();
+          let keep_minimum = category.team_vc_settings.keep_minimum;
+
+          // Partition into occupied and empty
+          let mut occupied_pairs = Vec::new();
+          let mut empty_pairs = Vec::new();
 
           for tc in &category.channels.teams {
-            let red_empty = !vc_members.contains(&tc.red_vc.get());
-            let blu_empty = !vc_members.contains(&tc.blu_vc.get());
+            let red_has_players = vc_members.contains(&tc.red_vc.get());
+            let blu_has_players = vc_members.contains(&tc.blu_vc.get());
 
-            if red_empty && blu_empty {
-              // Delete from Discord
-              let _ = tc.red_vc.delete(&self.http).await;
-              let _ = tc.blu_vc.delete(&self.http).await;
-
-              // Remove from database
-              let _ = self.db.teams.remove_team(guild_id, tc.red_vc, tc.blu_vc, &guild_name, &category_name).await;
-              deleted_count += 1;
+            if red_has_players || blu_has_players {
+              occupied_pairs.push(tc.clone());
             } else {
-              kept.push(tc.clone());
+              empty_pairs.push(tc.clone());
             }
           }
-          category.channels.teams = kept;
+
+          // If keep_minimum is enabled, preserve one empty pair (lowest set_index)
+          if keep_minimum && !empty_pairs.is_empty() {
+            empty_pairs.sort_by(|a, b| a.set_index.cmp(&b.set_index));
+            occupied_pairs.push(empty_pairs.remove(0));
+          }
+
+          // Delete remaining empty pairs
+          for tc in &empty_pairs {
+            let _ = tc.red_vc.delete(&self.http).await;
+            let _ = tc.blu_vc.delete(&self.http).await;
+            let _ = self.db.teams.remove_team(guild_id, tc.red_vc, tc.blu_vc, &guild_name, &category_name).await;
+            deleted_count += 1;
+          }
+
+          category.channels.teams = occupied_pairs;
         }
       }
 

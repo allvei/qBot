@@ -107,7 +107,8 @@ pub async fn log_queue_toggle(
   .bind(category_id as i64)
   .bind(format.id as i64)
   .fetch_one(&db.pool)
-  .await?;
+  .await
+  .map_err(|e| anyhow::anyhow!("no format row found for guild={} category={} format={}: {e}", guild_id, category_id, format.id))?;
 
   let guild_name: &str = fmt_info.get("guild_name");
   let ctg_nm: &str = fmt_info.get("category_name");
