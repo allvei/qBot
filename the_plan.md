@@ -28,8 +28,8 @@ This plan restructures the bot to run tokio in a background thread while eframe/
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Main Thread                           │
-│              eframe::run() -> egui GUI                    │
+│                    Main Thread                          │
+│              eframe::run() -> egui GUI                  │
 │  ┌────────────┬────────────┬────────────┬────────────┐  │
 │  │ Log Panel  │ Queue View │ Game View  │ Admin Panel│  │
 │  └────────────┴────────────┴────────────┴────────────┘  │
@@ -39,7 +39,7 @@ This plan restructures the bot to run tokio in a background thread while eframe/
                            │ (manager, db, log_buffer, cmd_tx)
                            ▼
 ┌─────────────────────────────────────────────────────────┐
-│              Background Tokio Thread                      │
+│              Background Tokio Thread                    │
 │  ┌────────────┬────────────┬────────────┬────────────┐  │
 │  │ Discord    │ Database   │ Command    │ Logging    │  │
 │  │ Gateway    │ Pool       │ Receiver   │ Subscriber │  │
