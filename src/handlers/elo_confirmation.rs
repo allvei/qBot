@@ -96,25 +96,24 @@ pub async fn handle_elo_change_confirmation(
     // Update in-memory player data and dashboards where this player is queued
     {
       let mut manager_lock = manager.lock().await;
+      let mut found_in_queue = false;
+
       if let Ok(server) = manager_lock.get_qguild(guild_id) {
         for category in &mut server.categories {
-          // Update in-memory player ELO and rank for all sessions
-          for session in &mut category.formats[0].sessions {
-            if let Some(session_player) = session.pool.iter_mut().find(|p| p.player.user_id == target_uid) {
-              session_player.player.elo = new_elo;
-              session_player.player.rank = Some(new_rank.clone());
-            }
-          }
-
-          // Check if player is in any session to determine if dashboard update is needed
-          let player_in_queue = category.formats[0].sessions.iter().any(|session| session.pool.iter().any(|p| p.player.user_id == target_uid));
-
-          if player_in_queue {
-            let prefix = crate::log::log_prefix_category(&crate::models::constants::guild_name(ctx, guild_id), &category.name());
-            category.queue_dash_update(ctx, guild_id).await;
-            info!("{} Player {} ELO changed, dashboard updated", prefix, user_tag);
+          if category.for_each_player_mut(target_uid, |session_player| {
+            session_player.player.elo = new_elo;
+            session_player.player.rank = Some(new_rank.clone());
+          }) {
+            found_in_queue = true;
           }
         }
+      }
+
+      let queued = manager_lock.queue_dash_updates_for_player(ctx, guild_id, target_uid).await;
+      if found_in_queue {
+        info!("Player {} ELO changed, queued {} dashboard update(s)", user_tag, queued);
+      } else {
+        info!("Player {} ELO changed but not found in any queue", user_tag);
       }
     }
 

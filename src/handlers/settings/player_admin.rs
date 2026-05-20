@@ -371,33 +371,26 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
     // Update in-memory player data and dashboards where this player is queued
     {
       let mut manager_lock = manager.lock().await;
+      let mut found_in_queue = false;
+
       if let Ok(server) = manager_lock.get_qguild(guild_id) {
-        let mut found_in_queue = false;
         for category in &mut server.categories {
-          // Update in-memory player ELO for all sessions
-          for session in &mut category.formats[0].sessions {
-            if let Some(session_player) = session.pool.iter_mut().find(|p| p.player.user_id == target_uid) {
-              session_player.player.elo = elo;
-              // Rank is updated separately based on elo_ranks_linked setting
-            }
-          }
-
-          // Check if player is in any session in this category
-          let player_in_queue = category.formats[0].sessions.iter().any(|session| session.pool.iter().any(|p| p.player.user_id == target_uid));
-
-          if player_in_queue {
+          if category.for_each_player_mut(target_uid, |session_player| {
+            session_player.player.elo = elo;
+          }) {
             found_in_queue = true;
-            let prefix = crate::log::log_prefix_category(&crate::models::constants::guild_name(ctx, guild_id), &category.name());
-            category.queue_dash_update(ctx, guild_id).await;
-            info!("{} Player {} ELO changed, dashboard updated", prefix, target_tag);
           }
-        }
-        if !found_in_queue {
-          info!("Player {} ELO changed but not found in any queue, no dashboard update needed", target_tag);
         }
       } else {
         let guild_name = crate::models::constants::guild_name(ctx, guild_id);
         warn!("[{}] Failed to get server when checking if player {} is queued", guild_name, target_tag);
+      }
+
+      let queued = manager_lock.queue_dash_updates_for_player(ctx, guild_id, target_uid).await;
+      if found_in_queue {
+        info!("Player {} ELO changed, queued {} dashboard update(s)", target_tag, queued);
+      } else {
+        info!("Player {} ELO changed but not found in any queue", target_tag);
       }
     }
 
@@ -428,26 +421,22 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
     // Update in-memory player data and dashboards where this player is queued
     {
       let mut manager_lock = manager.lock().await;
-      if let Ok(server) = manager_lock.get_qguild(guild_id) {
-        let mut found_in_queue = false;
-        for category in &mut server.categories {
-          // Update in-memory player dynamic_elo for all sessions
-          for session in &mut category.formats[0].sessions {
-            if let Some(session_player) = session.pool.iter_mut().find(|p| p.player.user_id == target_uid) {
-              session_player.player.dynamic_elo = dynamic_elo;
-            }
-          }
+      let mut found_in_queue = false;
 
-          let player_in_queue = category.formats[0].sessions.iter().any(|session| session.pool.iter().any(|p| p.player.user_id == target_uid));
-          if player_in_queue {
+      if let Ok(server) = manager_lock.get_qguild(guild_id) {
+        for category in &mut server.categories {
+          if category.for_each_player_mut(target_uid, |session_player| {
+            session_player.player.dynamic_elo = dynamic_elo;
+          }) {
             found_in_queue = true;
-            category.queue_dash_update(ctx, guild_id).await;
           }
         }
-        if found_in_queue {
-          info!("Player {} Dynamic ELO changed, dashboard updated", target_tag);
-        }
+      } else {
+        let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+        warn!("[{}] Failed to get server when checking if player {} is queued", guild_name, target_tag);
       }
+
+      let queued = manager_lock.queue_dash_updates_for_player(ctx, guild_id, target_uid).await;
     }
 
     // Refresh the settings menu
@@ -502,32 +491,28 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
     // Update in-memory player data and dashboards where this player is queued
     {
       let mut manager_lock = manager.lock().await;
-      if let Ok(server) = manager_lock.get_qguild(guild_id) {
-        let mut found_in_queue = false;
-        for category in &mut server.categories {
-          // Update in-memory player rank for all sessions
-          for session in &mut category.formats[0].sessions {
-            if let Some(session_player) = session.pool.iter_mut().find(|p| p.player.user_id == target_uid) {
-              session_player.player.rank = Some(new_rank.clone());
-              // ELO is updated based on elo_ranks_linked setting
-              if elo_ranks_linked {
-                session_player.player.elo = new_rank.elo;
-              }
-            }
-          }
+      let mut found_in_queue = false;
 
-          let player_in_queue = category.formats[0].sessions.iter().any(|session| session.pool.iter().any(|p| p.player.user_id == target_uid));
-          if player_in_queue {
+      if let Ok(server) = manager_lock.get_qguild(guild_id) {
+        for category in &mut server.categories {
+          if category.for_each_player_mut(target_uid, |session_player| {
+            session_player.player.rank = Some(new_rank.clone());
+            if elo_ranks_linked {
+              session_player.player.elo = new_rank.elo;
+            }
+          }) {
             found_in_queue = true;
-            category.queue_dash_update(ctx, guild_id).await;
-            info!("Player {} rank changed, dashboard updated for category {}", target_tag, category.name());
           }
-        }
-        if !found_in_queue {
-          info!("Player {} rank changed but not found in any queue", target_tag);
         }
       } else {
         warn!("Failed to get server when checking if player {} is queued", target_tag);
+      }
+
+      let queued = manager_lock.queue_dash_updates_for_player(ctx, guild_id, target_uid).await;
+      if found_in_queue {
+        info!("Player {} rank changed, queued {} dashboard update(s)", target_tag, queued);
+      } else {
+        info!("Player {} rank changed but not found in any queue", target_tag);
       }
     }
 

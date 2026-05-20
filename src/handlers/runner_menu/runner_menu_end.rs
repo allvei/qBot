@@ -110,8 +110,7 @@ pub async fn handle_end_without_score(ctx: &Context, interaction: &CI, db: &Arc<
       Ok(_) => {
         info!("{} Match ended without score report", log_prefix_category(&guild_name_str, &category_name));
 
-        // Update all dashboards
-        category.queue_dash_update_all(ctx).await;
+        category.queue_dash_update(ctx, guild_id).await;
 
         let embed = CE::new().title("Match ended").description(format!("Ended {} match without reporting score.", format_name)).color(0x00FF00);
 
@@ -342,7 +341,7 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
     // AfterExpiration spawn — pass None here so it doesn't try to re-lock manager.
     let result = category.pull_fmt(format_id, ctx, guild_id, db, None).await;
     if result.is_ok() {
-      category.queue_dash_update_all(ctx).await;
+      category.queue_dash_update(ctx, guild_id).await;
     }
     result
     // mgr lock released here
