@@ -1,3 +1,38 @@
+# v0.14.0
+
+__21.05.26__
+
+## Users & Admins
+
+__Added__
+
+- __Auto-leave queue on disconnect__ - New user preference to automatically leave the queue when disconnecting from the voice channel. Found in `/prefs` menu.
+- __GUI user management__ - Desktop app now includes a panel for viewing and managing server users with guild activity indicators.
+- __Guild-scoped deletion__ - Admins can delete all bot data for a specific server through the desktop app.
+
+__Improved__
+
+- __Dashboard ELO display__ - ELO values now consistently respect the dynamic ELO setting across all dashboard views.
+- __Runner menu flow__ - ELO confirmation handling and runner menu interactions work more smoothly.
+- __GUI integration__ - Desktop app now runs as part of the main application for live updates and better sync with Discord.
+
+__Fixed__
+
+- __Score submission freezing__ - Fixed a deadlock that could cause the bot to freeze when submitting match scores.
+- __Player lookup reliability__ - Players with missing rank data now default to Unranked instead of causing lookup issues.
+
+## Developers
+
+__Added__
+
+- __User search__ - Added user search functionality for easier player lookup.
+- __Guild deletion helper__ - Added helper for complete guild data removal.
+
+__Refactored__
+
+- __Settings naming__ - Renamed "server settings" and "user settings" for clearer separation.
+- __Code formatting__ - Standardized formatting with 2-space indentation across the entire codebase.
+
 # v0.13.0
 
 __18.05.26__
