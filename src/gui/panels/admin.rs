@@ -355,6 +355,22 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
 
     ui.add_space(4.0);
 
+    // ── System Control ────────────────────────────────────────────────────
+    ui.collapsing("System Control", |ui| {
+      egui::Grid::new("adm_sys").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+        ui.label("Restart bot gracefully:");
+        if ui.button("🔄 Graceful Restart").clicked() {
+          send(GuiCommand::GracefulRestart);
+        }
+        ui.end_row();
+        ui.label("");
+        ui.label("⚠️ State will be preserved. Games in progress will be saved.");
+        ui.end_row();
+      });
+    });
+
+    ui.add_space(4.0);
+
     // ── Debugging ─────────────────────────────────────────────────────────
     ui.collapsing("Debugging", |ui| {
       egui::Grid::new("adm_dbg").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {

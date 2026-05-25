@@ -28,6 +28,9 @@ pub enum GuiCommand {
   TestDiscordApi,
   ViewSessionDetails { guild_id: u64, category_id: u8, fmt_id: u8, session_index: usize },
 
+  // System Control
+  GracefulRestart,
+
   // Recovery from Bugs
   ClearAllTeamVCs { guild_id: u64, category_id: u8 },
   ResetCategoryState { guild_id: u64, category_id: u8 },
@@ -75,6 +78,7 @@ impl GuiCommand {
       GuiCommand::ViewSessionDetails { .. } => None,
       GuiCommand::TestBalanceMethods { .. } => None,
       GuiCommand::ToggleDebugMode { .. } => None,
+      GuiCommand::GracefulRestart => None,
       _ => match self {
         GuiCommand::ForceEndGame { guild_id, .. } => Some(*guild_id),
         GuiCommand::ClearQueue { guild_id, .. } => Some(*guild_id),

@@ -72,20 +72,112 @@ impl ShutdownHandler {
 
   /// Perform cleanup operations before shutdown
   async fn cleanup(&self) {
-    // Stop the dashboard update queue
+    use tokio::time::{sleep, Duration};
+    use tracing::info;
+
+    info!("Starting graceful shutdown sequence...");
+
+    self.mark_dashboards_restarting().await;
+
+    self.wait_for_active_sessions(Duration::from_secs(300)).await;
+
+    self.save_manager_state().await;
+
     {
       let mut queue_lock = self.dashboard_queue.lock().await;
-      let _ = queue_lock.take(); // Drop the queue, closing the channel
+      let _ = queue_lock.take();
     }
 
-    // Wait for any in-flight batch to finish
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(500)).await;
 
-    // Clean up empty team VCs
     self.cleanup_team_vcs().await;
 
-    // Mark dashboards as offline
     self.mark_dashboards_offline().await;
+
+    info!("Graceful shutdown complete");
+  }
+
+  /// Mark all dashboards with a restarting indicator
+  async fn mark_dashboards_restarting(&self) {
+    if let Ok(manager_lock) = self.manager.try_lock() {
+      info!("Marking dashboards as restarting...");
+
+      let mut tasks = tokio::task::JoinSet::new();
+
+      for server in &manager_lock.qguilds {
+        let guild_id = server.id;
+        let guild_name = self.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+
+        for category in &server.categories {
+          let restart_embed = CreateEmbed::new().title("🔄 qBot is restarting...").description("Bot will be back online shortly.\nQueues and active games will be preserved.").color(0xFFA500);
+
+          let chn_id = category.channels.dashboard;
+          let msg_id = category.dashboard_msg;
+          let ctg_nm = category.name.clone().unwrap_or_default();
+          let guild_name_clone = guild_name.clone();
+          let http = self.http.clone();
+
+          tasks.spawn(async move {
+            match chn_id.edit_message(&http, msg_id, EditMessage::new().embed(restart_embed)).await {
+              Ok(_) => {
+                info!("{} Dashboard marked as restarting", log_prefix_category(&guild_name_clone, &ctg_nm));
+              }
+              Err(e) => {
+                warn!("{} Failed to mark dashboard as restarting: {}", log_prefix_category(&guild_name_clone, &ctg_nm), e);
+              }
+            }
+          });
+        }
+      }
+
+      drop(manager_lock);
+      while tasks.join_next().await.is_some() {}
+    } else {
+      warn!("Could not acquire manager lock to mark dashboards as restarting");
+    }
+  }
+
+  /// Wait for active sessions to complete with timeout
+  async fn wait_for_active_sessions(&self, timeout: std::time::Duration) {
+    use std::time::Instant;
+    use tokio::time::{sleep, Duration};
+
+    let start = Instant::now();
+
+    loop {
+      let (has_active, count) = {
+        let manager = self.manager.lock().await;
+        let count = manager.count_active_sessions();
+        (count > 0, count)
+      };
+
+      if !has_active {
+        info!("All sessions completed");
+        break;
+      }
+
+      if start.elapsed() > timeout {
+        warn!("Timeout waiting for sessions to complete ({} still active)", count);
+        break;
+      }
+
+      info!("Waiting for {} active session(s) to complete... ({}s elapsed)", count, start.elapsed().as_secs());
+      sleep(Duration::from_secs(10)).await;
+    }
+  }
+
+  /// Save current manager state to database
+  async fn save_manager_state(&self) {
+    let manager = self.manager.lock().await;
+    match self.db.state.save_manager(&manager).await {
+      Ok(_) => {
+        let session_count = manager.count_active_sessions();
+        info!("Saved manager state ({} guilds, {} active sessions)", manager.qguilds.len(), session_count);
+      }
+      Err(e) => {
+        warn!("Failed to save manager state: {}", e);
+      }
+    }
   }
 
   /// Clean up empty team voice channels.

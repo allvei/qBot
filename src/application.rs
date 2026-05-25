@@ -22,6 +22,7 @@ use crate::gui::commands::GuiCommand;
 use crate::handlers::{admin, InteractionHelpers};
 use crate::models::server::QueueContext;
 use crate::repo::GuildRepository;
+use crate::state_transfer::StateTransfer;
 use crate::{
   guild_name, log_prefix_category, log_prefix_format, log_queue_toggle, ButtonType, Category, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database,
   DmMessageTracker, DmTrackerKey, Manager, Player, QGuild, Roles, SessionStatus, VoiceStateUpdate, RED,
@@ -327,12 +328,45 @@ struct Handler {
   dashboard_queue: Arc<tokio::sync::Mutex<Option<DashboardUpdateQueue>>>,
 }
 
+impl Handler {
+  /// Restore bot state from database if available
+  async fn restore_state_if_available(&self, ctx: &Context) {
+    const MAX_STATE_AGE_SECS: u64 = 3600;
+
+    match self.db.state.load_manager(MAX_STATE_AGE_SECS).await {
+      Ok(Some(restored_manager)) => {
+        let mut manager = self.manager.lock().await;
+        *manager = restored_manager;
+
+        manager.validate_and_cleanup(&ctx.cache).await;
+
+        let guild_count = manager.qguilds.len();
+        let session_count = manager.count_active_sessions();
+
+        info!("Restored bot state: {} guilds, {} active sessions", guild_count, session_count);
+
+        if let Err(e) = self.db.state.clear().await {
+          warn!("Failed to clear saved state after restoration: {}", e);
+        }
+      }
+      Ok(None) => {
+        debug!("No saved state found or state too old, starting fresh");
+      }
+      Err(e) => {
+        warn!("Failed to restore state: {}, starting fresh", e);
+      }
+    }
+  }
+}
+
 /// Handler for Discord events
 #[async_trait]
 impl EventHandler for Handler {
   /// When the bot is ready
   async fn ready(&self, ctx: Context, _ready: Ready) {
     let _guild_count = ctx.cache.guilds().len();
+
+    self.restore_state_if_available(&ctx).await;
 
     // Initialize dashboard update queue (done once on ready)
     {

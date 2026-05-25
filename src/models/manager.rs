@@ -4,6 +4,7 @@
 //! The Manager is responsible for managing multiple servers and their categories/games.
 
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use serenity::all::{Cache, ChannelId as CI, Context, GuildId as GI, UserId as UI};
 use std::collections::HashMap;
 use std::time::SystemTime;
@@ -11,7 +12,7 @@ use std::time::SystemTime;
 use crate::models::{Category, QGuild, Roles, SessionStatus};
 
 /// Manages multiple servers and their associated categories/games
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Manager {
   /// Collection of servers managed by this instance
   pub qguilds: Vec<QGuild>,
@@ -169,5 +170,74 @@ impl Manager {
       }
       Err(_) => 0,
     }
+  }
+
+  /// Validate and cleanup restored state after restart
+  /// Removes stale data and validates that Discord entities still exist
+  pub async fn validate_and_cleanup(&mut self, cache: &Cache) {
+    use std::time::Duration;
+    use tracing::{debug, warn};
+
+    let session_max_age = Duration::from_secs(3600);
+
+    self.qguilds.retain(|guild| {
+      let exists = cache.guild(guild.id).is_some();
+      if !exists {
+        warn!("Removing guild {} from state: bot is no longer in this guild", guild.id);
+      }
+      exists
+    });
+
+    for guild in &mut self.qguilds {
+      let guild_id = guild.id;
+      let guild_cache = cache.guild(guild_id);
+
+      for category in &mut guild.categories {
+        let dashboard_exists = guild_cache.as_ref().and_then(|g| g.channels.get(&category.channels.dashboard)).is_some();
+
+        if !dashboard_exists {
+          warn!("Dashboard channel {} missing for category {} in guild {}", category.channels.dashboard, category.id, guild_id);
+        }
+
+        category.channels.teams.retain(|tc| {
+          let red_exists = guild_cache.as_ref().and_then(|g| g.channels.get(&tc.red_vc)).is_some();
+          let blu_exists = guild_cache.as_ref().and_then(|g| g.channels.get(&tc.blu_vc)).is_some();
+
+          if !red_exists || !blu_exists {
+            debug!("Removing stale team VC pair (red: {}, blu: {}) from state", tc.red_vc, tc.blu_vc);
+            false
+          } else {
+            true
+          }
+        });
+
+        for format in &mut category.formats {
+          format.sessions.retain(|session| {
+            if let Some(started_at) = session.started_at {
+              let age = started_at.elapsed().unwrap_or_default();
+              if age > session_max_age {
+                warn!("Removing stale session from state (age: {}s, status: {:?})", age.as_secs(), session.status);
+                return false;
+              }
+            }
+            true
+          });
+        }
+      }
+    }
+
+    self.cleanup_stale_score_submissions();
+
+    debug!("State validation complete: {} guilds, {} categories", self.qguilds.len(), self.qguilds.iter().map(|g| g.categories.len()).sum::<usize>());
+  }
+
+  /// Count active sessions across all guilds
+  pub fn count_active_sessions(&self) -> usize {
+    self.qguilds.iter().map(|guild| guild.categories.iter().map(|cat| cat.formats.iter().map(|fmt| fmt.sessions.iter().filter(|s| s.is_active()).count()).sum::<usize>()).sum::<usize>()).sum()
+  }
+
+  /// Check if there are any sessions in progress
+  pub fn has_active_sessions(&self) -> bool {
+    self.count_active_sessions() > 0
   }
 }

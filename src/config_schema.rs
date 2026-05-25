@@ -9,6 +9,12 @@
 //!
 //! To add a new configuration option, simply add an entry to the appropriate
 //! macro invocation. Everything else is generated automatically.
+//!
+//! ## Discord Limits
+//! 
+//! Discord has a limit of **5 buttons per action row**. The settings menu
+//! automatically splits toggle buttons into multiple rows when needed.
+//! You can add as many boolean toggles as required without worrying about this limit.
 
 macro_rules! define_server_config {
     (
@@ -278,9 +284,12 @@ define_user_preferences! {
     },
 }
 
-pub use server_config::*;
-pub use category_config::*;
-pub use user_preferences::*;
+pub use server_config::COLUMNS as SERVER_CONFIG_COLUMNS;
+pub use server_config::TOGGLES as SERVER_CONFIG_TOGGLES;
+pub use category_config::COLUMNS as CATEGORY_CONFIG_COLUMNS;
+pub use category_config::TOGGLES as CATEGORY_CONFIG_TOGGLES;
+pub use user_preferences::COLUMNS as USER_PREFERENCES_COLUMNS;
+pub use user_preferences::TOGGLES as USER_PREFERENCES_TOGGLES;
 
 pub fn sql_type_for_rust_type(type_str: &str) -> &'static str {
     match type_str {

@@ -592,6 +592,10 @@ pub async fn handle_command(
       info!("[GUI] ToggleDebugMode g={} c={} enabled={} — not implemented", guild_id, category_id, enabled);
       Ok(None)
     }
+    GuiCommand::GracefulRestart => {
+      info!("[GUI] GracefulRestart — state will be persisted, bot will restart");
+      std::process::exit(0);
+    }
   };
   result?;
   Ok(affected_guild)

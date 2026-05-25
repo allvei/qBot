@@ -77,6 +77,7 @@ impl DatabaseMigrations {
     self.create_match_players_table().await?;
     self.create_fatkid_table().await?;
     self.create_guilds_table().await?;
+    self.create_bot_state_table().await?;
 
     // Add foreign key constraint after both tables exist
     self.add_config_foreign_key().await?;
@@ -95,6 +96,7 @@ impl DatabaseMigrations {
     self.verify_match_players().await?;
     self.verify_fatkids().await?;
     self.verify_guilds().await?;
+    self.verify_bot_state().await?;
     Ok(())
   }
 
@@ -825,6 +827,27 @@ impl DatabaseMigrations {
     let required_columns = vec!["id", "guild_id", "name", "nick"];
     self.verify_columns("guilds", &required_columns).await?;
 
+    Ok(())
+  }
+
+  async fn create_bot_state_table(&self) -> Result<()> {
+    if !self.check_table("bot_state").await? {
+      sqlx::query(
+        "CREATE TABLE bot_state (
+          id           INTEGER PRIMARY KEY CHECK (id = 1),
+          manager_json TEXT NOT NULL,
+          saved_at     INTEGER NOT NULL,
+          version      TEXT NOT NULL
+        )",
+      )
+      .execute(&self.pool)
+      .await?;
+    }
+    Ok(())
+  }
+  async fn verify_bot_state(&self) -> Result<()> {
+    let required_columns = vec!["id", "manager_json", "saved_at", "version"];
+    self.verify_columns("bot_state", &required_columns).await?;
     Ok(())
   }
 

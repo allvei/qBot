@@ -9,6 +9,7 @@ pub mod log;
 pub mod models;
 pub mod services;
 pub mod shutdown;
+pub mod state_transfer;
 pub mod terminal;
 pub mod util;
 

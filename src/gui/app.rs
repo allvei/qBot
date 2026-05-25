@@ -71,6 +71,32 @@ impl eframe::App for MyApp {
   fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
     let ctx = ui.ctx();
 
+    // Apply theme and font settings
+    if let Ok(settings) = self.state.gui_settings.try_read() {
+      // Apply theme
+      let visuals = match settings.theme {
+        crate::gui::state::ThemeChoice::Dark => egui::Visuals::dark(),
+        crate::gui::state::ThemeChoice::Light => egui::Visuals::light(),
+      };
+      ctx.set_visuals(visuals);
+
+      // Apply font size
+      let mut style = (*ctx.style()).clone();
+      style.text_styles.insert(
+        egui::TextStyle::Body,
+        egui::FontId::new(settings.font_size, egui::FontFamily::Proportional),
+      );
+      style.text_styles.insert(
+        egui::TextStyle::Button,
+        egui::FontId::new(settings.font_size, egui::FontFamily::Proportional),
+      );
+      style.text_styles.insert(
+        egui::TextStyle::Heading,
+        egui::FontId::new(settings.font_size * 1.3, egui::FontFamily::Proportional),
+      );
+      ctx.set_style(style);
+    }
+
     // Handle keyboard shortcuts
     ctx.input(|i| {
       if i.modifiers.ctrl && i.key_pressed(egui::Key::Q) {

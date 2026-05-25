@@ -45,6 +45,7 @@ pub enum SettingsRow {
 type SR = SettingsRow;
 
 /// A button in the settings menu
+#[derive(Clone)]
 pub struct SettingsButton {
   pub id: String,
   pub label: String,
@@ -317,14 +318,18 @@ impl AsSettingsMenu for ServerConfigDisplay {
       options: vec![("Custom distribution algorithm".to_string(), "bch".to_string()), ("Average distribution".to_string(), "average".to_string())],
     });
 
-    // Add ELO toggles
+    // Add ELO toggles (split into rows of max 5 buttons due to Discord limit)
     if !self.toggle_states.is_empty() {
       let toggle_buttons: Vec<SB> = SERVER_CONFIG_TOGGLES
         .iter()
         .zip(self.toggle_states.iter())
         .map(|(toggle, &state)| SB::toggle(toggle.button_id, if state { toggle.label_on } else { toggle.label_off }, state))
         .collect();
-      menu = menu.row(SR::Buttons(toggle_buttons));
+      
+      // Split into chunks of 5 buttons per row
+      for chunk in toggle_buttons.chunks(5) {
+        menu = menu.row(SR::Buttons(chunk.to_vec()));
+      }
     }
 
     // Add action buttons
@@ -360,7 +365,7 @@ impl ServerConfigDisplay {
         .placeholder("Team balance method..."),
     ));
 
-    // Add ELO toggles
+    // Add ELO toggles (split into rows of max 5 buttons due to Discord limit)
     let toggle_buttons: Vec<CB> = SERVER_CONFIG_TOGGLES
       .iter()
       .zip(self.toggle_states.iter())
@@ -375,8 +380,9 @@ impl ServerConfigDisplay {
       )
       .collect();
 
-    if !toggle_buttons.is_empty() {
-      components.push(CAR::Buttons(toggle_buttons));
+    // Split into chunks of 5 buttons per row
+    for chunk in toggle_buttons.chunks(5) {
+      components.push(CAR::Buttons(chunk.to_vec()));
     }
 
     // Add action buttons
@@ -463,11 +469,15 @@ impl AsSettingsMenu for RankConfigDisplay {
       "Select a rank below to edit its name, ELO, or linked role"
     });
 
-    // Add toggle buttons if any
+    // Add toggle buttons if any (split into rows of max 5 buttons due to Discord limit)
     if !self.toggle_states.is_empty() {
       let toggle_buttons: Vec<SB> =
         RANK_CONFIG_TOGGLES.iter().zip(self.toggle_states.iter()).map(|(toggle, &state)| SB::toggle(toggle.button_id, toggle.label_on, state)).collect();
-      menu = menu.row(SR::Buttons(toggle_buttons));
+      
+      // Split into chunks of 5 buttons per row
+      for chunk in toggle_buttons.chunks(5) {
+        menu = menu.row(SR::Buttons(chunk.to_vec()));
+      }
     }
 
     // Add rank selection if there are ranks
@@ -535,9 +545,9 @@ impl RankConfigDisplay {
 
     let mut components = Vec::new();
 
-    // Only add toggle buttons row if there are toggle buttons
-    if !toggle_buttons.is_empty() {
-      components.push(CAR::Buttons(toggle_buttons));
+    // Split into chunks of 5 buttons per row (Discord limit)
+    for chunk in toggle_buttons.chunks(5) {
+      components.push(CAR::Buttons(chunk.to_vec()));
     }
 
     // Only add rank selection menus if there are valid ranks

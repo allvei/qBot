@@ -9,6 +9,47 @@ use crate::models::Player;
 use crate::{Database, Manager};
 use serenity::all::{Context, GuildId};
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+
+/// Persistent GUI settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuiSettings {
+  pub theme: ThemeChoice,
+  pub font_size: f32,
+  pub log_buffer_size: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ThemeChoice {
+  Dark,
+  Light,
+}
+
+impl Default for GuiSettings {
+  fn default() -> Self {
+    Self {
+      theme: ThemeChoice::Dark,
+      font_size: 14.0,
+      log_buffer_size: 1000,
+    }
+  }
+}
+
+impl GuiSettings {
+  pub fn load() -> Self {
+    // Try to load from file, fallback to defaults
+    std::fs::read_to_string("gui_settings.json")
+      .ok()
+      .and_then(|s| serde_json::from_str(&s).ok())
+      .unwrap_or_default()
+  }
+
+  pub fn save(&self) {
+    if let Ok(json) = serde_json::to_string_pretty(self) {
+      let _ = std::fs::write("gui_settings.json", json);
+    }
+  }
+}
 
 /// Shared state accessible from both GUI (main thread) and tokio thread
 pub struct GuiSharedState {
@@ -32,6 +73,8 @@ pub struct GuiSharedState {
   pub ctx: Option<Arc<Context>>,
   /// Guild names mapped by ID
   pub guilds: HashMap<GuildId, String>,
+  /// GUI settings (theme, font size, etc.)
+  pub gui_settings: Arc<RwLock<GuiSettings>>,
 }
 
 impl GuiSharedState {
@@ -53,6 +96,7 @@ impl GuiSharedState {
       user_guild_data: Arc::new(RwLock::new(Vec::new())),
       ctx: None,
       guilds: HashMap::new(),
+      gui_settings: Arc::new(RwLock::new(GuiSettings::load())),
     }
   }
 
