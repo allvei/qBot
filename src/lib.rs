@@ -1,6 +1,7 @@
 #![allow(clippy::missing_docs_in_private_items)]
 
 pub mod application;
+pub mod config_schema;
 pub mod db;
 pub mod gui;
 pub mod handlers;

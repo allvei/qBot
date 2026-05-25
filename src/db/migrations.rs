@@ -27,6 +27,17 @@ pub struct DatabaseMigrations {
   pool: SqlitePool,
 }
 
+impl DatabaseMigrations {
+  /// Runtime version of add_column that doesn't require literals
+  async fn add_column_runtime(&self, table: &str, name: &str, sql_type: &str, default: &str) -> Result<()> {
+    if !self.check_column(table, name).await? {
+      let query = format!("ALTER TABLE {} ADD COLUMN {} {} DEFAULT {}", table, name, sql_type, default);
+      sqlx::query(&query).execute(&self.pool).await?;
+    }
+    Ok(())
+  }
+}
+
 impl MigrationHelpers for DatabaseMigrations {
   /// Add a column if it doesn't exist
   async fn add_column_if_missing(&self, table: &str, column: &str, column_type: &str, default: &str) -> Result<()> {
@@ -114,33 +125,28 @@ impl DatabaseMigrations {
     Ok(())
   }
   async fn verify_config(&self) -> Result<()> {
-    let required_columns = vec![
+    // Base columns that are not in config_schema (roles, etc.)
+    let mut required_columns = vec![
       "guild_id",
       "runner_id",
       "admin_id",
       "active_elo",
       "default_rank",
-      "elo_ranks_linked",
-      "post_game_auto_leave",
-      "post_game_confirm_time",
-      "team_balance_method",
-      "hide_elo",
-      "gamemode",
-      "default_vc_auto_join",
-      "default_vc_auto_leave",
-      "default_vc_leave_queue",
       "system_message_channel",
     ];
-    add_column!(self, "config", "elo_ranks_linked", "INTEGER", "1");
-    add_column!(self, "config", "post_game_auto_leave", "INTEGER", "1");
-    add_column!(self, "config", "post_game_confirm_time", "INTEGER", "120");
-    add_column!(self, "config", "team_balance_method", "TEXT", "'bch'");
-    add_column!(self, "config", "hide_elo", "INTEGER", "0");
-    add_column!(self, "config", "gamemode", "TEXT", "NULL");
-    add_column!(self, "config", "default_vc_auto_join", "INTEGER", "0");
-    add_column!(self, "config", "default_vc_auto_leave", "INTEGER", "0");
-    add_column!(self, "config", "default_vc_leave_queue", "INTEGER", "0");
+    
+    // Add system_message_channel manually (not a boolean toggle)
     add_column!(self, "config", "system_message_channel", "INTEGER", "NULL");
+
+    // Automatically add all columns from config_schema
+    use crate::config_schema::{server_config, sql_type_for_rust_type, sql_default_for_value};
+    for (column, rust_type, default_value) in server_config::COLUMNS {
+      required_columns.push(column);
+      let sql_type = sql_type_for_rust_type(rust_type);
+      let sql_default = sql_default_for_value(default_value, rust_type);
+      self.add_column_runtime("config", column, sql_type, &sql_default).await?;
+    }
+    
     self.verify_columns("config", &required_columns).await?;
     Ok(())
   }
@@ -189,19 +195,15 @@ impl DatabaseMigrations {
 
       // Add new settings columns if missing
       if has_user_id {
+        // Manually added columns (not in config_schema)
         add_column!(self, "users", "discord_tag", "TEXT", "NULL");
-        add_column!(self, "users", "pm_hot_alert", "INTEGER", "0");
         add_column!(self, "users", "pm_queue_alert_threshold", "INTEGER", "NULL");
-        add_column!(self, "users", "queue_expiration", "INTEGER", "30");
-        add_column!(self, "users", "vc_auto_join", "INTEGER", "0");
         add_column!(self, "users", "join_alert_title", "TEXT", "NULL");
         add_column!(self, "users", "join_alert", "TEXT", "NULL");
         add_column!(self, "users", "join_alert_color", "INTEGER", "3447003");
         add_column!(self, "users", "join_alert_img", "TEXT", "NULL");
         add_column!(self, "users", "join_alert_footer", "TEXT", "NULL");
         add_column!(self, "users", "join_alert_footer_img", "TEXT", "NULL");
-        add_column!(self, "users", "vc_auto_leave", "INTEGER", "0");
-        add_column!(self, "users", "vc_leave_queue", "INTEGER", "0");
         add_column!(self, "users", "post_game_auto_leave", "INTEGER", "1");
         add_column!(self, "users", "leave_alert_title", "TEXT", "NULL");
         add_column!(self, "users", "leave_alert", "TEXT", "NULL");
@@ -209,6 +211,16 @@ impl DatabaseMigrations {
         add_column!(self, "users", "leave_alert_img", "TEXT", "NULL");
         add_column!(self, "users", "leave_alert_footer", "TEXT", "NULL");
         add_column!(self, "users", "leave_alert_footer_img", "TEXT", "NULL");
+        
+        // Automatically add columns from user_preferences schema
+        use crate::config_schema::{user_preferences, sql_type_for_rust_type, sql_default_for_value};
+        for (column, rust_type, global_table, _override_table, default_value) in user_preferences::COLUMNS {
+          if *global_table == "users" {
+            let sql_type = sql_type_for_rust_type(rust_type);
+            let sql_default = sql_default_for_value(default_value, rust_type);
+            self.add_column_runtime("users", column, sql_type, &sql_default).await?;
+          }
+        }
       }
 
       // Drop old elo column if it exists (ELO is now in elo table)
@@ -550,11 +562,11 @@ impl DatabaseMigrations {
     // Add ping column if missing
     add_column!(self, "categories", "ping", "INTEGER", "1");
 
-    let required_columns = vec![
+    // Base columns not in config_schema
+    let mut required_columns = vec![
       "id",
       "guild_id",
       "category_id",
-      "confirm_time",
       "category",
       "dashboard",
       "chat",
@@ -562,12 +574,22 @@ impl DatabaseMigrations {
       "dashboard_msg",
       "game",
       "game_increment",
-      "quota",
       "connect_info",
-      "dm_alert_enabled",
-      "dm_alert_threshold",
       "dm_alert_users",
+      "dm_alert_threshold",
+      "team_vc_create_policy",
+      "team_vc_destroy_policy",
     ];
+
+    // Automatically add columns from category_config schema
+    use crate::config_schema::{category_config, sql_type_for_rust_type, sql_default_for_value};
+    for (column, rust_type, default_value) in category_config::COLUMNS {
+      required_columns.push(column);
+      let sql_type = sql_type_for_rust_type(rust_type);
+      let sql_default = sql_default_for_value(default_value, rust_type);
+      self.add_column_runtime("categories", column, sql_type, &sql_default).await?;
+    }
+
     self.verify_columns("categories", &required_columns).await?;
     Ok(())
   }

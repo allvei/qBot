@@ -256,19 +256,9 @@ impl AsSettingsMenu for crate::db::repo::UserPreferences {
 // ============================================================================
 
 /// All boolean toggles shown on the main guild config page.
-/// To add a new toggle: add a DB column, migration, and an entry here.
-pub const SERVER_CONFIG_TOGGLES: &[ConfigToggle] = &[
-  ConfigToggle { column: "elo_ranks_linked", button_id: "server_cfg_elo_ranks_linked", label_on: "ELO-Rank linked", label_off: "ELO-Rank independent", default: true },
-  ConfigToggle { column: "active_elo", button_id: "guild_config_dynamic_elo", label_on: "Dynamic ELO enabled", label_off: "Dynamic ELO disabled", default: false },
-  ConfigToggle {
-    column: "post_game_auto_leave",
-    button_id: "server_cfg_post_game_auto_leave",
-    label_on: "Post-game auto-remove is enabled",
-    label_off: "Post-game auto-remove is disabled",
-    default: true,
-  },
-  ConfigToggle { column: "hide_elo", button_id: "server_cfg_hide_elo", label_on: "ELO is visible", label_off: "ELO is hidden", default: false },
-];
+/// These are automatically generated from config_schema.rs
+/// To add a new toggle: add an entry to define_server_config! in config_schema.rs
+pub use crate::config_schema::server_config::TOGGLES as SERVER_CONFIG_TOGGLES;
 
 /// Guild config with guild name for display
 pub struct ServerSettingsDisplay {

@@ -1,0 +1,306 @@
+//! Declarative Configuration Schema
+//!
+//! This module provides a single source of truth for all configuration options.
+//! Using macros, it automatically generates:
+//! - Database migrations
+//! - Get/set methods for repositories
+//! - UI display components
+//! - Toggle buttons for boolean settings
+//!
+//! To add a new configuration option, simply add an entry to the appropriate
+//! macro invocation. Everything else is generated automatically.
+
+macro_rules! define_server_config {
+    (
+        $(
+            $field:ident: $type:ty {
+                column: $column:literal,
+                default: $default:expr,
+                display: $display_name:literal,
+                $(button: $button_id:literal,)?
+                $(labels: [$label_on:literal, $label_off:literal],)?
+                description: $description:literal,
+            }
+        ),* $(,)?
+    ) => {
+        pub mod server_config {
+            pub const COLUMNS: &[(&str, &str, &str)] = &[
+                $(
+                    ($column, stringify!($type), stringify!($default)),
+                )*
+            ];
+
+            pub const TOGGLES: &[crate::handlers::settings::menu::ConfigToggle] = &[
+                $(
+                    $(
+                        crate::handlers::settings::menu::ConfigToggle {
+                            column: $column,
+                            button_id: $button_id,
+                            label_on: $label_on,
+                            label_off: $label_off,
+                            default: $default,
+                        },
+                    )?
+                )*
+            ];
+        }
+    };
+}
+
+macro_rules! define_category_config {
+    (
+        $(
+            $field:ident: $type:ty {
+                column: $column:literal,
+                default: $default:expr,
+                display: $display_name:literal,
+                $(button_prefix: $button_prefix:literal,)?
+                $(labels: [$label_on:literal, $label_off:literal],)?
+                description: $description:literal,
+            }
+        ),* $(,)?
+    ) => {
+        pub mod category_config {
+            pub const COLUMNS: &[(&str, &str, &str)] = &[
+                $(
+                    ($column, stringify!($type), stringify!($default)),
+                )*
+            ];
+
+            pub const TOGGLES: &[(&str, &str, &str, &str, bool)] = &[
+                $(
+                    $(
+                        ($column, $button_prefix, $label_on, $label_off, $default),
+                    )?
+                )*
+            ];
+        }
+    };
+}
+
+macro_rules! define_user_preferences {
+    (
+        $(
+            $field:ident: $type:ty {
+                column: $column:literal,
+                global_table: $global_table:literal,
+                override_table: $override_table:literal,
+                default: $default:expr,
+                display: $display_name:literal,
+                $(button: $button_id:literal,)?
+                $(labels: [$label_on:literal, $label_off:literal],)?
+                description: $description:literal,
+            }
+        ),* $(,)?
+    ) => {
+        pub mod user_preferences {
+            pub const COLUMNS: &[(&str, &str, &str, &str, &str)] = &[
+                $(
+                    ($column, stringify!($type), $global_table, $override_table, stringify!($default)),
+                )*
+            ];
+
+            pub const TOGGLES: &[(&str, &str, &str, &str, bool)] = &[
+                $(
+                    $(
+                        ($column, $button_id, $label_on, $label_off, $default),
+                    )?
+                )*
+            ];
+        }
+    };
+}
+
+define_server_config! {
+    elo_ranks_linked: bool {
+        column: "elo_ranks_linked",
+        default: true,
+        display: "ELO-Rank Linking",
+        button: "server_cfg_elo_ranks_linked",
+        labels: ["ELO-Rank linked", "ELO-Rank independent"],
+        description: "Link ELO to rank roles automatically",
+    },
+    active_elo: bool {
+        column: "active_elo",
+        default: false,
+        display: "Dynamic ELO",
+        button: "guild_config_dynamic_elo",
+        labels: ["Dynamic ELO enabled", "Dynamic ELO disabled"],
+        description: "Enable dynamic ELO calculations",
+    },
+    post_game_auto_leave: bool {
+        column: "post_game_auto_leave",
+        default: true,
+        display: "Post-game Auto-remove",
+        button: "server_cfg_post_game_auto_leave",
+        labels: ["Post-game auto-remove is enabled", "Post-game auto-remove is disabled"],
+        description: "Automatically remove players from queue after game ends",
+    },
+    hide_elo: bool {
+        column: "hide_elo",
+        default: false,
+        display: "Hide ELO",
+        button: "server_cfg_hide_elo",
+        labels: ["ELO is visible", "ELO is hidden"],
+        description: "Hide ELO values from players",
+    },
+    default_vc_auto_join: bool {
+        column: "default_vc_auto_join",
+        default: false,
+        display: "Default VC Auto-join",
+        button: "server_cfg_default_vc_auto_join",
+        labels: ["VC auto-join enabled by default", "VC auto-join disabled by default"],
+        description: "Server default for automatically joining voice channel when queuing",
+    },
+    default_vc_auto_leave: bool {
+        column: "default_vc_auto_leave",
+        default: false,
+        display: "Default VC Auto-leave",
+        button: "server_cfg_default_vc_auto_leave",
+        labels: ["VC auto-leave enabled by default", "VC auto-leave disabled by default"],
+        description: "Server default for automatically leaving voice channel when unqueuing",
+    },
+    default_vc_leave_queue: bool {
+        column: "default_vc_leave_queue",
+        default: false,
+        display: "Default VC Leave Queue",
+        button: "server_cfg_default_vc_leave_queue",
+        labels: ["Leave queue on VC exit enabled by default", "Leave queue on VC exit disabled by default"],
+        description: "Server default for leaving queue when exiting voice channel",
+    },
+    post_game_confirm_time: u16 {
+        column: "post_game_confirm_time",
+        default: 60,
+        display: "Post-game Confirm Time",
+        description: "Seconds to wait for post-game confirmation",
+    },
+    team_balance_method: String {
+        column: "team_balance_method",
+        default: "bch".to_string(),
+        display: "Team Balance Method",
+        description: "Algorithm used for team balancing",
+    },
+    gamemode: String {
+        column: "gamemode",
+        default: "".to_string(),
+        display: "Gamemode",
+        description: "Current gamemode setting",
+    },
+}
+
+define_category_config! {
+    quota: u8 {
+        column: "quota",
+        default: 8,
+        display: "Player Quota",
+        description: "Number of players required to start a game",
+    },
+    confirm_time: u16 {
+        column: "confirm_time",
+        default: 60,
+        display: "Confirm Time",
+        description: "Seconds to wait for player confirmation",
+    },
+    require_score_report: bool {
+        column: "require_score_report",
+        default: false,
+        display: "Require Score Report",
+        button_prefix: "category_cfg_require_score",
+        labels: ["Score reporting required", "Score reporting optional"],
+        description: "Require score reporting when ending matches",
+    },
+    dm_alert_enabled: bool {
+        column: "dm_alert_enabled",
+        default: false,
+        display: "DM Alert Enabled",
+        button_prefix: "category_cfg_dm_alert",
+        labels: ["DM alerts enabled", "DM alerts disabled"],
+        description: "Send DM notifications when threshold is met",
+    },
+    team_vc_keep_minimum: bool {
+        column: "team_vc_keep_minimum",
+        default: true,
+        display: "Keep Minimum VCs",
+        button_prefix: "category_cfg_keep_min_vcs",
+        labels: ["Keep minimum VCs enabled", "Keep minimum VCs disabled"],
+        description: "Keep at least one set of team VCs even when empty",
+    },
+}
+
+define_user_preferences! {
+    vc_auto_join: bool {
+        column: "vc_auto_join",
+        global_table: "users",
+        override_table: "user_server_prefs",
+        default: false,
+        display: "VC Auto-join",
+        button: "settings_vc_auto_join",
+        labels: ["VC auto-join enabled", "VC auto-join disabled"],
+        description: "Automatically join voice channel when queuing",
+    },
+    vc_auto_leave: bool {
+        column: "vc_auto_leave",
+        global_table: "users",
+        override_table: "user_server_prefs",
+        default: false,
+        display: "VC Auto-leave",
+        button: "settings_vc_auto_leave",
+        labels: ["VC auto-leave enabled", "VC auto-leave disabled"],
+        description: "Automatically leave voice channel when unqueuing",
+    },
+    vc_leave_queue: bool {
+        column: "vc_leave_queue",
+        global_table: "users",
+        override_table: "user_server_prefs",
+        default: false,
+        display: "Leave Queue on VC Exit",
+        button: "settings_vc_leave_queue",
+        labels: ["Leave queue on VC exit enabled", "Leave queue on VC exit disabled"],
+        description: "Leave queue when exiting voice channel",
+    },
+    pm_hot_alert: bool {
+        column: "pm_hot_alert",
+        global_table: "users",
+        override_table: "",
+        default: false,
+        display: "DM Alerts",
+        button: "settings_toggle_dm",
+        labels: ["DM alerts enabled", "DM alerts disabled"],
+        description: "Receive DM notifications when queue is ready",
+    },
+    queue_expiration: u16 {
+        column: "queue_expiration",
+        global_table: "users",
+        override_table: "",
+        default: 120,
+        display: "Queue Timeout",
+        description: "Minutes before auto-removal from queue",
+    },
+}
+
+pub use server_config::*;
+pub use category_config::*;
+pub use user_preferences::*;
+
+pub fn sql_type_for_rust_type(type_str: &str) -> &'static str {
+    match type_str {
+        "bool" => "INTEGER",
+        "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" => "INTEGER",
+        "String" | "&str" => "TEXT",
+        _ => "TEXT",
+    }
+}
+
+pub fn sql_default_for_value(value_str: &str, type_str: &str) -> String {
+    match type_str {
+        "bool" => if value_str == "true" { "1".to_string() } else { "0".to_string() },
+        "String" | "&str" => {
+            if value_str.is_empty() || value_str == "\"\"" || value_str.contains("to_string()") {
+                "NULL".to_string()
+            } else {
+                format!("'{}'", value_str.trim_matches('"'))
+            }
+        }
+        _ => value_str.to_string(),
+    }
+}
