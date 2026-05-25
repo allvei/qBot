@@ -7,6 +7,7 @@ pub mod r#match;
 pub mod rank;
 pub mod team;
 pub mod user;
+pub mod user_server_prefs;
 
 pub use category::CategoryRepository;
 pub use config::ConfigRepository;
@@ -17,6 +18,7 @@ pub use r#match::{MatchPlayerInsert, MatchRecord, MatchRepo, PlayerStats};
 pub use rank::{GuildRank, RankRepository};
 pub use team::TeamRepository;
 pub use user::{is_valid_user_text, PlayerRepository, UserPreferences};
+pub use user_server_prefs::UserServerPrefsRepository;
 
 use anyhow::Result;
 use async_trait::async_trait;

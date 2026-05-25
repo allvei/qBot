@@ -13,7 +13,7 @@ use crate::{
   repo::GuildRepository,
 };
 use migrations::DatabaseMigrations;
-use repo::{CategoryRepository, ConfigRepository, EloRepository, FatkidRepository, MatchRepo, PlayerRepository, RankRepository, TeamRepository};
+use repo::{CategoryRepository, ConfigRepository, EloRepository, FatkidRepository, MatchRepo, PlayerRepository, RankRepository, TeamRepository, UserServerPrefsRepository};
 
 /// Main database interface that orchestrates all repositories
 #[derive(Clone)]
@@ -28,6 +28,7 @@ pub struct Database {
   pub teams: TeamRepository,
   pub matches: MatchRepo,
   pub fatkids: FatkidRepository,
+  pub user_server_prefs: UserServerPrefsRepository,
 }
 
 impl Database {
@@ -65,11 +66,12 @@ impl Database {
     let teams = TeamRepository::new(pool.clone());
     let matches = MatchRepo::new(&pool);
     let fatkids = FatkidRepository::new(pool.clone());
+    let user_server_prefs = UserServerPrefsRepository::new(pool.clone());
 
     // Verify schemas after all repositories are created
     migrations.verify_schemas().await?;
 
-    Ok(Self { pool, guilds, players: users, categories, config, elo: elos, ranks, teams, matches, fatkids })
+    Ok(Self { pool, guilds, players: users, categories, config, elo: elos, ranks, teams, matches, fatkids, user_server_prefs })
   }
 
   /// Get the underlying connection pool for advanced operations

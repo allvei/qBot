@@ -1991,11 +1991,16 @@ impl DashboardUpdateQueue {
           let pool_size = category.formats[0].sessions.first().map(|s| s.pool.len()).unwrap_or(0);
           //
 
-          // NOTE: We don't reload_player_ranks or validate_vc_status here for performance.
-          // These expensive operations are called only when needed:
-          // - reload_player_ranks: before team generation (hot/shuffle)
-          // - validate_vc_status: before notifications
+          // NOTE: We don't reload_player_ranks here for performance.
+          // That expensive operation is called only before team generation (hot/shuffle).
           // Dashboard updates happen frequently (every button press, VC change) and should be fast.
+
+          // Sync VC status with actual Discord state when there are hot sessions,
+          // so the missing players list is accurate even if voice state events were missed.
+          let has_hot_session = category.formats.iter().any(|sg| sg.sessions.iter().any(|s| s.is_hot()));
+          if has_hot_session {
+            category.verify_vc(&ctx, guild_id).await;
+          }
 
           // Get dashboard message info
           let channel_id = category.channels.dashboard;

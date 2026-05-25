@@ -559,6 +559,35 @@ impl PlayerRepository {
 
     Ok(())
   }
+
+  /// Get resolved VC preferences for a user in a specific server
+  /// Resolution order: per-server user override > server default > global user pref > hardcoded default
+  /// Returns (vc_auto_join, vc_auto_leave, vc_leave_queue)
+  pub async fn get_resolved_vc_prefs(
+    &self,
+    user_id: UserId,
+    guild_id: serenity::all::GuildId,
+    user_server_prefs_repo: &crate::db::repo::UserServerPrefsRepository,
+    config_repo: &crate::db::repo::ConfigRepository,
+  ) -> Result<(bool, bool, bool)> {
+    // Get per-server user overrides
+    let (server_auto_join, server_auto_leave, server_leave_queue) = user_server_prefs_repo.get_all_vc_prefs(user_id, guild_id).await?;
+
+    // Get server defaults
+    let server_default_auto_join = config_repo.get_default_vc_auto_join(guild_id).await.unwrap_or(false);
+    let server_default_auto_leave = config_repo.get_default_vc_auto_leave(guild_id).await.unwrap_or(false);
+    let server_default_leave_queue = config_repo.get_default_vc_leave_queue(guild_id).await.unwrap_or(false);
+
+    // Get global user preferences as fallback
+    let global_prefs = self.get_prefs(user_id).await.unwrap_or_default();
+
+    // Resolve each preference
+    let vc_auto_join = server_auto_join.unwrap_or_else(|| server_default_auto_join);
+    let vc_auto_leave = server_auto_leave.unwrap_or_else(|| server_default_auto_leave);
+    let vc_leave_queue = server_leave_queue.unwrap_or_else(|| server_default_leave_queue);
+
+    Ok((vc_auto_join, vc_auto_leave, vc_leave_queue))
+  }
 }
 
 /// User settings structure

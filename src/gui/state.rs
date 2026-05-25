@@ -7,6 +7,8 @@ use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use crate::gui::commands::GuiCommand;
 use crate::models::Player;
 use crate::{Database, Manager};
+use serenity::all::{Context, GuildId};
+use std::collections::HashMap;
 
 /// Shared state accessible from both GUI (main thread) and tokio thread
 pub struct GuiSharedState {
@@ -26,6 +28,10 @@ pub struct GuiSharedState {
   pub user_search_results: Arc<RwLock<Vec<Player>>>,
   /// Per-guild ELO data for the selected user (updated by tokio thread)
   pub user_guild_data: Arc<RwLock<Vec<(u64, crate::db::repo::GuildElo)>>>,
+  /// Discord context (optional, set when bot is ready)
+  pub ctx: Option<Arc<Context>>,
+  /// Guild names mapped by ID
+  pub guilds: HashMap<GuildId, String>,
 }
 
 impl GuiSharedState {
@@ -45,6 +51,8 @@ impl GuiSharedState {
       latest_manager: Arc::new(RwLock::new(None)),
       user_search_results: Arc::new(RwLock::new(Vec::new())),
       user_guild_data: Arc::new(RwLock::new(Vec::new())),
+      ctx: None,
+      guilds: HashMap::new(),
     }
   }
 
@@ -55,5 +63,18 @@ impl GuiSharedState {
         let _ = tx.try_send(cmd);
       }
     }
+  }
+}
+
+/// Inner state wrapper for panels that need access to ctx and guilds
+pub struct GuiState {
+  pub ctx: Option<Arc<Context>>,
+  pub db: Option<Arc<Database>>,
+  pub guilds: HashMap<GuildId, String>,
+}
+
+impl GuiState {
+  pub fn from_shared(shared: &GuiSharedState) -> Self {
+    Self { ctx: shared.ctx.clone(), db: Some(shared.db.clone()), guilds: shared.guilds.clone() }
   }
 }

@@ -463,9 +463,11 @@ impl Category {
 
   pub fn create_session_format(&mut self, fmt_id: u8) -> Result<&mut Session> {
     let sg = self.format_mut(fmt_id).ok_or_else(|| anyhow!("Format {} not found", fmt_id))?;
-    let has_inactive = sg.sessions.iter().any(|s| !s.is_active());
-    if has_inactive {
-      return Err(anyhow!("Cannot create new session: inactive session already exists"));
+    // Only prevent creation if there's an Idle session (not Hot)
+    // Hot sessions can have overflow players that need a new Idle session
+    let has_idle = sg.sessions.iter().any(|s| s.is_idle());
+    if has_idle {
+      return Err(anyhow!("Cannot create new session: idle session already exists"));
     }
     sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
     let sg = self.format_mut(fmt_id).unwrap();
@@ -581,6 +583,10 @@ impl Category {
 
   pub fn get_seshs_by_status_fmt(&self, fmt_id: u8, status: &SessionStatus) -> Vec<&Session> {
     self.format(fmt_id).map(|sg| sg.sessions.iter().filter(|s| s.status == *status).collect()).unwrap_or_default()
+  }
+
+  pub fn get_seshs_by_status_fmt_mut(&mut self, fmt_id: u8, status: &SessionStatus) -> Vec<&mut Session> {
+    self.format_mut(fmt_id).map(|sg| sg.sessions.iter_mut().filter(|s| s.status == *status).collect()).unwrap_or_default()
   }
 
   /// Get session index (position in Vec) for logging purposes
@@ -736,6 +742,9 @@ impl Category {
   /// Returns true if any changes were made that require dashboard update
   pub async fn check_hot_confirm_time(&mut self, ctx: &Context, guild_id: GI, post_game_confirm_time: Option<u16>) -> bool {
     let mut changes_made = false;
+
+    // Sync VC status with actual Discord state before making timeout decisions
+    self.verify_vc(ctx, guild_id).await;
 
     // Check hot sessions across all formats
     for sg in &mut self.formats {
@@ -1060,6 +1069,26 @@ impl Category {
   /// Returns the newly created pair, or None if a free pair already exists.
   pub async fn ensure_team_vcs(&mut self, ctx: &Context, guild_id: GI, db: &crate::Database) -> Result<Option<TeamChannel>, Error> {
     use serenity::all::{ChannelType, CreateChannel};
+
+    // Validate that team channels actually exist in Discord, removing any that were deleted
+    let mut teams_to_remove = Vec::new();
+    for tc in &self.channels.teams {
+      let red_exists = ctx.http.get_channel(tc.red_vc).await.is_ok();
+      let blu_exists = ctx.http.get_channel(tc.blu_vc).await.is_ok();
+      if !red_exists || !blu_exists {
+        warn!("Team channel pair #{} no longer exists in Discord (red: {}, blu: {}), removing from list", tc.set_index, red_exists, blu_exists);
+        teams_to_remove.push(tc.clone());
+      }
+    }
+    for tc in teams_to_remove {
+      self.channels.teams.retain(|t| t.red_vc != tc.red_vc && t.blu_vc != tc.blu_vc);
+      // Also remove from database
+      let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+      let category_name = self.name.as_deref().unwrap_or("Unknown");
+      if let Err(e) = db.teams.remove_team(guild_id, tc.red_vc, tc.blu_vc, &guild_name, &category_name).await {
+        warn!("Failed to remove deleted team channels from database: {}", e);
+      }
+    }
 
     // Check which team pairs are currently in active use (recently freed pairs are available for reuse)
     let occupied: Vec<TeamChannel> = self.actively_occupied_teams();
@@ -1848,6 +1877,7 @@ impl Category {
     let session = self.get_queue_fmt(fmt_id).await?;
     let was_empty = session.pool.is_empty();
     let was_idle = session.is_idle();
+    let was_hot = session.is_hot();
 
     let user_id = player.user_id;
     let player_tag = player.tag.clone();
@@ -1873,10 +1903,58 @@ impl Category {
       }
     }
 
+    // Clone manager early to avoid move issues
+    let manager_for_hot = queue_ctx.manager.clone();
+    let manager_for_overflow = queue_ctx.manager.clone();
+
     // Only check quota if session was Idle - Hot sessions already met quota
     if was_idle && self.is_quota_fmt(fmt_id) {
-      self.hot_fmt(fmt_id, queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager, false).await?;
+      self.hot_fmt(fmt_id, queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, manager_for_hot, false).await?;
     }
+
+    // Handle overflow in Hot sessions - create new Idle session for 2nd game
+    if was_hot {
+      let quota = self.format(fmt_id).map(|sg| sg.quota as usize).unwrap_or(8);
+      
+      // Check if Hot session has overflow
+      let has_overflow = {
+        let hot_sessions = self.get_seshs_by_status_fmt(fmt_id, &SessionStatus::Hot);
+        !hot_sessions.is_empty() && hot_sessions[0].pool.len() > quota
+      };
+      
+      if has_overflow {
+        // Try to create new Idle session
+        match self.create_session_format(fmt_id) {
+          Ok(_) => {
+            // Move overflow players to new Idle session
+            let mut hot_sessions_mut = self.get_seshs_by_status_fmt_mut(fmt_id, &SessionStatus::Hot);
+            if !hot_sessions_mut.is_empty() {
+              let overflow_count = hot_sessions_mut[0].pool.len() - quota;
+              let overflow_players: Vec<_> = hot_sessions_mut[0].pool.drain(quota..).collect();
+              drop(hot_sessions_mut); // Release borrow before next mutable borrow
+              
+              let idle_session = self.get_queue_fmt(fmt_id).await?;
+              for overflow_player in overflow_players {
+                idle_session.pool.push(overflow_player);
+              }
+              
+              info!("Created new Idle session and moved {} overflow players from Hot session in format {}", overflow_count, fmt_id);
+              
+              // Check if the new Idle session now meets quota for a 2nd simultaneous game
+              if self.is_quota_fmt(fmt_id) {
+                info!("New Idle session meets quota, transitioning to Hot for 2nd simultaneous game");
+                self.hot_fmt(fmt_id, queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, manager_for_overflow, false).await?;
+              }
+            }
+          }
+          Err(_) => {
+            // Idle session already exists, overflow players stay in Hot session
+            // This is expected and not an error
+          }
+        }
+      }
+    }
+
     Ok(())
   }
 

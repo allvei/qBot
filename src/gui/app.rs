@@ -4,7 +4,7 @@ use eframe::egui;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use crate::gui::panels::{admin, log, queue, settings, users};
+use crate::gui::panels::{admin, log, queue, settings, system_message, users};
 use crate::gui::state::GuiSharedState;
 
 /// Main egui application struct
@@ -13,6 +13,7 @@ pub struct MyApp {
   selected_tab: PanelTab,
   should_quit: bool,
   next_clock_tick: std::time::Instant,
+  system_message_panel: system_message::SystemMessagePanel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,11 +23,18 @@ enum PanelTab {
   Users,
   Admin,
   Settings,
+  SystemMessage,
 }
 
 impl MyApp {
   pub fn new(state: Arc<GuiSharedState>) -> Self {
-    Self { state, selected_tab: PanelTab::Logs, should_quit: false, next_clock_tick: Self::next_second_instant() }
+    Self {
+      state,
+      selected_tab: PanelTab::Logs,
+      should_quit: false,
+      next_clock_tick: Self::next_second_instant(),
+      system_message_panel: system_message::SystemMessagePanel::default(),
+    }
   }
 
   fn next_second_instant() -> std::time::Instant {
@@ -108,6 +116,7 @@ impl eframe::App for MyApp {
         ui.selectable_value(&mut self.selected_tab, PanelTab::Users, "Users");
         ui.selectable_value(&mut self.selected_tab, PanelTab::Admin, "Admin");
         ui.selectable_value(&mut self.selected_tab, PanelTab::Settings, "Settings");
+        ui.selectable_value(&mut self.selected_tab, PanelTab::SystemMessage, "System Message");
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
           if ui.button("Quit").clicked() {
@@ -128,6 +137,10 @@ impl eframe::App for MyApp {
       PanelTab::Users => users::show_users_panel(ui, &self.state),
       PanelTab::Admin => admin::show_admin_panel(ui, &self.state),
       PanelTab::Settings => settings::show_settings_panel(ui, &self.state),
+      PanelTab::SystemMessage => {
+        let gui_state = Arc::new(tokio::sync::Mutex::new(crate::gui::state::GuiState::from_shared(&self.state)));
+        self.system_message_panel.ui(ui, gui_state);
+      }
     });
 
     if self.should_quit {

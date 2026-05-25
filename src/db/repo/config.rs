@@ -198,4 +198,69 @@ impl ConfigRepository {
       .await?;
     Ok(())
   }
+
+  /// Get default_vc_auto_join setting (server-level default)
+  pub async fn get_default_vc_auto_join(&self, guild_id: GI) -> Result<bool> {
+    self.get_bool(guild_id, "default_vc_auto_join", false).await
+  }
+
+  /// Set default_vc_auto_join setting (server-level default)
+  pub async fn set_default_vc_auto_join(&self, guild_id: GI, enabled: bool) -> Result<()> {
+    self.set_bool(guild_id, "default_vc_auto_join", enabled).await
+  }
+
+  /// Get default_vc_auto_leave setting (server-level default)
+  pub async fn get_default_vc_auto_leave(&self, guild_id: GI) -> Result<bool> {
+    self.get_bool(guild_id, "default_vc_auto_leave", false).await
+  }
+
+  /// Set default_vc_auto_leave setting (server-level default)
+  pub async fn set_default_vc_auto_leave(&self, guild_id: GI, enabled: bool) -> Result<()> {
+    self.set_bool(guild_id, "default_vc_auto_leave", enabled).await
+  }
+
+  /// Get default_vc_leave_queue setting (server-level default)
+  pub async fn get_default_vc_leave_queue(&self, guild_id: GI) -> Result<bool> {
+    self.get_bool(guild_id, "default_vc_leave_queue", false).await
+  }
+
+  /// Set default_vc_leave_queue setting (server-level default)
+  pub async fn set_default_vc_leave_queue(&self, guild_id: GI, enabled: bool) -> Result<()> {
+    self.set_bool(guild_id, "default_vc_leave_queue", enabled).await
+  }
+
+  /// Get system_message_channel as Discord channel ID
+  pub async fn get_system_message_channel(&self, guild_id: GI) -> Result<Option<serenity::all::ChannelId>> {
+    let row = sqlx::query("SELECT system_message_channel FROM config WHERE guild_id = ?")
+      .bind(guild_id.get() as i64)
+      .fetch_optional(&self.pool)
+      .await?;
+
+    Ok(row.and_then(|row| row.try_get::<Option<i64>, _>("system_message_channel").ok().flatten().map(|id| serenity::all::ChannelId::new(id as u64))))
+  }
+
+  /// Set system_message_channel as Discord channel ID
+  pub async fn set_system_message_channel(&self, guild_id: GI, channel_id: serenity::all::ChannelId) -> Result<()> {
+    sqlx::query(
+      "INSERT INTO config (guild_id, system_message_channel) VALUES (?, ?) \
+       ON CONFLICT(guild_id) DO UPDATE SET system_message_channel = excluded.system_message_channel"
+    )
+    .bind(guild_id.get() as i64)
+    .bind(channel_id.get() as i64)
+    .execute(&self.pool)
+    .await?;
+    Ok(())
+  }
+
+  /// Clear system_message_channel
+  pub async fn clear_system_message_channel(&self, guild_id: GI) -> Result<()> {
+    sqlx::query(
+      "INSERT INTO config (guild_id, system_message_channel) VALUES (?, NULL) \
+       ON CONFLICT(guild_id) DO UPDATE SET system_message_channel = NULL"
+    )
+    .bind(guild_id.get() as i64)
+    .execute(&self.pool)
+    .await?;
+    Ok(())
+  }
 }

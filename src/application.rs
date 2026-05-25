@@ -301,6 +301,9 @@ impl Application {
     // Start terminal command reader for testing
     crate::terminal::start_terminal_reader(self.manager.clone(), self.db.clone()).await;
 
+    // Note: System message channel validation happens in the ready event handler
+    // See handlers/events.rs for the validation logic
+
     // Start client
     // Listen for signal-based shutdown AND GUI-based shutdown
     let gui_rx = self.gui_shutdown_rx.take();
@@ -358,6 +361,23 @@ impl EventHandler for Handler {
       let scheduler = crate::models::QueueExpirationScheduler::new(self.manager.clone(), self.db.clone(), ctx.clone());
       let scheduler_arc = Arc::new(tokio::sync::Mutex::new(scheduler));
       ctx.data.write().await.insert::<crate::models::QueueExpirationSchedulerKey>(scheduler_arc);
+    }
+
+    // Validate system message channels
+    {
+      let ctx_clone = ctx.clone();
+      let db_clone = self.db.clone();
+      tokio::spawn(async move {
+        let errors = crate::services::validate_system_message_channels(&ctx_clone, &db_clone).await;
+        if !errors.is_empty() {
+          error!("System message channel validation found {} issue(s):", errors.len());
+          for (guild_id, guild_name, error) in errors {
+            error!("[{}] {}: {}", guild_id, guild_name, error);
+          }
+        } else {
+          info!("All system message channels validated successfully");
+        }
+      });
     }
 
     // Start background task for team switch validation only

@@ -56,6 +56,7 @@ impl DatabaseMigrations {
   pub async fn create_tables(&self) -> Result<()> {
     self.create_config_table().await?;
     self.create_users_table().await?;
+    self.create_user_server_prefs_table().await?;
     self.create_categories_table().await?;
     self.create_teams_table().await?;
     self.create_formats_table().await?;
@@ -125,6 +126,10 @@ impl DatabaseMigrations {
       "team_balance_method",
       "hide_elo",
       "gamemode",
+      "default_vc_auto_join",
+      "default_vc_auto_leave",
+      "default_vc_leave_queue",
+      "system_message_channel",
     ];
     add_column!(self, "config", "elo_ranks_linked", "INTEGER", "1");
     add_column!(self, "config", "post_game_auto_leave", "INTEGER", "1");
@@ -132,6 +137,10 @@ impl DatabaseMigrations {
     add_column!(self, "config", "team_balance_method", "TEXT", "'bch'");
     add_column!(self, "config", "hide_elo", "INTEGER", "0");
     add_column!(self, "config", "gamemode", "TEXT", "NULL");
+    add_column!(self, "config", "default_vc_auto_join", "INTEGER", "0");
+    add_column!(self, "config", "default_vc_auto_leave", "INTEGER", "0");
+    add_column!(self, "config", "default_vc_leave_queue", "INTEGER", "0");
+    add_column!(self, "config", "system_message_channel", "INTEGER", "NULL");
     self.verify_columns("config", &required_columns).await?;
     Ok(())
   }
@@ -1060,6 +1069,26 @@ impl DatabaseMigrations {
 
     Ok(existing_cols.contains(&column_name.to_string()))
   }
+  /// Create user_server_prefs table for per-server, per-user preferences
+  async fn create_user_server_prefs_table(&self) -> Result<()> {
+    if !self.check_table("user_server_prefs").await? {
+      sqlx::query(
+        "CREATE TABLE user_server_prefs (
+          user_id          INTEGER NOT NULL,
+          guild_id         INTEGER NOT NULL,
+          vc_auto_join     INTEGER DEFAULT NULL,
+          vc_auto_leave    INTEGER DEFAULT NULL,
+          vc_leave_queue   INTEGER DEFAULT NULL,
+          PRIMARY KEY (user_id, guild_id)
+        )",
+      )
+      .execute(&self.pool)
+      .await?;
+      info!("Created user_server_prefs table");
+    }
+    Ok(())
+  }
+
   /// Check if a unique constraint exists on a column
   async fn check_unique(&self, table: &str, column: &str) -> Result<bool> {
     // INTEGER PRIMARY KEY is the rowid alias in SQLite and won't appear in index_list,

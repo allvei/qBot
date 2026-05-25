@@ -6,6 +6,7 @@ pub mod gui;
 pub mod handlers;
 pub mod log;
 pub mod models;
+pub mod services;
 pub mod shutdown;
 pub mod terminal;
 pub mod util;
