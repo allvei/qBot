@@ -75,6 +75,8 @@ pub struct GuiSharedState {
   pub guilds: HashMap<GuildId, String>,
   /// GUI settings (theme, font size, etc.)
   pub gui_settings: Arc<RwLock<GuiSettings>>,
+  /// Cached guild config values for live editing (guild_id -> column -> value)
+  pub guild_config_cache: Arc<RwLock<HashMap<u64, HashMap<String, String>>>>,
 }
 
 impl GuiSharedState {
@@ -97,6 +99,7 @@ impl GuiSharedState {
       ctx: None,
       guilds: HashMap::new(),
       gui_settings: Arc::new(RwLock::new(GuiSettings::load())),
+      guild_config_cache: Arc::new(RwLock::new(HashMap::new())),
     }
   }
 

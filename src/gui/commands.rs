@@ -61,6 +61,12 @@ pub enum GuiCommand {
   GetUserGuildData { user_id: u64 },
   UpdateUserElo { user_id: u64, guild_id: u64, elo: u16 },
   UpdateUserDynamicElo { user_id: u64, guild_id: u64, dynamic_elo: Option<u16> },
+
+  // Config Management
+  LoadGuildConfig { guild_id: u64 },
+  UpdateGuildConfigBool { guild_id: u64, column: String, value: bool },
+  UpdateGuildConfigInt { guild_id: u64, column: String, value: i64 },
+  UpdateGuildConfigText { guild_id: u64, column: String, value: String },
 }
 
 impl GuiCommand {
@@ -74,6 +80,10 @@ impl GuiCommand {
       GuiCommand::UpdateUserSteamId { .. } => None,
       GuiCommand::UpdateUserQueueExpiration { .. } => None,
       GuiCommand::GetUserGuildData { .. } => None,
+      GuiCommand::LoadGuildConfig { .. } => None,
+      GuiCommand::UpdateGuildConfigBool { .. } => None,
+      GuiCommand::UpdateGuildConfigInt { .. } => None,
+      GuiCommand::UpdateGuildConfigText { .. } => None,
       GuiCommand::DumpStateToLog { .. } => None,
       GuiCommand::ViewSessionDetails { .. } => None,
       GuiCommand::TestBalanceMethods { .. } => None,

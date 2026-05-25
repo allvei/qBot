@@ -130,6 +130,26 @@ impl ConfigRepository {
     Ok(())
   }
 
+  /// Set an integer config column by name.
+  pub async fn set_int(&self, guild_id: GI, column: &str, value: i64) -> Result<()> {
+    let query = format!(
+      "INSERT INTO config (guild_id, {column}) VALUES (?, ?) \
+             ON CONFLICT(guild_id) DO UPDATE SET {column} = excluded.{column}"
+    );
+    sqlx::query(&query).bind(guild_id.get() as i64).bind(value).execute(&self.pool).await?;
+    Ok(())
+  }
+
+  /// Set a text config column by name.
+  pub async fn set_text(&self, guild_id: GI, column: &str, value: &str) -> Result<()> {
+    let query = format!(
+      "INSERT INTO config (guild_id, {column}) VALUES (?, ?) \
+             ON CONFLICT(guild_id) DO UPDATE SET {column} = excluded.{column}"
+    );
+    sqlx::query(&query).bind(guild_id.get() as i64).bind(value).execute(&self.pool).await?;
+    Ok(())
+  }
+
   /// Get active_elo setting
   pub async fn get_active_elo(&self, guild_id: GI) -> Result<bool> {
     self.get_bool(guild_id, "active_elo", false).await

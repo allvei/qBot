@@ -101,6 +101,7 @@ pub struct Application {
   pub latest_manager: Option<Arc<tokio::sync::RwLock<Option<Manager>>>>,
   pub user_search_results: Option<Arc<tokio::sync::RwLock<Vec<Player>>>>,
   pub user_guild_data: Option<Arc<tokio::sync::RwLock<Vec<(u64, crate::db::repo::GuildElo)>>>>,
+  pub guild_config_cache: Option<Arc<tokio::sync::RwLock<std::collections::HashMap<u64, std::collections::HashMap<String, String>>>>>,
   pub gui_shutdown_rx: Option<oneshot::Receiver<()>>,
 }
 
@@ -119,7 +120,7 @@ impl Application {
     // Initialize dashboard queue
     let dashboard_queue = Arc::new(Mutex::new(None));
 
-    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None, user_search_results: None, user_guild_data: None, gui_shutdown_rx: None })
+    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None, user_search_results: None, user_guild_data: None, guild_config_cache: None, gui_shutdown_rx: None })
   }
 
   /// Initialize the application with pre-created manager and db (for GUI integration)
@@ -127,7 +128,7 @@ impl Application {
     // Initialize dashboard queue
     let dashboard_queue = Arc::new(Mutex::new(None));
 
-    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None, user_search_results: None, user_guild_data: None, gui_shutdown_rx: None })
+    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None, user_search_results: None, user_guild_data: None, guild_config_cache: None, gui_shutdown_rx: None })
   }
 
   /// Set the command receiver for GUI commands
@@ -151,6 +152,12 @@ impl Application {
   /// Set the user guild data target for GUI
   pub fn with_user_guild_data(mut self, user_guild_data: Arc<tokio::sync::RwLock<Vec<(u64, crate::db::repo::GuildElo)>>>) -> Self {
     self.user_guild_data = Some(user_guild_data);
+    self
+  }
+
+  /// Set the guild config cache for GUI
+  pub fn with_guild_config_cache(mut self, guild_config_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<u64, std::collections::HashMap<String, String>>>>) -> Self {
+    self.guild_config_cache = Some(guild_config_cache);
     self
   }
 
@@ -210,6 +217,7 @@ impl Application {
       let latest_manager_cmd = self.latest_manager.clone();
       let user_search_results_cmd = self.user_search_results.clone();
       let user_guild_data_cmd = self.user_guild_data.clone();
+      let guild_config_cache_cmd = self.guild_config_cache.clone();
       let dashboard_queue_cmd = self.dashboard_queue.clone();
 
       tokio::spawn(async move {
@@ -232,6 +240,7 @@ impl Application {
                       &db,
                       user_search_results_cmd.clone().unwrap_or_default(),
                       user_guild_data_cmd.clone().unwrap_or_default(),
+                      guild_config_cache_cmd.clone().unwrap_or_default(),
                     )
                     .await
                     {

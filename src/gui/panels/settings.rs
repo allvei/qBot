@@ -139,23 +139,33 @@ fn show_config_editor(ui: &mut egui::Ui, state: &GuiSharedState) {
     ui.label(RichText::new("Edit server configuration in real-time").small());
     ui.add_space(5.0);
 
-    // Guild selector
-    static mut SELECTED_GUILD: Option<u64> = None;
+    // Guild selector with persistent state
+    use std::sync::Mutex;
+    use lazy_static::lazy_static;
+    
+    lazy_static! {
+      static ref SELECTED_GUILD: Mutex<Option<u64>> = Mutex::new(None);
+      static ref CONFIG_CACHE: Mutex<std::collections::HashMap<String, bool>> = Mutex::new(std::collections::HashMap::new());
+      static ref CONFIG_LOADED: Mutex<bool> = Mutex::new(false);
+    }
     
     ui.horizontal(|ui| {
       ui.label("Guild:");
+      let current_guild_id = *SELECTED_GUILD.lock().unwrap();
+      let selected_text = current_guild_id
+        .and_then(|id| state.guilds.get(&serenity::all::GuildId::new(id)))
+        .map(|s| s.as_str())
+        .unwrap_or("Select guild...");
+        
       egui::ComboBox::from_id_source("guild_selector")
-        .selected_text(unsafe {
-          SELECTED_GUILD
-            .and_then(|id| state.guilds.get(&serenity::all::GuildId::new(id)))
-            .map(|s| s.as_str())
-            .unwrap_or("Select guild...")
-        })
+        .selected_text(selected_text)
         .show_ui(ui, |ui| {
           for (guild_id, guild_name) in &state.guilds {
             let id = guild_id.get();
-            if ui.selectable_label(unsafe { SELECTED_GUILD } == Some(id), guild_name).clicked() {
-              unsafe { SELECTED_GUILD = Some(id); }
+            if ui.selectable_label(current_guild_id == Some(id), guild_name).clicked() {
+              *SELECTED_GUILD.lock().unwrap() = Some(id);
+              *CONFIG_LOADED.lock().unwrap() = false;
+              state.send_cmd(crate::gui::commands::GuiCommand::LoadGuildConfig { guild_id: id });
             }
           }
         });
@@ -164,27 +174,68 @@ fn show_config_editor(ui: &mut egui::Ui, state: &GuiSharedState) {
     ui.add_space(5.0);
 
     // Show config options for selected guild
-    unsafe {
-      if let Some(guild_id) = SELECTED_GUILD {
-        ui.label(RichText::new("Server Config Options:").strong());
-        ui.add_space(3.0);
-
-        // Example config toggles (can be expanded)
-        ui.checkbox(&mut false, "ELO-Rank Linked");
-        ui.checkbox(&mut false, "Dynamic ELO Enabled");
-        ui.checkbox(&mut false, "Post-game Auto-remove");
-        ui.checkbox(&mut false, "Hide ELO");
-
-        ui.add_space(5.0);
-        if ui.button("💾 Save Changes").clicked() {
-          // TODO: Send command to update config
-          ui.ctx().debug_text(format!("Save config for guild {}", guild_id));
+    let selected_guild_id = *SELECTED_GUILD.lock().unwrap();
+    
+    if let Some(guild_id) = selected_guild_id {
+      // Try to load config from cache
+      if let Ok(cache) = state.guild_config_cache.try_read() {
+        if let Some(config_map) = cache.get(&guild_id) {
+          if !*CONFIG_LOADED.lock().unwrap() {
+            // Populate local cache from shared state
+            let mut local_cache = CONFIG_CACHE.lock().unwrap();
+            local_cache.clear();
+            for (key, value) in config_map {
+              if value == "1" || value == "true" {
+                local_cache.insert(key.clone(), true);
+              } else if value == "0" || value == "false" {
+                local_cache.insert(key.clone(), false);
+              }
+            }
+            *CONFIG_LOADED.lock().unwrap() = true;
+          }
         }
-
-        ui.label(RichText::new("Note: Live config editing coming soon").small().italics());
-      } else {
-        ui.label(RichText::new("Select a guild to edit configuration").weak());
       }
+
+      ui.label(RichText::new("Server Config Options:").strong());
+      ui.add_space(3.0);
+
+      // Display toggles from config_schema
+      use crate::config_schema::server_config::TOGGLES;
+      
+      let mut changed_values = Vec::new();
+      let mut local_cache = CONFIG_CACHE.lock().unwrap();
+      
+      for toggle in TOGGLES {
+        let current_value = local_cache.get(toggle.column).copied().unwrap_or(toggle.default);
+        let mut new_value = current_value;
+        
+        let label = if current_value { toggle.label_on } else { toggle.label_off };
+        if ui.checkbox(&mut new_value, label).changed() {
+          local_cache.insert(toggle.column.to_string(), new_value);
+          changed_values.push((toggle.column.to_string(), new_value));
+        }
+      }
+
+      // Send updates for changed values
+      for (column, value) in changed_values {
+        state.send_cmd(crate::gui::commands::GuiCommand::UpdateGuildConfigBool {
+          guild_id,
+          column,
+          value,
+        });
+      }
+
+      ui.add_space(5.0);
+      
+      if ui.button("� Reload Config").clicked() {
+        *CONFIG_LOADED.lock().unwrap() = false;
+        state.send_cmd(crate::gui::commands::GuiCommand::LoadGuildConfig { guild_id });
+      }
+
+      ui.add_space(3.0);
+      ui.label(RichText::new("✓ Changes save automatically").small().color(Color32::from_rgb(100, 200, 100)));
+    } else {
+      ui.label(RichText::new("Select a guild to edit configuration").weak());
     }
   });
 }

@@ -61,6 +61,7 @@ pub async fn handle_command(
   db: &Database,
   user_search_results: Arc<RwLock<Vec<Player>>>,
   user_guild_data: Arc<RwLock<Vec<(u64, crate::db::repo::GuildElo)>>>,
+  guild_config_cache: Arc<RwLock<std::collections::HashMap<u64, std::collections::HashMap<String, String>>>>,
 ) -> Result<Option<u64>> {
   let affected_guild = command.guild_id();
   let result: Result<Option<u64>, anyhow::Error> = match command {
@@ -565,6 +566,52 @@ pub async fn handle_command(
         Err(e) => warn!("[GUI] UpdateUserDynamicElo {} g={} failed: {}", user_id, guild_id, e),
       }
       Ok(None)
+    }
+
+    // ── Config Management ─────────────────────────────────────────────────
+    GuiCommand::LoadGuildConfig { guild_id } => {
+      let gid = GI::new(guild_id);
+      match db.config.get_config_map(gid).await {
+        Ok(config_map) => {
+          info!("[GUI] LoadGuildConfig g={} — loaded {} values", guild_id, config_map.len());
+          // Update the cache
+          if let Ok(mut cache) = guild_config_cache.try_write() {
+            cache.insert(guild_id, config_map);
+          }
+          Ok(Some(guild_id))
+        }
+        Err(e) => {
+          warn!("[GUI] LoadGuildConfig g={} failed: {}", guild_id, e);
+          Ok(None)
+        }
+      }
+    }
+
+    GuiCommand::UpdateGuildConfigBool { guild_id, column, value } => {
+      let gid = GI::new(guild_id);
+      match db.config.set_bool(gid, &column, value).await {
+        Ok(_) => info!("[GUI] UpdateGuildConfigBool g={} {}={}", guild_id, column, value),
+        Err(e) => warn!("[GUI] UpdateGuildConfigBool g={} {} failed: {}", guild_id, column, e),
+      }
+      Ok(Some(guild_id))
+    }
+
+    GuiCommand::UpdateGuildConfigInt { guild_id, column, value } => {
+      let gid = GI::new(guild_id);
+      match db.config.set_int(gid, &column, value).await {
+        Ok(_) => info!("[GUI] UpdateGuildConfigInt g={} {}={}", guild_id, column, value),
+        Err(e) => warn!("[GUI] UpdateGuildConfigInt g={} {} failed: {}", guild_id, column, e),
+      }
+      Ok(Some(guild_id))
+    }
+
+    GuiCommand::UpdateGuildConfigText { guild_id, column, value } => {
+      let gid = GI::new(guild_id);
+      match db.config.set_text(gid, &column, &value).await {
+        Ok(_) => info!("[GUI] UpdateGuildConfigText g={} {}={}", guild_id, column, value),
+        Err(e) => warn!("[GUI] UpdateGuildConfigText g={} {} failed: {}", guild_id, column, e),
+      }
+      Ok(Some(guild_id))
     }
 
     // ── Voice Channel (needs Discord API — log only) ───────────────────────
