@@ -122,6 +122,17 @@ pub struct GuiState {
 
 impl GuiState {
   pub fn from_shared(shared: &GuiSharedState) -> Self {
-    Self { ctx: shared.ctx.clone(), db: Some(shared.db.clone()), guilds: shared.guilds.clone() }
+    // Derive guild names from latest_manager snapshot so the map stays current
+    let guilds = if let Ok(lock) = shared.latest_manager.try_read() {
+      if let Some(manager) = lock.as_ref() {
+        manager.qguilds.iter().map(|g| (g.id, g.name.clone())).collect()
+      } else {
+        shared.guilds.clone()
+      }
+    } else {
+      shared.guilds.clone()
+    };
+
+    Self { ctx: shared.ctx.clone(), db: Some(shared.db.clone()), guilds }
   }
 }

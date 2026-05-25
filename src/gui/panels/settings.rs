@@ -149,23 +149,28 @@ fn show_config_editor(ui: &mut egui::Ui, state: &GuiSharedState) {
       static ref CONFIG_LOADED: Mutex<bool> = Mutex::new(false);
     }
     
+    // Derive guilds from latest_manager snapshot
+    let guilds: Vec<(u64, String)> = if let Ok(lock) = state.latest_manager.try_read() {
+      lock.as_ref().map(|m| m.qguilds.iter().map(|g| (g.id.get(), g.name.clone())).collect()).unwrap_or_default()
+    } else {
+      Vec::new()
+    };
+
     ui.horizontal(|ui| {
       ui.label("Guild:");
       let current_guild_id = *SELECTED_GUILD.lock().unwrap();
       let selected_text = current_guild_id
-        .and_then(|id| state.guilds.get(&serenity::all::GuildId::new(id)))
-        .map(|s| s.as_str())
+        .and_then(|id| guilds.iter().find(|(gid, _)| *gid == id).map(|(_, name)| name.as_str()))
         .unwrap_or("Select guild...");
-        
+
       egui::ComboBox::from_id_source("guild_selector")
         .selected_text(selected_text)
         .show_ui(ui, |ui| {
-          for (guild_id, guild_name) in &state.guilds {
-            let id = guild_id.get();
-            if ui.selectable_label(current_guild_id == Some(id), guild_name).clicked() {
-              *SELECTED_GUILD.lock().unwrap() = Some(id);
+          for (id, guild_name) in &guilds {
+            if ui.selectable_label(current_guild_id == Some(*id), guild_name).clicked() {
+              *SELECTED_GUILD.lock().unwrap() = Some(*id);
               *CONFIG_LOADED.lock().unwrap() = false;
-              state.send_cmd(crate::gui::commands::GuiCommand::LoadGuildConfig { guild_id: id });
+              state.send_cmd(crate::gui::commands::GuiCommand::LoadGuildConfig { guild_id: *id });
             }
           }
         });
