@@ -70,9 +70,13 @@ pub struct GuiSharedState {
   /// Per-guild ELO data for the selected user (updated by tokio thread)
   pub user_guild_data: Arc<RwLock<Vec<(u64, crate::db::repo::GuildElo)>>>,
   /// Discord context (optional, set when bot is ready)
-  pub ctx: Option<Arc<Context>>,
+  pub ctx: Arc<std::sync::Mutex<Option<Arc<Context>>>>,
   /// Guild names mapped by ID
   pub guilds: HashMap<GuildId, String>,
+  /// Guilds that have a system message channel configured (updated in tokio thread)
+  pub system_message_channel_guilds: Arc<RwLock<std::collections::HashSet<u64>>>,
+  /// Guilds that have a community updates channel configured (updated in tokio thread)
+  pub community_updates_channel_guilds: Arc<RwLock<std::collections::HashSet<u64>>>,
   /// GUI settings (theme, font size, etc.)
   pub gui_settings: Arc<RwLock<GuiSettings>>,
   /// Cached guild config values for live editing (guild_id -> column -> value)
@@ -96,8 +100,10 @@ impl GuiSharedState {
       latest_manager: Arc::new(RwLock::new(None)),
       user_search_results: Arc::new(RwLock::new(Vec::new())),
       user_guild_data: Arc::new(RwLock::new(Vec::new())),
-      ctx: None,
+      ctx: Arc::new(std::sync::Mutex::new(None)),
       guilds: HashMap::new(),
+      system_message_channel_guilds: Arc::new(RwLock::new(std::collections::HashSet::new())),
+      community_updates_channel_guilds: Arc::new(RwLock::new(std::collections::HashSet::new())),
       gui_settings: Arc::new(RwLock::new(GuiSettings::load())),
       guild_config_cache: Arc::new(RwLock::new(HashMap::new())),
     }
@@ -118,6 +124,12 @@ pub struct GuiState {
   pub ctx: Option<Arc<Context>>,
   pub db: Option<Arc<Database>>,
   pub guilds: HashMap<GuildId, String>,
+  /// Guilds that have a system message channel configured
+  pub system_message_channel_guilds: std::collections::HashSet<u64>,
+  /// Guilds that have a community updates channel configured
+  pub community_updates_channel_guilds: std::collections::HashSet<u64>,
+  /// Reference to shared state for sending commands
+  pub shared_state: Option<Arc<GuiSharedState>>,
 }
 
 impl GuiState {
@@ -133,6 +145,31 @@ impl GuiState {
       shared.guilds.clone()
     };
 
-    Self { ctx: shared.ctx.clone(), db: Some(shared.db.clone()), guilds }
+    let system_message_channel_guilds = if let Ok(lock) = shared.system_message_channel_guilds.try_read() {
+      lock.clone()
+    } else {
+      std::collections::HashSet::new()
+    };
+
+    let community_updates_channel_guilds = if let Ok(lock) = shared.community_updates_channel_guilds.try_read() {
+      lock.clone()
+    } else {
+      std::collections::HashSet::new()
+    };
+
+    let ctx = if let Ok(ctx_lock) = shared.ctx.lock() {
+      ctx_lock.clone()
+    } else {
+      None
+    };
+
+    Self {
+      ctx,
+      db: Some(shared.db.clone()),
+      guilds,
+      system_message_channel_guilds,
+      community_updates_channel_guilds,
+      shared_state: None, // Will be set by the panel
+    }
   }
 }

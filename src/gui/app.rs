@@ -4,7 +4,7 @@ use eframe::egui;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use crate::gui::panels::{admin, log, queue, settings, system_message, users};
+use crate::gui::panels::{admin, community_updates, log, queue, settings, system_message, users};
 use crate::gui::state::GuiSharedState;
 
 /// Main egui application struct
@@ -14,6 +14,7 @@ pub struct MyApp {
   should_quit: bool,
   next_clock_tick: std::time::Instant,
   system_message_panel: system_message::SystemMessagePanel,
+  community_updates_panel: community_updates::CommunityUpdatesPanel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +25,7 @@ enum PanelTab {
   Admin,
   Settings,
   SystemMessage,
+  CommunityUpdates,
 }
 
 impl MyApp {
@@ -34,6 +36,7 @@ impl MyApp {
       should_quit: false,
       next_clock_tick: Self::next_second_instant(),
       system_message_panel: system_message::SystemMessagePanel::default(),
+      community_updates_panel: community_updates::CommunityUpdatesPanel::default(),
     }
   }
 
@@ -143,9 +146,11 @@ impl eframe::App for MyApp {
         ui.selectable_value(&mut self.selected_tab, PanelTab::Admin, "Admin");
         ui.selectable_value(&mut self.selected_tab, PanelTab::Settings, "Settings");
         ui.selectable_value(&mut self.selected_tab, PanelTab::SystemMessage, "System Message");
+        ui.selectable_value(&mut self.selected_tab, PanelTab::CommunityUpdates, "Community Updates");
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
           if ui.button("Quit").clicked() {
+            self.state.send_cmd(crate::gui::commands::GuiCommand::GracefulShutdown);
             self.trigger_shutdown();
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
           }
@@ -164,8 +169,16 @@ impl eframe::App for MyApp {
       PanelTab::Admin => admin::show_admin_panel(ui, &self.state),
       PanelTab::Settings => settings::show_settings_panel(ui, &self.state),
       PanelTab::SystemMessage => {
-        let gui_state = Arc::new(tokio::sync::Mutex::new(crate::gui::state::GuiState::from_shared(&self.state)));
+        let mut gui_state = crate::gui::state::GuiState::from_shared(&self.state);
+        gui_state.shared_state = Some(self.state.clone());
+        let gui_state = Arc::new(tokio::sync::Mutex::new(gui_state));
         self.system_message_panel.ui(ui, gui_state);
+      }
+      PanelTab::CommunityUpdates => {
+        let mut gui_state = crate::gui::state::GuiState::from_shared(&self.state);
+        gui_state.shared_state = Some(self.state.clone());
+        let gui_state = Arc::new(tokio::sync::Mutex::new(gui_state));
+        self.community_updates_panel.ui(ui, gui_state);
       }
     });
 
