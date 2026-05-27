@@ -259,14 +259,14 @@ impl ConfigRepository {
     Ok(row.and_then(|row| row.try_get::<Option<i64>, _>("system_message_channel").ok().flatten().map(|id| serenity::all::ChannelId::new(id as u64))))
   }
 
-  /// Set system_message_channel as Discord channel ID
-  pub async fn set_system_message_channel(&self, guild_id: GI, channel_id: serenity::all::ChannelId) -> Result<()> {
+  /// Set system_message_channel as Discord channel ID (None to clear)
+  pub async fn set_system_message_channel(&self, guild_id: GI, channel_id: Option<serenity::all::ChannelId>) -> Result<()> {
     sqlx::query(
       "INSERT INTO config (guild_id, system_message_channel) VALUES (?, ?) \
        ON CONFLICT(guild_id) DO UPDATE SET system_message_channel = excluded.system_message_channel"
     )
     .bind(guild_id.get() as i64)
-    .bind(channel_id.get() as i64)
+    .bind(channel_id.map(|id| id.get() as i64))
     .execute(&self.pool)
     .await?;
     Ok(())
@@ -279,6 +279,29 @@ impl ConfigRepository {
        ON CONFLICT(guild_id) DO UPDATE SET system_message_channel = NULL"
     )
     .bind(guild_id.get() as i64)
+    .execute(&self.pool)
+    .await?;
+    Ok(())
+  }
+
+  /// Get community_updates_channel as Discord channel ID
+  pub async fn get_community_updates_channel(&self, guild_id: GI) -> Result<Option<serenity::all::ChannelId>> {
+    let row = sqlx::query("SELECT community_updates_channel FROM config WHERE guild_id = ?")
+      .bind(guild_id.get() as i64)
+      .fetch_optional(&self.pool)
+      .await?;
+
+    Ok(row.and_then(|row| row.try_get::<Option<i64>, _>("community_updates_channel").ok().flatten().map(|id| serenity::all::ChannelId::new(id as u64))))
+  }
+
+  /// Set community_updates_channel as Discord channel ID (None to clear)
+  pub async fn set_community_updates_channel(&self, guild_id: GI, channel_id: Option<serenity::all::ChannelId>) -> Result<()> {
+    sqlx::query(
+      "INSERT INTO config (guild_id, community_updates_channel) VALUES (?, ?) \
+       ON CONFLICT(guild_id) DO UPDATE SET community_updates_channel = excluded.community_updates_channel"
+    )
+    .bind(guild_id.get() as i64)
+    .bind(channel_id.map(|id| id.get() as i64))
     .execute(&self.pool)
     .await?;
     Ok(())
