@@ -51,6 +51,9 @@ fn run_gui() -> Result<()> {
   let user_search_results_bot = shared_state.user_search_results.clone();
   let user_guild_data_bot = shared_state.user_guild_data.clone();
   let guild_config_cache_bot = shared_state.guild_config_cache.clone();
+  let system_message_channel_guilds_bot = shared_state.system_message_channel_guilds.clone();
+  let community_updates_channel_guilds_bot = shared_state.community_updates_channel_guilds.clone();
+  let shared_state_bot = shared_state.clone();
 
   // Spawn tokio runtime in background thread
   let bot_thread = thread::spawn(move || {
@@ -64,7 +67,10 @@ fn run_gui() -> Result<()> {
         .with_user_search_results(user_search_results_bot)
         .with_user_guild_data(user_guild_data_bot)
         .with_guild_config_cache(guild_config_cache_bot)
-        .with_gui_shutdown(shutdown_rx);
+        .with_system_message_channel_guilds(system_message_channel_guilds_bot)
+        .with_community_updates_channel_guilds(community_updates_channel_guilds_bot)
+        .with_gui_shutdown(shutdown_rx)
+        .with_shared_state(shared_state_bot);
       if let Err(e) = app.run().await {
         eprintln!("Bot error: {}", e);
       }

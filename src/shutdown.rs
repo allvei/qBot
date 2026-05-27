@@ -71,7 +71,7 @@ impl ShutdownHandler {
   }
 
   /// Perform cleanup operations before shutdown
-  async fn cleanup(&self) {
+  pub async fn cleanup(&self) {
     use tokio::time::{sleep, Duration};
     use tracing::info;
 
@@ -79,7 +79,8 @@ impl ShutdownHandler {
 
     self.mark_dashboards_restarting().await;
 
-    self.wait_for_active_sessions(Duration::from_secs(300)).await;
+    // Don't wait for active sessions - save state and shut down immediately
+    // self.wait_for_active_sessions(Duration::from_secs(300)).await;
 
     self.save_manager_state().await;
 
@@ -99,17 +100,19 @@ impl ShutdownHandler {
 
   /// Mark all dashboards with a restarting indicator
   async fn mark_dashboards_restarting(&self) {
-    if let Ok(manager_lock) = self.manager.try_lock() {
+    if let Ok(mut manager_lock) = self.manager.try_lock() {
       info!("Marking dashboards as restarting...");
 
       let mut tasks = tokio::task::JoinSet::new();
 
-      for server in &manager_lock.qguilds {
+      for server in &mut manager_lock.qguilds {
         let guild_id = server.id;
         let guild_name = self.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
 
-        for category in &server.categories {
-          let restart_embed = CreateEmbed::new().title("🔄 qBot is restarting...").description("Bot will be back online shortly.\nQueues and active games will be preserved.").color(0xFFA500);
+        for category in &mut server.categories {
+          category.restarting = true;
+
+          let restart_embed = CreateEmbed::new().title("qBot is restarting...").description("Bot will be back online shortly.\nQueues and active games will be preserved.").color(0xFFA500);
 
           let chn_id = category.channels.dashboard;
           let msg_id = category.dashboard_msg;

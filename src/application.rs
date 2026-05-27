@@ -102,7 +102,10 @@ pub struct Application {
   pub user_search_results: Option<Arc<tokio::sync::RwLock<Vec<Player>>>>,
   pub user_guild_data: Option<Arc<tokio::sync::RwLock<Vec<(u64, crate::db::repo::GuildElo)>>>>,
   pub guild_config_cache: Option<Arc<tokio::sync::RwLock<std::collections::HashMap<u64, std::collections::HashMap<String, String>>>>>,
+  pub system_message_channel_guilds: Option<Arc<tokio::sync::RwLock<std::collections::HashSet<u64>>>>,
+  pub community_updates_channel_guilds: Option<Arc<tokio::sync::RwLock<std::collections::HashSet<u64>>>>,
   pub gui_shutdown_rx: Option<oneshot::Receiver<()>>,
+  pub shared_state: Option<Arc<crate::gui::state::GuiSharedState>>,
 }
 
 impl Application {
@@ -120,7 +123,20 @@ impl Application {
     // Initialize dashboard queue
     let dashboard_queue = Arc::new(Mutex::new(None));
 
-    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None, user_search_results: None, user_guild_data: None, guild_config_cache: None, gui_shutdown_rx: None })
+    Ok(Self {
+      db,
+      manager,
+      dashboard_queue,
+      cmd_rx: None,
+      latest_manager: None,
+      user_search_results: None,
+      user_guild_data: None,
+      guild_config_cache: None,
+      system_message_channel_guilds: None,
+      community_updates_channel_guilds: None,
+      gui_shutdown_rx: None,
+      shared_state: None,
+    })
   }
 
   /// Initialize the application with pre-created manager and db (for GUI integration)
@@ -128,7 +144,20 @@ impl Application {
     // Initialize dashboard queue
     let dashboard_queue = Arc::new(Mutex::new(None));
 
-    Ok(Self { db, manager, dashboard_queue, cmd_rx: None, latest_manager: None, user_search_results: None, user_guild_data: None, guild_config_cache: None, gui_shutdown_rx: None })
+    Ok(Self {
+      db,
+      manager,
+      dashboard_queue,
+      cmd_rx: None,
+      latest_manager: None,
+      user_search_results: None,
+      user_guild_data: None,
+      guild_config_cache: None,
+      system_message_channel_guilds: None,
+      community_updates_channel_guilds: None,
+      gui_shutdown_rx: None,
+      shared_state: None,
+    })
   }
 
   /// Set the command receiver for GUI commands
@@ -161,9 +190,27 @@ impl Application {
     self
   }
 
+  /// Set the system message channel guilds for GUI
+  pub fn with_system_message_channel_guilds(mut self, system_message_channel_guilds: Arc<tokio::sync::RwLock<std::collections::HashSet<u64>>>) -> Self {
+    self.system_message_channel_guilds = Some(system_message_channel_guilds);
+    self
+  }
+
+  /// Set the community updates channel guilds for GUI
+  pub fn with_community_updates_channel_guilds(mut self, community_updates_channel_guilds: Arc<tokio::sync::RwLock<std::collections::HashSet<u64>>>) -> Self {
+    self.community_updates_channel_guilds = Some(community_updates_channel_guilds);
+    self
+  }
+
   /// Set the GUI shutdown receiver
   pub fn with_gui_shutdown(mut self, rx: oneshot::Receiver<()>) -> Self {
     self.gui_shutdown_rx = Some(rx);
+    self
+  }
+
+  /// Set the shared_state for GUI integration
+  pub fn with_shared_state(mut self, shared_state: Arc<crate::gui::state::GuiSharedState>) -> Self {
+    self.shared_state = Some(shared_state);
     self
   }
 
@@ -184,7 +231,12 @@ impl Application {
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::GUILD_VOICE_STATES | GatewayIntents::GUILDS | GatewayIntents::GUILD_MEMBERS;
 
     let client =
-      Client::builder(&config.token, intents).event_handler(Handler { db: self.db.clone(), manager: self.manager.clone(), dashboard_queue: self.dashboard_queue.clone() }).await?;
+      Client::builder(&config.token, intents).event_handler(Handler {
+        db: self.db.clone(),
+        manager: self.manager.clone(),
+        dashboard_queue: self.dashboard_queue.clone(),
+        shared_state: self.shared_state.clone(),
+      }).await?;
 
     // Set the manager in the client data for global access
     client.data.write().await.insert::<GuildKey>(self.manager.clone());
@@ -219,6 +271,9 @@ impl Application {
       let user_guild_data_cmd = self.user_guild_data.clone();
       let guild_config_cache_cmd = self.guild_config_cache.clone();
       let dashboard_queue_cmd = self.dashboard_queue.clone();
+      let cache_cmd = client.cache.clone();
+      let http_cmd = client.http.clone();
+      let shared_state_cmd = self.shared_state.clone();
 
       tokio::spawn(async move {
         loop {
@@ -232,8 +287,26 @@ impl Application {
             cmd = cmd_rx.recv() => {
               match cmd {
                 Some(command) => {
+                  // Handle GracefulShutdown specially - trigger cleanup then exit
+                  if matches!(command, GuiCommand::GracefulShutdown) {
+                    info!("[GUI] GracefulShutdown — performing cleanup and exiting");
+                    let shutdown_handler = crate::shutdown::ShutdownHandler::new(
+                      manager.clone(),
+                      dashboard_queue_cmd.clone(),
+                      cache_cmd.clone(),
+                      http_cmd.clone(),
+                      db.clone(),
+                    );
+                    shutdown_handler.cleanup().await;
+                    shutdown_flag_cmd.store(true, std::sync::atomic::Ordering::Relaxed);
+                    break;
+                  }
+
                   let (snapshot, affected_guild) = {
                     let mut manager_lock = manager.lock().await;
+                    let ctx_opt: Option<Arc<serenity::all::Context>> = shared_state_cmd.as_ref()
+                      .and_then(|s| s.ctx.lock().ok())
+                      .and_then(|c| c.clone());
                     let affected_guild = match command_handler::handle_command(
                       command,
                       &mut manager_lock,
@@ -241,6 +314,7 @@ impl Application {
                       user_search_results_cmd.clone().unwrap_or_default(),
                       user_guild_data_cmd.clone().unwrap_or_default(),
                       guild_config_cache_cmd.clone().unwrap_or_default(),
+                      ctx_opt,
                     )
                     .await
                     {
@@ -277,11 +351,14 @@ impl Application {
     // Spawn periodic snapshot task for GUI
     if let Some(latest_manager) = self.latest_manager.take() {
       let manager = self.manager.clone();
+      let db = self.db.clone();
       let shutdown_flag_snap = shutdown_flag.clone();
+      let system_message_channel_guilds = self.system_message_channel_guilds.clone();
+      let community_updates_channel_guilds = self.community_updates_channel_guilds.clone();
 
       tokio::spawn(async move {
         use tokio::time::{interval, Duration};
-        let mut snapshot_interval = interval(Duration::from_millis(100));
+        let mut snapshot_interval = interval(Duration::from_millis(500));
 
         loop {
           tokio::select! {
@@ -299,9 +376,36 @@ impl Application {
                 continue; // Skip this snapshot if lock is held
               };
 
+              // Extract guild IDs before moving manager_clone
+              let guild_ids: Vec<u64> = manager_clone.qguilds.iter().map(|g| g.id.get()).collect();
+
               // Update snapshot
               let mut latest = latest_manager.write().await;
               *latest = Some(manager_clone);
+
+              // Update system message channel guilds if configured
+              if let Some(sys_msg_guilds) = &system_message_channel_guilds {
+                let mut guilds_with_channel = std::collections::HashSet::new();
+                for guild_id in &guild_ids {
+                  if let Ok(Some(_)) = db.config.get_system_message_channel((*guild_id).into()).await {
+                    guilds_with_channel.insert(*guild_id);
+                  }
+                }
+                let mut sys_msg_guilds_write = sys_msg_guilds.write().await;
+                *sys_msg_guilds_write = guilds_with_channel;
+              }
+
+              // Update community updates channel guilds if configured
+              if let Some(comm_updates_guilds) = &community_updates_channel_guilds {
+                let mut guilds_with_channel = std::collections::HashSet::new();
+                for guild_id in &guild_ids {
+                  if let Ok(Some(_)) = db.config.get_community_updates_channel((*guild_id).into()).await {
+                    guilds_with_channel.insert(*guild_id);
+                  }
+                }
+                let mut comm_updates_guilds_write = comm_updates_guilds.write().await;
+                *comm_updates_guilds_write = guilds_with_channel;
+              }
             }
           }
         }
@@ -335,6 +439,7 @@ struct Handler {
   db: Arc<Database>,
   manager: Arc<Mutex<Manager>>,
   dashboard_queue: Arc<tokio::sync::Mutex<Option<DashboardUpdateQueue>>>,
+  shared_state: Option<Arc<crate::gui::state::GuiSharedState>>,
 }
 
 impl Handler {
@@ -347,12 +452,43 @@ impl Handler {
         let mut manager = self.manager.lock().await;
         *manager = restored_manager;
 
-        manager.validate_and_cleanup(&ctx.cache).await;
+        // Clear restarting flag on all categories after restore
+        for guild in &mut manager.qguilds {
+          for category in &mut guild.categories {
+            category.restarting = false;
+          }
+        }
 
         let guild_count = manager.qguilds.len();
         let session_count = manager.count_active_sessions();
 
         info!("Restored bot state: {} guilds, {} active sessions", guild_count, session_count);
+        drop(manager);
+
+        // Defer validation to allow guild_create events to populate cache
+        // Without this delay, cache.guild() returns None for all guilds since Discord
+        // hasn't sent guild_create events yet, causing all guilds to be removed
+        let manager_clone = self.manager.clone();
+        let ctx_clone = ctx.clone();
+        tokio::spawn(async move {
+          tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+          let mut mgr = manager_clone.lock().await;
+          mgr.validate_and_cleanup(&ctx_clone.cache).await;
+
+          // Update dashboards for all categories after state restoration
+          // This ensures dashboards show the correct state instead of "offline"
+          let guild_ids: Vec<_> = mgr.qguilds.iter().map(|g| g.id).collect();
+          drop(mgr);
+
+          for guild_id in guild_ids {
+            let mut mgr = manager_clone.lock().await;
+            if let Ok(server) = mgr.get_qguild(guild_id) {
+              for category in &server.categories {
+                category.queue_dash_update(&ctx_clone, guild_id).await;
+              }
+            }
+          }
+        });
 
         if let Err(e) = self.db.state.clear().await {
           warn!("Failed to clear saved state after restoration: {}", e);
@@ -374,6 +510,13 @@ impl EventHandler for Handler {
   /// When the bot is ready
   async fn ready(&self, ctx: Context, _ready: Ready) {
     let _guild_count = ctx.cache.guilds().len();
+
+    // Set ctx in shared_state for GUI access
+    if let Some(shared_state) = &self.shared_state {
+      if let Ok(mut ctx_lock) = shared_state.ctx.lock() {
+        *ctx_lock = Some(Arc::new(ctx.clone()));
+      }
+    }
 
     self.restore_state_if_available(&ctx).await;
 
@@ -1505,12 +1648,9 @@ impl Handler {
               self.db.config.get_bool(guild_id, "post_game_auto_leave", true).await.unwrap_or(true)
             }
           } else {
-            // Idle or hot session: check user's vc_leave_queue preference
-            if let Ok(settings) = self.db.players.get_prefs(user_id).await {
-              settings.vc_leave_queue
-            } else {
-              false
-            }
+            // Idle or hot session: check user's vc_leave_queue preference (resolved with server defaults)
+            let (_, _, vc_leave_queue) = self.db.players.get_resolved_vc_prefs(user_id, guild_id, &self.db.user_server_prefs, &self.db.config).await.unwrap_or((false, false, false));
+            vc_leave_queue
           }
         }
       };
