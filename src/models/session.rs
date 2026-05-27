@@ -1,597 +1,483 @@
-// CHECK ME
-
+use std::collections::HashMap;
 use std::str::FromStr;
-use anyhow::{anyhow, Error};
-use rand::Rng;
+use std::time::SystemTime;
+
+use anyhow::{Error, Result};
+use egui::RichText;
 use serde::{Deserialize, Serialize};
-use serenity::all::{ButtonStyle, Cache, ChannelId, Context, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, CreateMessage, GuildId};
+use serenity::all::{ChannelId as CI, CreateEmbed as CE, CreateEmbedFooter as CEF, UserId as UI};
 use sqlx::FromRow;
-use tracing::{debug, error, info};
 
-use crate::models::{Player, Rank};
-use crate::handlers::dashboard;
+use crate::models::Player;
 
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-)]
-pub enum DivName {
-    Newcomer,
-    Journey,
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Serialize,
-    Deserialize,
-    PartialEq,
-)]
-pub enum SessionStatus {
-    Idle, // Waiting for enough players to join
-    Hot,  // Waiting for runners to start the session
-    Push, // Moving players to the team channels
-    Live, // Game is active
-    Pull, // Moving players back to the queue
-}
-
-impl SessionStatus {
-    pub fn is_active(&self) -> bool {
-        matches!(self, SessionStatus::Push | SessionStatus::Live | SessionStatus::Pull)
-    }
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    PartialEq,
-)]
-pub enum Team {
-    Red,
-    Blu,
-}
-
-impl FromStr
-    for Team {
-    type Err =
-        Error;
-
-    fn from_str(
-        s: &str,
-    ) -> Result<
-        Self,
-        Self::Err,
-    > {
-        match s {
-            "RED" => Ok(Team::Red),
-            "BLU" => Ok(Team::Blu),
-            _ => Err(Error::msg(format!("Unknown : {}", s))),
-        }
-    }
-}
-
-#[derive(
-    Default,
-)]
-pub struct Manager {
-    pub servers:
-        Vec<Server>,
-}
-
-impl Manager {
-    pub fn new(
-    ) -> Self {
-        Self { servers: Vec::new() }
-    }
-
-    pub fn pull_list(
-        &mut self,
-        cache: &Cache,
-    ) -> Self {
-        let mut servers = Vec::new();
-        cache.guilds().iter().for_each(|g| {
-            servers.push(Server::new(*g, None));
-        });
-        Self {
-            servers,
-        }
-    }
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-)]
-pub struct Server {
-    pub guild_id:
-        GuildId,
-    pub groups:
-        Vec<Group>,
-}
-
-impl Server {
-    pub fn new(
-        guild_id: GuildId,
-        group: Option<Group>,
-    ) -> Self {
-        info!("New server created for {}", guild_id);
-        Self {
-            guild_id,
-            groups: vec![group.unwrap()],
-        }
-    }
-
-    pub fn groups(
-        &self,
-    ) -> &Vec<Group> {
-        &self.groups
-    }
-
-    pub fn groups_mut(&mut self) -> &mut Vec<Group>{
-        &mut self
-            .groups
-    }
-
-    pub fn find_group_by_queue_channel(
-        &self,
-        channel_id: u64,
-    ) -> Option<
-        &Group,
-    > {
-        self.groups.iter().find(|g| g.queue_id == channel_id)
-    }
-
-    pub fn find_group_by_queue_tc_mut(
-        &mut self,
-        channel_id: u64,
-    ) -> Option<
-        &mut Group,
-    > {
-        self.groups.iter_mut().find(|g| g.queue_id == channel_id)
-    }
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-)]
-pub struct Group {
-    pub guild_id:          u64,
-    pub dashboard_id:      u64,
-    pub queue_chat_id:     u64,
-    pub queue_id:          u64,
-    pub teams:             Vec<TeamChannels>,
-    pub sessions:          Vec<Session>,
-    pub session_increment: u16,
-    pub quota:             u8,
-}
-
-impl Group {
-    pub fn new(
-        guild_id:        u64,
-        dashboard_tc_id: u64,
-        queue_chat_id:   u64,
-        queue_vc_id:     u64,
-        red_vc_id:       u64,
-        blu_vc_id:       u64,
-        session_quota:   u8,
-    ) -> Self {
-        info!("New group created for {}", dashboard_tc_id);
-        Self {
-            guild_id,
-            dashboard_id: dashboard_tc_id,
-            queue_chat_id,
-            queue_id: queue_vc_id,
-            teams: vec![TeamChannels { red_vc_id, blu_vc_id }],
-            sessions: Vec::new(),
-            session_increment: 0,
-            quota: session_quota,
-        }
-    }
-
-    pub fn add_team_channels(&mut self,red: u64,blu: u64,) {
-        self.teams.push(TeamChannels { red_vc_id: red, blu_vc_id: blu });
-    }
-
-    pub fn get_sessions_by_status(&mut self, status: &SessionStatus) -> Vec<&mut Session> {
-        self.sessions.iter_mut().filter(|s| s.status == *status).collect()
-    }
-
-    pub fn is_player_in_session(&self, player: &Player) -> bool {
-        self.sessions.iter().any(|s| s.pool.iter().any(|p| p.player.discord_id == player.discord_id))
-    }
-
-    pub fn get_player_session_status(&self, player: &Player) -> Result<SessionStatus, Error> {
-        self.sessions
-            .iter()
-            .find(|s| s.pool.iter().any(|p| p.player.discord_id == player.discord_id))
-            .map(|s| Ok(s.status))
-            .unwrap_or(Err(anyhow!("Player not found in any session")))
-    }
-
-    pub fn create_session(&mut self) {
-        self.session_increment += 1;
-        info!("Creating new session with ID: {}", self.session_increment);
-        self.sessions.push(Session::new(self.session_increment, self.guild_id, self.queue_id));
-    }
-
-    pub fn end_session(&mut self,session_id: u16,) -> bool {
-        info!("Attempting to end session with ID: {}", session_id);
-        if let Some(pos) = self.sessions.iter().position(|s| s.session_id == session_id) {
-            self.sessions.remove(pos);
-            info!("Session {} successfully ended and removed", session_id);
-            true
-        } else {
-            info!("Failed to end session {}: Session not found", session_id);
-            false
-        }
-    }
-
-    pub async fn init_dashboard(&self,ctx: &Context,dashboard_id: u64,) -> Result<bool, anyhow::Error> {
-        info!("Initializing dashboard for channel ID: {}", dashboard_id);
-        if self.dashboard_id != dashboard_id {
-            return Ok(false);
-        }
-        
-        let channel = ChannelId::new(dashboard_id);
-        let embed = dashboard::create_dynamic_dashboard(self).await;
-        
-        // Create buttons in a modular way for easy addition/removal
-        let buttons = self.create_dashboard_buttons();
-        let action_row = CreateActionRow::Buttons(buttons);
-            
-        match channel.send_message(
-            &ctx.http, 
-            CreateMessage::new()
-                .embed(embed)
-                .components(vec![action_row])
-        ).await {
-            Ok(_) => {
-                info!("Dashboard initialized successfully");
-                Ok(true)
-            },
-            Err(e) => {
-                error!("Failed to initialize dashboard: {:?}", e);
-                Err(anyhow::anyhow!("Failed to initialize dashboard: {:?}", e))
-            }
-        }
-    }
-    
-    /// Creates buttons for the dashboard in a modular way
-    /// Makes it easy to add or remove buttons
-    pub fn create_dashboard_buttons(&self) -> Vec<CreateButton> {
-        // Get the latest session ID if available
-        let session_id = self.sessions.last().map(|s| s.session_id.to_string());
-        
-        // Check if there's an live session to enable/disable buttons
-        let has_live_session = !self.sessions.is_empty();
-        let has_ready_session = self.sessions.iter().any(|s| s.pool.len() >= 8);
-        
-        // Define button configurations - this makes it easy to add/remove buttons
-        let button_configs = vec![
-            // (custom_id, label, style, disabled, emoji_option)
-            ("join",    "Join Queue",   ButtonStyle::Success,   false,               None::<&str>),
-            ("leave",   "Leave Queue",  ButtonStyle::Secondary, false,               None::<&str>),
-            ("shuffle", "Shuffle",      ButtonStyle::Primary,   !has_ready_session,  None::<&str>),
-            ("start",   "Start Match",  ButtonStyle::Secondary, !has_live_session,   None::<&str>),
-            ("end",     "End Match",    ButtonStyle::Danger,    !has_live_session,   None::<&str>)
-        ];
-        
-        // Generate buttons from configurations
-        button_configs.into_iter().map(|(action, label, style, disabled, emoji)| {
-            // Create button with the appropriate custom_id
-            let custom_id = if let Some(id) = &session_id {
-                // For buttons that need a session ID
-                if action != "join" && action != "leave" {
-                    format!("{action}:{id}")
-                } else {
-                    action.to_string()
-                }
-            } else {
-                // No session ID available
-                action.to_string()
-            };
-            
-            // Create the button with all specified properties
-            let button = CreateButton::new(custom_id)
-                .label(label)
-                .style(style)
-                .disabled(disabled);
-                
-            // Add emoji if specified (currently disabled due to type issues)
-            // if let Some(emoji_char) = emoji {
-            //     button = button.emoji(emoji_char);
-            // }
-            
-            button
-        }).collect()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
-    pub guild_id:      u64,
-    pub queue_chat_id: u64,
-    pub session_id:    u16,
-    pub status:        SessionStatus,
-    pub pool:          Vec<SessionPlayer>,
-}
-
-impl Session {
-    pub fn new(session_id: u16,guild_id: u64,queue_chat_id: u64,) -> Self {
-        let session = Self {
-            guild_id,
-            queue_chat_id,
-            session_id,
-            pool:   Vec::new(),
-            status: SessionStatus::Idle,
-        };
-        info!("New session started with ID: {}", session_id);
-        session
-    }
-
-    pub fn idle(&mut self) {
-        info!("Changing session {} status to IDLE", self.session_id);
-        self.status = SessionStatus::Idle;
-    }
-
-    pub fn hot(&mut self) {
-        // send notif
-        info!("Changing session {} status to HOT", self.session_id);
-        self.status = SessionStatus::Hot;
-    }
-
-    pub fn push(&mut self) {
-        info!("Changing session {} status to PUSH", self.session_id);
-        self.status = SessionStatus::Push;
-    }
-
-    pub fn live(&mut self) {
-        info!("Changing session {} status to LIVE", self.session_id);
-        self.status = SessionStatus::Live;
-    }
-
-    pub fn pull(&mut self) {
-        info!("Changing session {} status to PULL", self.session_id);
-        self.status = SessionStatus::Pull;
-    }
-
-    pub fn generate_teams(&mut self) {
-        info!("Generating teams for session {}", self.session_id);
-        debug!("Cloned {} players for team assignment", self.pool.len());
-        let mut rng = rand::rng();
-        let mut players = self.pool.clone();
-
-        // 1. First add buffered players to genpool (priority)
-        let buffered_players = self.pool.iter().filter(|p| p.buffered.is_some()).cloned().collect::<Vec<_>>();
-
-        // 2. Fill remaining slots with non-buffered players
-        let remaining_slots = 8 - buffered_players.len(); // Assuming 8 players per match
-        let mut non_buffered = self.pool.iter().filter(|p| p.buffered.is_none()).cloned().collect::<Vec<_>>();
-
-        // Take only what we need
-        if non_buffered.len() > remaining_slots {
-            non_buffered.truncate(remaining_slots);
-        }
-
-        // 3. Sort players by ELO in descending order
-        players.sort_by(|a, b| {
-            let a_elo = a.player.rank.unwrap_or(Rank::Beginner).elo();
-            let b_elo = b.player.rank.unwrap_or(Rank::Beginner).elo();
-
-            // Randomize order for players with identical ELO
-            if a_elo == b_elo {
-                if rng.random::<bool>() {
-                    std::cmp::Ordering::Less
-                } else {
-                    std::cmp::Ordering::Greater
-                }
-            } else {
-                b_elo.cmp(&a_elo)
-            }
-        });
-
-        // 4. Distribute players in snake draft pattern (ABBAABBA)
-        let mut team_a = Vec::new();
-        let mut team_b = Vec::new();
-
-        for (i, player) in players.iter().enumerate() {
-            let mut player_clone = player.clone();
-
-            // Snake draft pattern: 0->A, 1->B, 2->B, 3->A, 4->A, 5->B, 6->B, 7->A
-            match i % 4 {
-                0 | 3 => {
-                    player_clone.team(Team::Red);
-                    team_a.push(player_clone);
-                }
-                1 | 2 => {
-                    player_clone.team(Team::Blu);
-                    team_b.push(player_clone);
-                }
-                _ => unreachable!(),
-            }
-        }
-
-        // 5. Update the original pool with team assignments
-        for player in &team_a {
-            if let Some(p) = self.pool.iter_mut().find(|p| p.player.discord_id == player.player.discord_id) {
-                p.team = Some(Team::Red);
-            }
-        }
-
-        for player in &team_b {
-            if let Some(p) = self.pool.iter_mut().find(|p| p.player.discord_id == player.player.discord_id) {
-                p.team = Some(Team::Blu);
-            }
-        }
-    }
-
-    pub fn count(&self) -> usize {
-        self.pool.len()
-    }
-
-    pub fn get_members(&self) -> Vec<Player> {
-        self.pool.iter().map(|m| m.player.clone()).collect()
-    }
-
-    pub fn add_player(&mut self, player: &Player) {
-        // Clone players for team assignment
-        let session_player = SessionPlayer::construct(player.clone(), self.guild_id, self.session_id);
-        info!("Player {} added to session {}. Total players: {}", player.discord_id, self.session_id, self.pool.len());
-        self.pool.push(session_player);
-    }
-
-    pub fn remove_player(&mut self, player: &SessionPlayer) {
-        let before_count = self.pool.len();
-        self.pool.retain(|p| p.player.discord_id != player.player.discord_id);
-        let after_count = self.pool.len();
-
-        if before_count == after_count {
-            info!("Player {} not found in session {}", player.player.discord_id, self.session_id);
-        } else {
-            info!("Player {} removed from session {}. Remaining players: {}", player.player.discord_id, self.session_id, after_count);
-        }
-    }
-
-    pub fn buff(&mut self, user_id: u64, buffered: Option<Player>) {
-        self.pool.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().buff(buffered);
-    }
-
-    pub fn unbuff(&mut self, user_id: u64) {
-        self.pool.iter_mut().find(|m| m.player.discord_id == user_id).unwrap().unbuff();
-    }
-
-    pub fn update_queue_status(&mut self,
-        user:      Player,
-        queue_vc:  Option<bool>,
-        queue_cmd: Option<bool>,
-    ) {
-        // if session is closed, ignore
-        if !matches!(self.status, SessionStatus::Idle | SessionStatus::Pull) {
-            return;
-        }
-
-        let uid = user.discord_id;
-        // find existing entry
-        if let Some(sp) = self.pool.iter_mut().find(|sp| sp.player.discord_id == uid) {
-            if let Some(v) = queue_vc {
-                sp.queue_vc = v;
-            }
-            if let Some(c) = queue_cmd {
-                sp.queue_cmd = c;
-            }
-
-            // if neither flag is true any more, remove them
-            if !sp.in_queue() {
-                self.pool.retain(|p| p.player.discord_id != uid);
-            }
-        } else if queue_vc.unwrap_or(false) || queue_cmd.unwrap_or(false) {
-            // first‐time join
-            let mut sp = SessionPlayer::construct(user, self.guild_id, self.session_id);
-            sp.queue_vc = queue_vc.unwrap_or(false);
-            sp.queue_cmd = queue_cmd.unwrap_or(false);
-            self.pool.push(sp);
-        }
-    }
-
-    /// Helper so you don’t have to remember SessionPlayer::new everywhere
-    pub fn on_voice_state_change(&mut self, user: Player, joined: bool) {
-        self.update_queue_status(user, Some(joined), None);
-    }
-
-    pub fn on_command_join(&mut self, user: Player, joined: bool) {
-        self.update_queue_status(user, None, Some(joined));
-    }
-
-    /// Notify session ready when the queue quota is reached.
-    ///
-    /// * `ctx`        - Ref to the Serenity context.
-    /// * `db`         - Ref to the database.
-    /// * `group`      - The group containing the session.
-    pub async fn notify_session_ready(&self,ctx: &Context,) -> Result<(), Error> {
-        // Send notification to log channel
-        if self.queue_chat_id != 0 {
-            let channel = ChannelId::new(self.queue_chat_id);
-            let mut player_mentions = Vec::new();
-            // Take at most 8 players
-            let pool_len = self.pool.len().min(8);
-            for member in &self.pool[..pool_len] {
-                player_mentions.push(format!("<@{}>", member.player.discord_id));
-            }
-            
-            let embed = CreateEmbed::new()
-                .title("QUOTA REACHED!")
-                .description(
-                    format!(
-                        "**8 players ready for pickup!**\n\n{}\n\nPlayers have 2 minutes to confirm.", // TODO: Use Discord datetime feature
-                        player_mentions.join(" ")
-                    )
-                )
-                .footer(CreateEmbedFooter::new("Awaiting team generation..."));
-            channel.send_message(&ctx.http, CreateMessage::new().embed(embed)).await?;
-        } else {
-            error!("Queue chat ID is not set in the config")
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize,)]
-pub struct SessionPlayer {
-    pub guild_id:   u64,
-    pub session_id: u16,
-    pub player:     Player,
-    pub team:       Option<Team>,
-    pub buffered:   Option<Player>,
-    pub queue_vc:   bool,
-    pub queue_cmd:  bool,
-}
-
-impl SessionPlayer {
-    pub fn construct(
-        player:     Player,
-        guild_id:   u64,
-        session_id: u16,
-    ) -> Self {
-        Self {
-            guild_id,
-            session_id,
-            player,
-            team:      None,
-            buffered:  None,
-            queue_vc:  false,
-            queue_cmd: false,
-        }
-    }
-
-    pub fn buff(&mut self, buffered: Option<Player>,) {
-        self.buffered = buffered;
-    }
-
-    pub fn unbuff(&mut self,) {
-        self.buffered = None;
-    }
-
-    pub fn team(&mut self, team: Team,) {
-        self.team = Some(team);
-    }
-
-    pub fn in_queue(&self) -> bool {
-        self.queue_vc || self.queue_cmd
-    }
+  pub status: SessionStatus,
+  pub pool: Vec<SessionPlayer>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub ready_at: Option<SystemTime>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub started_at: Option<SystemTime>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub match_ended_at: Option<SystemTime>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub team_channels: Option<TeamChannel>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub pending_team_switch: Option<PendingTeamSwitch>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub last_action_at: Option<SystemTime>,
+  #[serde(default)]
+  pub score_reported: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamChannels {
-    pub red_vc_id: u64,
-    pub blu_vc_id: u64,
+pub struct PendingTeamSwitch {
+  pub detected_at: SystemTime,
+  pub swapped_teams: HashMap<UI, Team>,
+}
+
+impl Session {
+  /// Get a player by their Discord ID
+  pub fn get_player(&self, user_id: UI) -> Result<Player> {
+    match self.pool.iter().find(|p| p.player.user_id == user_id) {
+      Some(player) => Ok(player.player.clone()),
+      None => Err(anyhow::anyhow!("User not found")),
+    }
+  }
+
+  /// Add a player to the session
+  /// Returns Ok(position) with the player's 1-indexed position in the queue
+  pub fn add_ply(&mut self, player: Player, in_vc: bool) -> Result<usize> {
+    let mut session_player = SessionPlayer::add(player);
+    session_player.in_vc = in_vc;
+    self.pool.push(session_player);
+    Ok(self.pool.len())
+  }
+
+  /// Add a player to the session with their rank, marking them as already in queue VC
+  /// Use this when re-adding players who were just moved to the queue channel
+  /// Returns Ok(position) with the player's 1-indexed position in the queue
+  #[deprecated(since = "0.12.0", note = "Use add_ply() with in_vc=true instead")]
+  pub fn add_player_in_vc(&mut self, player: Player) -> Result<usize> {
+    self.add_ply(player, true)
+  }
+
+  pub fn remove_player(&mut self, user_id: UI) {
+    self.pool.retain(|p| p.player.user_id != user_id);
+  }
+
+  /// Create a new session
+  pub fn new(status: SessionStatus, pool: Vec<SessionPlayer>) -> Self {
+    Self { status, pool, ready_at: None, started_at: None, match_ended_at: None, team_channels: None, pending_team_switch: None, last_action_at: None, score_reported: false }
+  }
+
+  /// Check if the session is active
+  pub fn is_active(&self) -> bool {
+    matches!(self.status, SessionStatus::Push | SessionStatus::Live | SessionStatus::Pull)
+  }
+
+  /// Check if the session is hot
+  pub fn is_hot(&self) -> bool {
+    matches!(self.status, SessionStatus::Hot)
+  }
+
+  /// Check if the session is idle
+  pub fn is_idle(&self) -> bool {
+    matches!(self.status, SessionStatus::Idle)
+  }
+
+  /// Set the session to idle and clear team assignments
+  pub fn idle(&mut self) {
+    self.status = SessionStatus::Idle;
+    self.ready_at = None;
+    self.started_at = None;
+    self.match_ended_at = None;
+    self.team_channels = None;
+    self.pending_team_switch = None;
+    // Clear team assignments and VC join tracking when going back to idle
+    for player in &mut self.pool {
+      player.team = None;
+    }
+  }
+
+  /// Set the session to hot and record the ready timestamp
+  pub fn hot(&mut self) -> CE {
+    self.status = SessionStatus::Hot;
+    self.ready_at = Some(SystemTime::now());
+    // Create an embed message for the game ready notification
+
+    CE::new().title("GAME READY!").description(format!("A match is ready to start with {} players!", self.pool.len())).footer(CEF::new("Awaiting team generation..."))
+  }
+
+  /// Set the session to push
+  pub fn push(&mut self) {
+    self.status = SessionStatus::Push;
+  }
+
+  /// Set the session to live and record start time
+  pub fn live(&mut self) {
+    self.status = SessionStatus::Live;
+    self.started_at = Some(SystemTime::now());
+  }
+
+  /// Set the session to pull
+  pub fn pull(&mut self) {
+    self.status = SessionStatus::Pull;
+  }
+
+  /// Detect if players have switched teams based on current VC positions
+  /// Returns true if a valid swap is detected (one player from each team swapped)
+  pub fn detect_team_switch(&mut self, ctx: &serenity::all::Context, guild_id: serenity::all::GuildId) -> bool {
+    use tracing::debug;
+
+    // Only track switches during Live games
+    if self.status != SessionStatus::Live {
+      return false;
+    }
+
+    let Some(team_channels) = &self.team_channels else {
+      return false;
+    };
+
+    let red_vc = team_channels.red_vc;
+    let blu_vc = team_channels.blu_vc;
+
+    // Get current VC positions from Discord
+    let Some(guild) = ctx.cache.guild(guild_id) else {
+      return false;
+    };
+
+    let mut current_vc_positions = HashMap::new();
+    for player in &self.pool {
+      if let Some(voice_state) = guild.voice_states.get(&player.player.user_id) {
+        if let Some(channel_id) = voice_state.channel_id {
+          if channel_id == red_vc || channel_id == blu_vc {
+            current_vc_positions.insert(player.player.user_id, channel_id);
+          }
+        }
+      }
+    }
+
+    // Detect switches: find players whose VC doesn't match their assigned team
+    let mut swapped_teams = HashMap::new();
+    for player in &self.pool {
+      let Some(assigned_team) = player.team else { continue };
+      let Some(&current_vc) = current_vc_positions.get(&player.player.user_id) else { continue };
+
+      let expected_vc = match assigned_team {
+        Team::Red => red_vc,
+        Team::Blu => blu_vc,
+        Team::Unassigned => continue,
+      };
+
+      if current_vc != expected_vc {
+        // Player is in wrong VC - they switched
+        let new_team = if current_vc == red_vc { Team::Red } else { Team::Blu };
+        swapped_teams.insert(player.player.user_id, new_team);
+      }
+    }
+
+    // Valid switch requires exactly 2 players (one from each team swapping)
+    if swapped_teams.len() != 2 {
+      return false;
+    }
+
+    // Verify it's a cross-team swap (one Red->Blu, one Blu->Red)
+    let teams: Vec<_> = swapped_teams.values().collect();
+    if teams.len() == 2 && teams[0] != teams[1] {
+      debug!("Detected valid team switch: {} players swapped teams", swapped_teams.len());
+      self.pending_team_switch = Some(PendingTeamSwitch { detected_at: SystemTime::now(), swapped_teams });
+      return true;
+    }
+
+    false
+  }
+
+  /// Check if pending team switch has been stable for 2+ minutes and commit it
+  pub fn validate_and_commit_team_switch(&mut self, ctx: &serenity::all::Context, guild_id: serenity::all::GuildId) -> bool {
+    use tracing::{debug, info};
+
+    let Some(pending) = &self.pending_team_switch else {
+      return false;
+    };
+
+    // Check if 2 minutes have elapsed
+    let Ok(elapsed) = SystemTime::now().duration_since(pending.detected_at) else {
+      return false;
+    };
+
+    if elapsed.as_secs() < 120 {
+      return false;
+    }
+
+    // Verify the switch is still valid (players are still in swapped positions)
+    let Some(team_channels) = &self.team_channels else {
+      self.pending_team_switch = None;
+      return false;
+    };
+
+    let red_vc = team_channels.red_vc;
+    let blu_vc = team_channels.blu_vc;
+
+    let Some(guild) = ctx.cache.guild(guild_id) else {
+      return false;
+    };
+
+    // Verify each swapped player is still in their new team's VC
+    for (&user_id, &new_team) in &pending.swapped_teams {
+      let expected_vc = match new_team {
+        Team::Red => red_vc,
+        Team::Blu => blu_vc,
+        Team::Unassigned => continue,
+      };
+
+      let still_in_correct_vc = guild.voice_states.get(&user_id).and_then(|vs| vs.channel_id).map(|ch| ch == expected_vc).unwrap_or(false);
+
+      if !still_in_correct_vc {
+        debug!("Team switch invalidated - player {} not in expected VC", user_id);
+        self.pending_team_switch = None;
+        return false;
+      }
+    }
+
+    // Switch is still valid after 2 minutes - commit it to memory
+    for (&user_id, &new_team) in &pending.swapped_teams {
+      if let Some(player) = self.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+        let old_team = player.team;
+        player.team = Some(new_team);
+        info!("Committed team switch: {} moved from {:?} to {:?}", player.player.tag, old_team, new_team);
+      }
+    }
+
+    self.pending_team_switch = None;
+    true
+  }
+
+  /// Create an empty session
+  pub fn empty() -> Self {
+    Self {
+      status: SessionStatus::Idle,
+      pool: Vec::new(),
+      ready_at: None,
+      started_at: None,
+      match_ended_at: None,
+      team_channels: None,
+      pending_team_switch: None,
+      last_action_at: None,
+      score_reported: false,
+    }
+  }
+
+  /// Check if this Hot session has timed out (players didn't join VC in time)
+  pub fn is_hot_confirm_time(&self, confirm_time_seconds: u64) -> bool {
+    if !self.is_hot() {
+      return false;
+    }
+
+    // Use match_ended_at if available (post-game scenario), otherwise ready_at
+    let base_time = self.match_ended_at.or(self.ready_at);
+
+    if let Some(base_time) = base_time {
+      if let Ok(elapsed) = SystemTime::now().duration_since(base_time) {
+        return elapsed.as_secs() >= confirm_time_seconds;
+      }
+    }
+    false
+  }
+
+  /// Get seconds remaining until timeout (returns 0 if timed out or not hot)
+  pub fn seconds_until_confirm_expiration(&self, confirm_time_seconds: u64) -> u64 {
+    if !self.is_hot() {
+      return 0;
+    }
+
+    // Use match_ended_at if available (post-game scenario), otherwise ready_at
+    let base_time = self.match_ended_at.or(self.ready_at);
+
+    if let Some(base_time) = base_time {
+      if let Ok(elapsed) = SystemTime::now().duration_since(base_time) {
+        let elapsed_secs = elapsed.as_secs();
+        if elapsed_secs < confirm_time_seconds {
+          return confirm_time_seconds - elapsed_secs;
+        }
+      }
+    }
+    0
+  }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum SessionStatus {
+  Idle, // Waiting for enough players to join
+  Hot,  // Waiting for runners to start the game
+  Push, // Moving players to the team channels
+  Live, // Game is active
+  Pull, // Moving players back to the queue
+}
+
+impl SessionStatus {
+  pub fn icon(&self) -> egui::RichText {
+    use egui_phosphor::regular::*;
+    let icon = match self {
+      SessionStatus::Idle => MOON,
+      SessionStatus::Hot => FIRE_SIMPLE,
+      SessionStatus::Push => ARROW_BEND_DOWN_RIGHT,
+      SessionStatus::Live => PLAY,
+      SessionStatus::Pull => ARROW_BEND_DOWN_LEFT,
+    };
+    egui::RichText::new(icon).family(egui::FontFamily::Name("phosphor".into()))
+  }
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct SessionPlayer {
+  pub player: Player,
+  pub team: Option<Team>,
+  pub in_vc: bool,
+  pub in_queue: bool,
+  pub joined_at: SystemTime,
+  pub queue_expiration: u8,
+  pub vc_leave_grace_until: Option<SystemTime>,
+}
+
+impl SessionPlayer {
+  pub fn add(player: Player) -> Self {
+    Self { player: player.clone(), team: None, in_vc: false, in_queue: false, joined_at: SystemTime::now(), queue_expiration: player.queue_expiration, vc_leave_grace_until: None }
+  }
+
+  pub fn set_team(&mut self, team: Team) {
+    self.team = Some(team);
+  }
+
+  pub fn vc_on(&mut self) {
+    self.in_vc = true;
+  }
+
+  pub fn vc_off(&mut self) {
+    self.in_vc = false;
+  }
+
+  pub fn vc_icon(&self) -> egui::RichText {
+    use egui_phosphor::regular::*;
+    let icon = match self.in_vc {
+      true => HEADSET,
+      false => MOON,
+    };
+    RichText::new(icon).family(egui::FontFamily::Name("phosphor".into()))
+  }
+}
+
+#[allow(dead_code)]
+trait Quota {
+  fn less(&self, quota: usize) -> bool;
+  fn equal(&self, quota: usize) -> bool;
+  fn more(&self, quota: usize) -> bool;
+}
+
+impl Quota for Vec<SessionPlayer> {
+  fn less(&self, quota: usize) -> bool {
+    self.len() < quota
+  }
+  fn equal(&self, quota: usize) -> bool {
+    self.len() == quota
+  }
+  fn more(&self, quota: usize) -> bool {
+    self.len() > quota
+  }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamChannel {
+  pub red_vc: CI,
+  pub blu_vc: CI,
+  pub set_index: u32,
+  pub session_id: Option<String>,
+}
+
+impl TeamChannel {
+  pub fn new(red_vc: CI, blu_vc: CI, set_index: u32) -> Self {
+    Self { red_vc, blu_vc, set_index, session_id: None }
+  }
+
+  pub fn with_session(red_vc: CI, blu_vc: CI, set_index: u32, session_id: String) -> Self {
+    Self { red_vc, blu_vc, set_index, session_id: Some(session_id) }
+  }
+
+  pub fn empty() -> Self {
+    Self { red_vc: CI::new(1), blu_vc: CI::new(1), set_index: 0, session_id: None }
+  }
+
+  /// Checks if this TeamChannel contains the given channel_id
+  /// in either red_vc or blu_vc
+  pub fn contains_channel(&self, channel_id: CI) -> bool {
+    self.red_vc == channel_id || self.blu_vc == channel_id
+  }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum Team {
+  Unassigned,
+  Red,
+  Blu,
+}
+
+impl FromStr for Team {
+  type Err = Error;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "UNASSIGNED" => Ok(Team::Unassigned),
+      "RED" => Ok(Team::Red),
+      "BLU" => Ok(Team::Blu),
+      _ => Err(Error::msg(format!("Unknown : {s}"))),
+    }
+  }
+}
+
+/// Process match result with ELO calculations
+/// This is a shared function used by both dashboard and runner menu to ensure consistency
+///
+/// # Arguments
+/// * `db` - Database connection
+/// * `guild_id` - Guild ID
+/// * `category_id` - Category ID
+/// * `session_players` - Session player data for ELO processing
+/// * `result` - Match result ("red", "draw", or "blu")
+///
+/// # Returns
+/// * `Ok(Some(changes))` - ELO changes applied (if dynamic ELO enabled)
+/// * `Ok(None)` - No ELO changes (dynamic ELO disabled or no match found)
+/// * `Err(e)` if database operations fail
+pub async fn process_match_result_with_elo(
+  db: std::sync::Arc<crate::db::Database>,
+  guild_id: serenity::all::GuildId,
+  category_id: u8,
+  session_players: &[SessionPlayer],
+  result: &str,
+  ctx: &serenity::prelude::Context,
+) -> Result<Option<Vec<crate::models::dynamic_elo::EloChange>>> {
+  use tracing::error;
+
+  // Get latest match ID from database
+  if let Some(match_id) = db.matches.get_latest_match_id(guild_id, category_id as i64).await? {
+    // Update match result in database
+    if let Err(e) = db.matches.update_match_result(match_id, result).await {
+      error!("Failed to update match result in database: {e}");
+    }
+
+    // Apply dynamic ELO changes if enabled
+    return match crate::models::dynamic_elo::process_match_elo(&db, guild_id, match_id, session_players, result, ctx).await {
+      Ok(Some(changes)) => {
+        tracing::info!("Dynamic ELO applied: {} players updated", changes.len());
+        Ok(Some(changes))
+      }
+      Ok(None) => Ok(None), // Dynamic ELO not enabled
+      Err(e) => {
+        error!("Failed to process dynamic ELO: {e}");
+        Err(e.into())
+      }
+    };
+  }
+
+  Ok(None)
 }

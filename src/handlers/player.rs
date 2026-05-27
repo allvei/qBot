@@ -1,136 +1,348 @@
-// Combined session handlers
-use std::sync::Arc;
-
-use anyhow::{ anyhow, Result };
-use rand::rng;
+// Combined game handlers
+use anyhow::{anyhow, Result};
 use rand::seq::SliceRandom;
-use serenity::all::{
-    ChannelId,
-    Context,
-    CreateEmbed as CE,
-    CreateEmbedFooter as CEF,
-    CreateInteractionResponse as CIR,
-    CreateInteractionResponseMessage as CIRM,
-    EditMember,
-    GuildId,
-    RoleId,
-    UserId,
-};
-use tracing::{info, warn};
+use serenity::all::{Context as Ctx, GuildId as GI, Member, UserId as UI};
 
-use crate::database::Database;
-use crate::models::command::{CommandContext};
-use crate::models::player::Role;
-use crate::models::session::{ Group, Session, SessionPlayer, SessionStatus, Team };
+use tracing::{debug, error, info, warn};
+
+use crate::models::{CommandContext as CmC, QGuild, Rank, Role, SessionPlayer as SP, SessionStatus as SS, Team};
+use crate::{guild_name, ComponentContext as CC, Database as DB};
+
+/// Helper: Get member with cache → DB → Discord API fallback strategy
+async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI, db: &DB) -> Option<Member> {
+  // 1. Try cache first (fast path, no API call)
+  if let Some(guild) = ctx.cache.guild(guild_id) {
+    if let Some(member) = guild.members.get(&user_id).cloned() {
+      return Some(member);
+    }
+  }
+
+  // 2. Check if user exists in database (avoids Discord API call)
+  if db.players.get(user_id).await.is_ok() {
+    // User exists in DB, try Discord API to get full member info
+    if let Ok(member) = guild_id.member(&ctx.http, user_id).await {
+      return Some(member);
+    }
+  }
+
+  // 3. Last resort: Try Discord API anyway (for new users)
+  guild_id.member(&ctx.http, user_id).await.ok()
+}
+
+/// Get user's rank from their Discord roles (highest rank role they have)
+pub async fn get_user_rank_from_discord_roles(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Option<crate::db::repo::rank::GuildRank> {
+  // Get the member and their roles
+  let member = match get_member_cached(ctx, guild_id, user_id, db).await {
+    Some(m) => m,
+    None => return None,
+  };
+
+  // Get all configured ranks for the guild
+  let ranks = match db.ranks.get_ranks(guild_id).await {
+    Ok(r) => r,
+    Err(_) => return None,
+  };
+
+  // Find the highest rank the user has (ranks are sorted by ELO ascending, so check in reverse)
+  for rank in ranks.iter().rev() {
+    if member.roles.contains(&rank.role_id) {
+      debug!("User {} has Discord role '{}' (role_id: {}, ELO: {})", user_id, rank.name, rank.role_id, rank.elo);
+      return Some(rank.clone());
+    }
+  }
+
+  None
+}
+
+/// Get player's rank from their ELO in the database
+pub async fn get_player_rank(db: &DB, guild_id: GI, user_id: UI) -> Option<Rank> {
+  // Get player's ELO from the elos table
+  match db.elo.get(user_id, guild_id, db).await {
+    Ok(guild_elo) => Some(guild_elo.rank),
+    Err(_) => None,
+  }
+}
+
+/// Get or assign player rank - returns existing rank or assigns based on Discord roles
+pub async fn get_or_assign_player_rank(db: &DB, guild_id: GI, user_id: UI) -> Result<Rank> {
+  // Check if player already has a rank in the elos table
+  if let Some(rank) = get_player_rank(db, guild_id, user_id).await {
+    return Ok(rank);
+  }
+
+  // Player has no ELO record - try to determine rank from Discord roles
+  // Note: This requires a Context, which we don't have here.
+  // The dashboard.rs code should call get_user_rank_from_discord_roles first.
+
+  // Fallback to server's configured default rank
+  let default_rank_role_id = db.config.get_default_rank_role_id(guild_id).await?;
+
+  // Find the configured default rank in the database by role ID
+  let default_guild_rank = match default_rank_role_id {
+    Some(role_id) => db.ranks.rank_from_role_id(guild_id, role_id).await.ok(),
+    None => None,
+  };
+
+  // Fall back to lowest ELO rank if no default configured
+  let (assigned_rank, elo) = if let Some(ref guild_rank) = default_guild_rank {
+    (Rank::from_elo(db, guild_id, guild_rank.elo).await?, guild_rank.elo)
+  } else {
+    let rank = Rank::lowest(db, guild_id).await?;
+    (rank.clone(), rank.elo)
+  };
+
+  // Set the player's ELO and rank in the database
+  db.elo.set(user_id, guild_id, elo, assigned_rank.clone()).await?;
+
+  info!("Assigned rank '{}' (ELO {}) to user {}", assigned_rank.name, elo, user_id);
+  Ok(assigned_rank)
+}
+
+/// Resolve a player's rank and ELO for queue entry.
+///
+/// Combines Discord role detection, DB rank lookup, ELO normalization, and player
+/// creation into a single function. This is the canonical path for voice-join and
+/// startup recovery flows where a `Context` is available for role inspection.
+///
+/// Returns `(Player, Rank)` ready for queue insertion, or an error.
+pub async fn resolve_player_for_queue(ctx: &Ctx, db: &DB, guild_id: GI, user_id: UI) -> Result<(crate::models::Player, Rank, Option<(String, String)>)> {
+  // 1. Detect rank: Discord roles (source of truth) vs DB
+  let role_based_guild_rank = get_user_rank_from_discord_roles(ctx, db, guild_id, user_id).await;
+
+  let mut rank_mismatch: Option<(String, String)> = None;
+  let discord_rank = if let Some(db_rank) = get_player_rank(db, guild_id, user_id).await {
+    if let Some(guild_rank) = &role_based_guild_rank {
+      let role_rank = Rank::from_name(db, guild_id, &guild_rank.name).await.unwrap_or(db_rank.clone());
+      if role_rank != db_rank {
+        rank_mismatch = Some((db_rank.name.clone(), guild_rank.name.clone()));
+      }
+      role_rank
+    } else {
+      db_rank
+    }
+  } else if let Some(guild_rank) = &role_based_guild_rank {
+    Rank::from_name(db, guild_id, &guild_rank.name).await.unwrap_or_else(|_| Rank { guild_id, role_id: guild_rank.role_id, name: guild_rank.name.clone(), elo: guild_rank.elo })
+  } else {
+    get_or_assign_player_rank(db, guild_id, user_id).await?
+  };
+
+  // 2. Get or create player
+  let mut player = match db.get_player(user_id, ctx).await {
+    Ok(p) => p,
+    Err(_) => db.new_player(user_id, ctx).await?,
+  };
+
+  // 3. Normalize ELO based on elo_ranks_linked setting
+  let elo_ranks_linked = db.config.get_elo_ranks_linked(guild_id).await.unwrap_or(true);
+
+  if elo_ranks_linked {
+    let (elo, changed) = db.elo.validate_and_normalize_elo(user_id, guild_id, &discord_rank, db).await?;
+    player.elo = elo;
+    if changed {
+      let user_tag = crate::log::get_user_tag(ctx, user_id, db).await;
+      info!("ELO normalized for {}: {} (rank '{}')", user_tag, elo, discord_rank.name);
+    }
+  } else {
+    // Independent: use existing ELO as-is, or default to rank base
+    let existing_elo = db.elo.get_if_exists(user_id, guild_id).await.ok().flatten();
+    if let Some(guild_elo) = existing_elo {
+      player.elo = guild_elo.elo;
+    } else {
+      player.elo = discord_rank.elo;
+      if let Err(e) = db.elo.set(user_id, guild_id, player.elo, discord_rank.clone()).await {
+        warn!("Failed to initialize guild ELO: {}", e);
+      }
+    }
+  }
+
+  player.rank = Some(discord_rank.clone());
+
+  // 4. Override with dynamic ELO if enabled for this guild
+  if db.config.get_active_elo(guild_id).await.unwrap_or(false) {
+    if let Ok(Some(guild_elo)) = db.elo.get_if_exists(user_id, guild_id).await {
+      // Use dynamic_elo if set, otherwise use 1500 as default
+      player.elo = guild_elo.dynamic_elo.unwrap_or(1500);
+    }
+  }
+
+  Ok((player, discord_rank, rank_mismatch))
+}
+
+/// Validate that runner and admin roles are configured
+pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<Vec<String>> {
+  let mut missing_roles = Vec::new();
+
+  // Get all guild roles
+  let guild_roles = match ctx.http.get_guild_roles(guild_id).await {
+    Ok(roles) => roles,
+    Err(e) => {
+      warn!("Failed to fetch guild roles: {e}");
+      return Err(anyhow!("Failed to fetch guild roles"));
+    }
+  };
+
+  // Check runner and admin roles
+  for role in [Role::Runner, Role::Admin] {
+    // Check if role is configured
+    let configured_role_id = role.id(db, guild_id).await;
+
+    let has_role = if let Some(role_id) = configured_role_id {
+      // Check if the configured role still exists in the guild
+      guild_roles.iter().any(|r| r.id == role_id)
+    } else {
+      false
+    };
+
+    if !has_role {
+      // Fallback: search for role by name (case-insensitive)
+      let role_name = role.name().to_lowercase();
+      let found_role = guild_roles.iter().find(|r| r.name.to_lowercase() == role_name);
+
+      if let Some(found) = found_role {
+        // Found a role with matching name! Auto-save it to config
+        info!("Found existing role '{}', saving to config", found.name);
+
+        // Save this role ID to the database config
+        if let Err(e) = role.save_id(db, guild_id, found.id).await {
+          warn!("Failed to save found role {} to config: {}", role.name(), e);
+        } else {
+          info!("Saved {} role ID to config: {}", role.name(), found.id.get());
+        }
+      } else {
+        // Role doesn't exist by ID or name
+        missing_roles.push(role.name().to_string());
+      }
+    }
+  }
+
+  Ok(missing_roles)
+}
+
+async fn deny_command(cc: &CmC<'_>, role: &Role) -> Result<()> {
+  let user_tag = crate::log::get_user_tag(cc.ctx, cc.intax.user.id, &cc.db).await;
+  info!("[{}] User {} does not have {} role", cc.guild_name(), user_tag, role.name());
+  cc.reply_ephemeral(&format!("This command is reserved for {}s", role.name().to_lowercase())).await?;
+  Ok(())
+}
 
 /// Checks if a user has the specified role.
-///
-/// * `cc` - The command context.
-/// * `role` - The role to check for.
-pub async fn check_role(
-    cc: &CommandContext<'_>,
-    role: &Role,
-) -> Result<bool> {
-    if let Some(guild_id) = cc.intax.guild_id {
-        let member = guild_id.member(&cc.ctx.http, cc.intax.user.id).await;
-        if let Ok(member) = member {
-            info!("Checking if user has {} role with ID: {}", role.name(), role.id());
-            return Ok(member.roles.contains(&RoleId::new(role.id())));
-        } else {
-            warn!("Failed to fetch member for user {} in guild {}: {:?}", cc.intax.user.id, guild_id, member.as_ref().err());
+/// Prioritizes Discord permissions (Administrator or Manage Server) over configured role.
+pub async fn is_role(cc: &CmC<'_>, role: &Role) -> Result<bool> {
+  use serenity::all::Permissions;
+
+  if let Some(guild_id) = cc.intax.guild_id {
+    let member = match get_member_cached(cc.ctx, guild_id, cc.intax.user.id, &cc.db).await {
+      Some(m) => m,
+      None => {
+        let user_tag = crate::log::get_user_tag(cc.ctx, cc.intax.user.id, &cc.db).await;
+        warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), user_tag);
+        return Ok(false);
+      }
+    };
+
+    // For Admin role: Check Discord permissions first (Administrator or Manage Server)
+    if matches!(role, Role::Admin) {
+      if let Some(guild_ref) = guild_id.to_guild_cached(&cc.ctx.cache) {
+        let perms = guild_ref.member_permissions(&member);
+        if perms.contains(Permissions::ADMINISTRATOR) || perms.contains(Permissions::MANAGE_GUILD) {
+          return Ok(true);
         }
+      }
     }
-    Ok(false)
+
+    // Check configured roles (supports multiple)
+    let role_ids = role.ids(&cc.db, guild_id).await;
+    if !role_ids.is_empty() {
+      // User has the role if they have ANY of the configured roles
+      if role_ids.iter().any(|role_id| member.roles.contains(role_id)) {
+        return Ok(true);
+      } else {
+        deny_command(cc, role).await?;
+        return Ok(false);
+      }
+    } else {
+      deny_command(cc, role).await?;
+      return Ok(false);
+    }
+  }
+  Ok(false)
+}
+
+pub async fn is_admin(cc: &CmC<'_>) -> Result<bool> {
+  is_role(cc, &Role::Admin).await
+}
+
+pub async fn is_runner(cc: &CmC<'_>) -> Result<bool> {
+  // Admins can do anything runners can
+  if is_admin(cc).await? {
+    return Ok(true);
+  }
+  is_role(cc, &Role::Runner).await
+}
+
+/// Checks if a user has the specified role (for component interactions).
+/// Prioritizes Discord permissions (Administrator or Manage Server) over configured role.
+pub async fn is_role_component(cc: &CC<'_>, role: &Role) -> Result<bool> {
+  use serenity::all::Permissions;
+
+  if let Some(guild_id) = cc.component.guild_id {
+    let member = match get_member_cached(cc.ctx, guild_id, cc.component.user.id, &cc.db).await {
+      Some(m) => m,
+      None => {
+        let user_tag = crate::log::get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
+        warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), user_tag);
+        return Ok(false);
+      }
+    };
+
+    // Check Discord permissions first (Administrator or Manage Server)
+    let has_discord_perms = guild_id
+      .to_guild_cached(&cc.ctx.cache)
+      .map(|guild_ref| {
+        let perms = guild_ref.member_permissions(&member);
+        perms.contains(Permissions::ADMINISTRATOR) || perms.contains(Permissions::MANAGE_GUILD)
+      })
+      .unwrap_or(false);
+
+    if matches!(role, Role::Admin) && has_discord_perms {
+      let user_tag = crate::log::get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
+      info!("User {} has Discord admin/manage permissions", user_tag);
+      return Ok(true);
+    }
+
+    // Admins can do anything runners can
+    if matches!(role, Role::Runner) {
+      if has_discord_perms {
+        return Ok(true);
+      }
+      let admin_role_ids = Role::Admin.ids(&cc.db, guild_id).await;
+      if admin_role_ids.iter().any(|role_id| member.roles.contains(role_id)) {
+        return Ok(true);
+      }
+    }
+
+    // Check configured roles (supports multiple)
+    let role_ids = role.ids(&cc.db, guild_id).await;
+    if !role_ids.is_empty() {
+      // User has the role if they have ANY of the configured roles
+      return Ok(role_ids.iter().any(|role_id| member.roles.contains(role_id)));
+    } else {
+      let guild_name = guild_name(cc.ctx, guild_id);
+      info!("[{}] Role {} not configured", guild_name, role.name());
+    }
+  }
+  Ok(false)
 }
 
 /// Splits the players into two teams.
-///
-/// * `players` - The players to split into teams.
-pub fn split_into_teams(players: &[SessionPlayer]) -> (Vec<SessionPlayer>, Vec<SessionPlayer>) {
-    let mut rng = rng();
-    let mut player_list: Vec<SessionPlayer> = players.to_vec();
-    player_list.shuffle(&mut rng);
-    let team_size = player_list.len() / 2;
-    let team1 = player_list[0..team_size].to_vec();
-    let team2 = player_list[team_size..].to_vec();
-    (team1, team2)
-}
-
-
-/// Moves players back to the queue channel.
-///
-/// * `ctx`        - Ref to the Serenity context.
-/// * `db`         - Ref to the database.
-/// * `group`      - The group containing session and queue info.
-/// * `session`    - The session with players to move.
-/// * `guild_id`   - The ID of the guild where the session is taking place.
-async fn move_players_to_queue_channel(
-    ctx: &Context,
-    _db: &Arc<Database>,
-    group: &Group,
-    session: &Session,
-    guild_id: GuildId
-) -> Result<()> {
-    // Check if queue channel is configured
-    if group.queue_id != 0 {
-        for player in &session.pool {
-            let user_id = player.player.discord_id;
-            // Try to move the user back to queue
-            let _ = ctx.http.edit_member(
-                guild_id,
-                UserId::new(user_id),
-                &EditMember::new().voice_channel(ChannelId::new(group.queue_id)),
-                Some("Moving player back to queue voice channel")
-            ).await;
-        }
-    }
-    Ok(())
-}
-
-/// Moves players to their respective team channels.
-///
-/// * `ctx`        - Ref to the Serenity context.
-/// * `db`         - Ref to the database.
-/// * `group`      - The group containing team channel information.
-/// * `session`    - The session with assigned teams.
-/// * `guild_id`   - The ID of the guild where the session is taking place.
-async fn move_players_to_team_channels(
-    ctx: &Context,
-    _db: &Arc<Database>,
-    group: &Group,
-    session: &Session,
-    guild_id: GuildId
-) -> Result<()> {
-    // Get red/blue voice channel IDs from the first team in the group
-    if group.teams.is_empty() {
-        return Err(anyhow!("No team channels configured for this group"));
-    }
-    let red_vc_id = group.teams[0].red_vc_id;
-    let blue_tc_id = group.teams[0].blu_vc_id;
-    if red_vc_id == 0 || blue_tc_id == 0 {
-        return Err(anyhow!("Voice channel IDs not configured for this group"));
-    }
-    let redvc = ChannelId::new(red_vc_id);
-    let bluvc = ChannelId::new(blue_tc_id);
-
-    // Move players to red/blu voice channels
-    for player in &session.pool {
-        if let Some(team) = &player.team {
-            let target_channel = match team {
-                Team::Red => redvc,
-                Team::Blu => bluvc,
-            };
-            let user_id = player.player.discord_id;
-            if let Ok(mut member) = guild_id.member(&ctx.http, user_id).await {
-                let _ = member.edit(
-                    &ctx.http,
-                    EditMember::new().voice_channel(target_channel)
-                ).await;
-            }
-        }
-    }
-
-    Ok(())
+pub fn split_into_teams(players: &[SP]) -> (Vec<SP>, Vec<SP>) {
+  let mut rng = rand::rng();
+  let mut player_list: Vec<SP> = players.to_vec();
+  player_list.shuffle(&mut rng);
+  let team_size = player_list.len() / 2;
+  let team1 = player_list[0..team_size].to_vec();
+  let team2 = player_list[team_size..].to_vec();
+  (team1, team2)
 }
 
 //
@@ -138,331 +350,346 @@ async fn move_players_to_team_channels(
 //
 
 /// `/join` and `/leave`
-pub async fn queue<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
-    info!("Processing queue command from user {}", cc.intax.user.id);
-    let client_id  = cc.intax.user.id.into();
-    let channel_id = cc.intax.channel_id.get();
-    
-    // Get group of current channel
-    let mut group = cc.db.get_group_by_channel(channel_id).await?;
-    
-    // Check if we have idle sessions
-    match group.get_sessions_by_status(&SessionStatus::Idle).len() {
-        0 => {
-            info!("No idle sessions found, creating a new session");
-            group.create_session();
-        },
-        1 => {
-            info!("Found one existing idle session");
-        },
-        n => {
-            return Err(anyhow!("Found more than one idle session ({}). This is unexpected. ", n));
-        },
+pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut QGuild) -> Result<()> {
+  let user = cc.intax.user.id;
+  let channel = cc.intax.channel_id;
+  let command_name = &cc.intax.data.name;
+
+  // Handle leave command
+  if command_name == "leave" {
+    let mut found = false;
+    let mut queue_count = 0;
+
+    let category = guild.get_category(channel)?;
+
+    // Find and remove player from any game across all formats
+    for sg in &mut category.formats {
+      for game in &mut sg.sessions {
+        if game.status == SS::Idle {
+          let initial_len = game.pool.len();
+          game.pool.retain(|p| p.player.user_id != user);
+          if game.pool.len() < initial_len {
+            found = true;
+            queue_count = game.pool.len();
+            break;
+          }
+        }
+      }
+      if found {
+        break;
+      }
     }
 
-    // Get player info or create a new one
-    let player = match cc.db.get_user(client_id).await {
-        Ok(player) => {
-            info!("Found user in db!");
-            player
-        }
-        Err(_) => {
-            info!("Creating new user in db!");
-            cc.db.new_user(client_id).await?
-        }
-    };
-
-    // Check if player is already in session
-    if group.get_player_session_status(&player)?.is_active() {
-        info!("Player {} is already in a session", player.discord_id);
-        return Ok(());
+    if found {
+      cc.reply(&format!("Left the queue! ({queue_count}/{} players)", category.quota())).await?;
     }
 
+    category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
 
-    info!("Command processed successfully, sending response");
-    Ok(())
+    return Ok(());
+  }
+
+  // Handle join command
+  // Validate player has a rank
+  let guild_id = match cc.intax.guild_id {
+    Some(id) => id,
+    None => {
+      cc.reply("This command can only be used in a server.").await?;
+      return Ok(());
+    }
+  };
+
+  // Get or assign player rank (assigns default if needed)
+  let rank = match get_or_assign_player_rank(&cc.db, guild_id, user).await {
+    Ok(rank) => rank,
+    Err(e) => {
+      cc.reply(&format!("Failed to get or assign rank: {e}. Please contact an admin.")).await?;
+      return Ok(());
+    }
+  };
+
+  let elo_ranks_linked = cc.db.config.get_elo_ranks_linked(guild_id).await.unwrap_or(true);
+
+  // Get player info with guild-specific ELO or create a new one
+  let mut player = match cc.db.players.get_with_guild_rank(user, cc.ctx, guild_id, &cc.db).await {
+    Ok(mut player) => {
+      if elo_ranks_linked {
+        // Linked: ELO and rank are coupled
+        if player.elo == 0 {
+          info!("DEBUG: Player {} has ELO 0, setting to {} from Discord rank {}", user, rank.elo, rank.name);
+          player.elo = rank.elo;
+          player.rank = Some(rank.clone());
+          if let Err(e) = cc.db.elo.set(user, guild_id, player.elo, player.rank.clone().unwrap()).await {
+            warn!("Failed to update player ELO in database: {}", e);
+          }
+        } else {
+          // Check for ELO mismatch with Discord rank
+          let elo_mismatch = player.elo <= 30 && rank.elo > 30;
+
+          if elo_mismatch {
+            warn!("ELO MISMATCH DETECTED in queue: Player {} has ELO {} but Discord rank {} (default ELO {}). Auto-correcting...", user, player.elo, rank.name, rank.elo);
+
+            player.elo = rank.elo;
+            player.rank = Some(rank.clone());
+
+            if let Err(e) = cc.db.elo.set(user, guild_id, player.elo, player.rank.clone().unwrap()).await {
+              error!("Failed to auto-correct ELO for player {} in queue: {}", user, e);
+            } else {
+              info!("Successfully auto-corrected ELO for player {} in queue to {} (rank: {})", user, player.elo, rank.name);
+            }
+          } else {
+            info!("DEBUG: Player {} has custom ELO {}, keeping it instead of Discord rank ELO {}", user, player.elo, rank.elo);
+            player.update_rank_from_elo(&cc.db, guild_id).await;
+          }
+        }
+      } else {
+        // Independent: keep existing ELO, just set rank from Discord
+        player.rank = Some(rank.clone());
+        if player.elo == 0 {
+          // No ELO yet, use rank's base as default
+          player.elo = rank.elo;
+          if let Err(e) = cc.db.elo.set(user, guild_id, player.elo, rank.clone()).await {
+            warn!("Failed to initialize player ELO in database: {}", e);
+          }
+        }
+      }
+      player
+    }
+    Err(_) => {
+      // New player
+      let mut new_player = cc.db.new_player(user, cc.ctx).await?;
+      new_player.elo = rank.elo;
+      new_player.rank = Some(rank.clone());
+      if let Err(e) = cc.db.elo.set(user, guild_id, new_player.elo, new_player.rank.clone().unwrap()).await {
+        warn!("Failed to update new player ELO in database: {}", e);
+      }
+      new_player
+    }
+  };
+
+  // Set discord tag from interaction user data (already available, no API call needed)
+  player.tag = cc.intax.user.tag();
+
+  // Override with dynamic ELO if enabled for this guild
+  if cc.db.config.get_active_elo(guild_id).await.unwrap_or(false) {
+    if let Ok(Some(guild_elo)) = cc.db.elo.get_if_exists(user, guild_id).await {
+      if let Some(dyn_elo) = guild_elo.dynamic_elo {
+        player.elo = dyn_elo;
+      }
+    }
+  }
+
+  let category = guild.get_category(channel)?;
+
+  // Check if we have an idle session
+  let idle_sessions = category.get_seshs_by_status(&SS::Idle);
+  if idle_sessions.is_empty() {
+    cc.reply("No queue available. A match is currently in progress.").await?;
+    return Ok(());
+  } else if idle_sessions.len() > 1 {
+    return Err(anyhow!("Found more than one idle game ({}). This is unexpected.", idle_sessions.len()));
+  }
+
+  // Check if player is already in game
+  if category.get_user_sesh(user).await.is_ok() {
+    // Already in queue - refresh queue time
+    if let Ok(session) = category.get_user_sesh(user).await {
+      if let Some(sp) = session.pool.iter_mut().find(|p| p.player.user_id == user) {
+        sp.joined_at = std::time::SystemTime::now();
+      }
+    }
+    let current_queue = category.get_queue().await.map(|s| s.pool.len()).unwrap_or(0);
+    cc.reply(&format!("Refreshed your queue time! ({current_queue}/{} players)", category.quota())).await?;
+    category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
+  } else {
+    let queue = category.get_queue().await?;
+    queue.add_ply(player, false)?;
+
+    let current_queue = queue.pool.len();
+    let quota_reached = current_queue >= category.quota() as usize;
+
+    if quota_reached {
+      category.hot(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await?;
+    }
+
+    cc.reply(&format!("Joined the queue! ({current_queue}/{} players)", category.quota())).await?;
+    category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
+  }
+
+  Ok(())
 }
 
 /// `/status`
-pub async fn status<'a>(cc: &'a CommandContext<'a>) -> Result<()> {
-    info!("Processing queue status command");
-    // Get active group with session
-    let group = cc.db.get_group_by_channel(cc.intax.channel_id.get()).await?;
+pub async fn status<'a>(cc: &'a CmC<'a>, guild: &mut QGuild) -> Result<()> {
+  let channel = cc.intax.channel_id;
 
-    // If group has no sessions or session pool, return empty count
-    let count = if group.sessions.is_empty() {
-        0
+  let (queue_count, queue_list, quota) = {
+    let category = guild.get_category(channel)?;
+
+    let idle_games = category.get_seshs_by_status(&SS::Idle);
+
+    if idle_games.is_empty() {
+      (0, "No active queue found.".to_string(), category.quota())
     } else {
-        group.sessions.last().expect("No active session found").pool.len()
-    };
+      let game = &idle_games[0];
+      let count = game.pool.len();
+      let list = if count > 0 {
+        game.pool.iter().enumerate().map(|(i, p)| format!("{}. <@{}>", i + 1, p.player.user_id)).collect::<Vec<_>>().join("\n")
+      } else {
+        "Queue is empty".to_string()
+      };
+      (count, list, category.quota())
+    }
+  }; // Manager lock is dropped here
 
-    let description = if count == 0 {
-        "Queue is empty. Use `/join` to join!".to_string()
-    } else {
-        let mut parts = vec![format!("**{} players in queue:**\n", count)];
-        // Ensure we have a session and access its pool
-        if let Some(session) = group.sessions.last() {
-            for (i, member) in session.pool.iter().enumerate() {
-                // Use discord_id as display name if needed
-                let name = format!("user_{}", member.player.discord_id);
-                parts.push(format!("{}.{}", i + 1, name));
-            }
-        }
-        parts.join("\n")
-    };
+  if queue_count == 0 && queue_list == "No active queue found." {
+    cc.reply("No active queue found.").await?;
+  } else {
+    cc.reply(&format!("**Queue Status ({queue_count}/{quota} players)**\n{queue_list}")).await?;
+  }
 
-    let embed = CE::new()
-        .title("Queue Status")
-        .description(description)
-        .footer(CEF::new(format!("Queue: {}/8", count)));
-
-    let response = CIR::Message(
-        CIRM::new().embed(embed).ephemeral(true)
-    );
-
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-    Ok(())
+  Ok(())
 }
 
 /// `/shuffle`
-pub async fn shuffle(cc: &CommandContext<'_>) -> Result<()> {
-    info!("Processing shuffle command");
-    // Check permissions
-    if !check_role(cc, &Role::Runner).await? {
-        cc.create_bot_reply("Only runners can shuffle teams!").await?;
-        return Ok(());
+pub async fn shuffle(cc: &CmC<'_>, guild: &mut QGuild) -> Result<()> {
+  if !is_runner(cc).await? {
+    return Ok(());
+  }
+
+  // Get active category with game
+  let category = guild.get_category(cc.intax.channel_id)?;
+  let quota = category.quota() as usize;
+
+  // Find the first format with an active game
+  let mut target_game = None;
+  let mut target_fmt_name = String::new();
+
+  for sg in &category.formats {
+    if let Some(game) = sg.sessions.last() {
+      if game.pool.len() >= quota {
+        target_game = Some(game);
+        target_fmt_name = sg.name.clone();
+        break;
+      }
     }
+  }
 
-    // Get active group with session
-    // TODO: Replace 0 with the actual queue channel ID for the group you want
-    let group = cc.db.get_group_by_channel(0).await?; // <-- FIX: supply correct queue_id
-
-    if group.sessions.is_empty() {
-        cc.create_bot_reply("No active sessions.").await?;
-        return Ok(());
+  let game = match target_game {
+    Some(g) => g,
+    None => {
+      cc.reply("No active games with enough players found.").await?;
+      return Ok(());
     }
+  };
 
-    let session = group.sessions.last().unwrap();
+  if game.pool.len() < quota {
+    cc.reply(&format!("Not enough players in game. Need {} more.", quota - game.pool.len())).await?;
+    return Ok(());
+  }
 
-    if session.pool.len() < 8 {
-        cc.create_bot_reply(
-            &format!("Not enough players in session. Need {} more.", 8 - session.pool.len())
-        ).await?;
-        return Ok(());
+  // Collect players and split into teams (synchronous shuffle so no !Send types live across await)
+  let (mut red_team, mut blu_team) = split_into_teams(&game.pool);
+  let mut updated_category = category.clone();
+
+  // Assign teams using GamePlayer's team method
+  for sp in &mut red_team {
+    sp.set_team(Team::Red);
+  }
+  for sp in &mut blu_team {
+    sp.set_team(Team::Blu);
+  }
+
+  // Update pool with new team assignments
+  // Find the same format and session we found earlier
+  for sg in &mut updated_category.formats {
+    if sg.name == target_fmt_name {
+      if let Some(last_session) = sg.sessions.last_mut() {
+        last_session.pool.clear();
+        last_session.pool.extend(red_team.into_iter().chain(blu_team.into_iter()));
+      }
+      break;
     }
+  }
 
-    // Collect players and split into teams (synchronous shuffle so no !Send types live across await)
-    let (mut red_team, mut blu_team) = split_into_teams(&session.pool);
-    let mut updated_group = group.clone();
+  // Find the session again for the rest of the logic
+  let last_session =
+    updated_category.formats.iter_mut().find(|sg| sg.name == target_fmt_name).and_then(|sg| sg.sessions.last_mut()).ok_or_else(|| anyhow!("No session available after update"))?;
 
-    // Assign teams using SessionPlayer's team method
-    for sp in &mut red_team {
-        sp.team(Team::Red);
-    }
-    for sp in &mut blu_team {
-        sp.team(Team::Blu);
-    }
+  let red_team_names: Vec<String> = last_session.pool.iter().filter(|sp| sp.team == Some(Team::Red)).map(|sp| format!("<@{}>", sp.player.user_id)).collect();
+  let blu_team_names: Vec<String> = last_session.pool.iter().filter(|sp| sp.team == Some(Team::Blu)).map(|sp| format!("<@{}>", sp.player.user_id)).collect();
 
-    // Update pool with new team assignments
-    updated_group.sessions.last_mut().unwrap().pool.clear();
-    updated_group.sessions.last_mut().unwrap().pool.extend(red_team.into_iter());
-    updated_group.sessions.last_mut().unwrap().pool.extend(blu_team.into_iter());
+  let embed_content = format!("**Teams Generated!**\n\n**Red Team:**\n{}\n\n**Blue Team:**\n{}", red_team_names.join("\n"), blu_team_names.join("\n"));
 
-    updated_group.sessions.last_mut().unwrap().status = SessionStatus::Hot;
-    // TODO: Persist updated_group changes to DB if needed (no update_group method exists)
-    // You may need to implement this in your database layer.
+  // Update dashboard
+  category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
 
-    let red_team_names: Vec<String> = updated_group.sessions.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Red)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
-    let blu_team_names: Vec<String> = updated_group.sessions.last().unwrap().pool.iter().filter(|sp| sp.team == Some(Team::Blu)).map(|sp| format!("<@{}>", sp.player.discord_id)).collect();
-
-    let embed = CE::new()
-        .title("Teams Generated!")
-        .description(
-            format!(
-                "**Session ID:** `{}`\n\n**🔴 RED Team:**\n{}\n\n**🔵 BLU Team:**\n{}",
-                stringify!(updated_group.session.last().unwrap().id),
-                red_team_names.join("\n"),
-                blu_team_names.join("\n")
-            )
-        )
-        .footer(CEF::new("Use /accept to confirm teams"));
-
-    let response = CIR::Message(
-        CIRM::new().embed(embed).ephemeral(true)
-    );
-
-    cc.intax.create_response(&cc.ctx.http, response).await?;
-
-    // Log to channel
-    let config = cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found").get()).await?;
-    if config.log_tc_id != 0 {
-        let channel = ChannelId::new(config.log_tc_id);
-
-        let log_embed = CE::new()
-            .title("Session Created")
-            .description(
-                format!(
-                    "**Session:** `{}`\n**Generated by:** {}\n\n**🔴 RED:** {}\n**🔵 BLU:** {}",
-                    stringify!(updated_group.sessions.last().unwrap().id),
-                    cc.intax.user.display_name(),
-                    red_team_names.join(", "),
-                    blu_team_names.join(", ")
-                )
-            )
-            .footer(CEF::new("Awaiting acceptance..."));
-
-        channel.send_message(
-            &cc.ctx.http,
-            serenity::all::CreateMessage::new().embed(log_embed)
-        ).await?;
-    }
-
-    Ok(())
+  cc.reply(&embed_content).await?;
+  Ok(())
 }
 
 /// `/accept`
-pub async fn accept(cc: &CommandContext<'_>, session_id: &Option<String>) -> Result<()> {
-    info!(
-        "Processing accept command for session ID: {}",
-        session_id.clone().unwrap_or("None".to_string())
-    );
-    // Check permissions
-    if !check_role(cc, &Role::Runner).await? {
-        cc.create_bot_reply("Only runners can accept sessions!").await?;
-        return Ok(());
+pub async fn accept(cc: &CmC<'_>, guild: &mut QGuild) -> Result<()> {
+  if !is_runner(cc).await? {
+    return Ok(());
+  }
+
+  // Get the category for the current channel
+  let channel_id = cc.intax.channel_id;
+  let category = guild.get_category(channel_id)?;
+
+  // Check hot game count first
+  let hot_game_count = category.formats[0].sessions.iter().filter(|g| g.status == SS::Hot).count();
+  match hot_game_count {
+    0 => {
+      cc.reply("No hot games found in this category.").await?;
+      return Ok(());
     }
-
-    // Get the group for the current channel
-    let channel_id = cc.intax.channel_id.get();
-    let mut group = cc.db.get_group_by_channel(channel_id).await?;
-
-    match group.get_sessions_by_status(&SessionStatus::Hot).len() {
-        0 => {
-            cc.create_bot_reply("No hot sessions found in this group.").await?;
-            return Ok(());
-        },
-        1 => {
-            info!("Found one existing hot session");
-        },
-        n => {
-            return Err(anyhow!("Found more than one hot session ({}). This is unexpected. ", n));
-        },
-    };
-
-    let target_session = &mut group.get_sessions_by_status(&SessionStatus::Hot)[0];
-    
-    // Update session status to Push
-    target_session.push();
-
-    cc.create_bot_reply("Session accepted! Players moved to team channels.").await?;
-
-    // Log acceptance
-    let config = cc.db.get_config(cc.intax.guild_id.unwrap().get()).await?;
-    if config.log_tc_id != 0 {
-        let channel = ChannelId::new(config.log_tc_id);
-
-        let log_embed = CE::new()
-            .title("Session Accepted")
-            .description(
-                format!(
-                    "**Session ID:** `{:?}`\n**Accepted by:** {}",
-                    target_session.session_id,
-                    cc.intax.user.display_name()
-                )
-            )
-            .footer(CEF::new("Session in progress..."));
-
-        channel.send_message(
-            &cc.ctx.http,
-            serenity::all::CreateMessage::new().embed(log_embed)
-        ).await?;
+    1 => {
+      info!("Found one existing hot game");
     }
+    n => {
+      return Err(anyhow!("Found more than one hot game ({}). This is unexpected.", n));
+    }
+  }
 
-    Ok(())
+  // Now get mutable access to the hot game
+  let hot_game = category.formats[0].sessions.iter_mut().find(|g| g.status == SS::Hot).ok_or_else(|| anyhow!("Hot game not found after verification"))?;
+
+  hot_game.push();
+
+  // Update dashboard
+  category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
+
+  cc.reply("Game accepted! Players moved to team channels.").await?;
+
+  Ok(())
 }
 
-/// `/end`
-///
-/// * `ctx`         - Ref to the Serenity context.
-/// * `interaction` - Ref to the command interaction.
-/// * `db`          - Ref to the database.
-/// * `session_id`  - The ID of the session to end.
-pub async fn end(cc: &CommandContext<'_>, session_id: Option<String>) -> Result<()> {
-    info!(
-        "Processing end command for session ID: {}",
-        session_id.clone().unwrap_or("None".to_string())
-    );
-    // Check permissions
-    if !check_role(cc, &Role::Runner).await? {
-        cc.create_bot_reply("Only runners can end sessions!").await?;
-        return Ok(());
-    }
+pub async fn end(cc: &CmC<'_>, guild: &mut QGuild) -> Result<()> {
+  if !is_runner(cc).await? {
+    return Ok(());
+  }
 
-    // TODO: Replace 0 with the actual queue channel ID for the group you want
-    let mut group = cc.db.get_group_by_channel(0).await?; // <-- FIX: supply correct queue_id
+  // Get the category for the current channel
+  let channel_id = cc.intax.channel_id;
+  let category = guild.get_category(channel_id)?;
 
-    // Find the session to end based on ID or status
-    let session_index = if let Some(id) = session_id.clone() {
-        // Find session with matching ID
-        group.sessions.iter().position(|s| format!("{:?}", s.session_id) == id)
-    } else {
-        // Find session with Push status
-        group.sessions.iter().position(|s| s.status == SessionStatus::Push)
-    };
+  // Check if there's an active game to end
+  let has_active = category.formats[0].sessions.iter().any(|s| s.status == SS::Hot || s.status == SS::Live);
 
-    if let Some(index) = session_index {
-        // Set the session status to Pull (ended)
-        group.sessions[index].status = SessionStatus::Pull;
+  if !has_active {
+    cc.reply("No active game found to end.").await?;
+    return Ok(());
+  }
 
-        // TODO: Persist group changes to DB if needed (no update_group method exists)
-        // You may need to implement this in your database layer.
+  // Use Category::pull() to properly move players back and handle re-queueing
+  if let Some(guild_id) = cc.intax.guild_id {
+    category.pull(cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await?;
+    cc.reply("Game has been ended. Players moved back to queue.").await?;
+  } else {
+    cc.reply("This command can only be used in a server.").await?;
+  }
 
-        // Move players to queue channel if we're in a guild
-        if let Some(guild_id) = cc.intax.guild_id {
-            move_players_to_queue_channel(
-                cc.ctx,
-                &cc.db,
-                &group,
-                &group.sessions[index],
-                guild_id
-            ).await?;
-        }
-    } else {
-        cc.create_bot_reply("No active session found to end.").await?;
-        return Ok(());
-    }
-
-    let session_id_display = if let Some(idx) = session_index {
-        format!("{:?}", group.sessions[idx].session_id)
-    } else {
-        "unknown".to_string()
-    };
-
-    cc.create_bot_reply(
-        &format!("Session {} has been ended. Players will be moved back to queue.", session_id_display)
-    ).await?;
-
-    // Log session end
-    let config = cc.db.get_config(cc.intax.guild_id.unwrap().get()).await?;
-    if config.log_tc_id != 0 {
-        let channel = ChannelId::new(config.log_tc_id);
-
-        let log_embed = CE::new()
-            .title("Session Ended")
-            .description(
-                format!(
-                    "**Session ID:** `{:?}`\n**Ended by:** {}",
-                    session_id_display,
-                    cc.intax.user.display_name()
-                )
-            )
-            .footer(CEF::new("Session completed"));
-
-        channel.send_message(
-            &cc.ctx.http,
-            serenity::all::CreateMessage::new().embed(log_embed)
-        ).await?;
-    }
-
-    Ok(())
+  Ok(())
 }

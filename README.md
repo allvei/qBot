@@ -1,35 +1,42 @@
-# Passtime.tf Discord PUG Bot
+# qBot
 
-A comprehensive Discord bot for managing 4v4 pickup games (PUGs) for passtime.tf, built in Rust using the Serenity Discord library.
+A comprehensive Discord bot for managing PUGs, built with Rust using the Serenity Discord library.
 
-## Design principles
+## Why was this made over existing PUG bots?
 
-- Discord commands are very inconvenient to use, so minimize the use of them. Current Pugbut requires commands.
-- All information should be compact and easy to access. Current Pugbut spreads information across multiple channels or requires commands.
+- **To make it more efficient.**
+  Other bots need Discord commands that are very clunky and inconvenient to use, I look to minimize the use of them by using interactive components such as buttons, or automatic common actions like generating teams, or automatically queueing players when they join a voice channel.
+- **To make information compact and easy to access.**
+  Other bots require commands to display info that could be spread information across multiple channels.
+  I solved this by creating a dashboard that consolidates all information into one place.
+- **To make it more personal for passtime.tf**
+  Other bots were made to be more general for all types of games, I aimed to make ours more specific for passtime.tf.
+- **To give room for more features.**
+  We don't have control over the code of other bots. This would help us expand the bot with more features in the future. Check out the planned features below.
 
 ## Features
 
 - **Queue Management**:          Players can join/leave queue and check status from the dashboard
-- **Automatic Team Generation**: Generates balanced 4v4 teams when queue is full
-- **Voice Channel Management**:  Automatically moves players to team-specific voice channels
+- **Automatic Team Generation**: Generates balanced teams when queue is full
+- **Voice Channel Management**:  Automatically moves players to team-specific voice channels when starting a game.
 - **Match Lifecycle**:           Complete match flow from queue → teams → confirmation → play → end
-- **Admin Controls**:            Buffer players, configure bot settings, view logs
+- **Admin Controls**:            Player queue management, configure bot settings, view logs
 - **Role-based Permissions**:    Separate permissions for runners and admins
+- **Balancing**:                 Choose between ELO-based matchmaking or manual point-based balancing.
 
-## Commands
+## Planned Features
 
-### Player Commands
+### Major
 
-- `/join`                 - Join the PUG queue
-- `/leave`                - Leave the PUG queue
+- Integration with the TF2 game server.
+  - Automatically assign players to the right teams.
+  - Track server and player statistics.
+  - Automatically move players back to the queue when a team wins.
+- Class and region specific elo ratings.
 
-### Runner Commands
+### Minor
 
-- `/shuffle [match_id]`   - Regenerate teams for a match
-- `/accept [match_id]`    - Confirm generated teams and start match
-- `/end [match_id]`       - End a match and return players to queue
-
-### Admin Commands
-
-- `/buffer [user]`        - Buffer a player (guarantee a spot in the current session)
-- `/config [key] [value]` - View or modify bot configuration
+- Map voting and rotation.
+- Methods for requesting substitutions when a player becomes unavailable.
+- Pre-game class selection.
+- Captain mode for manual team creation.

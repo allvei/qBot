@@ -1,17 +1,27 @@
-// CHECK ME
 #![allow(clippy::missing_docs_in_private_items)]
 
-// Library crate for testable modules
-pub mod database;
-pub mod discord;
-pub mod error;
-pub mod events;
+pub mod application;
+pub mod config_schema;
+pub mod db;
+pub mod gui;
 pub mod handlers;
+pub mod log;
 pub mod models;
+pub mod services;
+pub mod shutdown;
+pub mod state_transfer;
+pub mod terminal;
+pub mod util;
 
-// Re-export
-pub use database::Database;
-pub use discord::*;
-pub use events::*;
-pub use handlers::{admin, session};
+pub use application::*;
+pub use db::*;
+pub use handlers::{admin, commands, player};
+pub use log::*;
+pub use log::{ansi, log_prefix_category, log_prefix_format};
+pub use models::constants::guild_name;
 pub use models::*;
+pub use terminal::*;
+pub use util::*;
+
+// Import macros from settings utils
+pub use handlers::settings::utils::*;
