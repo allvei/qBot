@@ -135,10 +135,14 @@ impl DatabaseMigrations {
       "active_elo",
       "default_rank",
       "system_message_channel",
+      "community_updates_channel",
     ];
-    
+
     // Add system_message_channel manually (not a boolean toggle)
     add_column!(self, "config", "system_message_channel", "INTEGER", "NULL");
+
+    // Add community_updates_channel manually (not a boolean toggle)
+    add_column!(self, "config", "community_updates_channel", "INTEGER", "NULL");
 
     // Automatically add all columns from config_schema
     use crate::config_schema::{server_config, sql_type_for_rust_type, sql_default_for_value};
@@ -148,7 +152,7 @@ impl DatabaseMigrations {
       let sql_default = sql_default_for_value(default_value, rust_type);
       self.add_column_runtime("config", column, sql_type, &sql_default).await?;
     }
-    
+
     self.verify_columns("config", &required_columns).await?;
     Ok(())
   }
