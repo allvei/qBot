@@ -3,7 +3,7 @@ use serenity::all::{
   ComponentInteraction as CI, Context, CreateActionRow as CAR, CreateEmbed as CE, CreateInputText as CIT, CreateInteractionResponse as CIR,
   CreateInteractionResponseMessage as CIRM, GuildId as GI, InputTextStyle as ITS, ModalInteraction as MI, RoleId, UserId as UI,
 };
-use tracing::error;
+use tracing::{error, warn};
 
 #[macro_export]
 /// Macro to fetch player data and create PlayerSettings struct
@@ -72,7 +72,30 @@ macro_rules! send_nav_modal {
 
 /// Helper function to send navigation response
 pub async fn send_nav_response(interaction: &CI, ctx: &Context, response: Result<CIR>) -> Result<()> {
-  interaction.create_response(&ctx.http, response?).await?;
+  match response {
+    Ok(r) => {
+      interaction.create_response(&ctx.http, r).await?;
+    }
+    Err(e) => {
+      // Check if this is a component limit error
+      if e.to_string().contains("Component limit exceeded") {
+        warn!("Component limit error: {}", e);
+        // Send a user-friendly error message
+        use serenity::all::CreateInteractionResponseMessage as CIRM;
+        interaction
+          .create_response(
+            &ctx.http,
+            serenity::all::CreateInteractionResponse::Message(CIRM::new()
+              .content("⚠️ This page has too many components to display. Please contact the bot administrator to reduce the number of options.")
+              .ephemeral(true)),
+          )
+          .await?;
+      } else {
+        // Propagate other errors
+        return Err(e);
+      }
+    }
+  }
   Ok(())
 }
 

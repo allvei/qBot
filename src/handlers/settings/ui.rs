@@ -6,7 +6,7 @@ use serenity::all::{
 use crate::handlers::settings::{get_all_rank_roles, get_rank_settings, get_guild_config, ServerSettings};
 use crate::handlers::CategorySettings;
 
-use crate::handlers::settings::menu::{AsSettingsMenu, CategoryListDisplay, CategorySettingsDisplay, RankConfigDisplay, ServerConfigDisplay, ServerSettingsDisplay};
+use crate::handlers::settings::menu::{AsSettingsMenu, CategoryListDisplay, CategorySettingsDisplay, EloConfigDisplay, GeneralConfigDisplay, RankConfigDisplay, RolesConfigDisplay, ServerConfigDisplay, ServerSettingsDisplay, VcConfigDisplay};
 use crate::{guild_name, Database};
 use anyhow::Result;
 use std::sync::Arc;
@@ -151,14 +151,92 @@ pub async fn nav_guild_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -
 /// Build a CIR navigating back to the server configuration page
 pub async fn nav_role_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
   let guild_name = guild_name(ctx, guild_id);
+  let display = ServerConfigDisplay { guild_name };
+  let embed = display.as_settings_menu().build_embed();
+  let buttons = display.as_settings_menu().build_components();
+  Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
+}
+
+/// Build a CIR for the roles configuration sub-menu
+pub async fn nav_roles_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
+  let guild_name = guild_name(ctx, guild_id);
   let settings = get_guild_config(db, guild_id).await?;
-  let display = ServerConfigDisplay {
+  let display = RolesConfigDisplay {
     guild_name: guild_name.clone(),
     runner_role: settings.runner_role.clone(),
     admin_role: settings.admin_role.clone(),
-    toggle_states: settings.toggle_states.clone(),
+  };
+  let embed = display.as_settings_menu().build_embed();
+  let buttons = display.as_settings_menu().build_components();
+  Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
+}
+
+/// Build a CIR for the ELO configuration sub-menu
+pub async fn nav_elo_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, page: usize) -> Result<CIR> {
+  let guild_name = guild_name(ctx, guild_id);
+  let settings = get_guild_config(db, guild_id).await?;
+
+  // Get toggle states for ELO settings (filter SERVER_CONFIG_TOGGLES for ELO-related columns)
+  let elo_toggles: Vec<&crate::handlers::settings::menu::ConfigToggle> = crate::handlers::settings::menu::SERVER_CONFIG_TOGGLES
+    .iter()
+    .filter(|t| t.column.contains("elo"))
+    .collect();
+
+  let mut toggle_states = Vec::new();
+  for toggle in &elo_toggles {
+    let state = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
+    toggle_states.push(state);
+  }
+
+  let display = EloConfigDisplay {
+    guild_name: guild_name.clone(),
+    toggle_states,
     balance_method: settings.balance_method.clone(),
+    page,
+  };
+  let embed = display.as_settings_menu().build_embed();
+  let buttons = display.as_settings_menu().build_components();
+  Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
+}
+
+/// Build a CIR for the general configuration sub-menu
+pub async fn nav_general_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
+  let guild_name = guild_name(ctx, guild_id);
+  let settings = get_guild_config(db, guild_id).await?;
+  let system_message_channel = db.config.get_system_message_channel(guild_id).await?.map(|id| id.to_string());
+  let community_updates_channel = db.config.get_community_updates_channel(guild_id).await?.map(|id| id.to_string());
+  let display = GeneralConfigDisplay {
+    guild_name: guild_name.clone(),
     post_game_confirm_time: settings.post_game_confirm_time,
+    system_message_channel,
+    community_updates_channel,
+  };
+  let embed = display.as_settings_menu().build_embed();
+  let buttons = display.as_settings_menu().build_components();
+  Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
+}
+
+/// Build a CIR for the VC configuration sub-menu
+pub async fn nav_vc_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, page: usize) -> Result<CIR> {
+  let guild_name = guild_name(ctx, guild_id);
+  let settings = get_guild_config(db, guild_id).await?;
+
+  // Get toggle states for VC settings (filter SERVER_CONFIG_TOGGLES for VC-related columns)
+  let vc_toggles: Vec<&crate::handlers::settings::menu::ConfigToggle> = crate::handlers::settings::menu::SERVER_CONFIG_TOGGLES
+    .iter()
+    .filter(|t| t.column.starts_with("default_vc_"))
+    .collect();
+
+  let mut toggle_states = Vec::new();
+  for toggle in &vc_toggles {
+    let state = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
+    toggle_states.push(state);
+  }
+
+  let display = VcConfigDisplay {
+    guild_name: guild_name.clone(),
+    toggle_states,
+    page,
   };
   let embed = display.as_settings_menu().build_embed();
   let buttons = display.as_settings_menu().build_components();

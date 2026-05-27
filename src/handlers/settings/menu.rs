@@ -5,6 +5,57 @@ use serenity::all::{
 
 use crate::Ephemeral as Eph;
 
+const DISCORD_MAX_ACTION_ROWS: usize = 5;
+const DISCORD_MAX_BUTTONS_PER_ROW: usize = 5;
+
+/// Ensures the component list stays within Discord's 5-row limit.
+/// Automatically combines button rows from the end to fit within the limit.
+/// Returns an error if it's impossible to fit within the limit.
+pub fn ensure_component_limit(components: Vec<CAR>) -> Result<Vec<CAR>, String> {
+  if components.len() <= DISCORD_MAX_ACTION_ROWS {
+    return Ok(components);
+  }
+
+  // Try to combine button rows from the end to fit within the limit
+  let mut result = components.clone();
+  let mut attempts = 0;
+  const MAX_ATTEMPTS: usize = 10;
+
+  while result.len() > DISCORD_MAX_ACTION_ROWS && attempts < MAX_ATTEMPTS {
+    attempts += 1;
+
+    // Find the last two button rows that can be combined
+    let mut combined = false;
+    for i in (1..result.len()).rev() {
+      if let (CAR::Buttons(ref row1), CAR::Buttons(ref row2)) = (&result[i - 1], &result[i]) {
+        if row1.len() + row2.len() <= DISCORD_MAX_BUTTONS_PER_ROW {
+          // Combine the two rows
+          let mut combined_row = row1.clone();
+          combined_row.extend(row2.clone());
+          result[i - 1] = CAR::Buttons(combined_row);
+          result.remove(i);
+          combined = true;
+          break;
+        }
+      }
+    }
+
+    if !combined {
+      break; // Cannot combine further
+    }
+  }
+
+  if result.len() > DISCORD_MAX_ACTION_ROWS {
+    Err(format!(
+      "Component limit exceeded: {} rows (max {}). Cannot fit within Discord's limit even after combining rows.",
+      components.len(),
+      DISCORD_MAX_ACTION_ROWS
+    ))
+  } else {
+    Ok(result)
+  }
+}
+
 // ============================================================================
 // Core Types and Constants
 // ============================================================================
@@ -285,63 +336,26 @@ impl AsSettingsMenu for ServerSettingsDisplay {
   }
 }
 
-/// Server configuration display for guild config sub-menu (roles, balance, ELO)
+/// Server configuration display for guild config main menu
 pub struct ServerConfigDisplay {
   pub guild_name: String,
-  pub runner_role: Option<String>,
-  pub admin_role: Option<String>,
-  pub toggle_states: Vec<bool>,
-  pub balance_method: String,
-  pub post_game_confirm_time: u16,
 }
 
 impl AsSettingsMenu for ServerConfigDisplay {
   fn as_settings_menu(&self) -> SettingsMenu {
-    let runner_default = self.runner_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
-    let admin_default = self.admin_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
-
-    let mut menu = SettingsMenu::new(format!("{} - Guild config", self.guild_name))
-      .description("Configure server-wide settings including roles, team balance method, and ELO settings")
-      .field(SF::new("Post-game confirm time", format!("{} seconds", self.post_game_confirm_time)))
+    SettingsMenu::new(format!("{} - Guild config", self.guild_name))
+      .description("Configure server-wide settings")
       .color(0x5865F2)
-      .footer("Configure server-wide settings below");
-
-    // Add role selects
-    menu = menu.row(SR::RoleSelect { id: "guild_config_runner_role".to_string(), placeholder: "Select runner role".to_string(), default: runner_default });
-
-    menu = menu.row(SR::RoleSelect { id: "guild_config_admin_role".to_string(), placeholder: "Select admin role".to_string(), default: admin_default });
-
-    // Add balance method select
-    menu = menu.row(SR::StringSelect {
-      id: "guild_config_balance".to_string(),
-      placeholder: "Team balance method...".to_string(),
-      options: vec![("Custom distribution algorithm".to_string(), "bch".to_string()), ("Average distribution".to_string(), "average".to_string())],
-    });
-
-    // Add ELO toggles (split into rows of max 5 buttons due to Discord limit)
-    if !self.toggle_states.is_empty() {
-      let toggle_buttons: Vec<SB> = SERVER_CONFIG_TOGGLES
-        .iter()
-        .zip(self.toggle_states.iter())
-        .map(|(toggle, &state)| SB::toggle(toggle.button_id, if state { toggle.label_on } else { toggle.label_off }, state))
-        .collect();
-      
-      // Split into chunks of 5 buttons per row
-      for chunk in toggle_buttons.chunks(5) {
-        menu = menu.row(SR::Buttons(chunk.to_vec()));
-      }
-    }
-
-    // Add action buttons
-    menu = menu.row(SR::Buttons(vec![
-      SB::action("guild_config_edit_post_game_confirm_time", "Edit post-game timeout", Sbs::Secondary),
-      SB::action("guild_config_edit_gamemode", "Edit gamemode", Sbs::Secondary),
-      SB::action("guild_config_migrate_elo", "Run ELO migration", Sbs::Primary),
-      SB::action("guild_config_create_roles", "Create roles", Sbs::Primary),
-      SB::action("guild_config_roles_back", "Back", Sbs::Secondary),
-    ]));
-
-    menu
+      .footer("Select a category to configure")
+      .row(SR::Buttons(vec![
+        SB::action("guild_config_general_menu", "General",    Sbs::Primary),
+        SB::action("guild_config_roles_menu",   "Roles",      Sbs::Primary),
+        SB::action("guild_config_elo_menu",     "ELO",        Sbs::Primary),
+        SB::action("guild_config_vc_menu",      "Voice chat", Sbs::Primary),
+      ]))
+      .row(SR::Buttons(vec![
+        SB::action("guild_config_roles_back", "Back", Sbs::Secondary),
+      ]))
   }
 }
 
@@ -351,49 +365,240 @@ impl ServerConfigDisplay {
   }
 
   pub fn build_components(&self) -> Vec<CAR> {
+    self.as_settings_menu().build_components()
+  }
+}
+
+/// Roles configuration sub-menu
+pub struct RolesConfigDisplay {
+  pub guild_name: String,
+  pub runner_role: Option<String>,
+  pub admin_role: Option<String>,
+}
+
+impl AsSettingsMenu for RolesConfigDisplay {
+  fn as_settings_menu(&self) -> SettingsMenu {
     let runner_default = self.runner_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
     let admin_default = self.admin_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
 
-    let mut components = vec![
-      CAR::SelectMenu(CSM::new("guild_config_runner_role", CSMK::Role { default_roles: runner_default.map(|r| vec![r]) }).placeholder("Select runner role")),
-      CAR::SelectMenu(CSM::new("guild_config_admin_role", CSMK::Role { default_roles: admin_default.map(|r| vec![r]) }).placeholder("Select admin role")),
-    ];
+    SettingsMenu::new(format!("{} - Roles config", self.guild_name))
+      .description("Configure runner and admin roles")
+      .color(0x5865F2)
+      .row(SR::RoleSelect { id: "guild_config_runner_role".to_string(), placeholder: "Select runner role".to_string(), default: runner_default })
+      .row(SR::RoleSelect { id: "guild_config_admin_role".to_string(), placeholder: "Select admin role".to_string(), default: admin_default })
+      .row(SR::Buttons(vec![
+        SB::action("guild_config_create_roles", "Create roles", Sbs::Primary),
+        SB::action("guild_config_roles_menu", "Back", Sbs::Secondary),
+      ]))
+  }
+}
 
-    // Add team balance method
-    components.push(CAR::SelectMenu(
-      CSM::new("guild_config_balance", CSMK::String { options: vec![CSMO::new("Custom distribution algorithm", "bch"), CSMO::new("Average distribution", "average")] })
-        .placeholder("Team balance method..."),
-    ));
+impl RolesConfigDisplay {
+  pub fn build_embed(&self) -> CE {
+    self.as_settings_menu().build_embed()
+  }
 
-    // Add ELO toggles (split into rows of max 5 buttons due to Discord limit)
-    let toggle_buttons: Vec<CB> = SERVER_CONFIG_TOGGLES
+  pub fn build_components(&self) -> Vec<CAR> {
+    self.as_settings_menu().build_components()
+  }
+}
+
+/// ELO configuration sub-menu
+pub struct EloConfigDisplay {
+  pub guild_name: String,
+  pub toggle_states: Vec<bool>,
+  pub balance_method: String,
+  pub page: usize,
+}
+
+impl AsSettingsMenu for EloConfigDisplay {
+  fn as_settings_menu(&self) -> SettingsMenu {
+    // Filter SERVER_CONFIG_TOGGLES for ELO-related columns
+    let elo_toggles: Vec<&ConfigToggle> = SERVER_CONFIG_TOGGLES
       .iter()
-      .zip(self.toggle_states.iter())
-      .map(
-        |(toggle, &state)| {
-          if state {
-            CB::new(toggle.button_id).label(toggle.label_on).style(BS::Success)
-          } else {
-            CB::new(toggle.button_id).label(toggle.label_off).style(BS::Danger)
-          }
-        },
-      )
+      .filter(|t| t.column.contains("elo"))
       .collect();
 
-    // Split into chunks of 5 buttons per row
-    for chunk in toggle_buttons.chunks(5) {
-      components.push(CAR::Buttons(chunk.to_vec()));
+    let total_pages = (elo_toggles.len() + DISCORD_MAX_BUTTONS_PER_ROW - 1) / DISCORD_MAX_BUTTONS_PER_ROW;
+    let page_info = if total_pages > 1 {
+      format!("Page {}/{}", self.page + 1, total_pages)
+    } else {
+      String::new()
+    };
+
+    let mut menu = SettingsMenu::new(format!("{} - ELO config", self.guild_name))
+      .description("Configure ELO and team balance settings")
+      .color(0x5865F2)
+      .footer(if page_info.is_empty() { "Configure ELO settings below".to_string() } else { format!("Configure ELO settings below | {}", page_info) });
+
+    // Add balance method select
+    menu = menu.row(SR::StringSelect {
+      id: "guild_config_balance".to_string(),
+      placeholder: "Team balance method...".to_string(),
+      options: vec![("Custom distribution algorithm".to_string(), "bch".to_string()), ("Average distribution".to_string(), "average".to_string())],
+    });
+
+    // Add ELO toggles (show only current page)
+    if !self.toggle_states.is_empty() {
+      let start_idx = self.page * DISCORD_MAX_BUTTONS_PER_ROW;
+      let end_idx = (start_idx + DISCORD_MAX_BUTTONS_PER_ROW).min(elo_toggles.len());
+
+      if start_idx < elo_toggles.len() {
+        let toggle_buttons: Vec<SB> = elo_toggles
+          .iter()
+          .zip(self.toggle_states.iter())
+          .skip(start_idx)
+          .take(end_idx - start_idx)
+          .map(|(toggle, &state)| SB::toggle(toggle.button_id, if state { toggle.label_on } else { toggle.label_off }, state))
+          .collect();
+
+        menu = menu.row(SR::Buttons(toggle_buttons));
+      }
     }
 
-    // Add action buttons
-    components.push(CAR::Buttons(vec![
-      CB::new("guild_config_edit_post_game_confirm_time").label("Edit post-game timeout").style(BS::Secondary),
-      CB::new("guild_config_migrate_elo").label("Run ELO migration").style(BS::Primary),
-      CB::new("guild_config_create_roles").label("Create roles").style(BS::Primary),
-      Eph::back("guild_config_roles_back"),
-    ]));
+    // Add action buttons with pagination
+    let mut action_buttons = vec![
+      SB::action("guild_config_migrate_elo", "Migrate ELO", Sbs::Primary),
+    ];
 
-    components
+    // Add pagination buttons if needed
+    if total_pages > 1 {
+      if self.page > 0 {
+        action_buttons.push(SB::action(format!("guild_config_elo_page_{}", self.page - 1), "◀ Prev", Sbs::Secondary));
+      }
+      if self.page < total_pages - 1 {
+        action_buttons.push(SB::action(format!("guild_config_elo_page_{}", self.page + 1), "Next ▶", Sbs::Secondary));
+      }
+    }
+
+    action_buttons.push(SB::action("guild_config_roles_menu", "Back", Sbs::Secondary));
+    menu = menu.row(SR::Buttons(action_buttons));
+
+    menu
+  }
+}
+
+impl EloConfigDisplay {
+  pub fn build_embed(&self) -> CE {
+    self.as_settings_menu().build_embed()
+  }
+
+  pub fn build_components(&self) -> Vec<CAR> {
+    self.as_settings_menu().build_components()
+  }
+}
+
+/// General configuration sub-menu
+pub struct GeneralConfigDisplay {
+  pub guild_name: String,
+  pub post_game_confirm_time: u16,
+  pub system_message_channel: Option<String>,
+  pub community_updates_channel: Option<String>,
+}
+
+impl AsSettingsMenu for GeneralConfigDisplay {
+  fn as_settings_menu(&self) -> SettingsMenu {
+    let system_msg_display = self.system_message_channel.as_ref().map(|id| format!("<#{}>", id)).unwrap_or_else(|| "Not configured".to_string());
+    let community_updates_display = self.community_updates_channel.as_ref().map(|id| format!("<#{}>", id)).unwrap_or_else(|| "Not configured".to_string());
+
+    SettingsMenu::new(format!("{} - General config", self.guild_name))
+      .description("Configure general server settings")
+      .field(SF::new("Post-game confirm time", format!("{} seconds", self.post_game_confirm_time)))
+      .field(SF::new("System message channel", system_msg_display))
+      .field(SF::new("Community updates channel", community_updates_display))
+      .color(0x5865F2)
+      .row(SR::Buttons(vec![
+        SB::action("guild_config_edit_post_game_confirm_time", "Edit timeout", Sbs::Secondary),
+        SB::action("guild_config_edit_gamemode", "Edit gamemode", Sbs::Secondary),
+        SB::action("guild_config_edit_system_msg_channel", "Edit system msg channel", Sbs::Secondary),
+        SB::action("guild_config_edit_community_updates_channel", "Edit community updates channel", Sbs::Secondary),
+        SB::action("guild_config_roles_menu", "Back", Sbs::Secondary),
+      ]))
+  }
+}
+
+/// VC configuration sub-menu
+pub struct VcConfigDisplay {
+  pub guild_name: String,
+  pub toggle_states: Vec<bool>,
+  pub page: usize,
+}
+
+impl AsSettingsMenu for VcConfigDisplay {
+  fn as_settings_menu(&self) -> SettingsMenu {
+    // Filter SERVER_CONFIG_TOGGLES for VC-related columns
+    let vc_toggles: Vec<&ConfigToggle> = SERVER_CONFIG_TOGGLES
+      .iter()
+      .filter(|t| t.column.starts_with("default_vc_"))
+      .collect();
+
+    let total_pages = (vc_toggles.len() + DISCORD_MAX_BUTTONS_PER_ROW - 1) / DISCORD_MAX_BUTTONS_PER_ROW;
+    let page_info = if total_pages > 1 {
+      format!("Page {}/{}", self.page + 1, total_pages)
+    } else {
+      String::new()
+    };
+
+    let mut menu = SettingsMenu::new(format!("{} - VC config", self.guild_name))
+      .description("Configure voice channel default settings")
+      .color(0x5865F2)
+      .footer(if page_info.is_empty() { "Configure VC settings below".to_string() } else { format!("Configure VC settings below | {}", page_info) });
+
+    // Add VC toggles (show only current page)
+    if !self.toggle_states.is_empty() {
+      let start_idx = self.page * DISCORD_MAX_BUTTONS_PER_ROW;
+      let end_idx = (start_idx + DISCORD_MAX_BUTTONS_PER_ROW).min(vc_toggles.len());
+
+      if start_idx < vc_toggles.len() {
+        let toggle_buttons: Vec<SB> = vc_toggles
+          .iter()
+          .zip(self.toggle_states.iter())
+          .skip(start_idx)
+          .take(end_idx - start_idx)
+          .map(|(toggle, &state)| SB::toggle(toggle.button_id, if state { toggle.label_on } else { toggle.label_off }, state))
+          .collect();
+
+        menu = menu.row(SR::Buttons(toggle_buttons));
+      }
+    }
+
+    // Add action buttons with pagination
+    let mut action_buttons = vec![];
+
+    // Add pagination buttons if needed
+    if total_pages > 1 {
+      if self.page > 0 {
+        action_buttons.push(SB::action(format!("guild_config_vc_page_{}", self.page - 1), "◀ Prev", Sbs::Secondary));
+      }
+      if self.page < total_pages - 1 {
+        action_buttons.push(SB::action(format!("guild_config_vc_page_{}", self.page + 1), "Next ▶", Sbs::Secondary));
+      }
+    }
+
+    action_buttons.push(SB::action("guild_config_roles_menu", "Back", Sbs::Secondary));
+    menu = menu.row(SR::Buttons(action_buttons));
+
+    menu
+  }
+}
+
+impl GeneralConfigDisplay {
+  pub fn build_embed(&self) -> CE {
+    self.as_settings_menu().build_embed()
+  }
+
+  pub fn build_components(&self) -> Vec<CAR> {
+    self.as_settings_menu().build_components()
+  }
+}
+
+impl VcConfigDisplay {
+  pub fn build_embed(&self) -> CE {
+    self.as_settings_menu().build_embed()
+  }
+
+  pub fn build_components(&self) -> Vec<CAR> {
+    self.as_settings_menu().build_components()
   }
 }
 
