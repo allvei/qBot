@@ -28,8 +28,8 @@ where
     let level = metadata.level();
     let target = metadata.target();
 
-    // Only capture pf_pug_bot logs
-    if !target.starts_with("pf_pug_bot") {
+    // Only capture qbot logs
+    if !target.starts_with("qbot") {
       return;
     }
 

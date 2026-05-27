@@ -1,5 +1,5 @@
 use anyhow::Result;
-use pf_pug_bot::{init_logging, Application};
+use qbot::{init_logging, Application};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::thread;
@@ -33,18 +33,18 @@ fn run_headless() -> Result<()> {
 fn run_gui() -> Result<()> {
   // Initialize shared state components
   let log_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(1000)));
-  let (cmd_tx, cmd_rx) = mpsc::channel::<pf_pug_bot::gui::commands::GuiCommand>(100);
+  let (cmd_tx, cmd_rx) = mpsc::channel::<qbot::gui::commands::GuiCommand>(100);
   let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
   // Initialize logging with GUI log buffer
   init_logging(Some(log_buffer.clone()));
 
   // Create manager and database for shared state
-  let manager = Arc::new(Mutex::new(pf_pug_bot::Manager::default()));
-  let db = Arc::new(tokio::runtime::Runtime::new().expect("Failed to create tokio runtime").block_on(async { pf_pug_bot::Database::new("sqlite:./pf_pug_bot.db").await.unwrap() }));
+  let manager = Arc::new(Mutex::new(qbot::Manager::default()));
+  let db = Arc::new(tokio::runtime::Runtime::new().expect("Failed to create tokio runtime").block_on(async { qbot::Database::new("sqlite:./qbot.db").await.unwrap() }));
 
   // Create shared state for GUI
-  let shared_state = Arc::new(pf_pug_bot::gui::state::GuiSharedState::new(manager.clone(), db.clone(), log_buffer, cmd_tx, shutdown_tx));
+  let shared_state = Arc::new(qbot::gui::state::GuiSharedState::new(manager.clone(), db.clone(), log_buffer, cmd_tx, shutdown_tx));
 
   // Clone for bot thread
   let latest_manager_bot = shared_state.latest_manager.clone();
@@ -124,7 +124,7 @@ fn run_gui() -> Result<()> {
 
       cc.egui_ctx.set_fonts(fonts);
 
-      Ok(Box::new(pf_pug_bot::gui::app::MyApp::new(shared_state)))
+      Ok(Box::new(qbot::gui::app::MyApp::new(shared_state)))
     }),
   );
 

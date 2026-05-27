@@ -145,7 +145,7 @@ pub enum GuiCommand {
 
 - `src/gui/log_layer.rs` - `GuiLogLayer` implementing `tracing::Subscriber`
 - Captures log events and pushes to `log_buffer` (ring buffer, max 1000 lines)
-- Filter to `pf_pug_bot` logs only (exclude library spam)
+- Filter to `qbot` logs only (exclude library spam)
 
 ### 3.2 Modify `src/util.rs::init_logging()`
 
@@ -283,7 +283,7 @@ egui = "0.31"         # core library (included in eframe, but explicit for types
 
 ### 6.2 Update `[bin]` section
 
-- Keep existing `pf_pug_bot` binary (for headless mode)
+- Keep existing `qbot` binary (for headless mode)
 - Add optional feature flag `gui` for GUI mode
 - Or just always build GUI (simpler for now)
 

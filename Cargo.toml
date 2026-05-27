@@ -1,14 +1,14 @@
 [package]
-name    = "pf_pug_bot"
+name    = "qbot"
 version = "0.14.0"
 edition = "2021"
 
 [[bin]]
-name = "pf_pug_bot"
+name = "qbot"
 path = "src/main.rs"
 
 [lib]
-name = "pf_pug_bot"
+name = "qbot"
 path = "src/lib.rs"
 
 [dependencies]

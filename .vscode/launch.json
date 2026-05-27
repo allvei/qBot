@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug unit tests in library 'pf_pug_bot'",
+            "name": "Debug unit tests in library 'qbot'",
             "type": "lldb",
             "request": "launch",
             "cargo": {
@@ -15,25 +15,25 @@
             }
         },
         {
-            "name": "Debug executable 'pf_pug_bot'",
+            "name": "Debug executable 'qbot'",
             "type": "lldb",
             "request": "launch",
             "cargo": {
                 "args": [
                     "run",
-                    "--bin=pf_pug_bot"
+                    "--bin=qbot"
                 ]
             },
             "args": []
         },
         {
-            "name": "Debug unit tests in executable 'pf_pug_bot'",
+            "name": "Debug unit tests in executable 'qbot'",
             "type": "lldb",
             "request": "launch",
             "cargo": {
                 "args": [
                     "test",
-                    "--bin=pf_pug_bot"
+                    "--bin=qbot"
                 ]
             }
         }
