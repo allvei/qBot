@@ -149,6 +149,24 @@ fn get_sorted_teams(pool: &[crate::models::SessionPlayer], _quota: usize) -> (Ve
   (team_red, team_blu)
 }
 
+/// Public wrapper for get_sorted_teams (used by runner_menu_end)
+pub fn get_sorted_teams_pub(pool: &[crate::models::SessionPlayer], quota: usize) -> (Vec<crate::models::SessionPlayer>, Vec<crate::models::SessionPlayer>) {
+  get_sorted_teams(pool, quota)
+}
+
+/// Build and add team fields to an embed using TeamDisplay (used by runner_menu_end)
+pub async fn build_team_fields(
+  embed: CE,
+  team_red: Vec<crate::models::SessionPlayer>,
+  team_blu: Vec<crate::models::SessionPlayer>,
+  hide_elo: bool,
+  dynamic_elo_active: bool,
+  db: &crate::Database,
+  guild_id: GI,
+) -> CE {
+  TeamDisplay::new(team_red, team_blu, hide_elo, dynamic_elo_active).add_to_embed(embed, db, guild_id).await
+}
+
 /// Represents different types of button interactions in the Discord bot
 #[derive(Debug, Clone, PartialEq)]
 pub enum ButtonType {
@@ -321,8 +339,14 @@ impl Category {
       let join_label = if has_multiple { format!("Join {}", sg.name) } else { "Join".to_string() };
 
       // Row: Join {name} | [Leave | Edit timeout] | Start/End | [Shuffle]
-      let mut row = vec![CB::new(format!("join_queue{fmt_suffix}")).label(&join_label).style(BS::Success)];
-      if has_queued_players {
+      let mut row = if self.restarting {
+        // When restarting, only show end button for live games
+        vec![]
+      } else {
+        vec![CB::new(format!("join_queue{fmt_suffix}")).label(&join_label).style(BS::Success)]
+      };
+
+      if !self.restarting && has_queued_players {
         row.push(CB::new(format!("leave_queue{fmt_suffix}")).label("Leave").style(BS::Danger));
         row.push(CB::new(format!("change_expiry{fmt_suffix}")).label("Edit timeout").style(BS::Secondary));
       }
@@ -330,7 +354,7 @@ impl Category {
         let end_label = if self.require_score_report { "End & log score" } else { "End" };
         row.push(CB::new(format!("end_match{fmt_suffix}")).label(end_label).style(BS::Danger));
       }
-      if is_hot {
+      if !self.restarting && is_hot {
         row.push(CB::new(format!("start_match{fmt_suffix}")).label("Start").style(BS::Success));
         row.push(CB::new(format!("shuffle_teams{fmt_suffix}")).label("Shuffle").style(BS::Secondary));
       }
@@ -1072,13 +1096,21 @@ impl Category {
       return Ok(());
     }
 
-    // Check for duplicate action within 2 seconds on the same hot session
+    // Check if there's already a Push or Live session (prevent starting multiple games)
+    let has_active_game = self.format(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.is_active())).unwrap_or(false);
+
+    if has_active_game {
+      cc.reply_ephemeral("A game is already in progress. Wait for it to finish.").await?;
+      return Ok(());
+    }
+
+    // Check for duplicate action within 5 seconds on the same hot session
     if let Some(fmt) = self.format_mut(fmt_id) {
       if let Some(hot_session) = fmt.sessions.iter_mut().find(|s| s.is_hot()) {
         if let Some(last_action) = hot_session.last_action_at {
           if let Ok(elapsed) = SystemTime::now().duration_since(last_action) {
-            if elapsed < Duration::from_secs(2) {
-              // Duplicate action within 2 seconds - acknowledge silently
+            if elapsed < Duration::from_secs(5) {
+              // Duplicate action within 5 seconds - acknowledge silently
               cc.reply_acknowledge().await?;
               return Ok(());
             }
@@ -1253,6 +1285,23 @@ impl Category {
       }
     }
 
+    // Capture match data for chat embed before pull_fmt clears the session
+    let queue_chat = self.channels.queue_chat;
+    let reporter_tag = cc.component.user.tag();
+    let (chat_embed_data, match_duration) = {
+      let active_session = self
+        .format(format_id)
+        .and_then(|sg| sg.sessions.iter().find(|s| s.status == SessionStatus::Live).or_else(|| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot)));
+      if let Some(session) = active_session {
+        let quota = self.format(format_id).map(|sg| sg.quota as usize).unwrap_or(0);
+        let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
+        let duration = session.started_at.and_then(|started| std::time::SystemTime::now().duration_since(started).ok()).map(|d| d.as_secs());
+        (Some((team_red, team_blu)), duration)
+      } else {
+        (None, None)
+      }
+    };
+
     // End the match - pass None to avoid deadlock with manager lock held by caller
     match self.pull_fmt(format_id, cc.ctx, guild_id, &cc.db, None).await {
       Ok(_) => {
@@ -1269,6 +1318,23 @@ impl Category {
           "blu" => crate::BLUE,
           _ => 0x888888,
         };
+
+        // Post match result embed to queue chat
+        if let Some((team_red, team_blu)) = chat_embed_data {
+          let hide_elo = cc.db.config.get_bool(guild_id, "hide_elo", false).await.unwrap_or(false);
+          let dynamic_elo_active = cc.db.config.get_active_elo(guild_id).await.unwrap_or(false);
+
+          let mut chat_embed = CE::new().title(format!("{} - {}", format_name, result_text)).color(result_color);
+
+          if let Some(secs) = match_duration {
+            chat_embed = chat_embed.field("Duration", format!("{}m {}s", secs / 60, secs % 60), true);
+          }
+
+          chat_embed = TeamDisplay::new(team_red, team_blu, hide_elo, dynamic_elo_active).add_to_embed(chat_embed, &cc.db, guild_id).await;
+          chat_embed = chat_embed.footer(serenity::all::CreateEmbedFooter::new(format!("Reported by {}", reporter_tag)));
+
+          let _ = queue_chat.send_message(&cc.ctx.http, CM::new().embed(chat_embed)).await;
+        }
 
         let embed = CE::new().title("Match ended").description(format!("**{}** - {}", format_name, result_text)).color(result_color);
 

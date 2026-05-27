@@ -311,6 +311,9 @@ pub struct Category {
   /// Last dashboard action (user_tag, action_description, timestamp)
   #[serde(skip)]
   pub last_action: Option<(String, String, SystemTime)>,
+  /// Bot is restarting - hide join buttons
+  #[serde(skip)]
+  pub restarting: bool,
   /// Pending VC notification: (message_id, list of user_ids still needing to join)
   #[serde(skip)]
   pub pending_vc_notification: Option<(MI, Vec<UI>)>,
@@ -352,6 +355,7 @@ impl Category {
       recently_freed_teams: Vec::new(),
       require_score_report: false,
       last_action: None,
+      restarting: false,
       pending_vc_notification: None,
       last_ping_time: None,
     }
