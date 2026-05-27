@@ -30,6 +30,7 @@ pub enum GuiCommand {
 
   // System Control
   GracefulRestart,
+  GracefulShutdown,
 
   // Recovery from Bugs
   ClearAllTeamVCs { guild_id: u64, category_id: u8 },
@@ -67,6 +68,14 @@ pub enum GuiCommand {
   UpdateGuildConfigBool { guild_id: u64, column: String, value: bool },
   UpdateGuildConfigInt { guild_id: u64, column: String, value: i64 },
   UpdateGuildConfigText { guild_id: u64, column: String, value: String },
+
+  // System Messages
+  SendSystemMessage { guild_id: Option<u64>, message: String },
+  ValidateSystemMessageChannels,
+
+  // Community Updates
+  SendCommunityUpdate { guild_id: Option<u64>, message: String },
+  ValidateCommunityUpdatesChannels,
 }
 
 impl GuiCommand {
@@ -84,11 +93,16 @@ impl GuiCommand {
       GuiCommand::UpdateGuildConfigBool { .. } => None,
       GuiCommand::UpdateGuildConfigInt { .. } => None,
       GuiCommand::UpdateGuildConfigText { .. } => None,
+      GuiCommand::SendSystemMessage { .. } => None,
+      GuiCommand::ValidateSystemMessageChannels => None,
+      GuiCommand::SendCommunityUpdate { .. } => None,
+      GuiCommand::ValidateCommunityUpdatesChannels => None,
       GuiCommand::DumpStateToLog { .. } => None,
       GuiCommand::ViewSessionDetails { .. } => None,
       GuiCommand::TestBalanceMethods { .. } => None,
       GuiCommand::ToggleDebugMode { .. } => None,
       GuiCommand::GracefulRestart => None,
+      GuiCommand::GracefulShutdown => None,
       _ => match self {
         GuiCommand::ForceEndGame { guild_id, .. } => Some(*guild_id),
         GuiCommand::ClearQueue { guild_id, .. } => Some(*guild_id),

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use serenity::all::{GuildId as GI, UserId as UI};
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::gui::commands::GuiCommand;
 use crate::models::{Player, Session, SessionPlayer, SessionStatus, Team};
@@ -62,6 +62,7 @@ pub async fn handle_command(
   user_search_results: Arc<RwLock<Vec<Player>>>,
   user_guild_data: Arc<RwLock<Vec<(u64, crate::db::repo::GuildElo)>>>,
   guild_config_cache: Arc<RwLock<std::collections::HashMap<u64, std::collections::HashMap<String, String>>>>,
+  ctx: Option<Arc<serenity::all::Context>>,
 ) -> Result<Option<u64>> {
   let affected_guild = command.guild_id();
   let result: Result<Option<u64>, anyhow::Error> = match command {
@@ -614,6 +615,95 @@ pub async fn handle_command(
       Ok(Some(guild_id))
     }
 
+    // ── System Messages ─────────────────────────────────────────────────────
+    GuiCommand::SendSystemMessage { guild_id, message } => {
+      if let Some(ctx) = ctx {
+        if let Some(guild_id) = guild_id {
+          match crate::services::send_system_message(&ctx, db, GI::new(guild_id), &message).await {
+            Ok(_) => info!("[GUI] System message sent to guild {}", guild_id),
+            Err(e) => error!("[GUI] Failed to send system message to guild {}: {}", guild_id, e),
+          }
+        } else {
+          match crate::services::broadcast_system_message(&ctx, db, &message).await {
+            Ok(results) => {
+              let success_count = results.iter().filter(|(_, r)| r.is_ok()).count();
+              let error_count = results.iter().filter(|(_, r)| r.is_err()).count();
+              info!("[GUI] Broadcast system message: {} success, {} failed", success_count, error_count);
+            }
+            Err(e) => error!("[GUI] Failed to broadcast system message: {}", e),
+          }
+        }
+      } else {
+        error!("[GUI] Cannot send system message: Discord context not available");
+      }
+      Ok(None)
+    }
+
+    GuiCommand::ValidateSystemMessageChannels => {
+      if let Some(ctx) = ctx {
+        let errors = crate::services::validate_system_message_channels(&ctx, db).await;
+        if errors.is_empty() {
+          info!("[GUI] All system message channels validated successfully");
+        } else {
+          error!("[GUI] Found {} guild(s) with invalid system message channels", errors.len());
+          for (guild_id, guild_name, error) in errors {
+            error!("[GUI] [{}] {}: {}", guild_id, guild_name, error);
+          }
+        }
+      } else {
+        error!("[GUI] Cannot validate system message channels: Discord context not available");
+      }
+      Ok(None)
+    }
+
+    GuiCommand::SendCommunityUpdate { guild_id, message } => {
+      if let Some(ctx) = ctx {
+        if let Some(guild_id) = guild_id {
+          let result = crate::services::send_community_update(&ctx, db, guild_id.into(), &message).await;
+          match result {
+            Ok(_) => info!("[GUI] Community update sent to guild {}", guild_id),
+            Err(e) => error!("[GUI] Failed to send community update to guild {}: {}", guild_id, e),
+          }
+        } else {
+          match crate::services::broadcast_community_update(&ctx, db, &message).await {
+            Ok(results) => {
+              let success_count = results.iter().filter(|(_, r)| r.is_ok()).count();
+              let fail_count = results.len() - success_count;
+              info!("[GUI] Community update broadcast: {} succeeded, {} failed", success_count, fail_count);
+              for (guild_id, result) in results {
+                if let Err(e) = result {
+                  error!("[GUI] Failed to send community update to guild {}: {}", guild_id, e);
+                }
+              }
+            }
+            Err(e) => {
+              error!("[GUI] Failed to broadcast community update: {}", e);
+            }
+          }
+        }
+      } else {
+        error!("[GUI] Cannot send community update: Discord context not available");
+      }
+      Ok(None)
+    }
+
+    GuiCommand::ValidateCommunityUpdatesChannels => {
+      if let Some(ctx) = ctx {
+        let errors = crate::services::validate_community_updates_channels(&ctx, db).await;
+        if errors.is_empty() {
+          info!("[GUI] All community updates channels validated successfully");
+        } else {
+          error!("[GUI] Found {} guild(s) with invalid community updates channels", errors.len());
+          for (guild_id, guild_name, error) in errors {
+            error!("[GUI] [{}] {}: {}", guild_id, guild_name, error);
+          }
+        }
+      } else {
+        error!("[GUI] Cannot validate community updates channels: Discord context not available");
+      }
+      Ok(None)
+    }
+
     // ── Voice Channel (needs Discord API — log only) ───────────────────────
     GuiCommand::MovePlayerToVC { guild_id, user_id, channel_id } => {
       info!("[GUI] MovePlayerToVC u={} → ch={} g={} — requires Discord HTTP, not implemented in GUI handler", user_id, channel_id, guild_id);
@@ -642,6 +732,10 @@ pub async fn handle_command(
     GuiCommand::GracefulRestart => {
       info!("[GUI] GracefulRestart — state will be persisted, bot will restart");
       std::process::exit(0);
+    }
+    GuiCommand::GracefulShutdown => {
+      info!("[GUI] GracefulShutdown — handled by application.rs command task");
+      Ok(None)
     }
   };
   result?;
