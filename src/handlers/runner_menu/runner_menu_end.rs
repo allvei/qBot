@@ -321,7 +321,7 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
   };
 
   // Apply ELO changes to in-memory session and call pull_fmt, then release the lock.
-  let pull_result = {
+  let (pull_result, chat_embed_data) = {
     let mut mgr = manager.lock().await;
     let server = mgr.get_qguild(guild_id)?;
     let category = server.categories.iter_mut().find(|c| c.id == category_id).ok_or_else(|| anyhow::anyhow!("Category not found"))?;
@@ -337,13 +337,31 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
       }
     }
 
+    // Capture match data for chat embed before pull_fmt clears the session
+    let queue_chat = category.channels.queue_chat;
+    let embed_data = {
+      let active_session = category
+        .formats
+        .iter()
+        .find(|f| f.id == format_id)
+        .and_then(|f| f.sessions.iter().find(|s| s.status == crate::models::SessionStatus::Live).or_else(|| f.sessions.iter().find(|s| s.status == crate::models::SessionStatus::Hot)));
+      if let Some(session) = active_session {
+        let quota = category.formats.iter().find(|f| f.id == format_id).map(|f| f.quota as usize).unwrap_or(0);
+        let (team_red, team_blu) = crate::models::dashboard::get_sorted_teams_pub(&session.pool, quota);
+        let duration = session.started_at.and_then(|started| std::time::SystemTime::now().duration_since(started).ok()).map(|d| d.as_secs());
+        Some((queue_chat, team_red, team_blu, duration))
+      } else {
+        None
+      }
+    };
+
     // pull_fmt takes &mut self (category) and may lock manager internally via the
     // AfterExpiration spawn — pass None here so it doesn't try to re-lock manager.
     let result = category.pull_fmt(format_id, ctx, guild_id, db, None).await;
     if result.is_ok() {
       category.queue_dash_update(ctx, guild_id).await;
     }
-    result
+    (result, embed_data)
     // mgr lock released here
   };
 
@@ -362,6 +380,23 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
         "blu" => BLUE,
         _ => 0x888888,
       };
+
+      // Post match result embed to queue chat
+      if let Some((queue_chat, team_red, team_blu, duration)) = chat_embed_data {
+        let hide_elo = db.config.get_bool(guild_id, "hide_elo", false).await.unwrap_or(false);
+        let dynamic_elo_active = db.config.get_active_elo(guild_id).await.unwrap_or(false);
+
+        let mut chat_embed = CE::new().title(format!("{} - {}", format_name, result_text)).color(result_color);
+
+        if let Some(secs) = duration {
+          chat_embed = chat_embed.field("Duration", format!("{}m {}s", secs / 60, secs % 60), true);
+        }
+
+        chat_embed = crate::models::dashboard::build_team_fields(chat_embed, team_red, team_blu, hide_elo, dynamic_elo_active, db, guild_id).await;
+        chat_embed = chat_embed.footer(serenity::all::CreateEmbedFooter::new(format!("Reported by {}", interaction.user.tag())));
+
+        let _ = queue_chat.send_message(&ctx.http, serenity::all::CreateMessage::new().embed(chat_embed)).await;
+      }
 
       let embed = CE::new().title("Match ended").description(format!("**{}** - {}", format_name, result_text)).color(result_color);
 
