@@ -134,14 +134,6 @@ define_server_config! {
         labels: ["Dynamic ELO enabled", "Dynamic ELO disabled"],
         description: "Enable dynamic ELO calculations",
     },
-    post_game_auto_leave: bool {
-        column: "post_game_auto_leave",
-        default: true,
-        display: "Post-game Auto-remove",
-        button: "server_cfg_post_game_auto_leave",
-        labels: ["Post-game auto-remove is enabled", "Post-game auto-remove is disabled"],
-        description: "Automatically remove players from queue after game ends",
-    },
     hide_elo: bool {
         column: "hide_elo",
         default: false,
@@ -149,6 +141,14 @@ define_server_config! {
         button: "server_cfg_hide_elo",
         labels: ["ELO is visible", "ELO is hidden"],
         description: "Hide ELO values from players",
+    },
+    post_game_auto_leave: bool {
+        column: "post_game_auto_leave",
+        default: true,
+        display: "Post-game Auto-remove",
+        button: "server_cfg_post_game_auto_leave",
+        labels: ["Post-game auto-remove is enabled", "Post-game auto-remove is disabled"],
+        description: "Automatically remove players from queue after game ends",
     },
     default_vc_auto_join: bool {
         column: "default_vc_auto_join",
