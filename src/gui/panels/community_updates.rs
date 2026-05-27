@@ -5,26 +5,26 @@ use tracing::info;
 
 use crate::gui::state::GuiState;
 
-/// System message panel for sending custom updates to guilds
-pub struct SystemMessagePanel {
+/// Community updates panel for sending announcements to guilds
+pub struct CommunityUpdatesPanel {
   message_content: String,
   send_to_all: bool,
   selected_guild_index: usize,
   last_result: Option<String>,
 }
 
-impl Default for SystemMessagePanel {
+impl Default for CommunityUpdatesPanel {
   fn default() -> Self {
     Self { message_content: String::new(), send_to_all: true, selected_guild_index: 0, last_result: None }
   }
 }
 
-impl SystemMessagePanel {
+impl CommunityUpdatesPanel {
   pub fn ui(&mut self, ui: &mut Ui, state: Arc<Mutex<GuiState>>) {
-    ui.heading("System Message Broadcast");
+    ui.heading("Community Updates Broadcast");
     ui.separator();
 
-    ui.label("Compose a system message to send to configured channels:");
+    ui.label("Compose a community update to send to configured channels:");
     ui.add_space(10.0);
 
     // Message input
@@ -48,19 +48,19 @@ impl SystemMessagePanel {
       ui.add_space(5.0);
       let state_guard = state.blocking_lock();
       let mut guilds: Vec<_> = state_guard.guilds.iter().map(|(id, name)| (*id, name.clone())).collect();
-      let sys_msg_guilds = state_guard.system_message_channel_guilds.clone();
+      let community_updates_guilds = state_guard.community_updates_channel_guilds.clone();
       drop(state_guard);
 
       // Sort by name for stable dropdown order
       guilds.sort_by(|a, b| a.1.cmp(&b.1));
 
-      // Filter to only show guilds with configured system message channel
+      // Filter to only show guilds with configured community updates channel
       let guilds_with_channel: Vec<_> = guilds
         .into_iter()
-        .filter(|(guild_id, _)| sys_msg_guilds.contains(&guild_id.get()))
+        .filter(|(guild_id, _)| community_updates_guilds.contains(&guild_id.get()))
         .collect();
 
-      info!("UI: sys_msg_guilds.len={}, guilds_with_channel.len={}, selected_guild_index={}", sys_msg_guilds.len(), guilds_with_channel.len(), self.selected_guild_index);
+      info!("UI: community_updates_guilds.len={}, guilds_with_channel.len={}, selected_guild_index={}", community_updates_guilds.len(), guilds_with_channel.len(), self.selected_guild_index);
 
       // Reset index if out of bounds
       if self.selected_guild_index >= guilds_with_channel.len() && !guilds_with_channel.is_empty() {
@@ -74,7 +74,7 @@ impl SystemMessagePanel {
           }
         });
       } else {
-        ui.label("No servers with configured system message channel");
+        ui.label("No servers with configured community updates channel");
       }
     }
 
@@ -100,7 +100,7 @@ impl SystemMessagePanel {
     ui.separator();
 
     // Validation section
-    if ui.button("Validate System Message Channels").clicked() {
+    if ui.button("Validate Community Updates Channels").clicked() {
       self.validate_channels(state.clone());
     }
   }
@@ -114,20 +114,20 @@ impl SystemMessagePanel {
 
     let state_guard = state.blocking_lock();
     let guilds: Vec<_> = state_guard.guilds.iter().map(|(id, name)| (*id, name.clone())).collect();
-    let sys_msg_guilds = state_guard.system_message_channel_guilds.clone();
+    let community_updates_guilds = state_guard.community_updates_channel_guilds.clone();
     drop(state_guard);
 
     // Sort by name for stable dropdown order (same as in ui())
     let mut sorted_guilds = guilds.clone();
     sorted_guilds.sort_by(|a, b| a.1.cmp(&b.1));
 
-    // Filter to only show guilds with configured system message channel (same as in ui())
+    // Filter to only show guilds with configured community updates channel (same as in ui())
     let guilds_with_channel: Vec<_> = sorted_guilds
       .into_iter()
-      .filter(|(guild_id, _)| sys_msg_guilds.contains(&guild_id.get()))
+      .filter(|(guild_id, _)| community_updates_guilds.contains(&guild_id.get()))
       .collect();
 
-    info!("send_message: sys_msg_guilds.len={}, guilds.len={}, filtered_guilds.len={}, selected_guild_index={}", sys_msg_guilds.len(), guilds.len(), guilds_with_channel.len(), self.selected_guild_index);
+    info!("send_message: community_updates_guilds.len={}, guilds.len={}, filtered_guilds.len={}, selected_guild_index={}", community_updates_guilds.len(), guilds.len(), guilds_with_channel.len(), self.selected_guild_index);
 
     // Reset index if out of bounds
     if self.selected_guild_index >= guilds_with_channel.len() && !guilds_with_channel.is_empty() {
@@ -146,7 +146,7 @@ impl SystemMessagePanel {
     // Send command to bot thread instead of spawning directly
     let state_guard = state.blocking_lock();
     if let Some(shared_state) = state_guard.shared_state.as_ref() {
-      shared_state.send_cmd(crate::gui::commands::GuiCommand::SendSystemMessage {
+      shared_state.send_cmd(crate::gui::commands::GuiCommand::SendCommunityUpdate {
         guild_id,
         message: message.clone(),
       });
@@ -163,7 +163,7 @@ impl SystemMessagePanel {
   fn validate_channels(&mut self, state: Arc<Mutex<GuiState>>) {
     let state_guard = state.blocking_lock();
     if let Some(shared_state) = state_guard.shared_state.as_ref() {
-      shared_state.send_cmd(crate::gui::commands::GuiCommand::ValidateSystemMessageChannels);
+      shared_state.send_cmd(crate::gui::commands::GuiCommand::ValidateCommunityUpdatesChannels);
       self.last_result = Some("Validating channels... Check logs for results.".to_string());
     } else {
       self.last_result = Some("Error: Bot not initialized".to_string());

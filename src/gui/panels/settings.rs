@@ -110,23 +110,26 @@ fn show_connection_status(ui: &mut egui::Ui, state: &GuiSharedState) {
     // Discord gateway status (check if context is available)
     ui.horizontal(|ui| {
       ui.label("Discord Gateway:");
-      if state.ctx.is_some() {
+      let ctx_available = state.ctx.lock().map(|ctx| ctx.is_some()).unwrap_or(false);
+      if ctx_available {
         ui.label(RichText::new("● Connected").color(Color32::GREEN));
       } else {
         ui.label(RichText::new("● Connecting...").color(Color32::YELLOW));
       }
     });
 
-    if let Some(ctx) = &state.ctx {
-      ui.horizontal(|ui| {
-        ui.label("Guilds:");
-        ui.label(format!("{} loaded", state.guilds.len()));
-      });
+    if let Ok(ctx_guard) = state.ctx.lock() {
+      if let Some(ctx) = &*ctx_guard {
+        ui.horizontal(|ui| {
+          ui.label("Guilds:");
+          ui.label(format!("{} loaded", state.guilds.len()));
+        });
 
-      ui.horizontal(|ui| {
-        ui.label("Shard:");
-        ui.label(format!("{}", ctx.shard_id));
-      });
+        ui.horizontal(|ui| {
+          ui.label("Shard:");
+          ui.label(format!("{}", ctx.shard_id));
+        });
+      }
     }
   });
 }
