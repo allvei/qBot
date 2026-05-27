@@ -15,3 +15,4 @@ Cargo.lock
 rustfmt.toml
 CHANGELOG_TEMPLATE.md
 /logs/
+gui_settings.json
