@@ -86,7 +86,7 @@ pub async fn get_user_tag(ctx: &Context, user_id: UI, db: &crate::Database) -> S
 
 /// Async log function that extrapolates all information from Format, Player, and Action
 pub async fn log_queue_toggle(
-  _ctx: &Context,
+  ctx: &Context,
   db: &crate::Database,
   guild_id: serenity::all::GuildId,
   category_id: u8,
@@ -96,7 +96,9 @@ pub async fn log_queue_toggle(
   rank_mismatch: Option<(String, String)>, // (old_rank, new_rank)
 ) -> Result<(), anyhow::Error> {
   // Get format info from database using guild_id, category_id, and format_id
-  let fmt_info = sqlx::query(
+  // If the format doesn't exist in the database (e.g., default format with ID 0),
+  // fall back to using the in-memory format info and guild name from context
+  let (guild_name, ctg_nm, fmt_nm) = match sqlx::query(
     "SELECT f.id, g.name as guild_name, c.name as category_name, f.name as format_name
          FROM formats f
          JOIN categories c ON f.guild_id = c.guild_id AND f.category_id = c.category_id
@@ -106,13 +108,31 @@ pub async fn log_queue_toggle(
   .bind(guild_id.get() as i64)
   .bind(category_id as i64)
   .bind(format.id as i64)
-  .fetch_one(&db.pool)
+  .fetch_optional(&db.pool)
   .await
-  .map_err(|e| anyhow::anyhow!("no format row found for guild={} category={} format={}: {e}", guild_id, category_id, format.id))?;
-
-  let guild_name: &str = fmt_info.get("guild_name");
-  let ctg_nm: &str = fmt_info.get("category_name");
-  let fmt_nm: &str = fmt_info.get("format_name");
+  {
+    Ok(Some(row)) => {
+      let guild_name: String = row.get("guild_name");
+      let category_name: String = row.get("category_name");
+      let format_name: String = row.get("format_name");
+      (guild_name, category_name, format_name)
+    }
+    Ok(None) => {
+      // Format not in database (e.g., default format with ID 0), use in-memory info
+      let guild_name = crate::guild_name(ctx, guild_id);
+      let category_name = "Unknown".to_string();
+      let format_name = format.name.clone();
+      (guild_name, category_name, format_name)
+    }
+    Err(e) => {
+      // Database error, try to fall back to in-memory info
+      cwarn!("Failed to query format info from database, using in-memory fallback: {e}");
+      let guild_name = crate::guild_name(ctx, guild_id);
+      let category_name = "Unknown".to_string();
+      let format_name = format.name.clone();
+      (guild_name, category_name, format_name)
+    }
+  };
 
   // Get pool size from all joinable sessions (Idle + Hot) to show accurate count with concurrent games
   // For joins: log is called AFTER add, so pool already contains the player
@@ -157,7 +177,7 @@ pub async fn log_queue_toggle(
   };
 
   // Call the original function with extrapolated data
-  log_queue_toggle_sync(guild_name, ctg_nm, &player.tag, queue_type, pool_size, Some(fmt_nm), position, rank_mismatch);
+  log_queue_toggle_sync(&guild_name, &ctg_nm, &player.tag, queue_type, pool_size, Some(&fmt_nm), position, rank_mismatch);
 
   Ok(())
 }
