@@ -111,6 +111,23 @@ impl ConfigRepository {
     Ok(())
   }
 
+  /// Get ping_role as Discord role ID
+  pub async fn get_ping_role_id(&self, guild_id: GI) -> Result<Option<String>> {
+    let row = sqlx::query("SELECT ping_role FROM config WHERE guild_id = ?").bind(guild_id.get() as i64).fetch_optional(&self.pool).await?;
+
+    Ok(row.and_then(|row| row.try_get::<Option<String>, _>("ping_role").ok().flatten()))
+  }
+
+  /// Set ping_role as Discord role ID (as string, empty for @here)
+  pub async fn set_ping_role_id(&self, guild_id: GI, role_id: Option<&str>) -> Result<()> {
+    sqlx::query("INSERT INTO config (guild_id, ping_role) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET ping_role = excluded.ping_role")
+      .bind(guild_id.get() as i64)
+      .bind(role_id)
+      .execute(&self.pool)
+      .await?;
+    Ok(())
+  }
+
   /// Get a boolean config column by name.
   /// `default` is returned when the row or column is NULL.
   pub async fn get_bool(&self, guild_id: GI, column: &str, default: bool) -> Result<bool> {

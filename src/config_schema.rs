@@ -49,6 +49,12 @@ macro_rules! define_server_config {
                     )?
                 )*
             ];
+
+            pub const DESCRIPTIONS: &[(&str, &str)] = &[
+                $(
+                    ($column, $description),
+                )*
+            ];
         }
     };
 }
@@ -192,6 +198,12 @@ define_server_config! {
         display: "Gamemode",
         description: "Current gamemode setting",
     },
+    ping_role: String {
+        column: "ping_role",
+        default: "".to_string(),
+        display: "Ping Role",
+        description: "Role ID to ping instead of @here (empty for @here)",
+    },
 }
 
 define_category_config! {
@@ -286,6 +298,7 @@ define_user_preferences! {
 
 pub use server_config::COLUMNS as SERVER_CONFIG_COLUMNS;
 pub use server_config::TOGGLES as SERVER_CONFIG_TOGGLES;
+pub use server_config::DESCRIPTIONS as SERVER_CONFIG_DESCRIPTIONS;
 pub use category_config::COLUMNS as CATEGORY_CONFIG_COLUMNS;
 pub use category_config::TOGGLES as CATEGORY_CONFIG_TOGGLES;
 pub use user_preferences::COLUMNS as USER_PREFERENCES_COLUMNS;
