@@ -8,7 +8,7 @@ use tracing::info;
 
 use crate::db::Database;
 use crate::handlers::player::is_role_component;
-use crate::handlers::settings::menu::create_selection_menu;
+use crate::handlers::settings::menu::create_multi_user_select_menu;
 use crate::models::embeds::Ephemeral as Eph;
 use crate::models::{ComponentContext as CC, Role};
 use crate::{guild_name, log_prefix_guild, Manager, CYAN};
@@ -282,19 +282,18 @@ async fn show_player_selection(ctx: &Context, interaction: &CI, _db: &Arc<Databa
   }
 
   let title = match action {
-    "remove" => "Select a player to remove:",
-    "buffer" => "Select a player to buffer:",
-    "fatkid" => "Select a player to fatkid:",
-    _ => "Select a player:",
+    "remove" => "Select players to remove:",
+    "buffer" => "Select players to buffer:",
+    "fatkid" => "Select players to fatkid:",
+    _ => "Select players:",
   };
 
   let embed = CE::new().title(title).color(CYAN);
 
   let mut components = Vec::new();
 
-  if let Some(menu) = create_selection_menu(&format!("runner_player_{}", action), "Select player", players) {
-    components.push(menu);
-  }
+  let menu = create_multi_user_select_menu(&format!("runner_player_{}", action), "Select players");
+  components.push(menu);
   components.push(CAR::Buttons(vec![Eph::back("runner_menu_back")]));
 
   let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
@@ -309,7 +308,7 @@ pub async fn handle_player_selection(
   db: &Arc<Database>,
   manager: &Arc<tokio::sync::Mutex<Manager>>,
   action: &str,
-  user_id_str: &str,
+  user_ids: &[String],
 ) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
 
@@ -320,112 +319,132 @@ pub async fn handle_player_selection(
     return Ok(());
   }
 
-  let user_id = UI::new(user_id_str.parse::<u64>()?);
   let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
   let runner_tag = crate::get_user_tag(ctx, interaction.user.id, db).await;
 
   let mut mgr = manager.lock().await;
   let server = mgr.get_qguild(guild_id)?;
 
-  // Execute the action directly on the server
   // Track which category index and what action description to set
   let mut last_action_info: Option<(usize, String)> = None;
-  // Track if we need to cancel a queue expiration (for remove action)
+  // Track success/failure counts
+  let mut success_count = 0;
+  let mut failure_count = 0;
 
-  let result = match action {
-    "remove" => {
-      // Find and remove the player from all sessions
-      let mut found = false;
-      for (cat_idx, category) in server.categories.iter_mut().enumerate() {
-        for format in &mut category.formats {
-          let quota = format.quota as usize;
-          for session in &mut format.sessions {
-            if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == user_id) {
-              let player_tag = session.pool[pos].player.tag.clone();
-              session.pool.remove(pos);
-              found = true;
-              if let Some(scheduler) = ctx.data.read().await.get::<crate::QueueExpirationSchedulerKey>() {
-                let mut sched = scheduler.lock().await;
-                sched.cancel_queue_expiration(guild_id, category.id, format.id, user_id);
-              }
-              let guild_name = guild_name(ctx, guild_id);
-              let category_name = category.name.as_deref().unwrap_or("Unknown");
-              let format_name = &format.name;
-              info!("{} Runner removed player {} from queue", crate::log::log_prefix_format(&guild_name, category_name, format_name), player_tag);
-              last_action_info = Some((cat_idx, format!("removed {}", player_tag)));
+  for user_id_str in user_ids {
+    let user_id = match user_id_str.parse::<u64>() {
+      Ok(id) => UI::new(id),
+      Err(_) => {
+        failure_count += 1;
+        continue;
+      }
+    };
 
-              // If this was a Hot session and now below quota, transition back to Idle
-              if session.is_hot() && session.pool.len() < quota {
-                session.idle();
-                info!(
-                  "{} Hot session dropped below quota after removing player, transitioning back to Idle",
-                  crate::log::log_prefix_format(&guild_name, category_name, format_name)
-                );
+    let result = match action {
+      "remove" => {
+        // Find and remove the player from all sessions
+        let mut found = false;
+        for (cat_idx, category) in server.categories.iter_mut().enumerate() {
+          for format in &mut category.formats {
+            let quota = format.quota as usize;
+            for session in &mut format.sessions {
+              if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == user_id) {
+                let player_tag = session.pool[pos].player.tag.clone();
+                session.pool.remove(pos);
+                found = true;
+                if let Some(scheduler) = ctx.data.read().await.get::<crate::QueueExpirationSchedulerKey>() {
+                  let mut sched = scheduler.lock().await;
+                  sched.cancel_queue_expiration(guild_id, category.id, format.id, user_id);
+                }
+                let guild_name = guild_name(ctx, guild_id);
+                let category_name = category.name.as_deref().unwrap_or("Unknown");
+                let format_name = &format.name;
+                info!("{} Runner removed player {} from queue", crate::log::log_prefix_format(&guild_name, category_name, format_name), player_tag);
+                last_action_info = Some((cat_idx, format!("removed {} player(s)", success_count + 1)));
+
+                // If this was a Hot session and now below quota, transition back to Idle
+                if session.is_hot() && session.pool.len() < quota {
+                  session.idle();
+                  info!(
+                    "{} Hot session dropped below quota after removing player, transitioning back to Idle",
+                    crate::log::log_prefix_format(&guild_name, category_name, format_name)
+                  );
+                }
               }
             }
           }
         }
+        if found {
+          success_count += 1;
+          Ok(())
+        } else {
+          failure_count += 1;
+          Err(anyhow::anyhow!("Player not found in any queue"))
+        }
       }
-      if found {
-        Ok(())
-      } else {
-        Err(anyhow::anyhow!("Player not found in any queue"))
-      }
-    }
-    "buffer" => {
-      // Move player to front of queue
-      let mut found = false;
-      for (cat_idx, category) in server.categories.iter_mut().enumerate() {
-        for format in &mut category.formats {
-          for session in &mut format.sessions {
-            if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == user_id) {
-              let player_tag = session.pool[pos].player.tag.clone();
-              let player = session.pool.remove(pos);
-              session.pool.insert(0, player);
-              found = true;
-              let guild_name = guild_name(ctx, guild_id);
-              let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
-              let fmt_nm = &format.name;
-              info!("{} Runner buffered player {} to front of queue", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player_tag);
-              last_action_info = Some((cat_idx, format!("buffered {}", player_tag)));
+      "buffer" => {
+        // Move player to front of queue
+        let mut found = false;
+        for (cat_idx, category) in server.categories.iter_mut().enumerate() {
+          for format in &mut category.formats {
+            for session in &mut format.sessions {
+              if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == user_id) {
+                let player_tag = session.pool[pos].player.tag.clone();
+                let player = session.pool.remove(pos);
+                session.pool.insert(0, player);
+                found = true;
+                let guild_name = guild_name(ctx, guild_id);
+                let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
+                let fmt_nm = &format.name;
+                info!("{} Runner buffered player {} to front of queue", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player_tag);
+                last_action_info = Some((cat_idx, format!("buffered {} player(s)", success_count + 1)));
+              }
             }
           }
         }
+        if found {
+          success_count += 1;
+          Ok(())
+        } else {
+          failure_count += 1;
+          Err(anyhow::anyhow!("Player not found in any queue"))
+        }
       }
-      if found {
-        Ok(())
-      } else {
-        Err(anyhow::anyhow!("Player not found in any queue"))
-      }
-    }
-    "fatkid" => {
-      // Move player to end of queue
-      let mut found = false;
-      for (cat_idx, category) in server.categories.iter_mut().enumerate() {
-        for format in &mut category.formats {
-          for session in &mut format.sessions {
-            if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == user_id) {
-              let player_tag = session.pool[pos].player.tag.clone();
-              let player = session.pool.remove(pos);
-              session.pool.push(player);
-              found = true;
-              let guild_name = guild_name(ctx, guild_id);
-              let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
-              let fmt_nm = &format.name;
-              info!("{} Runner fatkidded player {} to end of queue", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player_tag);
-              last_action_info = Some((cat_idx, format!("fatkidded {}", player_tag)));
+      "fatkid" => {
+        // Move player to end of queue
+        let mut found = false;
+        for (cat_idx, category) in server.categories.iter_mut().enumerate() {
+          for format in &mut category.formats {
+            for session in &mut format.sessions {
+              if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == user_id) {
+                let player_tag = session.pool[pos].player.tag.clone();
+                let player = session.pool.remove(pos);
+                session.pool.push(player);
+                found = true;
+                let guild_name = guild_name(ctx, guild_id);
+                let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
+                let fmt_nm = &format.name;
+                info!("{} Runner fatkidded player {} to end of queue", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player_tag);
+                last_action_info = Some((cat_idx, format!("fatkidded {} player(s)", success_count + 1)));
+              }
             }
           }
         }
+        if found {
+          success_count += 1;
+          Ok(())
+        } else {
+          failure_count += 1;
+          Err(anyhow::anyhow!("Player not found in any queue"))
+        }
       }
-      if found {
-        Ok(())
-      } else {
-        Err(anyhow::anyhow!("Player not found in any queue"))
-      }
+      _ => Ok(()),
+    };
+
+    if result.is_err() {
+      failure_count += 1;
     }
-    _ => Ok(()),
-  };
+  }
 
   // Set last action after the loops to avoid borrow issues
   if let Some((cat_idx, action_desc)) = last_action_info {
@@ -435,7 +454,7 @@ pub async fn handle_player_selection(
   }
 
   // Update dashboard if action was successful
-  let success = result.is_ok();
+  let success = success_count > 0;
   drop(mgr);
 
   if success {
@@ -468,8 +487,8 @@ pub async fn handle_player_selection(
     drop(mgr);
   }
 
-  let (title, color) = if let Err(e) = result {
-    (format!("Action failed: {}", e), 0xFF0000)
+  let (title, color) = if failure_count > 0 && success_count == 0 {
+    (format!("Action failed for {} player(s)", failure_count), 0xFF0000)
   } else {
     let action_name = match action {
       "remove" => "removed from",
@@ -477,7 +496,11 @@ pub async fn handle_player_selection(
       "fatkid" => "moved to end of",
       _ => "modified in",
     };
-    (format!("Player {} queue", action_name), 0x00FF00)
+    let mut desc = format!("{} player(s) {} queue", success_count, action_name);
+    if failure_count > 0 {
+      desc.push_str(&format!(" ({} failed)", failure_count));
+    }
+    (desc, 0x00FF00)
   };
 
   let embed = CE::new().title(title).color(color);
