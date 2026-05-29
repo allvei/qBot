@@ -10,7 +10,7 @@ use std::{
   time::{Duration, SystemTime},
 };
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::models::{Category, ComponentContext, DashboardQueueKey, Session, SessionPlayer, SessionStatus};
 
@@ -787,6 +787,7 @@ impl Category {
 
     // If player is already in this format, refresh their timeout and return
     if self.is_user_in_fmt(fmt_id, user_id) {
+      debug!("User {} ({}) already in format {}, refreshing timeout", user_id, cc.component.user.tag(), fmt_id);
       if let Some(sg) = self.format_mut(fmt_id) {
         for session in &mut sg.sessions {
           if let Some(sp) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
@@ -802,7 +803,10 @@ impl Category {
     // Check if we have an idle or hot session to join in the target format
     let has_joinable_session = self.format(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)).unwrap_or(false);
 
+    debug!("User {} ({}) attempting to join format {}: has_joinable_session={}", user_id, cc.component.user.tag(), fmt_id, has_joinable_session);
+
     if !has_joinable_session {
+      debug!("User {} ({}) blocked from joining format {}: no joinable session (match in progress)", user_id, cc.component.user.tag(), fmt_id);
       use serenity::all::CreateInteractionResponseFollowup as CIRF;
       let followup = CIRF::new().content("Cannot join - match is in progress. Please wait.").ephemeral(true);
       cc.component.create_followup(&cc.ctx.http, followup).await?;
@@ -814,8 +818,10 @@ impl Category {
     if let Some(guild_id) = cc.component.guild_id {
       // When dynamic ELO is enabled, check if this player needs skill selection first.
       let dynamic_elo_active = cc.db.config.get_active_elo(guild_id).await.unwrap_or(false);
+      debug!("User {} ({}) checking dynamic ELO: dynamic_elo_active={}", user_id, cc.component.user.tag(), dynamic_elo_active);
       if dynamic_elo_active {
         let needs_selection = cc.db.elo.needs_skill_selection(user_id, guild_id).await.unwrap_or(false);
+        debug!("User {} ({}) needs skill selection: {}", user_id, cc.component.user.tag(), needs_selection);
         if needs_selection {
           let gamemode = cc.db.config.get_gamemode(guild_id).await.unwrap_or(None);
           let prompt = match &gamemode {
@@ -839,13 +845,15 @@ impl Category {
       let (mut player, discord_rank, _rank_mismatch) = match resolve_player_for_queue(cc.ctx, &cc.db, guild_id, user_id).await {
         Ok(result) => result,
         Err(e) => {
-          error!("Failed to resolve player for queue: {e}");
+          error!("Failed to resolve player {} ({}) for queue: {e}", user_id, cc.component.user.tag());
           use serenity::all::CreateInteractionResponseFollowup as CIRF;
           let followup = CIRF::new().content("Failed to join queue. Please try again.").ephemeral(true);
           cc.component.create_followup(&cc.ctx.http, followup).await?;
           return Ok(());
         }
       };
+
+      debug!("User {} ({}) resolved as player: tag={}, rank={}", user_id, cc.component.user.tag(), player.tag, discord_rank.name);
 
       // Fetch discord tag from component user for performance (avoid extra API call)
       player.tag = cc.component.user.tag();
@@ -868,9 +876,11 @@ impl Category {
       let queue_context = crate::QueueContext::new(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone()));
       let is_user_in_vc = self.is_user_in_queue_vc(&cc.ctx.http, user_id).await;
 
+      debug!("User {} ({}) attempting to queue with VC status: is_user_in_vc={}", user_id, cc.component.user.tag(), is_user_in_vc);
       if let Err(e) = self.queue_player_with_vc_status_fmt(fmt_id, player.clone(), discord_rank, queue_context, is_user_in_vc).await {
-        warn!("Failed to queue player: {e}");
+        error!("Failed to queue player {} ({}): {e}", user_id, cc.component.user.tag());
       } else {
+        debug!("Successfully queued player {} ({}) in format {}", user_id, cc.component.user.tag(), fmt_id);
         // Log AFTER queue operation so position and count are accurate
         if let Some(format) = self.format(fmt_id) {
           if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, self.id, format, &player, "joined", None).await {
@@ -1073,6 +1083,8 @@ impl Category {
     use crate::handlers::player::is_role_component;
     use crate::models::Role;
 
+    let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+
     match is_role_component(cc, &Role::Runner).await {
       Ok(true) => {
         // User has Runner role, proceed
@@ -1104,6 +1116,24 @@ impl Category {
       return Ok(());
     }
 
+    // Check if someone is already starting this match
+    {
+      let mgr = cc.manager.lock().await;
+      if let Some(starting_user_id) = mgr.get_active_match_start(guild_id, self.id, fmt_id) {
+        if starting_user_id != cc.component.user.id {
+          let starting_user_tag = crate::log::get_user_tag(cc.ctx, starting_user_id, &cc.db).await;
+          cc.reply_ephemeral(&format!("{} started this match already", starting_user_tag)).await?;
+          return Ok(());
+        }
+      }
+    }
+
+    // Mark this user as starting
+    {
+      let mut mgr = cc.manager.lock().await;
+      mgr.set_active_match_start(guild_id, self.id, fmt_id, cc.component.user.id);
+    }
+
     // Check for duplicate action within 5 seconds on the same hot session
     if let Some(fmt) = self.format_mut(fmt_id) {
       if let Some(hot_session) = fmt.sessions.iter_mut().find(|s| s.is_hot()) {
@@ -1112,6 +1142,10 @@ impl Category {
             if elapsed < Duration::from_secs(5) {
               // Duplicate action within 5 seconds - acknowledge silently
               cc.reply_acknowledge().await?;
+              {
+                let mut mgr = cc.manager.lock().await;
+                mgr.clear_active_match_start(guild_id, self.id, fmt_id);
+              }
               return Ok(());
             }
           }
@@ -1124,10 +1158,18 @@ impl Category {
     cc.reply_update_message().await?;
 
     // Move players to team channels (Hot → Push → Live)
-    match self.push_fmt(fmt_id, cc.ctx, cc.component.guild_id.unwrap(), &cc.db, Some(cc.manager.clone())).await {
+    let result = self.push_fmt(fmt_id, cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await;
+
+    // Clear the active match start tracking
+    {
+      let mut mgr = cc.manager.lock().await;
+      mgr.clear_active_match_start(guild_id, self.id, fmt_id);
+    }
+
+    match result {
       Ok(_) => {
         info!("Players moved to team channels and game is now live");
-        self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
+        self.queue_dash_update(cc.ctx, guild_id).await;
         Ok(())
       }
       Err(e) => {
@@ -1141,6 +1183,8 @@ impl Category {
   async fn dash_end(&mut self, cc: &ComponentContext<'_>, fmt_id: u8) -> Result<()> {
     use crate::handlers::player::is_role_component;
     use crate::models::Role;
+
+    let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
     let active_session =
       self.format(fmt_id).and_then(|sg| sg.sessions.iter().find(|s| s.status == SessionStatus::Live).or_else(|| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot)));
@@ -1159,6 +1203,24 @@ impl Category {
     if !is_role_component(cc, &Role::Runner).await? {
       cc.reply_ephemeral("Only runners can end matches.").await?;
       return Ok(());
+    }
+
+    // Check if someone is already ending this match
+    {
+      let mgr = cc.manager.lock().await;
+      if let Some(submitting_user_id) = mgr.get_active_score_submission(guild_id, self.id, fmt_id) {
+        if submitting_user_id != cc.component.user.id {
+          let submitting_user_tag = crate::log::get_user_tag(cc.ctx, submitting_user_id, &cc.db).await;
+          cc.reply_ephemeral(&format!("{} started ending this match already", submitting_user_tag)).await?;
+          return Ok(());
+        }
+      }
+    }
+
+    // Mark this user as ending
+    {
+      let mut mgr = cc.manager.lock().await;
+      mgr.set_active_score_submission(guild_id, self.id, fmt_id, cc.component.user.id);
     }
 
     // Show winner selection buttons as ephemeral message
@@ -1370,11 +1432,31 @@ impl Category {
       return Ok(());
     }
 
+    let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+
     // Parse category_id and format_id from button custom_id (format: report_score_CATID_FMTID)
     let custom_id = &cc.component.data.custom_id;
     let parts: Vec<&str> = custom_id.split('_').collect();
-    let category_id = parts.get(2).and_then(|s| s.parse::<i64>().ok()).unwrap_or(self.id as i64);
+    let category_id = parts.get(2).and_then(|s| s.parse::<u8>().ok()).unwrap_or(self.id);
     let format_id = parts.get(3).and_then(|s| s.parse::<u8>().ok()).unwrap_or(0);
+
+    // Check if someone is already submitting a score for this match
+    {
+      let mgr = cc.manager.lock().await;
+      if let Some(submitting_user_id) = mgr.get_active_score_submission(guild_id, category_id, format_id) {
+        if submitting_user_id != cc.component.user.id {
+          let submitting_user_tag = crate::log::get_user_tag(cc.ctx, submitting_user_id, &cc.db).await;
+          cc.reply_ephemeral(&format!("{} started reporting this match already", submitting_user_tag)).await?;
+          return Ok(());
+        }
+      }
+    }
+
+    // Mark this user as submitting
+    {
+      let mut mgr = cc.manager.lock().await;
+      mgr.set_active_score_submission(guild_id, category_id, format_id, cc.component.user.id);
+    }
 
     // Create modal for score input with category_id and format_id embedded
     let modal = CreateModal::new(format!("report_score_modal_{}_{}", category_id, format_id), "Report Match Score").components(vec![
@@ -1813,7 +1895,19 @@ impl Category {
 
     // Send the ping message to ping channel (or dashboard if not set)
     let ping_channel = if self.channels.ping_channel.get() > 1 { self.channels.ping_channel } else { self.channels.dashboard };
-    let content = format!("@here +{} for {}\nPing by <@{}>", players_needed, format.name, user_id.get());
+
+    // Use configured ping role from server config if set, otherwise use @here
+    let ping_mention = if let Some(ref role_id) = cc.db.config.get_ping_role_id(guild_id).await? {
+      if !role_id.trim().is_empty() {
+        format!("<@&{}>", role_id.trim())
+      } else {
+        "@here".to_string()
+      }
+    } else {
+      "@here".to_string()
+    };
+
+    let content = format!("{} +{} for {}\nPing by <@{}>", ping_mention, players_needed, format.name, user_id.get());
 
     if let Ok(sent) = ping_channel.send_message(&cc.ctx.http, CM::new().content(content)).await {
       // Delete the message after 15 minutes

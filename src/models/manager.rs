@@ -18,6 +18,8 @@ pub struct Manager {
   pub qguilds: Vec<QGuild>,
   /// Tracks active score submissions: (guild_id, category_id, format_id) -> (user_id, start_time)
   pub active_score_submissions: HashMap<(GI, u8, u8), (UI, SystemTime)>,
+  /// Tracks active match starts: (guild_id, category_id, format_id) -> (user_id, start_time)
+  pub active_match_starts: HashMap<(GI, u8, u8), (UI, SystemTime)>,
 }
 
 impl Manager {
@@ -26,7 +28,11 @@ impl Manager {
   /// ### Returns
   /// * A new Manager instance
   pub fn new(guild_id: GI) -> Self {
-    Self { qguilds: vec![QGuild::new(guild_id, "Unknown".to_string(), Roles::empty())], active_score_submissions: HashMap::new() }
+    Self {
+      qguilds: vec![QGuild::new(guild_id, "Unknown".to_string(), Roles::empty())],
+      active_score_submissions: HashMap::new(),
+      active_match_starts: HashMap::new(),
+    }
   }
 
   /// Pull server list from Discord cache
@@ -42,7 +48,7 @@ impl Manager {
       let guild_name = cache.guild(*g).map(|guild| guild.name.clone()).unwrap_or_else(|| "Unknown".to_string());
       qguilds.push(QGuild::new(*g, guild_name, Roles::empty()));
     });
-    Self { qguilds, active_score_submissions: HashMap::new() }
+    Self { qguilds, active_score_submissions: HashMap::new(), active_match_starts: HashMap::new() }
   }
 
   /// Find a server by its guild ID
@@ -152,6 +158,54 @@ impl Manager {
     let now = SystemTime::now();
     let timeout = std::time::Duration::from_secs(300);
     self.active_score_submissions.retain(|_, (_, start_time)| start_time.elapsed().unwrap_or(timeout) < timeout);
+  }
+
+  /// Check if a match start is already in progress for a match
+  ///
+  /// ### Arguments
+  /// * `guild_id` - The Discord guild ID
+  /// * `category_id` - The category ID
+  /// * `format_id` - The format ID
+  ///
+  /// ### Returns
+  /// * `Option<UI>` - The user ID currently starting, or None if no active start
+  pub fn get_active_match_start(&self, guild_id: GI, category_id: u8, format_id: u8) -> Option<UI> {
+    let key = (guild_id, category_id, format_id);
+    self
+      .active_match_starts
+      .get(&key)
+      .map(|(user_id, start_time)| {
+        // Remove stale starts older than 5 minutes
+        if start_time.elapsed().unwrap_or(std::time::Duration::from_secs(0)) > std::time::Duration::from_secs(300) {
+          None
+        } else {
+          Some(*user_id)
+        }
+      })
+      .flatten()
+  }
+
+  /// Set a match start as in progress
+  ///
+  /// ### Arguments
+  /// * `guild_id` - The Discord guild ID
+  /// * `category_id` - The category ID
+  /// * `format_id` - The format ID
+  /// * `user_id` - The user ID starting the match
+  pub fn set_active_match_start(&mut self, guild_id: GI, category_id: u8, format_id: u8, user_id: UI) {
+    let key = (guild_id, category_id, format_id);
+    self.active_match_starts.insert(key, (user_id, SystemTime::now()));
+  }
+
+  /// Remove a match start from active tracking
+  ///
+  /// ### Arguments
+  /// * `guild_id` - The Discord guild ID
+  /// * `category_id` - The category ID
+  /// * `format_id` - The format ID
+  pub fn clear_active_match_start(&mut self, guild_id: GI, category_id: u8, format_id: u8) {
+    let key = (guild_id, category_id, format_id);
+    self.active_match_starts.remove(&key);
   }
 
   /// Queue dashboard updates for every category that contains the player.

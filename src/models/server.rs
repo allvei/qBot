@@ -483,7 +483,9 @@ impl Category {
   }
 
   pub async fn get_queue_fmt(&mut self, fmt_id: u8) -> Result<&mut Session, Error> {
+    debug!("get_queue_fmt: fmt_id={}, total formats={}", fmt_id, self.formats.len());
     let sg = self.format_mut(fmt_id).ok_or_else(|| anyhow!("Format {} not found", fmt_id))?;
+    debug!("get_queue_fmt: format found, total sessions={}, session statuses: {:?}", sg.sessions.len(), sg.sessions.iter().map(|s| format!("{:?}", s.status)).collect::<Vec<_>>());
     sg.sessions.iter_mut().find(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot).ok_or(anyhow!("No joinable session found in format {}", fmt_id))
   }
 
@@ -1522,15 +1524,25 @@ impl Category {
       .collect();
 
     // Find or create the idle session (queue) and get current size
+    // If pulling a Hot session (not post-game) and an Idle session already exists, create a new one
+    // to avoid mixing players from the ended game with players waiting for the next game
     let (idle_session_idx, current_queue_size) = {
       let sg = self.format_mut(fmt_id).unwrap();
-      let idle_session_idx = match sg.sessions.iter().position(|s| s.status == SessionStatus::Idle) {
-        Some(idx) => idx,
-        None => {
-          // No idle session exists (game ended from Hot without push), create one
-          info!("No idle session found, creating one for re-queuing players in format {}", fmt_id + 1);
-          sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
-          sg.sessions.len() - 1
+      let has_existing_idle = sg.sessions.iter().any(|s| s.status == SessionStatus::Idle);
+      let idle_session_idx = if !post_game && has_existing_idle {
+        // Pulling a Hot session with existing Idle - create new Idle for these players
+        info!("Pulling Hot session with existing Idle, creating new Idle session for re-queuing players in format {}", fmt_id + 1);
+        sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
+        sg.sessions.len() - 1
+      } else {
+        match sg.sessions.iter().position(|s| s.status == SessionStatus::Idle) {
+          Some(idx) => idx,
+          None => {
+            // No idle session exists (game ended from Hot without push), create one
+            info!("No idle session found, creating one for re-queuing players in format {}", fmt_id + 1);
+            sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
+            sg.sessions.len() - 1
+          }
         }
       };
       let current_size = sg.sessions[idle_session_idx].pool.len();
@@ -1878,7 +1890,9 @@ impl Category {
   }
 
   pub async fn queue_player_with_vc_status_fmt(&mut self, fmt_id: u8, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
+    debug!("queue_player_with_vc_status_fmt: user_id={}, tag={}, fmt_id={}, in_vc={}", player.user_id, player.tag, fmt_id, in_vc);
     let session = self.get_queue_fmt(fmt_id).await?;
+    debug!("queue_player_with_vc_status_fmt: got session, current pool size={}", session.pool.len());
     let was_empty = session.pool.is_empty();
     let was_idle = session.is_idle();
     let was_hot = session.is_hot();
@@ -1888,8 +1902,10 @@ impl Category {
     let player_queue_expiration = player.queue_expiration;
     let db = queue_ctx.db.unwrap();
     let user_prefs = db.players.get_prefs(user_id).await?;
+    debug!("queue_player_with_vc_status_fmt: user_prefs loaded, calling add_ply");
 
     session.add_ply(player.clone(), in_vc)?;
+    debug!("queue_player_with_vc_status_fmt: add_ply succeeded, new pool size={}", session.pool.len());
 
     // Schedule timeout for this player
     if let Some(guild_id) = queue_ctx.guild_id {
@@ -1937,7 +1953,8 @@ impl Category {
               let overflow_players: Vec<_> = hot_sessions_mut[0].pool.drain(quota..).collect();
               drop(hot_sessions_mut); // Release borrow before next mutable borrow
               
-              let idle_session = self.get_queue_fmt(fmt_id).await?;
+              // Get the newly created Idle session (last in the vector)
+              let idle_session = self.format_mut(fmt_id).and_then(|sg| sg.sessions.last_mut()).ok_or_else(|| anyhow!("Failed to get new Idle session"))?;
               for overflow_player in overflow_players {
                 idle_session.pool.push(overflow_player);
               }
@@ -2080,19 +2097,20 @@ impl Category {
       warn!("No idle sessions found when checking quota for format {}", fmt_id);
       return false;
     }
-    if g.len() > 1 {
-      warn!("Multiple idle games found in format {}, faulty", fmt_id);
-    }
-    let l = g[0].pool.len();
+    // Check all idle sessions - any one meeting quota should return true for concurrent games
     let q = self.format(fmt_id).map(|sg| sg.quota as usize).unwrap_or(0);
-    match l.cmp(&q) {
-      std::cmp::Ordering::Less => false,
-      std::cmp::Ordering::Equal => true,
-      std::cmp::Ordering::Greater => {
-        warn!("Quota met late, more players than quota in format {}", fmt_id);
-        true
+    for session in g {
+      let l = session.pool.len();
+      match l.cmp(&q) {
+        std::cmp::Ordering::Equal => return true,
+        std::cmp::Ordering::Greater => {
+          warn!("Quota met late, more players than quota in format {}", fmt_id);
+          return true;
+        }
+        std::cmp::Ordering::Less => continue,
       }
     }
+    false
   }
 
   /// Notifies the queue chat that quota has been met
