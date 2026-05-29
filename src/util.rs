@@ -85,7 +85,7 @@ pub fn init_logging(log_buffer: Option<std::sync::Arc<tokio::sync::Mutex<std::co
   let timer = tracing_subscriber::fmt::time::UtcTime::new(time::format_description::parse("[hour]:[minute]:[second].[subsecond digits:4]").unwrap());
 
   // Console layer - filter out library spam
-  let console_filter = EnvFilter::new("pf_pug_bot=info")
+  let console_filter = EnvFilter::new("qbot=info")
     .add_directive("serenity=warn".parse().unwrap())
     .add_directive("tokio_tungstenite=warn".parse().unwrap())
     .add_directive("tokio=warn".parse().unwrap())
@@ -107,7 +107,7 @@ pub fn init_logging(log_buffer: Option<std::sync::Arc<tokio::sync::Mutex<std::co
     .with_filter(console_filter);
 
   // File layer with application logs only - filter out spam
-  let file_filter = EnvFilter::new("pf_pug_bot=info")
+  let file_filter = EnvFilter::new("qbot=info")
     .add_directive("serenity=warn".parse().unwrap())
     .add_directive("tokio_tungstenite=warn".parse().unwrap())
     .add_directive("tokio=warn".parse().unwrap())
