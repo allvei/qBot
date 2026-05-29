@@ -270,6 +270,11 @@ pub fn create_selection_menu(menu_id: &str, placeholder: &str, options: Vec<(Str
   }
 }
 
+/// Create a multi-user select menu
+pub fn create_multi_user_select_menu(menu_id: &str, placeholder: &str) -> CAR {
+  CAR::SelectMenu(CSM::new(menu_id, CSMK::User { default_users: None }).placeholder(placeholder).min_values(1).max_values(25))
+}
+
 /// Trait for types that can be displayed as a settings menu
 pub trait AsSettingsMenu {
   fn as_settings_menu(&self) -> SettingsMenu;
@@ -374,21 +379,24 @@ pub struct RolesConfigDisplay {
   pub guild_name: String,
   pub runner_role: Option<String>,
   pub admin_role: Option<String>,
+  pub ping_role: Option<String>,
 }
 
 impl AsSettingsMenu for RolesConfigDisplay {
   fn as_settings_menu(&self) -> SettingsMenu {
     let runner_default = self.runner_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
     let admin_default = self.admin_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
+    let ping_default = self.ping_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
 
     SettingsMenu::new(format!("{} - Roles config", self.guild_name))
-      .description("Configure runner and admin roles")
+      .description("Configure runner, admin, and ping roles")
       .color(0x5865F2)
       .row(SR::RoleSelect { id: "guild_config_runner_role".to_string(), placeholder: "Select runner role".to_string(), default: runner_default })
       .row(SR::RoleSelect { id: "guild_config_admin_role".to_string(), placeholder: "Select admin role".to_string(), default: admin_default })
+      .row(SR::RoleSelect { id: "guild_config_ping_role".to_string(), placeholder: "Select ping role (empty for @here)".to_string(), default: ping_default })
       .row(SR::Buttons(vec![
-        SB::action("guild_config_create_roles", "Create roles", Sbs::Primary),
-        SB::action("guild_config_roles_menu", "Back", Sbs::Secondary),
+        SB::action("guild_config_create_ping_role", "Create ping role", Sbs::Primary),
+        SB::action("guild_config", "Back", Sbs::Secondary),
       ]))
   }
 }
@@ -471,7 +479,7 @@ impl AsSettingsMenu for EloConfigDisplay {
       }
     }
 
-    action_buttons.push(SB::action("guild_config_roles_menu", "Back", Sbs::Secondary));
+    action_buttons.push(SB::action("guild_config", "Back", Sbs::Secondary));
     menu = menu.row(SR::Buttons(action_buttons));
 
     menu
@@ -512,7 +520,7 @@ impl AsSettingsMenu for GeneralConfigDisplay {
         SB::action("guild_config_edit_gamemode", "Edit gamemode", Sbs::Secondary),
         SB::action("guild_config_edit_system_msg_channel", "Edit system msg channel", Sbs::Secondary),
         SB::action("guild_config_edit_community_updates_channel", "Edit community updates channel", Sbs::Secondary),
-        SB::action("guild_config_roles_menu", "Back", Sbs::Secondary),
+        SB::action("guild_config", "Back", Sbs::Secondary),
       ]))
   }
 }
@@ -575,7 +583,7 @@ impl AsSettingsMenu for VcConfigDisplay {
       }
     }
 
-    action_buttons.push(SB::action("guild_config_roles_menu", "Back", Sbs::Secondary));
+    action_buttons.push(SB::action("guild_config", "Back", Sbs::Secondary));
     menu = menu.row(SR::Buttons(action_buttons));
 
     menu

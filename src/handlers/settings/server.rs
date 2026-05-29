@@ -1,11 +1,11 @@
 use crate::handlers::settings::core::{parse_cid, parse_mid, parse_opt_cid};
 use crate::handlers::settings::menu::{CategoryListDisplay, RankRoleConfigDisplay, RANK_CONFIG_TOGGLES, SERVER_CONFIG_TOGGLES};
-use crate::handlers::settings::utils::{
+use crate::handlers::settings::utils::{create_short_input_opt,
   create_input_sh, create_input_sh_cap, create_paragraph_input_with_value, create_value_input_sh, create_value_input_sh_cap, get_role_name_with_fallback,
   send_component_error_response, send_modal_error_response, send_nav_response, send_nav_response_modal,
 };
 use crate::handlers::settings::{
-  build_category_settings_buttons, build_category_settings_embed, nav_category_list, nav_rank_config, nav_role_config,
+  build_category_settings_buttons, build_category_settings_embed, nav_category_list, nav_rank_config, nav_server_config,
   nav_guild_config, nav_elo_config, nav_general_config, nav_roles_config, nav_vc_config, CategorySettings,
 };
 use crate::models::guild_name;
@@ -28,6 +28,7 @@ use crate::{send_nav, send_nav_modal};
 pub struct ServerSettings {
   pub runner_role: Option<String>,
   pub admin_role: Option<String>,
+  pub ping_role: Option<String>,
   pub toggle_states: Vec<bool>,
   pub balance_method: String,
   pub post_game_confirm_time: u16,
@@ -120,8 +121,8 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
         // ELO config toggles - stay on ELO config page
         send_nav!(interaction, ctx, db, nav_elo_config, guild_id, 0)?;
       } else {
-        // Other toggles - go to roles config
-        send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
+        // Other toggles - go to server config
+        send_nav!(interaction, ctx, db, nav_server_config, guild_id)?;
       }
     }
     // Generic handler for all rank config toggles (dynamic ELO, ELO-Rank linked, etc.)
@@ -133,11 +134,29 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?;
     }
     "guild_config_roles" => {
-      send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
+      send_nav!(interaction, ctx, db, nav_server_config, guild_id)?;
     }
     // Handle sub-menu navigation
     "guild_config_roles_menu" => {
-      send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
+      send_nav!(interaction, ctx, db, nav_roles_config, guild_id)?;
+    }
+    "guild_config" => {
+      send_nav!(interaction, ctx, db, nav_server_config, guild_id)?;
+    }
+    "guild_config_server_back" => {
+      send_nav!(interaction, ctx, db, nav_server_config, guild_id)?;
+    }
+    "guild_config_general_back" => {
+      send_nav!(interaction, ctx, db, nav_general_config, guild_id)?;
+    }
+    "guild_config_roles_back" => {
+      send_nav!(interaction, ctx, db, nav_roles_config, guild_id)?;
+    }
+    "guild_config_elo_back" => {
+      send_nav!(interaction, ctx, db, nav_elo_config, guild_id, 0)?;
+    }
+    "guild_config_vc_back" => {
+      send_nav!(interaction, ctx, db, nav_vc_config, guild_id, 0)?;
     }
     "guild_config_elo_menu" => {
       send_nav!(interaction, ctx, db, nav_elo_config, guild_id, 0)?;
@@ -162,9 +181,6 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
         .unwrap_or(0);
       send_nav!(interaction, ctx, db, nav_vc_config, guild_id, page)?;
     }
-    "guild_config_roles_back" => {
-      send_nav!(interaction, ctx, db, nav_guild_config, guild_id)?;
-    }
     "guild_config_runner_role" => {
       if let CIDK::RoleSelect { values } = &interaction.data.kind {
         if let Some(role_id) = values.first() {
@@ -180,6 +196,25 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
         }
         send_nav!(interaction, ctx, db, nav_roles_config, guild_id)?;
       }
+    }
+    "guild_config_ping_role" => {
+      if let CIDK::RoleSelect { values } = &interaction.data.kind {
+        let role_id_str = values.first().map(|id| id.get().to_string());
+        db.config.set_ping_role_id(guild_id, role_id_str.as_deref()).await?;
+        send_nav!(interaction, ctx, db, nav_roles_config, guild_id)?;
+      }
+    }
+    "guild_config_create_ping_role" => {
+      // Show modal to enter role name
+      let modal = CM::new("guild_config_modal_create_ping_role", "Create ping role").components(vec![create_short_input_opt(
+        "Role name",
+        "ping_role_name",
+        "e.g., qBot Ping",
+        "qBot Ping",
+      )]);
+
+      let response = CIR::Modal(modal);
+      interaction.create_response(&ctx.http, response).await?;
     }
     "guild_config_ranks" => {
       send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?;
@@ -498,7 +533,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
         info!("[{}] Initialized default ranks", guild_name);
       }
 
-      send_nav!(interaction, ctx, db, nav_role_config, guild_id)?;
+      send_nav!(interaction, ctx, db, nav_server_config, guild_id)?;
     }
     "guild_config_create_category" => {
       // Show modal to collect category settings before creating channels
@@ -1929,7 +1964,33 @@ pub async fn handle_guild_config_modal(
   let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
   info!("{} submitted modal {} (guild: {})", user_tag, modal_id, guild_id);
 
-  if modal_id == "guild_config_rank_modal_add" {
+  if modal_id == "guild_config_modal_create_ping_role" {
+    // Handle create ping role modal
+    let mut role_name_value = String::new();
+
+    for row in &interaction.data.components {
+      for component in &row.components {
+        if let ARC::InputText(input) = component {
+          if input.custom_id == "ping_role_name" {
+            role_name_value = input.value.clone().unwrap_or_default();
+          }
+        }
+      }
+    }
+
+    let role_name = role_name_value.trim();
+    if role_name.is_empty() {
+      send_modal_error_response(interaction, ctx, "Role name cannot be empty.").await;
+      return Ok(());
+    }
+
+    // Create the role
+    let role = guild_id.create_role(&ctx.http, ER::new().name(role_name)).await?;
+    db.config.set_ping_role_id(guild_id, Some(&role.id.get().to_string())).await?;
+
+    // Navigate back to roles config
+    send_nav_response_modal(interaction, ctx, nav_roles_config(ctx, db, guild_id).await).await?;
+  } else if modal_id == "guild_config_rank_modal_add" {
     // Handle add new rank modal
     let mut name_value = String::new();
     let mut elo_value = String::new();
@@ -2513,6 +2574,7 @@ pub async fn get_guild_config(db: &Arc<Database>, guild_id: GI) -> Result<Server
   let config_map = db.config.get_config_map(guild_id).await?;
   let runner_role = config_map.get("runner_id").cloned();
   let admin_role = config_map.get("admin_id").cloned();
+  let ping_role = db.config.get_ping_role_id(guild_id).await?;
   let balance_method = db.config.get_team_balance_method(guild_id).await?;
 
   let mut toggle_states = Vec::with_capacity(SERVER_CONFIG_TOGGLES.len());
@@ -2524,5 +2586,5 @@ pub async fn get_guild_config(db: &Arc<Database>, guild_id: GI) -> Result<Server
 
   let post_game_confirm_time = db.config.get_post_game_confirm_time(guild_id).await.unwrap_or(120);
 
-  Ok(ServerSettings { runner_role, admin_role, toggle_states, balance_method, post_game_confirm_time })
+  Ok(ServerSettings { runner_role, admin_role, ping_role, toggle_states, balance_method, post_game_confirm_time })
 }
