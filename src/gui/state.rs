@@ -81,6 +81,8 @@ pub struct GuiSharedState {
   pub gui_settings: Arc<RwLock<GuiSettings>>,
   /// Cached guild config values for live editing (guild_id -> column -> value)
   pub guild_config_cache: Arc<RwLock<HashMap<u64, HashMap<String, String>>>>,
+  /// Flag indicating graceful shutdown is complete
+  pub shutdown_complete: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl GuiSharedState {
@@ -106,6 +108,7 @@ impl GuiSharedState {
       community_updates_channel_guilds: Arc::new(RwLock::new(std::collections::HashSet::new())),
       gui_settings: Arc::new(RwLock::new(GuiSettings::load())),
       guild_config_cache: Arc::new(RwLock::new(HashMap::new())),
+      shutdown_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }
   }
 

@@ -4,7 +4,7 @@ use eframe::egui;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use crate::gui::panels::{admin, community_updates, log, queue, settings, system_message, users};
+use crate::gui::panels::{admin, broadcast, log, queue, settings, users};
 use crate::gui::state::GuiSharedState;
 
 /// Main egui application struct
@@ -13,8 +13,7 @@ pub struct MyApp {
   selected_tab: PanelTab,
   should_quit: bool,
   next_clock_tick: std::time::Instant,
-  system_message_panel: system_message::SystemMessagePanel,
-  community_updates_panel: community_updates::CommunityUpdatesPanel,
+  broadcast_panel: broadcast::BroadcastPanel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,8 +23,7 @@ enum PanelTab {
   Users,
   Admin,
   Settings,
-  SystemMessage,
-  CommunityUpdates,
+  Broadcast,
 }
 
 impl MyApp {
@@ -35,8 +33,7 @@ impl MyApp {
       selected_tab: PanelTab::Logs,
       should_quit: false,
       next_clock_tick: Self::next_second_instant(),
-      system_message_panel: system_message::SystemMessagePanel::default(),
-      community_updates_panel: community_updates::CommunityUpdatesPanel::default(),
+      broadcast_panel: broadcast::BroadcastPanel::default(),
     }
   }
 
@@ -145,14 +142,11 @@ impl eframe::App for MyApp {
         ui.selectable_value(&mut self.selected_tab, PanelTab::Users, "Users");
         ui.selectable_value(&mut self.selected_tab, PanelTab::Admin, "Admin");
         ui.selectable_value(&mut self.selected_tab, PanelTab::Settings, "Settings");
-        ui.selectable_value(&mut self.selected_tab, PanelTab::SystemMessage, "System Message");
-        ui.selectable_value(&mut self.selected_tab, PanelTab::CommunityUpdates, "Community Updates");
+        ui.selectable_value(&mut self.selected_tab, PanelTab::Broadcast, "Broadcast");
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
           if ui.button("Quit").clicked() {
             self.state.send_cmd(crate::gui::commands::GuiCommand::GracefulShutdown);
-            self.trigger_shutdown();
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
           }
           if ui.button("Refresh").clicked() {
             self.refresh_data();
@@ -168,21 +162,20 @@ impl eframe::App for MyApp {
       PanelTab::Users => users::show_users_panel(ui, &self.state),
       PanelTab::Admin => admin::show_admin_panel(ui, &self.state),
       PanelTab::Settings => settings::show_settings_panel(ui, &self.state),
-      PanelTab::SystemMessage => {
+      PanelTab::Broadcast => {
         let mut gui_state = crate::gui::state::GuiState::from_shared(&self.state);
         gui_state.shared_state = Some(self.state.clone());
         let gui_state = Arc::new(tokio::sync::Mutex::new(gui_state));
-        self.system_message_panel.ui(ui, gui_state);
-      }
-      PanelTab::CommunityUpdates => {
-        let mut gui_state = crate::gui::state::GuiState::from_shared(&self.state);
-        gui_state.shared_state = Some(self.state.clone());
-        let gui_state = Arc::new(tokio::sync::Mutex::new(gui_state));
-        self.community_updates_panel.ui(ui, gui_state);
+        self.broadcast_panel.ui(ui, gui_state);
       }
     });
 
     if self.should_quit {
+      ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    // Check if graceful shutdown is complete, then close window
+    if self.state.shutdown_complete.load(std::sync::atomic::Ordering::Relaxed) {
       ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 

@@ -299,6 +299,10 @@ impl Application {
                     );
                     shutdown_handler.cleanup().await;
                     shutdown_flag_cmd.store(true, std::sync::atomic::Ordering::Relaxed);
+                    // Signal GUI that shutdown is complete
+                    if let Some(gui_state) = shared_state_cmd.as_ref() {
+                      gui_state.shutdown_complete.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
                     break;
                   }
 
@@ -411,9 +415,6 @@ impl Application {
         }
       });
     }
-
-    // Start terminal command reader for testing
-    crate::terminal::start_terminal_reader(self.manager.clone(), self.db.clone()).await;
 
     // Note: System message channel validation happens in the ready event handler
     // See handlers/events.rs for the validation logic
@@ -989,19 +990,26 @@ impl EventHandler for Handler {
           let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
           let action = parts.get(2).unwrap_or(&"");
 
-          // Extract user_id from button click or select menu
-          let user_id_str = if let serenity::all::ComponentInteractionDataKind::Button = itx.data.kind {
+          // Extract user_ids from button click or select menu
+          let user_ids: Vec<String> = if let serenity::all::ComponentInteractionDataKind::Button = itx.data.kind {
             // Button variant: custom_id is "runner_player_ACTION_USERID"
-            parts.get(3).unwrap_or(&"")
+            if let Some(id) = parts.get(3) {
+              vec![id.to_string()]
+            } else {
+              vec![]
+            }
+          } else if let serenity::all::ComponentInteractionDataKind::UserSelect { values } = &itx.data.kind {
+            // UserSelect variant: values are user IDs
+            values.iter().map(|v| v.get().to_string()).collect()
           } else if let serenity::all::ComponentInteractionDataKind::StringSelect { values } = &itx.data.kind {
-            // Select menu variant: value is the user_id
-            values.first().map(|s| s.as_str()).unwrap_or("")
+            // StringSelect variant: values are user IDs
+            values.clone()
           } else {
-            ""
+            vec![]
           };
 
-          if !user_id_str.is_empty() {
-            let result = crate::handlers::runner_menu::handle_player_selection(&ctx, itx, &self.db, &self.manager, action, user_id_str).await;
+          if !user_ids.is_empty() {
+            let result = crate::handlers::runner_menu::handle_player_selection(&ctx, itx, &self.db, &self.manager, action, &user_ids).await;
             if let Err(e) = result {
               error!("Error handling runner player selection for action '{}': {e}", action);
             }
@@ -1489,11 +1497,14 @@ impl EventHandler for Handler {
                   category.cancel_player_rejoin_expiration(&ctx, guild_id, format.id, user_id).await;
                 }
 
+                // Always check if this player was in the pending VC notification list
+                // This ensures the "PUG Starting" alert is deleted/updated when players join VC
+                category.on_player_joined_vc(&ctx, user_id).await;
+
                 // Update dashboard if player was missing in a hot session
                 // This removes them from the "Missing players" list
                 if was_hot && was_missing {
                   info!("{} joined VC during hot session, updating dashboard", tag);
-                  category.on_player_joined_vc(&ctx, user_id).await;
                   category.queue_dash_update(&ctx, guild_id).await;
                 }
               }
@@ -1832,7 +1843,7 @@ impl Handler {
     let custom_id = &interaction.data.custom_id;
     let parts: Vec<&str> = custom_id.split('_').collect();
     let category_id = parts.get(3).and_then(|s| s.parse::<i64>().ok());
-    let _format_id = parts.get(4).and_then(|s| s.parse::<i64>().ok());
+    let format_id = parts.get(4).and_then(|s| s.parse::<i64>().ok());
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
 
     // Extract scores from modal
@@ -1905,6 +1916,7 @@ impl Handler {
 
     // Check if score was already reported and update database atomically within the lock
     let mut score_already_reported = false;
+    let mut should_clear_submission = false;
     if let Some(cat_id) = category_id {
       let mut mgr = self.manager.lock().await;
       if let Ok(server) = mgr.get_qguild(guild_id) {
@@ -1916,6 +1928,7 @@ impl Handler {
             } else {
               session.score_reported = true;
               let session_players = session.pool.clone();
+              should_clear_submission = true;
 
               // Update database immediately while holding the lock to prevent race condition
               drop(mgr);
@@ -1938,6 +1951,12 @@ impl Handler {
             }
           }
         }
+      }
+
+      // Clear the active score submission if we processed a score
+      if should_clear_submission {
+        let mut mgr = self.manager.lock().await;
+        mgr.clear_active_score_submission(guild_id, cat_id as u8, format_id.unwrap_or(0) as u8);
       }
     }
 
