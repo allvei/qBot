@@ -1,5 +1,6 @@
 use crate::handlers::settings::core::{parse_cid, parse_mid, parse_opt_cid};
 use crate::handlers::settings::menu::{CategoryListDisplay, RankRoleConfigDisplay, RANK_CONFIG_TOGGLES, SERVER_CONFIG_TOGGLES};
+use crate::handlers::settings::menu_system::{add_back_button, get_navigation_info, MenuPage};
 use crate::handlers::settings::utils::{create_short_input_opt,
   create_input_sh, create_input_sh_cap, create_paragraph_input_with_value, create_value_input_sh, create_value_input_sh_cap, get_role_name_with_fallback,
   send_component_error_response, send_modal_error_response, send_nav_response, send_nav_response_modal,
@@ -133,39 +134,21 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       db.config.set_bool(guild_id, toggle.column, !current).await?;
       send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?;
     }
-    "guild_config_roles" => {
-      send_nav!(interaction, ctx, db, nav_server_config, guild_id)?;
-    }
-    // Handle sub-menu navigation
-    "guild_config_roles_menu" => {
-      send_nav!(interaction, ctx, db, nav_roles_config, guild_id)?;
-    }
-    "guild_config" => {
-      send_nav!(interaction, ctx, db, nav_server_config, guild_id)?;
-    }
-    "guild_config_server_back" => {
-      send_nav!(interaction, ctx, db, nav_server_config, guild_id)?;
-    }
-    "guild_config_general_back" => {
-      send_nav!(interaction, ctx, db, nav_general_config, guild_id)?;
-    }
-    "guild_config_roles_back" => {
-      send_nav!(interaction, ctx, db, nav_roles_config, guild_id)?;
-    }
-    "guild_config_elo_back" => {
-      send_nav!(interaction, ctx, db, nav_elo_config, guild_id, 0)?;
-    }
-    "guild_config_vc_back" => {
-      send_nav!(interaction, ctx, db, nav_vc_config, guild_id, 0)?;
-    }
-    "guild_config_elo_menu" => {
-      send_nav!(interaction, ctx, db, nav_elo_config, guild_id, 0)?;
-    }
-    "guild_config_vc_menu" => {
-      send_nav!(interaction, ctx, db, nav_vc_config, guild_id, 0)?;
-    }
-    "guild_config_general_menu" => {
-      send_nav!(interaction, ctx, db, nav_general_config, guild_id)?;
+    // Handle sub-menu navigation using menu system
+    _ if get_navigation_info(button_id).is_some() => {
+      if let Some((nav_fn_name, page)) = get_navigation_info(button_id) {
+        match nav_fn_name {
+            "nav_server_config" => send_nav!(interaction, ctx, db, nav_server_config, guild_id)?,
+            "nav_roles_config" => send_nav!(interaction, ctx, db, nav_roles_config, guild_id)?,
+            "nav_elo_config" => send_nav!(interaction, ctx, db, nav_elo_config, guild_id, page.unwrap_or(0))?,
+            "nav_vc_config" => send_nav!(interaction, ctx, db, nav_vc_config, guild_id, page.unwrap_or(0))?,
+            "nav_general_config" => send_nav!(interaction, ctx, db, nav_general_config, guild_id)?,
+            "nav_rank_config" => send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?,
+            "nav_category_list" => send_nav!(interaction, ctx, db, nav_category_list, guild_id)?,
+            "nav_guild_config" => send_nav!(interaction, ctx, db, nav_guild_config, guild_id)?,
+            _ => {}
+        }
+      }
     }
     // Handle ELO pagination buttons
     button_id if button_id.starts_with("guild_config_elo_page_") => {
@@ -215,9 +198,6 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
 
       let response = CIR::Modal(modal);
       interaction.create_response(&ctx.http, response).await?;
-    }
-    "guild_config_ranks" => {
-      send_nav!(interaction, ctx, db, nav_rank_config, guild_id)?;
     }
     "guild_config_ranks_back" => {
       send_nav!(interaction, ctx, db, nav_guild_config, guild_id)?;
@@ -297,12 +277,15 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
               .description("Select a Discord role to link to a new rank. The role will be used to assign this rank to players automatically.")
               .color(0x5865F2),
           )
-          .components(vec![
-            CAR::SelectMenu(
-              CSM::new("guild_config_rank_link_role", CSMK::Role { default_roles: None }).placeholder("Select a Discord role to link").min_values(1).max_values(1),
-            ),
-            CAR::Buttons(vec![CB::new("guild_config_ranks_back").label("Back to ranks").style(BS::Secondary)]),
-          ]),
+          .components({
+            let mut comps = vec![
+              CAR::SelectMenu(
+                CSM::new("guild_config_rank_link_role", CSMK::Role { default_roles: None }).placeholder("Select a Discord role to link").min_values(1).max_values(1),
+              ),
+            ];
+            add_back_button(&mut comps, MenuPage::RankConfig);
+            comps
+          }),
       );
       interaction.create_response(&ctx.http, response).await?;
     }
@@ -355,9 +338,6 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
         }
       }
     }
-    "guild_config_categories" => {
-      send_nav!(interaction, ctx, db, nav_category_list, guild_id)?;
-    }
     "guild_config_categories_back" => {
       send_nav!(interaction, ctx, db, nav_guild_config, guild_id)?;
     }
@@ -394,22 +374,52 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       interaction.create_response(&ctx.http, CIR::Modal(modal)).await?;
     }
     "guild_config_edit_system_msg_channel" => {
-      info!("Opening system message channel modal for guild {}", guild_id);
-      let current_channel = db.config.get_system_message_channel(guild_id).await?.map(|id| id.to_string()).unwrap_or_default();
-      info!("Current system message channel: {}", current_channel);
-      let modal = CM::new("guild_config_modal_system_msg_channel", "Edit system message channel").components(vec![
-        create_value_input_sh("System message channel ID", "system_msg_channel_input", "e.g., 123456789012345678", &current_channel),
-      ]);
-      interaction.create_response(&ctx.http, CIR::Modal(modal)).await?;
+      info!("Opening system message channel select for guild {}", guild_id);
+      let current_channel = db.config.get_system_message_channel(guild_id).await?;
+      let select_menu = CSM::new("guild_config_system_msg_channel_select", CSMK::Channel {
+        channel_types: Some(vec![serenity::all::ChannelType::Text]),
+        default_channels: current_channel.map(|id| vec![id]),
+      }).placeholder("Select system message channel").min_values(1).max_values(1);
+      let mut components = vec![CAR::SelectMenu(select_menu)];
+      add_back_button(&mut components, MenuPage::GeneralConfig);
+      let embed = CE::new()
+        .title("Edit System Message Channel")
+        .description("Select the channel where system messages will be sent.")
+        .color(0x5865F2);
+      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
+      interaction.create_response(&ctx.http, response).await?;
     }
     "guild_config_edit_community_updates_channel" => {
-      info!("Opening community updates channel modal for guild {}", guild_id);
-      let current_channel = db.config.get_community_updates_channel(guild_id).await?.map(|id| id.to_string()).unwrap_or_default();
-      info!("Current community updates channel: {}", current_channel);
-      let modal = CM::new("guild_config_modal_community_updates_channel", "Edit community updates channel").components(vec![
-        create_value_input_sh("Community updates channel ID", "community_updates_channel_input", "e.g., 123456789012345678", &current_channel),
-      ]);
-      interaction.create_response(&ctx.http, CIR::Modal(modal)).await?;
+      info!("Opening community updates channel select for guild {}", guild_id);
+      let current_channel = db.config.get_community_updates_channel(guild_id).await?;
+      let select_menu = CSM::new("guild_config_community_updates_channel_select", CSMK::Channel {
+        channel_types: Some(vec![serenity::all::ChannelType::Text]),
+        default_channels: current_channel.map(|id| vec![id]),
+      }).placeholder("Select community updates channel").min_values(1).max_values(1);
+      let mut components = vec![CAR::SelectMenu(select_menu)];
+      add_back_button(&mut components, MenuPage::GeneralConfig);
+      let embed = CE::new()
+        .title("Edit Community Updates Channel")
+        .description("Select the channel where community updates will be sent.")
+        .color(0x5865F2);
+      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
+      interaction.create_response(&ctx.http, response).await?;
+    }
+    "guild_config_system_msg_channel_select" => {
+      if let CIDK::ChannelSelect { values } = &interaction.data.kind {
+        if let Some(channel_id) = values.first() {
+          db.config.set_system_message_channel(guild_id, Some(*channel_id)).await?;
+          send_nav!(interaction, ctx, db, nav_general_config, guild_id)?;
+        }
+      }
+    }
+    "guild_config_community_updates_channel_select" => {
+      if let CIDK::ChannelSelect { values } = &interaction.data.kind {
+        if let Some(channel_id) = values.first() {
+          db.config.set_community_updates_channel(guild_id, Some(*channel_id)).await?;
+          send_nav!(interaction, ctx, db, nav_general_config, guild_id)?;
+        }
+      }
     }
     "guild_config_migrate_elo" => {
       // Show confirmation prompt before running migration
@@ -439,12 +449,15 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       };
 
       let components = if total_players > 0 && without_dynamic_elo > 0 {
-        vec![CAR::Buttons(vec![
+        let mut comps = vec![CAR::Buttons(vec![
           CB::new("guild_config_migrate_elo_confirm").label("Confirm Migration").style(BS::Danger),
-          CB::new("guild_config_migrate_elo_cancel").label("Cancel").style(BS::Secondary),
-        ])]
+        ])];
+        add_back_button(&mut comps, MenuPage::EloConfig);
+        comps
       } else {
-        vec![CAR::Buttons(vec![CB::new("guild_config_migrate_elo_cancel").label("Close").style(BS::Secondary)])]
+        let mut comps = vec![];
+        add_back_button(&mut comps, MenuPage::EloConfig);
+        comps
       };
 
       let response = CIR::Message(CIRM::new().content(description).components(components).ephemeral(true));
@@ -487,8 +500,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       }
     }
     "guild_config_migrate_elo_cancel" => {
-      // User cancelled the migration - delete the ephemeral message
-      interaction.delete_response(&ctx.http).await.ok();
+      send_nav!(interaction, ctx, db, nav_elo_config, guild_id, 0)?;
     }
     "guild_config_create_roles" => {
       // Create runner, admin, and rank roles
@@ -593,7 +605,8 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
         )
         .color(0x5865F2);
 
-      let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("guild_config_link_cancel").label("Cancel").style(BS::Secondary)])];
+      let mut components = vec![CAR::SelectMenu(select_menu)];
+      add_back_button(&mut components, MenuPage::CategoryList);
 
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
       interaction.create_response(&ctx.http, response).await?;
@@ -766,7 +779,8 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
                 .description(format!("{}\n\n**Next:** Select the {} channel from the dropdown below.", status, next_channel_name))
                 .color(0x5865F2);
 
-              let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("guild_config_link_cancel").label("Cancel").style(BS::Secondary)])];
+              let mut components = vec![CAR::SelectMenu(select_menu)];
+              add_back_button(&mut components, MenuPage::CategoryList);
 
               let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
               interaction.create_response(&ctx.http, response).await?;
@@ -1292,7 +1306,8 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
                 .description(format!("{}\n\n**Next:** Select the {} channel from the dropdown below.", status, next_channel_name))
                 .color(0x5865F2);
 
-              let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("guild_config_link_cancel").label("Cancel").style(BS::Secondary)])];
+              let mut components = vec![CAR::SelectMenu(select_menu)];
+              add_back_button(&mut components, MenuPage::CategoryList);
 
               let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
               interaction.create_response(&ctx.http, response).await?;
@@ -1550,7 +1565,8 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
         )
         .color(0xFF0000);
 
-      let components = vec![CAR::SelectMenu(select_menu), CAR::Buttons(vec![CB::new("guild_config_remove_cancel").label("Cancel").style(BS::Secondary)])];
+      let mut components = vec![CAR::SelectMenu(select_menu)];
+      add_back_button(&mut components, MenuPage::CategoryList);
 
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
       interaction.create_response(&ctx.http, response).await?;
@@ -1602,11 +1618,11 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
               ))
               .color(0xFF0000);
 
-            let components = vec![CAR::Buttons(vec![
+            let mut components = vec![CAR::Buttons(vec![
               CB::new(format!("guild_config_remove_confirm_delete_{}", category_id)).label("Yes, delete channels").style(BS::Danger),
               CB::new(format!("guild_config_remove_confirm_keep_{}", category_id)).label("No, keep channels").style(BS::Success),
-              CB::new("guild_config_remove_cancel").label("Cancel").style(BS::Secondary),
             ])];
+            add_back_button(&mut components, MenuPage::CategoryList);
 
             let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
             interaction.create_response(&ctx.http, response).await?;
@@ -2415,114 +2431,6 @@ pub async fn handle_guild_config_modal(
     db.config.set_post_game_confirm_time(guild_id, post_game_confirm_time).await?;
     let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
     info!("{} set post-game confirm time to {} seconds", user_tag, post_game_confirm_time);
-
-    send_nav_modal!(interaction, ctx, db, nav_general_config, guild_id)?;
-  } else if modal_id == "guild_config_modal_system_msg_channel" {
-    // Handle system message channel modal
-    let mut channel_id_value = String::new();
-
-    for row in &interaction.data.components {
-      for component in &row.components {
-        if let ARC::InputText(input) = component {
-          if input.custom_id == "system_msg_channel_input" {
-            channel_id_value = input.value.clone().unwrap_or_default();
-          }
-        }
-      }
-    }
-
-    info!("System message channel modal submitted with value: '{}'", channel_id_value);
-
-    // Parse and validate channel ID
-    if channel_id_value.trim().is_empty() {
-      // Clear the channel
-      match db.config.set_system_message_channel(guild_id, None).await {
-        Ok(_) => {
-          let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
-          info!("{} cleared system message channel", user_tag);
-        }
-        Err(e) => {
-          error!("Failed to clear system message channel: {}", e);
-          send_modal_error_response(interaction, ctx, &format!("Failed to clear channel: {}", e)).await;
-          return Ok(());
-        }
-      }
-    } else {
-      let channel_id: u64 = match channel_id_value.trim().parse() {
-        Ok(id) => id,
-        Err(_) => {
-          send_modal_error_response(interaction, ctx, "Invalid channel ID. Must be a number.").await;
-          return Ok(());
-        }
-      };
-
-      // Update database
-      match db.config.set_system_message_channel(guild_id, Some(CI::new(channel_id))).await {
-        Ok(_) => {
-          let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
-          info!("{} set system message channel to {}", user_tag, channel_id);
-        }
-        Err(e) => {
-          error!("Failed to set system message channel: {}", e);
-          send_modal_error_response(interaction, ctx, &format!("Failed to set channel: {}", e)).await;
-          return Ok(());
-        }
-      }
-    }
-
-    send_nav_modal!(interaction, ctx, db, nav_general_config, guild_id)?;
-  } else if modal_id == "guild_config_modal_community_updates_channel" {
-    // Handle community updates channel modal
-    let mut channel_id_value = String::new();
-
-    for row in &interaction.data.components {
-      for component in &row.components {
-        if let ARC::InputText(input) = component {
-          if input.custom_id == "community_updates_channel_input" {
-            channel_id_value = input.value.clone().unwrap_or_default();
-          }
-        }
-      }
-    }
-
-    info!("Community updates channel modal submitted with value: '{}'", channel_id_value);
-
-    // Parse and validate channel ID
-    if channel_id_value.trim().is_empty() {
-      // Clear the channel
-      match db.config.set_community_updates_channel(guild_id, None).await {
-        Ok(_) => {
-          let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
-          info!("{} cleared community updates channel", user_tag);
-        }
-        Err(e) => {
-          error!("Failed to clear community updates channel: {}", e);
-          send_modal_error_response(interaction, ctx, &format!("Failed to clear channel: {}", e)).await;
-          return Ok(());
-        }
-      }
-    } else {
-      let channel_id: u64 = match channel_id_value.trim().parse() {
-        Ok(id) => id,
-        Err(_) => {
-          send_modal_error_response(interaction, ctx, "Invalid channel ID. Must be a number.").await;
-          return Ok(());
-        }
-      };
-
-      // Update database
-      match db.config.set_community_updates_channel(guild_id, Some(CI::new(channel_id))).await {
-        Ok(_) => {
-          let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
-          info!("{} set community updates channel to {}", user_tag, channel_id);
-        }
-        Err(e) => {
-          error!("Failed to set community updates channel: {}", e);
-          send_modal_error_response(interaction, ctx, &format!("Failed to set channel: {}", e)).await;
-          return Ok(());
-        }
-      }
-    }
 
     send_nav_modal!(interaction, ctx, db, nav_general_config, guild_id)?;
   } else {

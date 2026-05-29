@@ -49,7 +49,7 @@ impl ButtonStyle {
 /// Menu page identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MenuPage {
-    /// Main guild config page
+    /// Main guild config overview page (Server/Ranks/Categories buttons)
     GuildConfig,
     /// Server config page (General/Roles/VC/ELO buttons)
     ServerConfig,
@@ -112,10 +112,29 @@ impl MenuSystem {
         menus.insert(MenuPage::GuildConfig, MenuDefinition {
             page: MenuPage::GuildConfig,
             title: "Guild Configuration",
-            description: "Select a server to configure",
+            description: "**Configuration Overview:**\n\n**Server-wide settings**\n• Roles (runner/admin permissions)\n• Team balance method\n• ELO & Rank linking\n\n**Rank management**\n• Add, remove & link ranks\n• Set default rank\n\n**Category management**\n• Queue channels & voice channels\n• Team channels & game settings",
             color: MenuColor::Standard,
             parent: None,
-            buttons: vec![],
+            buttons: vec![
+                MenuButton {
+                    id: "guild_config_roles",
+                    label: "Server",
+                    description: Some("Configure server-wide settings like roles, team balance, and ELO"),
+                    target_page: Some(MenuPage::ServerConfig),
+                },
+                MenuButton {
+                    id: "guild_config_ranks",
+                    label: "Ranks",
+                    description: Some("Manage rank roles and ELO thresholds"),
+                    target_page: Some(MenuPage::RankConfig),
+                },
+                MenuButton {
+                    id: "guild_config_categories",
+                    label: "Categories",
+                    description: Some("Manage queue categories and their settings"),
+                    target_page: Some(MenuPage::CategoryList),
+                },
+            ],
             fields: vec![],
             dynamic_fields: vec![],
             dynamic_components: vec![],
@@ -412,7 +431,7 @@ impl MenuSystem {
                 if !has_back {
                     // Generate unique back button ID based on parent page
                     let back_id = match parent {
-                        MenuPage::GuildConfig => "guild_config",
+                        MenuPage::GuildConfig => "guild_config_back",
                         MenuPage::ServerConfig => "guild_config_server_back",
                         MenuPage::RolesConfig => "guild_config_roles_back",
                         MenuPage::EloConfig => "guild_config_elo_back",
@@ -444,4 +463,94 @@ pub fn get_menu_system() -> &'static MenuSystem {
         system.populate_descriptions();
         system
     })
+}
+
+/// Navigate to a menu page based on button ID
+/// Returns the target page if the button ID is found in the menu system
+pub fn get_target_page(button_id: &str) -> Option<MenuPage> {
+    let system = get_menu_system();
+    for menu in system.menus.values() {
+        if let Some(button) = menu.buttons.iter().find(|b| b.id == button_id) {
+            return button.target_page;
+        }
+    }
+    None
+}
+
+/// Check if a button ID is a back button
+pub fn is_back_button(button_id: &str) -> bool {
+    button_id.ends_with("_back")
+}
+
+/// Get the back button ID for a given parent page
+pub fn get_back_button_id(parent: MenuPage) -> &'static str {
+    match parent {
+        MenuPage::GuildConfig => "guild_config_back",
+        MenuPage::ServerConfig => "guild_config_server_back",
+        MenuPage::RolesConfig => "guild_config_roles_back",
+        MenuPage::EloConfig => "guild_config_elo_back",
+        MenuPage::VcConfig => "guild_config_vc_back",
+        MenuPage::GeneralConfig => "guild_config_general_back",
+        MenuPage::RankConfig => "guild_config_rank_back",
+        MenuPage::CategoryList => "guild_config_categories_back",
+        MenuPage::CategorySettings => "guild_config_category_back",
+    }
+}
+
+/// Add a back button row to components
+pub fn add_back_button(components: &mut Vec<CAR>, parent: MenuPage) {
+    add_back_button_with_label(components, parent, "Back");
+}
+
+/// Add a back button row to components with custom label
+pub fn add_back_button_with_label(components: &mut Vec<CAR>, parent: MenuPage, label: &str) {
+    use serenity::all::{CreateButton as CB, ButtonStyle as BS};
+    let back_id = get_back_button_id(parent);
+    components.push(CAR::Buttons(vec![CB::new(back_id).label(label).style(BS::Secondary)]));
+}
+
+/// Handle navigation based on button ID using the menu system
+/// Returns (nav_function_name, page_number) if the button should navigate
+pub fn get_navigation_info(button_id: &str) -> Option<(&'static str, Option<usize>)> {
+    // First check if it's a back button that's not in the menu system
+    if is_back_button(button_id) {
+        // Map back button IDs to the page they navigate TO
+        let target = match button_id {
+            "guild_config_back" => MenuPage::GuildConfig,
+            "guild_config_server_back" => MenuPage::ServerConfig,
+            "guild_config_roles_back" => MenuPage::RolesConfig,
+            "guild_config_elo_back" => MenuPage::EloConfig,
+            "guild_config_vc_back" => MenuPage::VcConfig,
+            "guild_config_general_back" => MenuPage::GeneralConfig,
+            "guild_config_rank_back" => MenuPage::RankConfig,
+            "guild_config_categories_back" => MenuPage::CategoryList,
+            "guild_config_category_back" => MenuPage::CategorySettings,
+            _ => return None,
+        };
+        return match target {
+            MenuPage::ServerConfig => Some(("nav_server_config", None)),
+            MenuPage::RolesConfig => Some(("nav_roles_config", None)),
+            MenuPage::EloConfig => Some(("nav_elo_config", Some(0))),
+            MenuPage::VcConfig => Some(("nav_vc_config", Some(0))),
+            MenuPage::GeneralConfig => Some(("nav_general_config", None)),
+            MenuPage::RankConfig => Some(("nav_rank_config", None)),
+            MenuPage::CategoryList => Some(("nav_category_list", None)),
+            MenuPage::GuildConfig => Some(("nav_guild_config", None)),
+            MenuPage::CategorySettings => None,
+        };
+    }
+
+    // Then check menu system for other buttons
+    let target_page = get_target_page(button_id)?;
+    match target_page {
+        MenuPage::ServerConfig => Some(("nav_server_config", None)),
+        MenuPage::RolesConfig => Some(("nav_roles_config", None)),
+        MenuPage::EloConfig => Some(("nav_elo_config", Some(0))),
+        MenuPage::VcConfig => Some(("nav_vc_config", Some(0))),
+        MenuPage::GeneralConfig => Some(("nav_general_config", None)),
+        MenuPage::RankConfig => Some(("nav_rank_config", None)),
+        MenuPage::CategoryList => Some(("nav_category_list", None)),
+        MenuPage::GuildConfig => Some(("nav_guild_config", None)),
+        MenuPage::CategorySettings => None,
+    }
 }

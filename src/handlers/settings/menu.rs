@@ -359,7 +359,7 @@ impl AsSettingsMenu for ServerConfigDisplay {
         SB::action("guild_config_vc_menu",      "Voice chat", Sbs::Primary),
       ]))
       .row(SR::Buttons(vec![
-        SB::action("guild_config_roles_back", "Back", Sbs::Secondary),
+        SB::action("guild_config_back", "Back", Sbs::Secondary),
       ]))
   }
 }
@@ -396,7 +396,7 @@ impl AsSettingsMenu for RolesConfigDisplay {
       .row(SR::RoleSelect { id: "guild_config_ping_role".to_string(), placeholder: "Select ping role (empty for @here)".to_string(), default: ping_default })
       .row(SR::Buttons(vec![
         SB::action("guild_config_create_ping_role", "Create ping role", Sbs::Primary),
-        SB::action("guild_config", "Back", Sbs::Secondary),
+        SB::action("guild_config_back", "Back", Sbs::Secondary),
       ]))
   }
 }
@@ -479,7 +479,7 @@ impl AsSettingsMenu for EloConfigDisplay {
       }
     }
 
-    action_buttons.push(SB::action("guild_config", "Back", Sbs::Secondary));
+    action_buttons.push(SB::action("guild_config_back", "Back", Sbs::Secondary));
     menu = menu.row(SR::Buttons(action_buttons));
 
     menu
@@ -520,7 +520,7 @@ impl AsSettingsMenu for GeneralConfigDisplay {
         SB::action("guild_config_edit_gamemode", "Edit gamemode", Sbs::Secondary),
         SB::action("guild_config_edit_system_msg_channel", "Edit system msg channel", Sbs::Secondary),
         SB::action("guild_config_edit_community_updates_channel", "Edit community updates channel", Sbs::Secondary),
-        SB::action("guild_config", "Back", Sbs::Secondary),
+        SB::action("guild_config_back", "Back", Sbs::Secondary),
       ]))
   }
 }
@@ -583,7 +583,7 @@ impl AsSettingsMenu for VcConfigDisplay {
       }
     }
 
-    action_buttons.push(SB::action("guild_config", "Back", Sbs::Secondary));
+    action_buttons.push(SB::action("guild_config_back", "Back", Sbs::Secondary));
     menu = menu.row(SR::Buttons(action_buttons));
 
     menu

@@ -128,6 +128,13 @@ pub async fn send_embed_button_response(interaction: &CI, ctx: &Context, embed: 
   Ok(())
 }
 
+/// Helper function to create and send ephemeral embed/button response
+pub async fn send_ephemeral_embed_response(interaction: &CI, ctx: &Context, embed: CE, components: Vec<CAR>) -> Result<()> {
+  let response = CIR::Message(CIRM::new().embed(embed).components(components).ephemeral(true));
+  interaction.create_response(&ctx.http, response).await?;
+  Ok(())
+}
+
 /// Helper function for modal interactions
 pub async fn send_embed_button_response_modal(interaction: &MI, ctx: &Context, embed: CE, components: Vec<CAR>) -> Result<()> {
   let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
