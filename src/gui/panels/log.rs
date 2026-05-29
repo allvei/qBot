@@ -7,7 +7,7 @@ pub fn show_log_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
   // Read log buffer
   let logs = if let Ok(buffer) = state.log_buffer.try_lock() { buffer.iter().cloned().collect::<Vec<_>>() } else { vec!["Error: Could not acquire log buffer lock".to_string()] };
 
-  ScrollArea::vertical().stick_to_bottom(true).max_height(600.0).show(ui, |ui: &mut egui::Ui| {
+  ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui: &mut egui::Ui| {
     if logs.is_empty() {
       ui.vertical_centered(|ui| {
         ui.add_space(50.0);
