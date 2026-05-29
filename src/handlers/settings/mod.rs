@@ -2,6 +2,7 @@ pub mod alerts;
 pub mod categories;
 pub mod core;
 pub mod menu;
+pub mod menu_system;
 pub mod player_admin;
 pub mod ranks;
 pub mod server;
