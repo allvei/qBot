@@ -1,6 +1,6 @@
 pub mod alert_limiter;
 pub mod buttons;
-pub mod colours;
+pub mod colors;
 pub mod constants;
 pub mod dashboard;
 pub mod dm_tracker;
@@ -15,7 +15,7 @@ pub mod setup_state;
 pub mod types;
 
 pub use buttons::*;
-pub use colours::*;
+pub use colors::*;
 pub use constants::*;
 pub use dashboard::*;
 pub use dm_tracker::*;
