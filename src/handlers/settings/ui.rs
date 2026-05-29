@@ -1,12 +1,12 @@
 use serenity::all::{
-  Context, CreateActionRow as CAR, CreateEmbed as CE, CreateInputText as CIT, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateSelectMenu as CSM,
-  CreateSelectMenuKind as CSMK, CreateSelectMenuOption as CSMO, GuildId as GI, InputTextStyle as ITS,
+  Context, CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE, CreateInputText as CIT, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateSelectMenu as CSM,
+  CreateSelectMenuKind as CSMK, CreateSelectMenuOption as CSMO, GuildId as GI, InputTextStyle as ITS, RoleId, ButtonStyle as BS,
 };
 
 use crate::handlers::settings::{get_all_rank_roles, get_rank_settings, get_guild_config, ServerSettings};
 use crate::handlers::CategorySettings;
-
-use crate::handlers::settings::menu::{AsSettingsMenu, CategoryListDisplay, CategorySettingsDisplay, EloConfigDisplay, GeneralConfigDisplay, RankConfigDisplay, RolesConfigDisplay, ServerConfigDisplay, ServerSettingsDisplay, VcConfigDisplay};
+use crate::handlers::settings::menu_system::{get_menu_system, MenuPage};
+use crate::handlers::settings::menu::{AsSettingsMenu, CategoryListDisplay, CategorySettingsDisplay, RankConfigDisplay, ServerSettingsDisplay};
 use crate::{guild_name, Database};
 use anyhow::Result;
 use std::sync::Arc;
@@ -149,32 +149,45 @@ pub async fn nav_guild_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -
 }
 
 /// Build a CIR navigating back to the server configuration page
-pub async fn nav_role_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
+pub async fn nav_server_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
   let guild_name = guild_name(ctx, guild_id);
-  let display = ServerConfigDisplay { guild_name };
-  let embed = display.as_settings_menu().build_embed();
-  let buttons = display.as_settings_menu().build_components();
-  Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
+  let system = get_menu_system();
+  system.build_response(MenuPage::ServerConfig, &guild_name)
+    .ok_or_else(|| anyhow::anyhow!("Failed to build server config response"))
 }
 
 /// Build a CIR for the roles configuration sub-menu
 pub async fn nav_roles_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
   let guild_name = guild_name(ctx, guild_id);
   let settings = get_guild_config(db, guild_id).await?;
-  let display = RolesConfigDisplay {
-    guild_name: guild_name.clone(),
-    runner_role: settings.runner_role.clone(),
-    admin_role: settings.admin_role.clone(),
-  };
-  let embed = display.as_settings_menu().build_embed();
-  let buttons = display.as_settings_menu().build_components();
-  Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
+  let system = get_menu_system();
+
+  // Build role select components
+  let runner_default = settings.runner_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
+  let admin_default = settings.admin_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
+  let ping_default = settings.ping_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
+
+  let extra_components = vec![
+    CAR::SelectMenu(CSM::new("guild_config_runner_role", CSMK::Role {
+      default_roles: runner_default.map(|r| vec![r]),
+    }).placeholder("Select runner role")),
+    CAR::SelectMenu(CSM::new("guild_config_admin_role", CSMK::Role {
+      default_roles: admin_default.map(|r| vec![r]),
+    }).placeholder("Select admin role")),
+    CAR::SelectMenu(CSM::new("guild_config_ping_role", CSMK::Role {
+      default_roles: ping_default.map(|r| vec![r]),
+    }).placeholder("Select ping role (empty for @here)")),
+  ];
+
+  system.build_response_with_extra(MenuPage::RolesConfig, &guild_name, extra_components)
+    .ok_or_else(|| anyhow::anyhow!("Failed to build roles config response"))
 }
 
 /// Build a CIR for the ELO configuration sub-menu
 pub async fn nav_elo_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, page: usize) -> Result<CIR> {
   let guild_name = guild_name(ctx, guild_id);
   let settings = get_guild_config(db, guild_id).await?;
+  let system = get_menu_system();
 
   // Get toggle states for ELO settings (filter SERVER_CONFIG_TOGGLES for ELO-related columns)
   let elo_toggles: Vec<&crate::handlers::settings::menu::ConfigToggle> = crate::handlers::settings::menu::SERVER_CONFIG_TOGGLES
@@ -182,44 +195,59 @@ pub async fn nav_elo_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, pag
     .filter(|t| t.column.contains("elo"))
     .collect();
 
-  let mut toggle_states = Vec::new();
+  let mut toggle_buttons = Vec::new();
   for toggle in &elo_toggles {
     let state = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
-    toggle_states.push(state);
+    let label = if state { toggle.label_on } else { toggle.label_off };
+    let style = if state { BS::Success } else { BS::Danger };
+    toggle_buttons.push(CB::new(toggle.button_id).label(label).style(style));
   }
 
-  let display = EloConfigDisplay {
-    guild_name: guild_name.clone(),
-    toggle_states,
-    balance_method: settings.balance_method.clone(),
-    page,
-  };
-  let embed = display.as_settings_menu().build_embed();
-  let buttons = display.as_settings_menu().build_components();
-  Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
+  // Add pagination buttons if needed
+  let total_pages = (elo_toggles.len() + 4) / 5;
+  if total_pages > 1 {
+    if page > 0 {
+      toggle_buttons.push(CB::new(format!("guild_config_elo_page_{}", page - 1)).label("◀ Prev").style(BS::Secondary));
+    }
+    if page < total_pages - 1 {
+      toggle_buttons.push(CB::new(format!("guild_config_elo_page_{}", page + 1)).label("Next ▶").style(BS::Secondary));
+    }
+  }
+
+  let extra_components = vec![CAR::Buttons(toggle_buttons)];
+
+  system.build_response_with_extra(MenuPage::EloConfig, &guild_name, extra_components)
+    .ok_or_else(|| anyhow::anyhow!("Failed to build ELO config response"))
 }
 
 /// Build a CIR for the general configuration sub-menu
 pub async fn nav_general_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
   let guild_name = guild_name(ctx, guild_id);
   let settings = get_guild_config(db, guild_id).await?;
+  let system = get_menu_system();
+
   let system_message_channel = db.config.get_system_message_channel(guild_id).await?.map(|id| id.to_string());
   let community_updates_channel = db.config.get_community_updates_channel(guild_id).await?.map(|id| id.to_string());
-  let display = GeneralConfigDisplay {
-    guild_name: guild_name.clone(),
-    post_game_confirm_time: settings.post_game_confirm_time,
-    system_message_channel,
-    community_updates_channel,
-  };
-  let embed = display.as_settings_menu().build_embed();
-  let buttons = display.as_settings_menu().build_components();
-  Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
+
+  let dynamic_data = vec![
+    ("Post-game confirm time", format!("{} seconds", settings.post_game_confirm_time)),
+    ("System message channel", system_message_channel.as_ref().map(|id| format!("<#{}>", id)).unwrap_or_else(|| "Not configured".to_string())),
+    ("Community updates channel", community_updates_channel.as_ref().map(|id| format!("<#{}>", id)).unwrap_or_else(|| "Not configured".to_string())),
+  ];
+
+  let embed = system.build_embed_with_dynamic(MenuPage::GeneralConfig, &guild_name, &dynamic_data)
+    .ok_or_else(|| anyhow::anyhow!("Failed to build general config embed"))?;
+
+  let components = system.build_components(MenuPage::GeneralConfig).unwrap_or_default();
+
+  Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(components)))
 }
 
 /// Build a CIR for the VC configuration sub-menu
 pub async fn nav_vc_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, page: usize) -> Result<CIR> {
   let guild_name = guild_name(ctx, guild_id);
   let settings = get_guild_config(db, guild_id).await?;
+  let system = get_menu_system();
 
   // Get toggle states for VC settings (filter SERVER_CONFIG_TOGGLES for VC-related columns)
   let vc_toggles: Vec<&crate::handlers::settings::menu::ConfigToggle> = crate::handlers::settings::menu::SERVER_CONFIG_TOGGLES
@@ -227,20 +255,29 @@ pub async fn nav_vc_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, page
     .filter(|t| t.column.starts_with("default_vc_"))
     .collect();
 
-  let mut toggle_states = Vec::new();
+  let mut toggle_buttons = Vec::new();
   for toggle in &vc_toggles {
     let state = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
-    toggle_states.push(state);
+    let label = if state { toggle.label_on } else { toggle.label_off };
+    let style = if state { BS::Success } else { BS::Danger };
+    toggle_buttons.push(CB::new(toggle.button_id).label(label).style(style));
   }
 
-  let display = VcConfigDisplay {
-    guild_name: guild_name.clone(),
-    toggle_states,
-    page,
-  };
-  let embed = display.as_settings_menu().build_embed();
-  let buttons = display.as_settings_menu().build_components();
-  Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
+  // Add pagination buttons if needed
+  let total_pages = (vc_toggles.len() + 4) / 5;
+  if total_pages > 1 {
+    if page > 0 {
+      toggle_buttons.push(CB::new(format!("guild_config_vc_page_{}", page - 1)).label("◀ Prev").style(BS::Secondary));
+    }
+    if page < total_pages - 1 {
+      toggle_buttons.push(CB::new(format!("guild_config_vc_page_{}", page + 1)).label("Next ▶").style(BS::Secondary));
+    }
+  }
+
+  let extra_components = vec![CAR::Buttons(toggle_buttons)];
+
+  system.build_response_with_extra(MenuPage::VcConfig, &guild_name, extra_components)
+    .ok_or_else(|| anyhow::anyhow!("Failed to build VC config response"))
 }
 
 /// Build a CIR navigating back to the rank configuration page
