@@ -92,7 +92,7 @@ impl BroadcastPanel {
         MessageType::SystemMessage => "system message",
         MessageType::CommunityUpdate => "community updates",
       };
-      info!("UI: {}_guilds.len={}, guilds_with_channel.len={}, selected_guild_index={}", channel_type_name, channel_guilds.len(), guilds_with_channel.len(), self.selected_guild_index);
+      // Removed spammy debug log that was called on every UI render
 
       // Reset index if out of bounds
       if self.selected_guild_index >= guilds_with_channel.len() && !guilds_with_channel.is_empty() {
