@@ -7,6 +7,7 @@ pub mod player_admin;
 pub mod ranks;
 pub mod server;
 pub mod ui;
+pub mod user_prefs_system;
 pub mod utils;
 
 pub use alerts::*;
@@ -17,4 +18,5 @@ pub use player_admin::*;
 pub use ranks::*;
 pub use server::*;
 pub use ui::*;
+pub use user_prefs_system::*;
 pub use utils::*;

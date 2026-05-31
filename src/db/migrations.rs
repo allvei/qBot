@@ -1123,17 +1123,21 @@ impl DatabaseMigrations {
     if !self.check_table("user_server_prefs").await? {
       sqlx::query(
         "CREATE TABLE user_server_prefs (
-          user_id          INTEGER NOT NULL,
-          guild_id         INTEGER NOT NULL,
-          vc_auto_join     INTEGER DEFAULT NULL,
-          vc_auto_leave    INTEGER DEFAULT NULL,
-          vc_leave_queue   INTEGER DEFAULT NULL,
+          user_id                  INTEGER NOT NULL,
+          guild_id                 INTEGER NOT NULL,
+          vc_auto_join             INTEGER DEFAULT NULL,
+          vc_auto_leave            INTEGER DEFAULT NULL,
+          vc_leave_queue           INTEGER DEFAULT NULL,
+          ping_notification_enabled INTEGER DEFAULT NULL,
           PRIMARY KEY (user_id, guild_id)
         )",
       )
       .execute(&self.pool)
       .await?;
       info!("Created user_server_prefs table");
+    } else {
+      // Add ping_notification_enabled column if missing
+      add_column!(self, "user_server_prefs", "ping_notification_enabled", "INTEGER", "NULL");
     }
     Ok(())
   }

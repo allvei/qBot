@@ -121,4 +121,20 @@ impl UserServerPrefsRepository {
       .await?;
     Ok(())
   }
+
+  /// Get ping_notification_enabled preference for a user in a specific server
+  /// Returns None if not set (user hasn't opted out or opted in yet)
+  /// Returns Some(true) if user has opted in to ping notifications
+  /// Returns Some(false) if user has opted out of ping notifications
+  pub async fn get_ping_notification_enabled(&self, user_id: UI, guild_id: GI) -> Result<Option<bool>> {
+    self.get_pref(user_id, guild_id, "ping_notification_enabled").await
+  }
+
+  /// Set ping_notification_enabled preference for a user in a specific server
+  /// None = user hasn't made a choice yet (default behavior applies)
+  /// Some(true) = user has opted in to ping notifications
+  /// Some(false) = user has opted out of ping notifications
+  pub async fn set_ping_notification_enabled(&self, user_id: UI, guild_id: GI, value: Option<bool>) -> Result<()> {
+    self.set_pref(user_id, guild_id, "ping_notification_enabled", value).await
+  }
 }
