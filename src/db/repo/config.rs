@@ -301,6 +301,46 @@ impl ConfigRepository {
     Ok(())
   }
 
+  /// Get ping_users_enabled setting
+  pub async fn get_ping_users_enabled(&self, guild_id: GI) -> Result<bool> {
+    self.get_bool(guild_id, "ping_users_enabled", true).await
+  }
+
+  /// Set ping_users_enabled setting
+  pub async fn set_ping_users_enabled(&self, guild_id: GI, enabled: bool) -> Result<()> {
+    self.set_bool(guild_id, "ping_users_enabled", enabled).await
+  }
+
+  /// Get ping_user_cooldown setting (in minutes)
+  pub async fn get_ping_user_cooldown(&self, guild_id: GI) -> Result<u16> {
+    let row = sqlx::query("SELECT ping_user_cooldown FROM config WHERE guild_id = ?")
+      .bind(guild_id.get() as i64)
+      .fetch_optional(&self.pool)
+      .await?;
+
+    Ok(row.and_then(|row| row.try_get::<Option<i64>, _>("ping_user_cooldown").ok().flatten()).map(|v| v as u16).unwrap_or(30))
+  }
+
+  /// Set ping_user_cooldown setting (in minutes)
+  pub async fn set_ping_user_cooldown(&self, guild_id: GI, cooldown: u16) -> Result<()> {
+    self.set_int(guild_id, "ping_user_cooldown", cooldown as i64).await
+  }
+
+  /// Get ping_runner_cooldown setting (in minutes)
+  pub async fn get_ping_runner_cooldown(&self, guild_id: GI) -> Result<u16> {
+    let row = sqlx::query("SELECT ping_runner_cooldown FROM config WHERE guild_id = ?")
+      .bind(guild_id.get() as i64)
+      .fetch_optional(&self.pool)
+      .await?;
+
+    Ok(row.and_then(|row| row.try_get::<Option<i64>, _>("ping_runner_cooldown").ok().flatten()).map(|v| v as u16).unwrap_or(15))
+  }
+
+  /// Set ping_runner_cooldown setting (in minutes)
+  pub async fn set_ping_runner_cooldown(&self, guild_id: GI, cooldown: u16) -> Result<()> {
+    self.set_int(guild_id, "ping_runner_cooldown", cooldown as i64).await
+  }
+
   /// Get community_updates_channel as Discord channel ID
   pub async fn get_community_updates_channel(&self, guild_id: GI) -> Result<Option<serenity::all::ChannelId>> {
     let row = sqlx::query("SELECT community_updates_channel FROM config WHERE guild_id = ?")

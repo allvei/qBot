@@ -204,6 +204,26 @@ define_server_config! {
         display: "Ping Role",
         description: "Role ID to ping instead of @here (empty for @here)",
     },
+    ping_users_enabled: bool {
+        column: "ping_users_enabled",
+        default: true,
+        display: "Ping Users",
+        button: "server_cfg_ping_users_enabled",
+        labels: ["Users can ping", "Only runners can ping"],
+        description: "Allow regular users to use the Ping button",
+    },
+    ping_user_cooldown: u16 {
+        column: "ping_user_cooldown",
+        default: 30,
+        display: "Ping User Cooldown",
+        description: "Cooldown in minutes for regular users to ping",
+    },
+    ping_runner_cooldown: u16 {
+        column: "ping_runner_cooldown",
+        default: 15,
+        display: "Ping Runner Cooldown",
+        description: "Cooldown in minutes for runners to ping",
+    },
 }
 
 define_category_config! {
