@@ -199,6 +199,52 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       let response = CIR::Modal(modal);
       interaction.create_response(&ctx.http, response).await?;
     }
+    "guild_config_assign_ping_role_all" => {
+      let ping_role_str = db.config.get_ping_role_id(guild_id).await?;
+      if let Some(ref role_str) = ping_role_str {
+        if let Ok(role_id) = role_str.parse::<u64>() {
+          let role_id = RoleId::new(role_id);
+          let members = guild_id.members(&ctx.http, None, None).await?;
+          let mut assigned_count = 0;
+
+          for member in members {
+            if !member.roles.contains(&role_id) {
+              if let Ok(_) = member.add_role(&ctx.http, role_id).await {
+                assigned_count += 1;
+              }
+            }
+          }
+
+          info!("Assigned ping role to {} members in guild {}", assigned_count, guild_id);
+          let response = CIR::UpdateMessage(CIRM::new().content(format!("Assigned ping role to {} members", assigned_count)).ephemeral(true));
+          interaction.create_response(&ctx.http, response).await?;
+        }
+      }
+      send_nav!(interaction, ctx, db, nav_roles_config, guild_id)?;
+    }
+    "guild_config_remove_ping_role_all" => {
+      let ping_role_str = db.config.get_ping_role_id(guild_id).await?;
+      if let Some(ref role_str) = ping_role_str {
+        if let Ok(role_id) = role_str.parse::<u64>() {
+          let role_id = RoleId::new(role_id);
+          let members = guild_id.members(&ctx.http, None, None).await?;
+          let mut removed_count = 0;
+
+          for member in members {
+            if member.roles.contains(&role_id) {
+              if let Ok(_) = member.remove_role(&ctx.http, role_id).await {
+                removed_count += 1;
+              }
+            }
+          }
+
+          info!("Removed ping role from {} members in guild {}", removed_count, guild_id);
+          let response = CIR::UpdateMessage(CIRM::new().content(format!("Removed ping role from {} members", removed_count)).ephemeral(true));
+          interaction.create_response(&ctx.http, response).await?;
+        }
+      }
+      send_nav!(interaction, ctx, db, nav_roles_config, guild_id)?;
+    }
     "guild_config_ranks_back" => {
       send_nav!(interaction, ctx, db, nav_guild_config, guild_id)?;
     }
@@ -373,11 +419,39 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
 
       interaction.create_response(&ctx.http, CIR::Modal(modal)).await?;
     }
+    "guild_config_edit_ping_user_cooldown" => {
+      let current_cooldown = db.config.get_ping_user_cooldown(guild_id).await.unwrap_or(30);
+
+      let modal = CM::new("guild_config_ping_user_cooldown_modal", "Edit ping user cooldown").components(vec![create_value_input_sh_cap(
+        "Ping user cooldown (minutes)",
+        "ping_user_cooldown_input",
+        "Enter cooldown in minutes (5-120)",
+        &current_cooldown.to_string(),
+        1,
+        3,
+      )]);
+
+      interaction.create_response(&ctx.http, CIR::Modal(modal)).await?;
+    }
+    "guild_config_edit_ping_runner_cooldown" => {
+      let current_cooldown = db.config.get_ping_runner_cooldown(guild_id).await.unwrap_or(15);
+
+      let modal = CM::new("guild_config_ping_runner_cooldown_modal", "Edit ping runner cooldown").components(vec![create_value_input_sh_cap(
+        "Ping runner cooldown (minutes)",
+        "ping_runner_cooldown_input",
+        "Enter cooldown in minutes (5-120)",
+        &current_cooldown.to_string(),
+        1,
+        3,
+      )]);
+
+      interaction.create_response(&ctx.http, CIR::Modal(modal)).await?;
+    }
     "guild_config_edit_system_msg_channel" => {
       info!("Opening system message channel select for guild {}", guild_id);
       let current_channel = db.config.get_system_message_channel(guild_id).await?;
       let select_menu = CSM::new("guild_config_system_msg_channel_select", CSMK::Channel {
-        channel_types: Some(vec![serenity::all::ChannelType::Text]),
+        channel_types: Some(vec![serenity::all::ChannelType::Text, serenity::all::ChannelType::News]),
         default_channels: current_channel.map(|id| vec![id]),
       }).placeholder("Select system message channel").min_values(1).max_values(1);
       let mut components = vec![CAR::SelectMenu(select_menu)];
@@ -393,7 +467,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       info!("Opening community updates channel select for guild {}", guild_id);
       let current_channel = db.config.get_community_updates_channel(guild_id).await?;
       let select_menu = CSM::new("guild_config_community_updates_channel_select", CSMK::Channel {
-        channel_types: Some(vec![serenity::all::ChannelType::Text]),
+        channel_types: Some(vec![serenity::all::ChannelType::Text, serenity::all::ChannelType::News]),
         default_channels: current_channel.map(|id| vec![id]),
       }).placeholder("Select community updates channel").min_values(1).max_values(1);
       let mut components = vec![CAR::SelectMenu(select_menu)];
@@ -408,6 +482,29 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
     "guild_config_system_msg_channel_select" => {
       if let CIDK::ChannelSelect { values } = &interaction.data.kind {
         if let Some(channel_id) = values.first() {
+          // Check if bot has SEND_MESSAGES permission in the channel
+          let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+          let bot_id = ctx.cache.current_user().id;
+          let has_permission = ctx.cache.channel(*channel_id)
+            .map(|channel_ref| channel_ref.permissions_for_user(ctx, bot_id).ok().map_or(false, |p| p.send_messages()))
+            .unwrap_or(true); // If we can't check, assume it's OK
+
+          if !has_permission {
+            let embed = CE::new()
+              .title("Permission Error")
+              .description(format!("**{}**\n\nThe bot does not have **SEND_MESSAGES** permission in <#{}>.\n\nPlease grant the bot the necessary permissions and try again.", guild_name, channel_id))
+              .color(0xED4245);
+            let components = vec![
+              CAR::Buttons(vec![
+                CB::new("guild_config_edit_system_msg_channel").label("Retry").style(BS::Primary),
+                CB::new("guild_config_general_config").label("Back").style(BS::Secondary),
+              ]),
+            ];
+            let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+          }
+
           db.config.set_system_message_channel(guild_id, Some(*channel_id)).await?;
           send_nav!(interaction, ctx, db, nav_general_config, guild_id)?;
         }
@@ -416,6 +513,29 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
     "guild_config_community_updates_channel_select" => {
       if let CIDK::ChannelSelect { values } = &interaction.data.kind {
         if let Some(channel_id) = values.first() {
+          // Check if bot has SEND_MESSAGES permission in the channel
+          let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+          let bot_id = ctx.cache.current_user().id;
+          let has_permission = ctx.cache.channel(*channel_id)
+            .map(|channel_ref| channel_ref.permissions_for_user(ctx, bot_id).ok().map_or(false, |p| p.send_messages()))
+            .unwrap_or(true); // If we can't check, assume it's OK
+
+          if !has_permission {
+            let embed = CE::new()
+              .title("Permission Error")
+              .description(format!("**{}**\n\nThe bot does not have **SEND_MESSAGES** permission in <#{}>.\n\nPlease grant the bot the necessary permissions and try again.", guild_name, channel_id))
+              .color(0xED4245);
+            let components = vec![
+              CAR::Buttons(vec![
+                CB::new("guild_config_edit_community_updates_channel").label("Retry").style(BS::Primary),
+                CB::new("guild_config_general_config").label("Back").style(BS::Secondary),
+              ]),
+            ];
+            let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
+            interaction.create_response(&ctx.http, response).await?;
+            return Ok(());
+          }
+
           db.config.set_community_updates_channel(guild_id, Some(*channel_id)).await?;
           send_nav!(interaction, ctx, db, nav_general_config, guild_id)?;
         }
@@ -2431,6 +2551,58 @@ pub async fn handle_guild_config_modal(
     db.config.set_post_game_confirm_time(guild_id, post_game_confirm_time).await?;
     let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
     info!("{} set post-game confirm time to {} seconds", user_tag, post_game_confirm_time);
+
+    send_nav_modal!(interaction, ctx, db, nav_general_config, guild_id)?;
+  } else if modal_id == "guild_config_ping_user_cooldown_modal" {
+    let mut ping_user_cooldown_value = String::new();
+
+    for row in &interaction.data.components {
+      for component in &row.components {
+        if let ARC::InputText(input) = component {
+          if input.custom_id == "ping_user_cooldown_input" {
+            ping_user_cooldown_value = input.value.clone().unwrap_or_default();
+          }
+        }
+      }
+    }
+
+    let ping_user_cooldown: u16 = match ping_user_cooldown_value.trim().parse() {
+      Ok(t) if (5..=120).contains(&t) => t,
+      _ => {
+        send_modal_error_response(interaction, ctx, "Invalid cooldown. Must be between 5 and 120 minutes.").await;
+        return Ok(());
+      }
+    };
+
+    db.config.set_ping_user_cooldown(guild_id, ping_user_cooldown).await?;
+    let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+    info!("{} set ping user cooldown to {} minutes", user_tag, ping_user_cooldown);
+
+    send_nav_modal!(interaction, ctx, db, nav_general_config, guild_id)?;
+  } else if modal_id == "guild_config_ping_runner_cooldown_modal" {
+    let mut ping_runner_cooldown_value = String::new();
+
+    for row in &interaction.data.components {
+      for component in &row.components {
+        if let ARC::InputText(input) = component {
+          if input.custom_id == "ping_runner_cooldown_input" {
+            ping_runner_cooldown_value = input.value.clone().unwrap_or_default();
+          }
+        }
+      }
+    }
+
+    let ping_runner_cooldown: u16 = match ping_runner_cooldown_value.trim().parse() {
+      Ok(t) if (5..=120).contains(&t) => t,
+      _ => {
+        send_modal_error_response(interaction, ctx, "Invalid cooldown. Must be between 5 and 120 minutes.").await;
+        return Ok(());
+      }
+    };
+
+    db.config.set_ping_runner_cooldown(guild_id, ping_runner_cooldown).await?;
+    let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
+    info!("{} set ping runner cooldown to {} minutes", user_tag, ping_runner_cooldown);
 
     send_nav_modal!(interaction, ctx, db, nav_general_config, guild_id)?;
   } else {
