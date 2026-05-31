@@ -1,11 +1,13 @@
 use crate::handlers::settings::alerts::{build_join_alert_embed, build_leave_alert_embed};
+use crate::handlers::settings::ui::{build_settings_buttons, build_settings_embed};
+use crate::handlers::settings::user_prefs_system::{get_user_prefs_menu_system, get_user_prefs_navigation_info, UserPrefsPage};
 use crate::handlers::settings::utils::{create_paragraph_input_with_value, create_short_input_opt, track_dm_activity};
-use crate::handlers::{build_settings_buttons, build_settings_embed};
 use crate::Database;
 use anyhow::Result;
 use serenity::all::{
-  ActionRowComponent as ARC, ButtonStyle as BS, ChannelId as CHID, ComponentInteraction as CI, Context, CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE,
-  CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateModal, EditMessage, GetMessages as GM, ModalInteraction as MI, UserId as UI,
+  ActionRowComponent as ARC, ButtonStyle as BS, ChannelId as CHID, ComponentInteraction as CI, ComponentInteractionDataKind as CIDK, Context, CreateActionRow as CAR,
+  CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateModal, EditMessage, GetMessages as GM,
+  GuildId as GI, ModalInteraction as MI, RoleId, UserId as UI,
 };
 use std::sync::Arc;
 use tracing::{debug, warn};
@@ -21,17 +23,28 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
   track_dm_activity(ctx, user_id).await;
 
   match button_id.as_str() {
+    // Handle user prefs navigation
+    button_id if get_user_prefs_navigation_info(button_id).is_some() => {
+      let target_page = get_user_prefs_navigation_info(button_id).unwrap();
+      let system = get_user_prefs_menu_system();
+      let settings = db.players.get_prefs(user_id).await?;
+
+      if let Some(response) = system.build_response(target_page, &settings) {
+        interaction.create_response(&ctx.http, response).await?;
+      }
+      return Ok(());
+    }
     "settings_toggle_dm" => {
       // Toggle DM alerts
       let _new_state = db.players.toggle_pm_hot_alert(user_id).await?;
 
       // Acknowledge and update the settings menu directly (no popup)
       let settings = db.players.get_prefs(user_id).await?;
-      let embed = build_settings_embed(&settings);
-      let buttons = build_settings_buttons(&settings);
+      let system = get_user_prefs_menu_system();
 
-      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
-      interaction.create_response(&ctx.http, response).await?;
+      if let Some(response) = system.build_response(UserPrefsPage::AlertSettings, &settings) {
+        interaction.create_response(&ctx.http, response).await?;
+      }
     }
     "settings_queue_expiration" => {
       // Show time selection buttons inline (replace current message temporarily)
@@ -82,11 +95,11 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
         db.players.update_prefs(user_id, &settings).await?;
 
         // Update the settings menu directly (no confirmation popup)
-        let embed = build_settings_embed(&settings);
-        let buttons = build_settings_buttons(&settings);
+        let system = get_user_prefs_menu_system();
 
-        let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
-        interaction.create_response(&ctx.http, response).await?;
+        if let Some(response) = system.build_response(UserPrefsPage::QueueSettings, &settings) {
+          interaction.create_response(&ctx.http, response).await?;
+        }
       }
     }
     "settings_vc_auto_leave" => {
@@ -96,11 +109,11 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
       db.players.update_prefs(user_id, &settings).await?;
 
       // Acknowledge and update the settings menu directly (no popup)
-      let embed = build_settings_embed(&settings);
-      let buttons = build_settings_buttons(&settings);
+      let system = get_user_prefs_menu_system();
 
-      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
-      interaction.create_response(&ctx.http, response).await?;
+      if let Some(response) = system.build_response(UserPrefsPage::QueueSettings, &settings) {
+        interaction.create_response(&ctx.http, response).await?;
+      }
     }
     "settings_vc_leave_queue" => {
       // Toggle leave queue on VC disconnect preference
@@ -109,11 +122,11 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
       db.players.update_prefs(user_id, &settings).await?;
 
       // Acknowledge and update the settings menu directly (no popup)
-      let embed = build_settings_embed(&settings);
-      let buttons = build_settings_buttons(&settings);
+      let system = get_user_prefs_menu_system();
 
-      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
-      interaction.create_response(&ctx.http, response).await?;
+      if let Some(response) = system.build_response(UserPrefsPage::QueueSettings, &settings) {
+        interaction.create_response(&ctx.http, response).await?;
+      }
     }
     "settings_vc_auto_join" => {
       // Toggle VC auto-queue preference
@@ -122,11 +135,33 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
       db.players.update_prefs(user_id, &settings).await?;
 
       // Acknowledge and update the settings menu directly (no popup)
-      let embed = build_settings_embed(&settings);
-      let buttons = build_settings_buttons(&settings);
+      let system = get_user_prefs_menu_system();
 
-      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
-      interaction.create_response(&ctx.http, response).await?;
+      if let Some(response) = system.build_response(UserPrefsPage::QueueSettings, &settings) {
+        interaction.create_response(&ctx.http, response).await?;
+      }
+    }
+    "settings_ping_notifications" => {
+      // Toggle ping notifications for the current server
+      let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
+
+      // Get current ping notification preference for this server
+      let current = db.user_server_prefs.get_ping_notification_enabled(user_id, guild_id).await.unwrap_or(None);
+      let new_value = match current {
+        Some(true) => Some(false),
+        Some(false) => Some(true),
+        None => Some(true), // Default to enabled on first interaction
+      };
+
+      db.user_server_prefs.set_ping_notification_enabled(user_id, guild_id, new_value).await?;
+
+      // Acknowledge and update the settings menu directly (no popup)
+      let settings = db.players.get_prefs(user_id).await?;
+      let system = get_user_prefs_menu_system();
+
+      if let Some(response) = system.build_response(UserPrefsPage::PingSettings, &settings) {
+        interaction.create_response(&ctx.http, response).await?;
+      }
     }
     "settings_edit_alert" => {
       // Show modal for customizing join announcement embed
@@ -153,6 +188,118 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
 
       let response = CIR::Modal(modal);
       interaction.create_response(&ctx.http, response).await?;
+    }
+    "settings_ping_server_select" => {
+      if let CIDK::StringSelect { values } = &interaction.data.kind {
+        if let Some(guild_id_str) = values.first() {
+          if let Ok(guild_id) = guild_id_str.parse::<u64>() {
+            let guild_id = GI::new(guild_id);
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown Server".to_string());
+
+            // Get current ping notification preference for this server
+            let ping_enabled = db.user_server_prefs.get_ping_notification_enabled(user_id, guild_id).await.unwrap_or(None);
+
+            // Determine button state and label
+            let (enabled, label) = match ping_enabled {
+              Some(true) => (true, "Ping notifications enabled"),
+              Some(false) => (false, "Ping notifications disabled"),
+              None => (true, "Enable ping notifications"), // Default to enabled on first interaction
+            };
+
+            let toggle_button = CB::new(format!("settings_toggle_ping_notification_{}", guild_id.get()))
+              .label(label)
+              .style(if enabled { BS::Success } else { BS::Danger });
+
+            let components = vec![
+              CAR::Buttons(vec![toggle_button]),
+              CAR::Buttons(vec![CB::new("settings_ping_back").label("Back").style(BS::Secondary)]),
+            ];
+
+            let embed = CE::new()
+              .title(format!("Ping Notifications - {}", guild_name))
+              .description("Toggle whether you want to receive ping notifications when games are ready in this server.")
+              .color(0x5865F2);
+
+            let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
+            interaction.create_response(&ctx.http, response).await?;
+          }
+        }
+      }
+    }
+    button_id if button_id.starts_with("settings_toggle_ping_notification_") => {
+      let guild_id_str = button_id.strip_prefix("settings_toggle_ping_notification_").unwrap();
+      if let Ok(guild_id) = guild_id_str.parse::<u64>() {
+        let guild_id = GI::new(guild_id);
+
+        // Get current preference
+        let current = db.user_server_prefs.get_ping_notification_enabled(user_id, guild_id).await.unwrap_or(None);
+
+        // Toggle: None -> Some(true), Some(true) -> Some(false), Some(false) -> Some(true)
+        let new_value = match current {
+          None => Some(true),
+          Some(true) => Some(false),
+          Some(false) => Some(true),
+        };
+
+        db.user_server_prefs.set_ping_notification_enabled(user_id, guild_id, new_value).await?;
+
+        // Handle role assignment/removal based on new preference
+        let ping_role_str = db.config.get_ping_role_id(guild_id).await?;
+        if let Some(ref role_str) = ping_role_str {
+          if let Ok(role_id) = role_str.parse::<u64>() {
+            let role_id = RoleId::new(role_id);
+            let member = guild_id.member(&ctx.http, user_id).await;
+
+            if let Ok(member) = member {
+              if new_value == Some(true) {
+                // Add role if enabling
+                if !member.roles.contains(&role_id) {
+                  let _ = member.add_role(&ctx.http, role_id).await;
+                }
+              } else if new_value == Some(false) {
+                // Remove role if disabling
+                if member.roles.contains(&role_id) {
+                  let _ = member.remove_role(&ctx.http, role_id).await;
+                }
+              }
+            }
+          }
+        }
+
+        // Update the button to reflect new state
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown Server".to_string());
+        let (enabled, label) = match new_value {
+          Some(true) => (true, "Ping notifications enabled"),
+          Some(false) => (false, "Ping notifications disabled"),
+          None => (true, "Enable ping notifications"),
+        };
+
+        let toggle_button = CB::new(format!("settings_toggle_ping_notification_{}", guild_id.get()))
+          .label(label)
+          .style(if enabled { BS::Success } else { BS::Danger });
+
+        let components = vec![
+          CAR::Buttons(vec![toggle_button]),
+          CAR::Buttons(vec![CB::new("settings_ping_back").label("Back").style(BS::Secondary)]),
+        ];
+
+        let embed = CE::new()
+          .title(format!("Ping Notifications - {}", guild_name))
+          .description("Toggle whether you want to receive ping notifications when games are ready in this server.")
+          .color(0x5865F2);
+
+        let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
+        interaction.create_response(&ctx.http, response).await?;
+      }
+    }
+    "settings_ping_back" => {
+      // Return to main settings menu
+      let settings = db.players.get_prefs(user_id).await?;
+      let system = get_user_prefs_menu_system();
+
+      if let Some(response) = system.build_response(UserPrefsPage::Main, &settings) {
+        interaction.create_response(&ctx.http, response).await?;
+      }
     }
     _ => {
       warn!("Unknown settings button: {}", button_id);

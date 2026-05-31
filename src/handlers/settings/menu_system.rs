@@ -249,6 +249,18 @@ impl MenuSystem {
                     target_page: None,
                 },
                 MenuButton {
+                    id: "guild_config_edit_ping_user_cooldown",
+                    label: "Edit ping user cooldown",
+                    description: Some("Change the cooldown in minutes for regular users to ping"),
+                    target_page: None,
+                },
+                MenuButton {
+                    id: "guild_config_edit_ping_runner_cooldown",
+                    label: "Edit ping runner cooldown",
+                    description: Some("Change the cooldown in minutes for runners to ping"),
+                    target_page: None,
+                },
+                MenuButton {
                     id: "guild_config_edit_system_msg_channel",
                     label: "Edit system msg channel",
                     description: Some("Configure the channel for system message broadcasts"),

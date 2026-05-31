@@ -471,10 +471,37 @@ impl Handler {
         // hasn't sent guild_create events yet, causing all guilds to be removed
         let manager_clone = self.manager.clone();
         let ctx_clone = ctx.clone();
+        let db_clone = self.db.clone();
         tokio::spawn(async move {
           tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
           let mut mgr = manager_clone.lock().await;
           mgr.validate_and_cleanup(&ctx_clone.cache).await;
+
+          // Reschedule queue expiration for all players in queue after restart
+          // QueueExpirationScheduler is not part of serialized Manager state, so tasks are lost
+          if let Some(scheduler) = ctx_clone.data.read().await.get::<crate::models::QueueExpirationSchedulerKey>() {
+            let mut scheduler = scheduler.lock().await;
+            for guild in &mgr.qguilds {
+              let guild_id = guild.id;
+              for category in &guild.categories {
+                for format in &category.formats {
+                  for session in &format.sessions {
+                    // Only schedule for idle sessions (not hot or active)
+                    if session.is_hot() || session.is_active() {
+                      continue;
+                    }
+                    for session_player in &session.pool {
+                      let player = session_player.player.clone();
+                      let queue_expiration = db_clone.players.get_prefs(player.user_id).await
+                        .map(|prefs| prefs.queue_expiration)
+                        .unwrap_or(30);
+                      scheduler.schedule_queue_expiration(guild_id, category.id, format.id, player, queue_expiration);
+                    }
+                  }
+                }
+              }
+            }
+          }
 
           // Update dashboards for all categories after state restoration
           // This ensures dashboards show the correct state instead of "offline"
@@ -1913,6 +1940,23 @@ impl Handler {
     } else {
       "draw"
     };
+
+    // Check if someone else is already submitting a score for this match
+    {
+      let mgr = self.manager.lock().await;
+      if let Some(submitting_user_id) = mgr.get_active_score_submission(guild_id, category_id.unwrap_or(0) as u8, format_id.unwrap_or(0) as u8) {
+        if submitting_user_id != interaction.user.id {
+          let submitting_user_tag = crate::log::get_user_tag(ctx, submitting_user_id, &self.db).await;
+          let response = CreateInteractionResponse::Message(
+            CreateInteractionResponseMessage::new()
+              .content(format!("{} is already reporting this match. Please wait for them to finish.", submitting_user_tag))
+              .ephemeral(true),
+          );
+          interaction.create_response(&ctx.http, response).await?;
+          return Ok(());
+        }
+      }
+    }
 
     // Check if score was already reported and update database atomically within the lock
     let mut score_already_reported = false;

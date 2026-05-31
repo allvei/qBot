@@ -202,6 +202,7 @@ pub enum ButtonType {
   DashboardShuffle,
   DashboardStart,
   DashboardEnd,
+  DashboardCancel,
   DashboardReportScore,
 
   // Permission confirmation button
@@ -251,6 +252,7 @@ impl ButtonType {
       "shuffle_teams" => Self::DashboardShuffle,
       "start_match" => Self::DashboardStart,
       "end_match" => Self::DashboardEnd,
+      "cancel_match" => Self::DashboardCancel,
       "report_score" => Self::DashboardReportScore,
 
       // Permission confirmation
@@ -294,7 +296,7 @@ impl ButtonType {
 
   /// Check if this button type is a dashboard action
   pub fn is_dashboard_action(&self) -> bool {
-    matches!(self, Self::DashboardJoin | Self::DashboardLeave | Self::DashboardShuffle | Self::DashboardStart | Self::DashboardEnd)
+    matches!(self, Self::DashboardJoin | Self::DashboardLeave | Self::DashboardShuffle | Self::DashboardStart | Self::DashboardEnd | Self::DashboardCancel)
   }
 
   /// Get the setup step name (for setup/init buttons)
@@ -351,8 +353,15 @@ impl Category {
         row.push(CB::new(format!("change_expiry{fmt_suffix}")).label("Edit timeout").style(BS::Secondary));
       }
       if is_live {
-        let end_label = if self.require_score_report { "End & log score" } else { "End" };
-        row.push(CB::new(format!("end_match{fmt_suffix}")).label(end_label).style(BS::Danger));
+        // Check if match can still be cancelled (less than 5 minutes)
+        if let Some(live_session) = sg.sessions.iter().find(|s| s.is_active()) {
+          if live_session.can_cancel_match() {
+            row.push(CB::new(format!("cancel_match{fmt_suffix}")).label("Cancel game").style(BS::Danger));
+          } else {
+            let end_label = if self.require_score_report { "End & log score" } else { "End" };
+            row.push(CB::new(format!("end_match{fmt_suffix}")).label(end_label).style(BS::Danger));
+          }
+        }
       }
       if !self.restarting && is_hot {
         row.push(CB::new(format!("start_match{fmt_suffix}")).label("Start").style(BS::Success));
@@ -400,6 +409,13 @@ impl Category {
     if let Some(started_at) = session.started_at {
       let ended_at = SystemTime::now();
       let duration_secs = ended_at.duration_since(started_at).map(|d| d.as_secs()).unwrap_or(0);
+
+      // Reject matches shorter than 2 minutes (likely double-report or error)
+      const MIN_MATCH_DURATION_SECS: u64 = 120;
+      if duration_secs < MIN_MATCH_DURATION_SECS {
+        warn!("Match duration too short ({}s), skipping database recording", duration_secs);
+        return Ok(());
+      }
 
       // Insert match record
       match db
@@ -1240,6 +1256,71 @@ impl Category {
     Ok(())
   }
 
+  /// Handles the cancel match button - reverts queue order and clears the match
+  async fn dash_cancel(&mut self, cc: &ComponentContext<'_>, fmt_id: u8) -> Result<()> {
+    use crate::handlers::player::is_role_component;
+    use crate::models::Role;
+
+    let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+
+    // Check if user is a runner
+    if !is_role_component(cc, &Role::Runner).await? {
+      cc.reply_ephemeral("Only runners can cancel matches.").await?;
+      return Ok(());
+    }
+
+    // Extract queue_vc before mutable borrow
+    let queue_vc = self.channels.queue_vc;
+
+    // Get current idle session pool to check who is still in the queue (before mutable borrow)
+    let idle_pool_user_ids: std::collections::HashSet<_> = self.format(fmt_id)
+      .and_then(|sg| sg.sessions.iter().find(|s| s.is_idle()))
+      .map(|idle| idle.pool.iter().map(|sp| sp.player.user_id).collect())
+      .unwrap_or_default();
+
+    // Find the active session
+    let active_session = self.format_mut(fmt_id).and_then(|sg| sg.sessions.iter_mut().find(|s| s.status == SessionStatus::Live));
+
+    if active_session.is_none() {
+      cc.reply_ephemeral("No active match to cancel.").await?;
+      return Ok(());
+    }
+
+    let session = active_session.unwrap();
+
+    // Check if match can still be cancelled
+    if !session.can_cancel_match() {
+      cc.reply_ephemeral("Match has been running for 5+ minutes and cannot be cancelled.").await?;
+      return Ok(());
+    }
+
+    // Restore the pre-match queue order, filtering out players who left the queue
+    if let Some(pre_match_pool) = session.pre_match_pool.take() {
+      let original_count = pre_match_pool.len();
+
+      // Filter out players who are no longer in the queue (on the dashboard)
+      let restored_pool: Vec<_> = pre_match_pool
+        .into_iter()
+        .filter(|sp| idle_pool_user_ids.contains(&sp.player.user_id))
+        .collect();
+
+      let removed_count = original_count - restored_pool.len();
+      session.pool = restored_pool;
+      info!("Match cancelled - queue order restored for {} players ({} removed for leaving queue)", session.pool.len(), removed_count);
+    } else {
+      warn!("No pre-match queue backup found, clearing session");
+      session.pool.clear();
+    }
+
+    // Reset the session to idle
+    session.idle();
+
+    cc.reply_ephemeral("Match cancelled. Queue order has been restored.").await?;
+    self.queue_dash_update(cc.ctx, guild_id).await;
+
+    Ok(())
+  }
+
   /// Handle end match result button click (dash_end_red/draw/blu_{category_id}_{format_id})
   async fn dash_handle_end_match_result(&mut self, cc: &ComponentContext<'_>) -> Result<()> {
     use crate::handlers::player::is_role_component;
@@ -1590,6 +1671,18 @@ impl Category {
         }
         result
       }
+      "cancel_match" => {
+        let fmt_name = self.format(fmt_id).map(|sg| sg.name.clone()).unwrap_or_else(|| "Unknown".to_string());
+        let result = self.dash_cancel(cc, fmt_id).await;
+        match &result {
+          Ok(_) => {
+            info!("{} {} used Cancel", crate::log::log_prefix_format(&guild_name, &ctg_nm, &fmt_name), user_tag);
+            self.set_last_action(user_tag.clone(), "cancelled the game");
+          }
+          Err(e) => warn!("{} {} failed to cancel game: {}", crate::log::log_prefix_format(&guild_name, &ctg_nm, &fmt_name), user_tag, e),
+        }
+        result
+      }
       action if action.starts_with("dash_end_") => {
         let result = self.dash_handle_end_match_result(cc).await;
         match &result {
@@ -1605,6 +1698,30 @@ impl Category {
           Err(e) => warn!("{} {} failed to report score: {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, e),
         }
         result
+      }
+      // Handle user prefs navigation buttons
+      action if action.starts_with("user_prefs_") => {
+        use crate::handlers::settings::user_prefs_system::{get_user_prefs_menu_system, get_user_prefs_navigation_info};
+        let user_id = cc.component.user.id;
+
+        if let Some(target_page) = get_user_prefs_navigation_info(action) {
+          let system = get_user_prefs_menu_system();
+          let settings = match cc.db.players.get_prefs(user_id).await {
+            Ok(s) => s,
+            Err(e) => {
+              cc.reply_ephemeral(&format!("Failed to load settings: {}", e)).await?;
+              return Ok(());
+            }
+          };
+
+          if let Some(response) = system.build_response(target_page, &settings) {
+            cc.component.create_response(&cc.ctx.http, response).await?;
+          }
+          Ok(())
+        } else {
+          cc.reply_ephemeral(&format!("Unknown button action: {action}")).await?;
+          Ok(())
+        }
       }
       _ => {
         cc.reply_ephemeral(&format!("Unknown button action: {action}")).await?;
@@ -1704,7 +1821,7 @@ impl Category {
     let response = CIR::Defer(CIRM::new().ephemeral(true));
     cc.component.create_response(&cc.ctx.http, response).await?;
 
-    use crate::handlers::settings::{build_settings_buttons, build_settings_embed};
+    use crate::handlers::settings::user_prefs_system::{get_user_prefs_menu_system, UserPrefsPage};
 
     let user_id = cc.component.user.id;
 
@@ -1719,13 +1836,17 @@ impl Category {
       }
     };
 
-    // Build settings embed with interactive buttons
-    let embed = build_settings_embed(&settings);
-    let buttons = build_settings_buttons(&settings);
+    // Build settings embed with interactive buttons using the new menu system
+    let system = get_user_prefs_menu_system();
+    let embed = system.build_embed(UserPrefsPage::Main, &settings);
+    let components = system.build_components(UserPrefsPage::Main, &settings);
 
     // Use followup since we deferred
     use serenity::all::CreateInteractionResponseFollowup as CIRF;
-    let followup = CIRF::new().embed(embed).components(buttons).ephemeral(true);
+    let followup = CIRF::new()
+      .embed(embed.unwrap_or_default())
+      .components(components.unwrap_or_default())
+      .ephemeral(true);
     cc.component.create_followup(&cc.ctx.http, followup).await?;
 
     Ok(())
@@ -1770,10 +1891,22 @@ impl Category {
 
     // Check if user is a runner (for cooldown duration)
     let is_runner = is_role_component(cc, &Role::Runner).await.unwrap_or(false);
+
+    // Check if regular users are allowed to ping
+    let ping_users_enabled = cc.db.config.get_ping_users_enabled(guild_id).await.unwrap_or(true);
+    if !is_runner && !ping_users_enabled {
+      cc.reply_ephemeral("Only runners can use the Ping button.").await?;
+      return Ok(());
+    }
+
+    // Get cooldown durations from config
+    let user_cooldown_mins = cc.db.config.get_ping_user_cooldown(guild_id).await.unwrap_or(30);
+    let runner_cooldown_mins = cc.db.config.get_ping_runner_cooldown(guild_id).await.unwrap_or(15);
+
     let cooldown_duration = if is_runner {
-      Duration::from_secs(15 * 60) // 15 minutes for runners
+      Duration::from_secs(runner_cooldown_mins as u64 * 60)
     } else {
-      Duration::from_secs(30 * 60) // 30 minutes for regular players
+      Duration::from_secs(user_cooldown_mins as u64 * 60)
     };
 
     // Check cooldown
@@ -1854,10 +1987,15 @@ impl Category {
 
     // Check if user is a runner (for cooldown duration)
     let is_runner = is_role_component(cc, &Role::Runner).await.unwrap_or(false);
+
+    // Get cooldown durations from config
+    let user_cooldown_mins = cc.db.config.get_ping_user_cooldown(guild_id).await.unwrap_or(30);
+    let runner_cooldown_mins = cc.db.config.get_ping_runner_cooldown(guild_id).await.unwrap_or(15);
+
     let cooldown_duration = if is_runner {
-      Duration::from_secs(15 * 60) // 15 minutes for runners
+      Duration::from_secs(runner_cooldown_mins as u64 * 60)
     } else {
-      Duration::from_secs(30 * 60) // 30 minutes for regular players
+      Duration::from_secs(user_cooldown_mins as u64 * 60)
     };
 
     // Check cooldown again (in case they waited)

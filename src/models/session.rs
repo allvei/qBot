@@ -28,6 +28,8 @@ pub struct Session {
   pub last_action_at: Option<SystemTime>,
   #[serde(default)]
   pub score_reported: bool,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub pre_match_pool: Option<Vec<SessionPlayer>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,7 +70,7 @@ impl Session {
 
   /// Create a new session
   pub fn new(status: SessionStatus, pool: Vec<SessionPlayer>) -> Self {
-    Self { status, pool, ready_at: None, started_at: None, match_ended_at: None, team_channels: None, pending_team_switch: None, last_action_at: None, score_reported: false }
+    Self { status, pool, ready_at: None, started_at: None, match_ended_at: None, team_channels: None, pending_team_switch: None, last_action_at: None, score_reported: false, pre_match_pool: None }
   }
 
   /// Check if the session is active
@@ -114,10 +116,12 @@ impl Session {
     self.status = SessionStatus::Push;
   }
 
-  /// Set the session to live and record start time
+  /// Set the session to live and record start time, backing up the current queue order
   pub fn live(&mut self) {
     self.status = SessionStatus::Live;
     self.started_at = Some(SystemTime::now());
+    // Backup the queue order before the match starts (for potential cancellation)
+    self.pre_match_pool = Some(self.pool.clone());
   }
 
   /// Set the session to pull
@@ -265,6 +269,7 @@ impl Session {
       pending_team_switch: None,
       last_action_at: None,
       score_reported: false,
+      pre_match_pool: None,
     }
   }
 
@@ -299,6 +304,41 @@ impl Session {
         let elapsed_secs = elapsed.as_secs();
         if elapsed_secs < confirm_time_seconds {
           return confirm_time_seconds - elapsed_secs;
+        }
+      }
+    }
+    0
+  }
+
+  /// Check if the match can still be cancelled (less than 5 minutes elapsed)
+  pub fn can_cancel_match(&self) -> bool {
+    const MIN_MATCH_DURATION_SECS: u64 = 300; // 5 minutes
+    
+    if !self.is_active() || self.started_at.is_none() {
+      return false;
+    }
+
+    if let Some(started_at) = self.started_at {
+      if let Ok(elapsed) = SystemTime::now().duration_since(started_at) {
+        return elapsed.as_secs() < MIN_MATCH_DURATION_SECS;
+      }
+    }
+    false
+  }
+
+  /// Get seconds remaining until match can no longer be cancelled
+  pub fn seconds_until_cancel_expires(&self) -> u64 {
+    const MIN_MATCH_DURATION_SECS: u64 = 300; // 5 minutes
+
+    if !self.is_active() || self.started_at.is_none() {
+      return 0;
+    }
+
+    if let Some(started_at) = self.started_at {
+      if let Ok(elapsed) = SystemTime::now().duration_since(started_at) {
+        let elapsed_secs = elapsed.as_secs();
+        if elapsed_secs < MIN_MATCH_DURATION_SECS {
+          return MIN_MATCH_DURATION_SECS - elapsed_secs;
         }
       }
     }

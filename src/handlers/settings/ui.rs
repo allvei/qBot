@@ -1,6 +1,6 @@
 use serenity::all::{
   Context, CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE, CreateInputText as CIT, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateSelectMenu as CSM,
-  CreateSelectMenuKind as CSMK, CreateSelectMenuOption as CSMO, GuildId as GI, InputTextStyle as ITS, RoleId, ButtonStyle as BS,
+  CreateSelectMenuKind as CSMK, CreateSelectMenuOption as CSMO, GuildId as GI, InputTextStyle as ITS, RoleId, ButtonStyle as BS, UserId as UI,
 };
 
 use crate::handlers::settings::{get_all_rank_roles, get_rank_settings, get_guild_config, ServerSettings};
@@ -21,6 +21,32 @@ pub fn build_settings_embed(settings: &crate::db::repo::UserPreferences) -> CE {
 pub fn build_settings_buttons(settings: &crate::db::repo::UserPreferences) -> Vec<CAR> {
   use AsSettingsMenu;
   settings.as_settings_menu().build_components()
+}
+
+/// Build settings buttons with guild-specific ping notification toggle
+pub async fn build_settings_buttons_with_ping(
+  settings: &crate::db::repo::UserPreferences,
+  ctx: &Context,
+  db: &Arc<Database>,
+  guild_id: GI,
+  user_id: UI,
+) -> Vec<CAR> {
+  use AsSettingsMenu;
+  let mut components = settings.as_settings_menu().build_components();
+
+  // Get ping notification state for this server
+  let ping_enabled = db.user_server_prefs.get_ping_notification_enabled(user_id, guild_id).await.unwrap_or(None);
+  let is_enabled = ping_enabled.unwrap_or(true); // Default to enabled
+
+  // Add ping notification toggle button to the 4th row (index 3)
+  if let Some(CAR::Buttons(buttons)) = components.get_mut(3) {
+    let ping_button = CB::new("settings_ping_notifications")
+      .label(if is_enabled { "Pings enabled" } else { "Pings disabled" })
+      .style(if is_enabled { BS::Success } else { BS::Danger });
+    buttons.push(ping_button);
+  }
+
+  components
 }
 
 /// Build guild config embed
@@ -228,9 +254,13 @@ pub async fn nav_general_config(ctx: &Context, db: &Arc<Database>, guild_id: GI)
 
   let system_message_channel = db.config.get_system_message_channel(guild_id).await?.map(|id| id.to_string());
   let community_updates_channel = db.config.get_community_updates_channel(guild_id).await?.map(|id| id.to_string());
+  let ping_user_cooldown = db.config.get_ping_user_cooldown(guild_id).await.unwrap_or(30);
+  let ping_runner_cooldown = db.config.get_ping_runner_cooldown(guild_id).await.unwrap_or(15);
 
   let dynamic_data = vec![
     ("Post-game confirm time", format!("{} seconds", settings.post_game_confirm_time)),
+    ("Ping user cooldown", format!("{} minutes", ping_user_cooldown)),
+    ("Ping runner cooldown", format!("{} minutes", ping_runner_cooldown)),
     ("System message channel", system_message_channel.as_ref().map(|id| format!("<#{}>", id)).unwrap_or_else(|| "Not configured".to_string())),
     ("Community updates channel", community_updates_channel.as_ref().map(|id| format!("<#{}>", id)).unwrap_or_else(|| "Not configured".to_string())),
   ];
@@ -238,7 +268,14 @@ pub async fn nav_general_config(ctx: &Context, db: &Arc<Database>, guild_id: GI)
   let embed = system.build_embed_with_dynamic(MenuPage::GeneralConfig, &guild_name, &dynamic_data)
     .ok_or_else(|| anyhow::anyhow!("Failed to build general config embed"))?;
 
-  let components = system.build_components(MenuPage::GeneralConfig).unwrap_or_default();
+  let mut components = system.build_components(MenuPage::GeneralConfig).unwrap_or_default();
+
+  // Add ping_users_enabled toggle button
+  let ping_users_enabled = db.config.get_ping_users_enabled(guild_id).await.unwrap_or(true);
+  let ping_toggle_label = if ping_users_enabled { "Users can ping" } else { "Only runners can ping" };
+  let ping_toggle_style = if ping_users_enabled { BS::Success } else { BS::Danger };
+  let ping_toggle_button = CB::new("server_cfg_ping_users_enabled").label(ping_toggle_label).style(ping_toggle_style);
+  components.push(CAR::Buttons(vec![ping_toggle_button]));
 
   Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(components)))
 }
@@ -287,7 +324,7 @@ pub async fn nav_rank_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) ->
   let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
   let display = RankConfigDisplay { guild_name: guild_name.clone(), rank_roles, toggle_states, default_rank_role };
   let embed = display.as_settings_menu().build_embed();
-  let buttons = display.as_settings_menu().build_components();
+  let buttons = display.build_components();
   Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
 }
 

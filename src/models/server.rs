@@ -1904,6 +1904,53 @@ impl Category {
     let user_prefs = db.players.get_prefs(user_id).await?;
     debug!("queue_player_with_vc_status_fmt: user_prefs loaded, calling add_ply");
 
+    // Handle ping role assignment and DB consistency checks
+    if let Some(guild_id) = queue_ctx.guild_id {
+      let ctx = queue_ctx.ctx;
+      let ping_role_str = db.config.get_ping_role_id(guild_id).await?;
+      
+      if let Some(ref role_str) = ping_role_str {
+        if let Ok(role_id) = role_str.parse::<u64>() {
+          let role_id = serenity::all::RoleId::new(role_id);
+          
+          // Get current DB preference
+          let db_ping_enabled = db.user_server_prefs.get_ping_notification_enabled(user_id, guild_id).await.unwrap_or(None);
+          
+          // Get member to check current role status
+          if let Ok(member) = guild_id.member(&ctx.http, user_id).await {
+            let has_role = member.roles.contains(&role_id);
+            
+            // Handle consistency checks and role assignment
+            match (has_role, db_ping_enabled) {
+              // User has role but DB shows 0 (opted out) - remove role
+              (true, Some(false)) => {
+                let _ = member.remove_role(&ctx.http, role_id).await;
+                debug!("Removed ping role from user {} (DB shows opted out)", user_id);
+              }
+              // User doesn't have role and DB shows 1 (opted in) - add role
+              (false, Some(true)) => {
+                let _ = member.add_role(&ctx.http, role_id).await;
+                debug!("Added ping role to user {} (DB shows opted in)", user_id);
+              }
+              // User doesn't have role and DB is NULL - give role and set DB to 1
+              (false, None) => {
+                let _ = member.add_role(&ctx.http, role_id).await;
+                let _ = db.user_server_prefs.set_ping_notification_enabled(user_id, guild_id, Some(true)).await;
+                debug!("Added ping role to user {} and set DB to opted in (was NULL)", user_id);
+              }
+              // User has role and DB is NULL - set DB to 1 (consistency)
+              (true, None) => {
+                let _ = db.user_server_prefs.set_ping_notification_enabled(user_id, guild_id, Some(true)).await;
+                debug!("Set DB to opted in for user {} (has role, was NULL)", user_id);
+              }
+              // Other cases are consistent, no action needed
+              _ => {}
+            }
+          }
+        }
+      }
+    }
+
     session.add_ply(player.clone(), in_vc)?;
     debug!("queue_player_with_vc_status_fmt: add_ply succeeded, new pool size={}", session.pool.len());
 

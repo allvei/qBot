@@ -286,7 +286,9 @@ pub trait AsSettingsMenu {
 
 impl AsSettingsMenu for crate::db::repo::UserPreferences {
   fn as_settings_menu(&self) -> SettingsMenu {
-    // Format expiration: hours for full hours, minutes for partial
+    // Keep the old implementation for backward compatibility
+    // The new menu system is used in core.rs for navigation, but this
+    // conversion is still needed for places that use build_settings_embed/buttons
     let queue_expiration_text = if self.queue_expiration >= 60 && self.queue_expiration.is_multiple_of(60) {
       let hours = self.queue_expiration / 60;
       format!("{}h", hours)
@@ -303,7 +305,10 @@ impl AsSettingsMenu for crate::db::repo::UserPreferences {
         SB::toggle("settings_vc_auto_join", "VC auto-join", self.vc_auto_join),
         SB::toggle("settings_vc_auto_leave", "Leave VC when leaving queue", self.vc_auto_leave),
       ]))
-      .row(SR::Buttons(vec![SB::toggle("settings_vc_leave_queue", "Leave queue when leaving VC", self.vc_leave_queue)]))
+      .row(SR::Buttons(vec![
+        SB::toggle("settings_vc_leave_queue", "Leave queue when leaving VC", self.vc_leave_queue),
+        // Ping notifications toggle is added dynamically based on server state
+      ]))
       .row(SR::Buttons(vec![SB::edit("settings_edit_alert", "Edit join alert"), SB::edit("settings_edit_leave_alert", "Edit leave alert")]))
   }
 }
@@ -388,6 +393,15 @@ impl AsSettingsMenu for RolesConfigDisplay {
     let admin_default = self.admin_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
     let ping_default = self.ping_role.as_ref().and_then(|s| s.parse::<u64>().ok()).map(RoleId::new);
 
+    let ping_role_buttons = if self.ping_role.is_some() && !self.ping_role.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+      vec![
+        SB::action("guild_config_assign_ping_role_all", "Assign ping role to all", Sbs::Success),
+        SB::action("guild_config_remove_ping_role_all", "Remove ping role from all", Sbs::Danger),
+      ]
+    } else {
+      vec![]
+    };
+
     SettingsMenu::new(format!("{} - Roles config", self.guild_name))
       .description("Configure runner, admin, and ping roles")
       .color(0x5865F2)
@@ -396,6 +410,9 @@ impl AsSettingsMenu for RolesConfigDisplay {
       .row(SR::RoleSelect { id: "guild_config_ping_role".to_string(), placeholder: "Select ping role (empty for @here)".to_string(), default: ping_default })
       .row(SR::Buttons(vec![
         SB::action("guild_config_create_ping_role", "Create ping role", Sbs::Primary),
+      ]))
+      .row(SR::Buttons(ping_role_buttons))
+      .row(SR::Buttons(vec![
         SB::action("guild_config_back", "Back", Sbs::Secondary),
       ]))
   }
@@ -693,16 +710,17 @@ impl AsSettingsMenu for RankConfigDisplay {
       }
     }
 
-    // Add rank selection if there are ranks
-    if !self.rank_roles.is_empty() {
+    // Add rank selection dropdowns (always add with fallback when empty)
+    let default_options: Vec<(String, String)> = if self.rank_roles.is_empty() {
+      vec![("No ranks configured".to_string(), "none".to_string())]
+    } else {
       // Detect duplicate rank names for default rank select
       let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
       for (name, _, _) in &self.rank_roles {
         *name_counts.entry(name.as_str()).or_insert(0) += 1;
       }
 
-      let default_options: Vec<(String, String)> = self
-        .rank_roles
+      self.rank_roles
         .iter()
         .map(|(name, _, role_id)| {
           let is_default = self.default_rank_role.map(|r| r == *role_id).unwrap_or(false);
@@ -715,22 +733,31 @@ impl AsSettingsMenu for RankConfigDisplay {
           };
           (label, role_id.to_string())
         })
-        .collect();
+        .collect()
+    };
 
-      menu = menu.row(SR::StringSelect { id: "guild_config_default_rank_select".to_string(), placeholder: "Set default rank".to_string(), options: default_options });
+    menu = menu.row(SR::StringSelect { id: "guild_config_default_rank_select".to_string(), placeholder: "Set default rank".to_string(), options: default_options });
 
-      // Add rank edit select
-      let edit_options: Vec<(String, String)> = self
-        .rank_roles
+    // Add rank edit select
+    let edit_options: Vec<(String, String)> = if self.rank_roles.is_empty() {
+      vec![("No ranks configured".to_string(), "none".to_string())]
+    } else {
+      // Detect duplicate rank names
+      let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+      for (name, _, _) in &self.rank_roles {
+        *name_counts.entry(name.as_str()).or_insert(0) += 1;
+      }
+
+      self.rank_roles
         .iter()
         .map(|(name, _, role_id)| {
           let label = if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 { format!("{} (ID {})", name, role_id.get()) } else { name.clone() };
           (label, role_id.to_string())
         })
-        .collect();
+        .collect()
+    };
 
-      menu = menu.row(SR::StringSelect { id: "guild_config_rank_select".to_string(), placeholder: "Select rank to configure".to_string(), options: edit_options });
-    }
+    menu = menu.row(SR::StringSelect { id: "guild_config_rank_select".to_string(), placeholder: "Select rank to configure".to_string(), options: edit_options });
 
     // Add action buttons
     menu = menu.row(SR::Buttons(vec![
@@ -763,65 +790,69 @@ impl RankConfigDisplay {
       components.push(CAR::Buttons(chunk.to_vec()));
     }
 
-    // Only add rank selection menus if there are valid ranks
-    if !self.rank_roles.is_empty() {
-      components.push({
-        // Detect duplicate rank names for labeling
-        let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-        for (name, _, _) in &self.rank_roles {
-          *name_counts.entry(name.as_str()).or_insert(0) += 1;
-        }
+    // Add rank selection menus (with fallback when empty)
+    components.push({
+      // Detect duplicate rank names for labeling
+      let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+      for (name, _, _) in &self.rank_roles {
+        *name_counts.entry(name.as_str()).or_insert(0) += 1;
+      }
 
-        CAR::SelectMenu(
-          CSM::new(
-            "guild_config_default_rank_select",
-            CSMK::String {
-              options: self
-                .rank_roles
-                .iter()
-                .map(|(name, _, role_id)| {
-                  let is_default = self.default_rank_role.map(|r| r == *role_id).unwrap_or(false);
-                  let has_duplicate = name_counts.get(name.as_str()).copied().unwrap_or(0) > 1;
-                  let label = match (is_default, has_duplicate) {
-                    (true, true) => format!("{} (ID {}, current default)", name, role_id.get()),
-                    (true, false) => format!("{} (current default)", name),
-                    (false, true) => format!("{} (ID {})", name, role_id.get()),
-                    (false, false) => name.clone(),
-                  };
-                  CSMO::new(label, role_id.to_string())
-                })
-                .collect(),
-            },
-          )
-          .placeholder("Set default rank"),
+      let options = if self.rank_roles.is_empty() {
+        vec![CSMO::new("No ranks configured".to_string(), "none".to_string())]
+      } else {
+        self.rank_roles
+          .iter()
+          .map(|(name, _, role_id)| {
+            let is_default = self.default_rank_role.map(|r| r == *role_id).unwrap_or(false);
+            let has_duplicate = name_counts.get(name.as_str()).copied().unwrap_or(0) > 1;
+            let label = match (is_default, has_duplicate) {
+              (true, true) => format!("{} (ID {}, current default)", name, role_id.get()),
+              (true, false) => format!("{} (current default)", name),
+              (false, true) => format!("{} (ID {})", name, role_id.get()),
+              (false, false) => name.clone(),
+            };
+            CSMO::new(label, role_id.to_string())
+          })
+          .collect()
+      };
+
+      CAR::SelectMenu(
+        CSM::new(
+          "guild_config_default_rank_select",
+          CSMK::String { options },
         )
-      });
+        .placeholder("Set default rank"),
+      )
+    });
 
-      components.push({
-        // Detect duplicate rank names
-        let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-        for (name, _, _) in &self.rank_roles {
-          *name_counts.entry(name.as_str()).or_insert(0) += 1;
-        }
+    components.push({
+      // Detect duplicate rank names
+      let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+      for (name, _, _) in &self.rank_roles {
+        *name_counts.entry(name.as_str()).or_insert(0) += 1;
+      }
 
-        CAR::SelectMenu(
-          CSM::new(
-            "guild_config_rank_select",
-            CSMK::String {
-              options: self
-                .rank_roles
-                .iter()
-                .map(|(name, _, role_id)| {
-                  let label = if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 { format!("{} (ID {})", name, role_id.get()) } else { name.clone() };
-                  CSMO::new(label, role_id.to_string())
-                })
-                .collect(),
-            },
-          )
-          .placeholder("Select rank to configure"),
+      let options = if self.rank_roles.is_empty() {
+        vec![CSMO::new("No ranks configured".to_string(), "none".to_string())]
+      } else {
+        self.rank_roles
+          .iter()
+          .map(|(name, _, role_id)| {
+            let label = if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 { format!("{} (ID {})", name, role_id.get()) } else { name.clone() };
+            CSMO::new(label, role_id.to_string())
+          })
+          .collect()
+      };
+
+      CAR::SelectMenu(
+        CSM::new(
+          "guild_config_rank_select",
+          CSMK::String { options },
         )
-      });
-    }
+        .placeholder("Select rank to configure"),
+      )
+    });
 
     components.push(CAR::Buttons(vec![
       CB::new("guild_config_rank_add").label("Add rank").style(BS::Success),
