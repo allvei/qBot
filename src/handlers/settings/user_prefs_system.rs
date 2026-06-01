@@ -32,12 +32,13 @@ fn dm_toggle_component(prefs: &UserPreferences) -> Option<CAR> {
 }
 
 fn ping_notifications_toggle_component(_prefs: &UserPreferences) -> Option<CAR> {
-    // Ping notifications are per-server and managed via UserServerPrefs
-    // This toggle is a placeholder for future per-user ping settings
+    // Ping notifications are per-server and can only be toggled from guild context
+    // This button is disabled in DM context
     Some(CAR::Buttons(vec![
         CB::new("settings_ping_notifications")
             .label("Ping Notifications")
-            .style(BS::Secondary),
+            .style(BS::Secondary)
+            .disabled(true),
     ]))
 }
 
@@ -254,20 +255,20 @@ impl UserPrefsMenuSystem {
         inner.add_page(crate::handlers::settings::unified_menu::MenuDefinition {
             page: UserPrefsPage::PingSettings,
             title: "Ping Settings",
-            description: "Configure ping notifications for each server",
+            description: "Manage per-server ping notification preferences",
             color: 0x5865F2,
             parent: Some(UserPrefsPage::Main),
             buttons: vec![
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_ping_notifications",
                     label: "Ping Notifications",
-                    description: Some("Toggle ping notifications for this server"),
+                    description: Some("Toggle ping notifications for this server (guild context only)"),
                     target_page: None,
                     button_type: ButtonType::Toggle,
                 },
             ],
             fields: vec![
-                ("Note", "Ping settings are configured per-server. This toggle works when accessed from a server context (dashboard).", true),
+                ("Note", "Ping settings are per-server and managed from the server dashboard. This menu is read-only in DM context.", true),
             ],
             dynamic_fields: vec![],
             dynamic_components: vec![
