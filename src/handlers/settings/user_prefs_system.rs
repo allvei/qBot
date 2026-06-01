@@ -343,7 +343,7 @@ pub fn get_user_prefs_parent_from_back_button(button_id: &str) -> Option<UserPre
         "user_prefs_main_back" => Some(UserPrefsPage::Main),
         "user_prefs_queue_back" => Some(UserPrefsPage::QueueSettings),
         "user_prefs_alert_back" => Some(UserPrefsPage::AlertSettings),
-        "user_prefs_ping_back" => Some(UserPrefsPage::PingSettings),
+        "user_prefs_ping_back" => Some(UserPrefsPage::Main),
         _ => None,
     }
 }

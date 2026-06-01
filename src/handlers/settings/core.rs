@@ -129,24 +129,33 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
       }
     }
     "settings_ping_notifications" => {
-      // Toggle ping notifications for the current server
-      let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
+      // Toggle ping notifications - only works in guild context
+      if let Some(guild_id) = interaction.guild_id {
+        // Get current ping notification preference for this server
+        let current = db.user_server_prefs.get_ping_notification_enabled(user_id, guild_id).await.unwrap_or(None);
+        let new_value = match current {
+          Some(true) => Some(false),
+          Some(false) => Some(true),
+          None => Some(true), // Default to enabled on first interaction
+        };
 
-      // Get current ping notification preference for this server
-      let current = db.user_server_prefs.get_ping_notification_enabled(user_id, guild_id).await.unwrap_or(None);
-      let new_value = match current {
-        Some(true) => Some(false),
-        Some(false) => Some(true),
-        None => Some(true), // Default to enabled on first interaction
-      };
-
-      db.user_server_prefs.set_ping_notification_enabled(user_id, guild_id, new_value).await?;
+        db.user_server_prefs.set_ping_notification_enabled(user_id, guild_id, new_value).await?;
+      }
 
       // Acknowledge and update the settings menu directly (no popup)
       let settings = db.players.get_prefs(user_id).await?;
       let system = get_user_prefs_menu_system();
 
       if let Some(response) = system.build_response(UserPrefsPage::PingSettings, &settings) {
+        interaction.create_response(&ctx.http, response).await?;
+      }
+    }
+    "user_prefs_ping_back" => {
+      // Back button from ping settings menu
+      let settings = db.players.get_prefs(user_id).await?;
+      let system = get_user_prefs_menu_system();
+
+      if let Some(response) = system.build_response(UserPrefsPage::Main, &settings) {
         interaction.create_response(&ctx.http, response).await?;
       }
     }
