@@ -27,7 +27,7 @@ fn dm_toggle_component(prefs: &UserPreferences) -> Option<CAR> {
     Some(CAR::Buttons(vec![
         CB::new("settings_toggle_dm")
             .label("DM Alerts")
-            .style(if prefs.pm_hot_alert { BS::Success } else { BS::Danger }),
+            .style(if prefs.pm_hot_alert { BS::Success } else { BS::Secondary }),
     ]))
 }
 
@@ -45,7 +45,7 @@ fn vc_auto_join_component(prefs: &UserPreferences) -> Option<CAR> {
     Some(CAR::Buttons(vec![
         CB::new("settings_vc_auto_join")
             .label("VC Auto-join")
-            .style(if prefs.vc_auto_join { BS::Success } else { BS::Danger }),
+            .style(if prefs.vc_auto_join { BS::Success } else { BS::Secondary }),
     ]))
 }
 
@@ -53,7 +53,7 @@ fn vc_auto_leave_component(prefs: &UserPreferences) -> Option<CAR> {
     Some(CAR::Buttons(vec![
         CB::new("settings_vc_auto_leave")
             .label("VC Auto-leave")
-            .style(if prefs.vc_auto_leave { BS::Success } else { BS::Danger }),
+            .style(if prefs.vc_auto_leave { BS::Success } else { BS::Secondary }),
     ]))
 }
 
@@ -61,7 +61,7 @@ fn vc_leave_queue_component(prefs: &UserPreferences) -> Option<CAR> {
     Some(CAR::Buttons(vec![
         CB::new("settings_vc_leave_queue")
             .label("Leave Queue on VC Disconnect")
-            .style(if prefs.vc_leave_queue { BS::Success } else { BS::Danger }),
+            .style(if prefs.vc_leave_queue { BS::Success } else { BS::Secondary }),
     ]))
 }
 
