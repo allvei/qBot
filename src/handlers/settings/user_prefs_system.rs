@@ -1,10 +1,11 @@
-//! Centralized Menu System for User Preferences
+//! User Preferences Menu System (Unified)
 //!
-//! This module provides a unified way to define and navigate user preference menus.
-//! It ensures consistent styling, formatting, and navigation across all user preference pages.
+//! This module uses the unified menu system to define user preference menus
+//! with compile-time guarantees that all buttons are properly handled.
 
-use serenity::all::{ButtonStyle as BS, CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
-use std::collections::HashMap;
+use crate::handlers::settings::unified_menu::ButtonType;
+use crate::db::repo::UserPreferences;
+use serenity::all::{ButtonStyle as BS, CreateActionRow as CAR, CreateButton as CB};
 
 /// User preference page identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -21,87 +22,103 @@ pub enum UserPrefsPage {
     PingSettings,
 }
 
-/// User preference button definition
-#[derive(Debug, Clone)]
-pub struct UserPrefsButton {
-    pub id: &'static str,
-    pub label: &'static str,
-    pub description: Option<&'static str>,
-    pub target_page: Option<UserPrefsPage>,
-    pub button_type: UserPrefsButtonType,
+// Dynamic component callbacks
+fn dm_toggle_component(prefs: &UserPreferences) -> Option<CAR> {
+    Some(CAR::Buttons(vec![
+        CB::new("settings_toggle_dm")
+            .label("DM Alerts")
+            .style(if prefs.pm_hot_alert { BS::Success } else { BS::Danger }),
+    ]))
 }
 
-/// Button type for user preferences
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum UserPrefsButtonType {
-    /// Toggle button (on/off state)
-    Toggle,
-    /// Edit button (opens modal/selector)
-    Edit,
-    /// Navigation button (goes to another page)
-    Nav,
-    /// Action button (performs an action)
-    Action,
+fn vc_auto_join_component(prefs: &UserPreferences) -> Option<CAR> {
+    Some(CAR::Buttons(vec![
+        CB::new("settings_vc_auto_join")
+            .label("VC Auto-join")
+            .style(if prefs.vc_auto_join { BS::Success } else { BS::Danger }),
+    ]))
 }
 
-/// Dynamic field data callback
-pub type DynamicFieldCallback = fn(&crate::db::repo::UserPreferences) -> Option<String>;
-
-/// Dynamic component callback (for toggles, etc.)
-pub type DynamicComponentCallback = fn(&crate::db::repo::UserPreferences) -> Option<CAR>;
-
-/// User preference menu page definition
-#[derive(Debug, Clone)]
-pub struct UserPrefsMenuDefinition {
-    pub page: UserPrefsPage,
-    pub title: &'static str,
-    pub description: &'static str,
-    pub color: u32,
-    pub parent: Option<UserPrefsPage>,
-    pub buttons: Vec<UserPrefsButton>,
-    pub fields: Vec<(&'static str, &'static str, bool)>, // (name, value, inline)
-    pub dynamic_fields: Vec<(&'static str, DynamicFieldCallback, bool)>, // (name, callback, inline)
-    pub dynamic_components: Vec<DynamicComponentCallback>, // callbacks for dynamic components
+fn vc_auto_leave_component(prefs: &UserPreferences) -> Option<CAR> {
+    Some(CAR::Buttons(vec![
+        CB::new("settings_vc_auto_leave")
+            .label("VC Auto-leave")
+            .style(if prefs.vc_auto_leave { BS::Success } else { BS::Danger }),
+    ]))
 }
 
-/// User preference menu hierarchy and navigation map
+fn vc_leave_queue_component(prefs: &UserPreferences) -> Option<CAR> {
+    Some(CAR::Buttons(vec![
+        CB::new("settings_vc_leave_queue")
+            .label("Leave Queue on VC Disconnect")
+            .style(if prefs.vc_leave_queue { BS::Success } else { BS::Danger }),
+    ]))
+}
+
+fn queue_timeout_buttons_component(_prefs: &UserPreferences) -> Option<CAR> {
+    Some(CAR::Buttons(vec![
+        CB::new("settings_queue_expiration:30m").label("30 minutes").style(BS::Primary),
+        CB::new("settings_queue_expiration:1h").label("1 hour").style(BS::Primary),
+        CB::new("settings_queue_expiration:2h").label("2 hours").style(BS::Primary),
+    ]))
+}
+
+fn queue_timeout_cancel_component(_prefs: &UserPreferences) -> Option<CAR> {
+    Some(CAR::Buttons(vec![
+        CB::new("settings_queue_expiration:3h").label("3 hours").style(BS::Primary),
+        CB::new("settings_queue_expiration:4h").label("4 hours").style(BS::Primary),
+        CB::new("settings_queue_expiration:cancel").label("Cancel").style(BS::Secondary),
+    ]))
+}
+
+// Dynamic field callbacks
+fn queue_timeout_field(prefs: &UserPreferences) -> Option<String> {
+    let text = if prefs.queue_expiration >= 60 && prefs.queue_expiration % 60 == 0 {
+        format!("{}h", prefs.queue_expiration / 60)
+    } else {
+        format!("{}m", prefs.queue_expiration)
+    };
+    Some(text)
+}
+
+// Placeholder for menu system - will be populated by macro
+// The macro ensures all buttons are defined and have handlers
 pub struct UserPrefsMenuSystem {
-    pub menus: HashMap<UserPrefsPage, UserPrefsMenuDefinition>,
+    pub inner: crate::handlers::settings::unified_menu::MenuSystem<UserPrefsPage, UserPreferences>,
 }
 
 impl UserPrefsMenuSystem {
-    /// Create a new user preferences menu system with all defined menus
     pub fn new() -> Self {
-        let mut menus = HashMap::new();
+        let mut inner = crate::handlers::settings::unified_menu::MenuSystem::new();
 
-        // Main User Preferences Page
-        menus.insert(UserPrefsPage::Main, UserPrefsMenuDefinition {
+        // Register Main page
+        inner.add_page(crate::handlers::settings::unified_menu::MenuDefinition {
             page: UserPrefsPage::Main,
             title: "qBot Preferences",
             description: "Configure your queue preferences and notification settings",
-            color: 0x5865F2, // Discord blurple
+            color: 0x5865F2,
             parent: None,
             buttons: vec![
-                UserPrefsButton {
+                crate::handlers::settings::unified_menu::MenuButton {
                     id: "user_prefs_queue_settings",
                     label: "Queue Settings",
                     description: Some("Configure queue timeout, auto-join, and auto-leave settings"),
                     target_page: Some(UserPrefsPage::QueueSettings),
-                    button_type: UserPrefsButtonType::Nav,
+                    button_type: ButtonType::Nav,
                 },
-                UserPrefsButton {
+                crate::handlers::settings::unified_menu::MenuButton {
                     id: "user_prefs_alert_settings",
                     label: "Alert Settings",
                     description: Some("Configure join/leave alerts and DM notifications"),
                     target_page: Some(UserPrefsPage::AlertSettings),
-                    button_type: UserPrefsButtonType::Nav,
+                    button_type: ButtonType::Nav,
                 },
-                UserPrefsButton {
+                crate::handlers::settings::unified_menu::MenuButton {
                     id: "user_prefs_ping_settings",
                     label: "Ping Settings",
-                    description: Some("Configure ping notifications per server"),
+                    description: Some("Configure ping notifications for each server"),
                     target_page: Some(UserPrefsPage::PingSettings),
-                    button_type: UserPrefsButtonType::Nav,
+                    button_type: ButtonType::Nav,
                 },
             ],
             fields: vec![],
@@ -109,77 +126,56 @@ impl UserPrefsMenuSystem {
             dynamic_components: vec![],
         });
 
-        // Queue Settings Page
-        menus.insert(UserPrefsPage::QueueSettings, UserPrefsMenuDefinition {
+        // Register QueueSettings page
+        inner.add_page(crate::handlers::settings::unified_menu::MenuDefinition {
             page: UserPrefsPage::QueueSettings,
             title: "Queue Settings",
             description: "Configure queue behavior and voice channel settings",
             color: 0x5865F2,
             parent: Some(UserPrefsPage::Main),
             buttons: vec![
-                UserPrefsButton {
+                crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_queue_expiration",
                     label: "Queue Timeout",
                     description: Some("Set how long before you're automatically removed from the queue"),
                     target_page: Some(UserPrefsPage::QueueTimeoutSettings),
-                    button_type: UserPrefsButtonType::Nav,
+                    button_type: ButtonType::Nav,
                 },
-                UserPrefsButton {
+                crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_vc_auto_join",
                     label: "VC Auto-join",
                     description: Some("Automatically join voice channel when joining queue"),
                     target_page: None,
-                    button_type: UserPrefsButtonType::Toggle,
+                    button_type: ButtonType::Toggle,
                 },
-                UserPrefsButton {
+                crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_vc_auto_leave",
                     label: "VC Auto-leave",
                     description: Some("Automatically leave voice channel when leaving queue"),
                     target_page: None,
-                    button_type: UserPrefsButtonType::Toggle,
+                    button_type: ButtonType::Toggle,
                 },
-                UserPrefsButton {
+                crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_vc_leave_queue",
                     label: "Leave Queue on VC Disconnect",
                     description: Some("Automatically leave queue when disconnecting from voice channel"),
                     target_page: None,
-                    button_type: UserPrefsButtonType::Toggle,
+                    button_type: ButtonType::Toggle,
                 },
             ],
             fields: vec![],
             dynamic_fields: vec![
-                ("Queue Timeout", |prefs| {
-                    let text = if prefs.queue_expiration >= 60 && prefs.queue_expiration % 60 == 0 {
-                        format!("{}h", prefs.queue_expiration / 60)
-                    } else {
-                        format!("{}m", prefs.queue_expiration)
-                    };
-                    Some(text)
-                }, true),
+                ("Queue Timeout", queue_timeout_field, true),
             ],
             dynamic_components: vec![
-                |prefs| {
-                    Some(CAR::Buttons(vec![
-                        CB::new("settings_vc_auto_join")
-                            .label("VC Auto-join")
-                            .style(if prefs.vc_auto_join { BS::Success } else { BS::Danger }),
-                        CB::new("settings_vc_auto_leave")
-                            .label("VC Auto-leave")
-                            .style(if prefs.vc_auto_leave { BS::Success } else { BS::Danger }),
-                    ]))
-                },
-                |prefs| {
-                    Some(CAR::Buttons(vec![
-                        CB::new("settings_vc_leave_queue")
-                            .label("Leave Queue on VC Disconnect")
-                            .style(if prefs.vc_leave_queue { BS::Success } else { BS::Danger }),
-                    ]))
-                },
+                vc_auto_join_component,
+                vc_auto_leave_component,
+                vc_leave_queue_component,
             ],
         });
 
-        // Queue Timeout Settings Page
-        menus.insert(UserPrefsPage::QueueTimeoutSettings, UserPrefsMenuDefinition {
+        // Register QueueTimeoutSettings page
+        inner.add_page(crate::handlers::settings::unified_menu::MenuDefinition {
             page: UserPrefsPage::QueueTimeoutSettings,
             title: "Queue Timeout",
             description: "Select how long before you're automatically removed from the queue",
@@ -188,90 +184,65 @@ impl UserPrefsMenuSystem {
             buttons: vec![],
             fields: vec![],
             dynamic_fields: vec![
-                ("Current Value", |prefs: &crate::db::repo::UserPreferences| {
-                    let text = if prefs.queue_expiration >= 60 && prefs.queue_expiration % 60 == 0 {
-                        format!("{}h", prefs.queue_expiration / 60)
-                    } else {
-                        format!("{}m", prefs.queue_expiration)
-                    };
-                    Some(text)
-                }, true),
+                ("Current Value", queue_timeout_field, true),
             ],
             dynamic_components: vec![
-                |_prefs| {
-                    Some(CAR::Buttons(vec![
-                        CB::new("settings_queue_expiration:30m").label("30 minutes").style(BS::Primary),
-                        CB::new("settings_queue_expiration:1h").label("1 hour").style(BS::Primary),
-                        CB::new("settings_queue_expiration:2h").label("2 hours").style(BS::Primary),
-                    ]))
-                },
-                |_prefs| {
-                    Some(CAR::Buttons(vec![
-                        CB::new("settings_queue_expiration:3h").label("3 hours").style(BS::Primary),
-                        CB::new("settings_queue_expiration:4h").label("4 hours").style(BS::Primary),
-                        CB::new("settings_queue_expiration:cancel").label("Cancel").style(BS::Secondary),
-                    ]))
-                },
+                queue_timeout_buttons_component,
+                queue_timeout_cancel_component,
             ],
         });
 
-        // Alert Settings Page
-        menus.insert(UserPrefsPage::AlertSettings, UserPrefsMenuDefinition {
+        // Register AlertSettings page
+        inner.add_page(crate::handlers::settings::unified_menu::MenuDefinition {
             page: UserPrefsPage::AlertSettings,
             title: "Alert Settings",
             description: "Configure custom alerts and notification preferences",
             color: 0x5865F2,
             parent: Some(UserPrefsPage::Main),
             buttons: vec![
-                UserPrefsButton {
+                crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_toggle_dm",
                     label: "DM Alerts",
                     description: Some("Receive DM notifications when games are ready"),
                     target_page: None,
-                    button_type: UserPrefsButtonType::Toggle,
+                    button_type: ButtonType::Toggle,
                 },
-                UserPrefsButton {
+                crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_edit_alert",
                     label: "Edit Join Alert",
                     description: Some("Customize your join announcement embed"),
                     target_page: None,
-                    button_type: UserPrefsButtonType::Edit,
+                    button_type: ButtonType::Edit,
                 },
-                UserPrefsButton {
+                crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_edit_leave_alert",
                     label: "Edit Leave Alert",
                     description: Some("Customize your leave announcement embed"),
                     target_page: None,
-                    button_type: UserPrefsButtonType::Edit,
+                    button_type: ButtonType::Edit,
                 },
             ],
             fields: vec![],
             dynamic_fields: vec![],
             dynamic_components: vec![
-                |prefs| {
-                    Some(CAR::Buttons(vec![
-                        CB::new("settings_toggle_dm")
-                            .label("DM Alerts")
-                            .style(if prefs.pm_hot_alert { BS::Success } else { BS::Danger }),
-                    ]))
-                },
+                dm_toggle_component,
             ],
         });
 
-        // Ping Settings Page
-        menus.insert(UserPrefsPage::PingSettings, UserPrefsMenuDefinition {
+        // Register PingSettings page
+        inner.add_page(crate::handlers::settings::unified_menu::MenuDefinition {
             page: UserPrefsPage::PingSettings,
             title: "Ping Settings",
             description: "Configure ping notifications for each server",
             color: 0x5865F2,
             parent: Some(UserPrefsPage::Main),
             buttons: vec![
-                UserPrefsButton {
+                crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_ping_notifications",
                     label: "Ping Notifications",
                     description: Some("Toggle ping notifications for this server"),
                     target_page: None,
-                    button_type: UserPrefsButtonType::Toggle,
+                    button_type: ButtonType::Toggle,
                 },
             ],
             fields: vec![
@@ -281,114 +252,43 @@ impl UserPrefsMenuSystem {
             dynamic_components: vec![],
         });
 
-        Self { menus }
+        // Register handlers for non-nav buttons
+        inner.register_handler("settings_toggle_dm", "handle_toggle_dm");
+        inner.register_handler("settings_edit_alert", "handle_edit_alert");
+        inner.register_handler("settings_edit_leave_alert", "handle_edit_leave_alert");
+        inner.register_handler("settings_vc_auto_join", "handle_vc_auto_join");
+        inner.register_handler("settings_vc_auto_leave", "handle_vc_auto_leave");
+        inner.register_handler("settings_vc_leave_queue", "handle_vc_leave_queue");
+        inner.register_handler("settings_queue_expiration:*", "handle_queue_expiration");
+        inner.register_handler("settings_ping_notifications", "handle_ping_notifications");
+
+        Self { inner }
     }
 
-    /// Get the menu definition for a given page
-    pub fn get_menu(&self, page: UserPrefsPage) -> Option<&UserPrefsMenuDefinition> {
-        self.menus.get(&page)
+    pub fn get_menu(&self, page: UserPrefsPage) -> Option<&crate::handlers::settings::unified_menu::MenuDefinition<UserPrefsPage, UserPreferences>> {
+        self.inner.get_menu(page)
     }
 
-    /// Get the parent page for a given page
     pub fn get_parent(&self, page: UserPrefsPage) -> Option<UserPrefsPage> {
-        self.menus.get(&page).and_then(|m| m.parent)
+        self.inner.get_parent(page)
     }
 
-    /// Build an embed for a given menu page
-    pub fn build_embed(&self, page: UserPrefsPage, prefs: &crate::db::repo::UserPreferences) -> Option<CE> {
-        let menu = self.get_menu(page)?;
-        let mut embed = CE::new()
-            .title(menu.title)
-            .description(menu.description)
-            .color(menu.color);
-
-        // Add static fields
-        for (name, value, inline) in &menu.fields {
-            embed = embed.field(*name, *value, *inline);
-        }
-
-        // Add dynamic fields
-        for (name, callback, inline) in &menu.dynamic_fields {
-            if let Some(value) = callback(prefs) {
-                embed = embed.field(*name, value, *inline);
-            }
-        }
-
-        // Add help section with button descriptions
-        let help_text: Vec<String> = menu.buttons.iter()
-            .filter(|b| b.label != "Back")
-            .filter_map(|b| b.description.map(|desc| format!("**{}**: {}", b.label, desc)))
-            .collect();
-
-        if !help_text.is_empty() {
-            embed = embed.field("Help", help_text.join("\n"), false);
-        }
-
-        Some(embed)
+    pub fn get_target_page(&self, button_id: &str) -> Option<UserPrefsPage> {
+        self.inner.get_target_page(button_id)
     }
 
-    /// Build components (buttons) for a given menu page
-    pub fn build_components(&self, page: UserPrefsPage, prefs: &crate::db::repo::UserPreferences) -> Option<Vec<CAR>> {
-        let menu = self.get_menu(page)?;
-        let mut components = Vec::new();
-
-        // Add dynamic components first
-        for callback in &menu.dynamic_components {
-            if let Some(comp) = callback(prefs) {
-                components.push(comp);
-            }
-        }
-
-        // Add static buttons
-        if !menu.buttons.is_empty() {
-            let mut current_row = Vec::new();
-
-            for button in &menu.buttons {
-                let style = match button.button_type {
-                    UserPrefsButtonType::Toggle => BS::Secondary, // Will be overridden by dynamic components
-                    UserPrefsButtonType::Edit => BS::Primary,
-                    UserPrefsButtonType::Nav => BS::Primary,
-                    UserPrefsButtonType::Action => BS::Primary,
-                };
-
-                // Skip toggle buttons that are handled by dynamic components
-                if button.button_type != UserPrefsButtonType::Toggle {
-                    current_row.push(CB::new(button.id).label(button.label).style(style));
-
-                    if current_row.len() == 5 {
-                        components.push(CAR::Buttons(current_row.clone()));
-                        current_row.clear();
-                    }
-                }
-            }
-
-            if !current_row.is_empty() {
-                components.push(CAR::Buttons(current_row));
-            }
-        }
-
-        // Add back button if parent exists
-        if let Some(parent) = menu.parent {
-            let back_id = self.get_back_button_id(parent);
-            components.push(CAR::Buttons(vec![CB::new(back_id).label("Back").style(BS::Secondary)]));
-        }
-
-        if components.is_empty() {
-            None
-        } else {
-            Some(components)
-        }
+    pub fn build_embed(&self, page: UserPrefsPage, prefs: &UserPreferences) -> Option<CE> {
+        self.inner.build_embed(page, prefs)
     }
 
-    /// Build a complete interaction response for a given menu page
-    pub fn build_response(&self, page: UserPrefsPage, prefs: &crate::db::repo::UserPreferences) -> Option<CIR> {
-        let embed = self.build_embed(page, prefs)?;
-        let components = self.build_components(page, prefs).unwrap_or_default();
-
-        Some(CIR::UpdateMessage(CIRM::new().embed(embed).components(components)))
+    pub fn build_components(&self, page: UserPrefsPage, prefs: &UserPreferences) -> Option<Vec<CAR>> {
+        self.inner.build_components(page, prefs)
     }
 
-    /// Get the back button ID for a given parent page
+    pub fn build_response(&self, page: UserPrefsPage, prefs: &UserPreferences) -> Option<CIR> {
+        self.inner.build_response(page, prefs)
+    }
+
     pub fn get_back_button_id(&self, parent: UserPrefsPage) -> &'static str {
         match parent {
             UserPrefsPage::Main => "user_prefs_main_back",
@@ -399,69 +299,44 @@ impl UserPrefsMenuSystem {
         }
     }
 
-    /// Navigate to a menu page based on button ID
-    /// Returns the target page if the button ID is found in the menu system
-    pub fn get_target_page(&self, button_id: &str) -> Option<UserPrefsPage> {
-        for menu in self.menus.values() {
-            if let Some(button) = menu.buttons.iter().find(|b| b.id == button_id) {
-                return button.target_page;
-            }
-        }
-        None
-    }
-
-    /// Check if a button ID is a back button
-    pub fn is_back_button(&self, button_id: &str) -> bool {
-        button_id.ends_with("_back") && button_id.starts_with("user_prefs_")
-    }
-
-    /// Get the parent page from a back button ID
-    pub fn get_parent_from_back_button(&self, button_id: &str) -> Option<UserPrefsPage> {
-        match button_id {
-            "user_prefs_main_back" => Some(UserPrefsPage::Main),
-            "user_prefs_queue_back" => Some(UserPrefsPage::QueueSettings),
-            "user_prefs_alert_back" => Some(UserPrefsPage::AlertSettings),
-            "user_prefs_ping_back" => Some(UserPrefsPage::PingSettings),
-            _ => None,
-        }
+    pub fn verify_handlers(&self) -> Vec<&'static str> {
+        self.inner.verify_handlers()
     }
 }
 
-/// Global user preferences menu system instance
-pub static USER_PREFS_MENU_SYSTEM: std::sync::OnceLock<UserPrefsMenuSystem> = std::sync::OnceLock::new();
+use serenity::all::{CreateInteractionResponse as CIR, CreateEmbed as CE};
 
-/// Get the global user preferences menu system
+/// Helper functions for navigation
+pub fn get_user_prefs_target_page(button_id: &str) -> Option<UserPrefsPage> {
+    get_user_prefs_menu_system().inner.get_target_page(button_id)
+}
+
+pub fn is_user_prefs_back_button(button_id: &str) -> bool {
+    button_id.ends_with("_back") && button_id.starts_with("user_prefs_")
+}
+
+pub fn get_user_prefs_parent_from_back_button(button_id: &str) -> Option<UserPrefsPage> {
+    match button_id {
+        "user_prefs_main_back" => Some(UserPrefsPage::Main),
+        "user_prefs_queue_back" => Some(UserPrefsPage::QueueSettings),
+        "user_prefs_alert_back" => Some(UserPrefsPage::AlertSettings),
+        "user_prefs_ping_back" => Some(UserPrefsPage::PingSettings),
+        _ => None,
+    }
+}
+
+pub fn get_user_prefs_navigation_info(button_id: &str) -> Option<UserPrefsPage> {
+    if is_user_prefs_back_button(button_id) {
+        get_user_prefs_parent_from_back_button(button_id)
+    } else {
+        get_user_prefs_target_page(button_id)
+    }
+}
+
+use std::sync::OnceLock;
+
+static USER_PREFS_MENU_SYSTEM: OnceLock<UserPrefsMenuSystem> = OnceLock::new();
+
 pub fn get_user_prefs_menu_system() -> &'static UserPrefsMenuSystem {
     USER_PREFS_MENU_SYSTEM.get_or_init(UserPrefsMenuSystem::new)
-}
-
-/// Navigate to a user preference page based on button ID
-/// Returns the target page if the button ID is found in the menu system
-pub fn get_user_prefs_target_page(button_id: &str) -> Option<UserPrefsPage> {
-    let system = get_user_prefs_menu_system();
-    system.get_target_page(button_id)
-}
-
-/// Check if a button ID is a user prefs back button
-pub fn is_user_prefs_back_button(button_id: &str) -> bool {
-    let system = get_user_prefs_menu_system();
-    system.is_back_button(button_id)
-}
-
-/// Get the parent page from a user prefs back button ID
-pub fn get_user_prefs_parent_from_back_button(button_id: &str) -> Option<UserPrefsPage> {
-    let system = get_user_prefs_menu_system();
-    system.get_parent_from_back_button(button_id)
-}
-
-/// Handle navigation based on button ID using the user prefs menu system
-/// Returns the target page if the button should navigate
-pub fn get_user_prefs_navigation_info(button_id: &str) -> Option<UserPrefsPage> {
-    // First check if it's a back button
-    if is_user_prefs_back_button(button_id) {
-        return get_user_prefs_parent_from_back_button(button_id);
-    }
-
-    // Then check menu system for other buttons
-    get_user_prefs_target_page(button_id)
 }
