@@ -41,7 +41,7 @@ impl PlayerSettings {
 /// Handle player settings rank selection dropdown
 pub async fn handle_player_settings_rank_select(ctx: &Context, interaction: &CI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<crate::models::Manager>>) -> Result<()> {
   let custom_id = &interaction.data.custom_id;
-  let user_tag = get_user_tag(ctx, interaction.user.id, db).await;
+  let _user_tag = get_user_tag(ctx, interaction.user.id, db).await;
   // Extract user_id from custom_id (format: player_settings_rank_select_<user_id>)
   let target_user_id: u64 = custom_id.rsplit('_').next().and_then(|s| s.parse().ok()).ok_or_else(|| anyhow::anyhow!("Invalid select ID format: {}", custom_id))?;
 
@@ -436,7 +436,7 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
         warn!("[{}] Failed to get server when checking if player {} is queued", guild_name, target_tag);
       }
 
-      let queued = manager_lock.queue_dash_updates_for_player(ctx, guild_id, target_uid).await;
+      let _queued = manager_lock.queue_dash_updates_for_player(ctx, guild_id, target_uid).await;
     }
 
     // Refresh the settings menu
@@ -531,9 +531,9 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
         if let Some(value) = &input.value {
           let trimmed = value.trim();
           match idx {
-            0 => {
+            0
               // Color field
-              if !trimmed.is_empty() {
+              if !trimmed.is_empty() => {
                 let hex_str = trimmed.trim_start_matches('#');
                 if let Ok(color) = u32::from_str_radix(hex_str, 16) {
                   if (0..=0xFFFFFF).contains(&color) {
@@ -541,7 +541,6 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
                   }
                 }
               }
-            }
             1 => user_prefs.join_alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
             2 => user_prefs.join_alert_footer = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
             3 => user_prefs.leave_alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },

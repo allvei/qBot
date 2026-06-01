@@ -514,7 +514,7 @@ pub async fn process_match_result_with_elo(
       Ok(None) => Ok(None), // Dynamic ELO not enabled
       Err(e) => {
         error!("Failed to process dynamic ELO: {e}");
-        Err(e.into())
+        Err(e)
       }
     };
   }

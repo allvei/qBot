@@ -76,7 +76,7 @@ pub async fn send_system_message(ctx: &Context, db: &Database, guild_id: GuildId
 
 /// Send a system message to all guilds that have a system message channel configured
 pub async fn broadcast_system_message(ctx: &Context, db: &Database, content: &str) -> Result<Vec<(GuildId, Result<()>)>> {
-  let guilds: Vec<GuildId> = ctx.cache.guilds().iter().copied().collect();
+  let guilds: Vec<GuildId> = ctx.cache.guilds().to_vec();
   let mut results = Vec::new();
 
   for guild_id in guilds {
@@ -90,7 +90,7 @@ pub async fn broadcast_system_message(ctx: &Context, db: &Database, content: &st
 /// Validate that all guilds have a valid system message channel configured
 /// Returns a list of (guild_id, guild_name, error) for guilds with issues
 pub async fn validate_system_message_channels(ctx: &Context, db: &Database) -> Vec<(GuildId, String, String)> {
-  let guilds: Vec<GuildId> = ctx.cache.guilds().iter().copied().collect();
+  let guilds: Vec<GuildId> = ctx.cache.guilds().to_vec();
   let mut errors = Vec::new();
 
   for guild_id in guilds {
@@ -187,7 +187,7 @@ pub async fn send_community_update(ctx: &Context, db: &Database, guild_id: Guild
 
 /// Send a community update to all guilds that have a community updates channel configured
 pub async fn broadcast_community_update(ctx: &Context, db: &Database, content: &str) -> Result<Vec<(GuildId, Result<()>)>> {
-  let guilds: Vec<GuildId> = ctx.cache.guilds().iter().copied().collect();
+  let guilds: Vec<GuildId> = ctx.cache.guilds().to_vec();
   let mut results = Vec::new();
 
   for guild_id in guilds {
@@ -201,7 +201,7 @@ pub async fn broadcast_community_update(ctx: &Context, db: &Database, content: &
 /// Validate that all guilds have a valid community updates channel configured
 /// Returns a list of (guild_id, guild_name, error) for guilds with issues
 pub async fn validate_community_updates_channels(ctx: &Context, db: &Database) -> Vec<(GuildId, String, String)> {
-  let guilds: Vec<GuildId> = ctx.cache.guilds().iter().copied().collect();
+  let guilds: Vec<GuildId> = ctx.cache.guilds().to_vec();
   let mut errors = Vec::new();
 
   for guild_id in guilds {

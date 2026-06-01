@@ -155,7 +155,7 @@ impl Manager {
 
   /// Clean up stale score submissions (older than 5 minutes)
   pub fn cleanup_stale_score_submissions(&mut self) {
-    let now = SystemTime::now();
+    let _now = SystemTime::now();
     let timeout = std::time::Duration::from_secs(300);
     self.active_score_submissions.retain(|_, (_, start_time)| start_time.elapsed().unwrap_or(timeout) < timeout);
   }

@@ -893,7 +893,7 @@ impl Category {
         if !players_to_remove.is_empty() {
           // Remove the timed-out players
           for user_id in &players_to_remove {
-            if let Some((tag, fmt_name)) = player_tags.get(user_id) {
+            if let Some((_tag, _fmt_name)) = player_tags.get(user_id) {
               // Player is in an active game, don't remove them
             } else {
               // Remove the player
@@ -980,8 +980,8 @@ impl Category {
       .collect();
 
     // Move users to team channels in parallel
-    let start_time = Instant::now();
-    let player_count = player_moves.len();
+    let _start_time = Instant::now();
+    let _player_count = player_moves.len();
     let move_tasks: Vec<_> = player_moves
       .into_iter()
       .map(|(user_id, channel_id, tag)| {
@@ -1098,7 +1098,7 @@ impl Category {
       // Also remove from database
       let guild_name = crate::models::constants::guild_name(ctx, guild_id);
       let category_name = self.name.as_deref().unwrap_or("Unknown");
-      if let Err(e) = db.teams.remove_team(guild_id, tc.red_vc, tc.blu_vc, &guild_name, &category_name).await {
+      if let Err(e) = db.teams.remove_team(guild_id, tc.red_vc, tc.blu_vc, &guild_name, category_name).await {
         warn!("Failed to remove deleted team channels from database: {}", e);
       }
     }
@@ -1146,7 +1146,7 @@ impl Category {
     let pair_num = self.channels.teams.len() + 1;
 
     // Create both team channels in parallel
-    let start_time = Instant::now();
+    let _start_time = Instant::now();
     let (blu_result, red_result) = tokio::join!(
       guild_id.create_channel(&ctx.http, CreateChannel::new(format!("🔵 BLU #{}", pair_num)).kind(ChannelType::Voice).category(category)),
       guild_id.create_channel(&ctx.http, CreateChannel::new(format!("🔴 RED #{}", pair_num)).kind(ChannelType::Voice).category(category))
@@ -1204,7 +1204,7 @@ impl Category {
     let to_delete: Vec<TeamChannel> = removable.drain(..to_delete_count).collect();
 
     // Delete all team VCs in parallel
-    let start_time = Instant::now();
+    let _start_time = Instant::now();
     let delete_count = to_delete.len() * 2; // Each pair has RED + BLU
     let delete_tasks: Vec<_> = to_delete
       .iter()
@@ -1867,10 +1867,10 @@ impl Category {
     let session = self.get_queue().await?;
 
     let user_id = player.user_id;
-    let ply_tg = player.tag.clone();
+    let _ply_tg = player.tag.clone();
     let player_queue_expiration = player.queue_expiration;
     let db = queue_ctx.db.unwrap();
-    let usr_prefs = db.players.get_prefs(user_id).await?;
+    let _usr_prefs = db.players.get_prefs(user_id).await?;
 
     session.add_ply(player.clone(), in_vc)?;
 
@@ -1905,10 +1905,10 @@ impl Category {
     let was_hot = session.is_hot();
 
     let user_id = player.user_id;
-    let player_tag = player.tag.clone();
+    let _player_tag = player.tag.clone();
     let player_queue_expiration = player.queue_expiration;
     let db = queue_ctx.db.unwrap();
-    let user_prefs = db.players.get_prefs(user_id).await?;
+    let _user_prefs = db.players.get_prefs(user_id).await?;
     debug!("queue_player_with_vc_status_fmt: user_prefs loaded, calling add_ply");
 
     // Handle ping role assignment and DB consistency checks
@@ -2102,12 +2102,12 @@ impl Category {
 
   pub async fn add_player(&mut self, session: &mut Session, player: Player, _rank: Rank, queue_ctx: &QueueContext<'_>, guild_id: GI) -> Result<()> {
     let user_id = player.user_id;
-    let player_tag = player.tag.clone();
+    let _player_tag = player.tag.clone();
     let player_queue_expiration = player.queue_expiration;
 
     session.add_ply(player.clone(), false)?;
     let db = queue_ctx.db.unwrap();
-    let user_prefs = db.players.get_prefs(user_id).await?;
+    let _user_prefs = db.players.get_prefs(user_id).await?;
 
     // Schedule timeout for this player
     self.set_player_rejoin_expiration(queue_ctx.ctx, guild_id, player, player_queue_expiration).await;

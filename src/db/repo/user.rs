@@ -582,9 +582,9 @@ impl PlayerRepository {
     let global_prefs = self.get_prefs(user_id).await.unwrap_or_default();
 
     // Resolve each preference: per-server override > server default > global user pref > hardcoded default
-    let vc_auto_join = server_auto_join.unwrap_or_else(|| server_default_auto_join || global_prefs.vc_auto_join);
-    let vc_auto_leave = server_auto_leave.unwrap_or_else(|| server_default_auto_leave || global_prefs.vc_auto_leave);
-    let vc_leave_queue = server_leave_queue.unwrap_or_else(|| server_default_leave_queue || global_prefs.vc_leave_queue);
+    let vc_auto_join = server_auto_join.unwrap_or(server_default_auto_join || global_prefs.vc_auto_join);
+    let vc_auto_leave = server_auto_leave.unwrap_or(server_default_auto_leave || global_prefs.vc_auto_leave);
+    let vc_leave_queue = server_leave_queue.unwrap_or(server_default_leave_queue || global_prefs.vc_leave_queue);
 
     Ok((vc_auto_join, vc_auto_leave, vc_leave_queue))
   }

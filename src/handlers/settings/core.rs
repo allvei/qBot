@@ -356,9 +356,9 @@ pub async fn handle_settings_modal(ctx: &Context, interaction: &MI, db: &Arc<Dat
             }
 
             match idx {
-              0 => {
+              0
                 // Color field
-                if !trimmed.is_empty() {
+                if !trimmed.is_empty() => {
                   let hex_str = trimmed.trim_start_matches('#');
                   if let Ok(color) = u32::from_str_radix(hex_str, 16) {
                     if (0..=0xFFFFFF).contains(&color) {
@@ -366,7 +366,6 @@ pub async fn handle_settings_modal(ctx: &Context, interaction: &MI, db: &Arc<Dat
                     }
                   }
                 }
-              }
               1 => settings.join_alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
               2 => settings.join_alert_footer = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
               3 => settings.join_alert_img = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
@@ -410,9 +409,9 @@ pub async fn handle_settings_modal(ctx: &Context, interaction: &MI, db: &Arc<Dat
             }
 
             match idx {
-              0 => {
+              0
                 // Color field
-                if !trimmed.is_empty() {
+                if !trimmed.is_empty() => {
                   let hex_str = trimmed.trim_start_matches('#');
                   if let Ok(color) = u32::from_str_radix(hex_str, 16) {
                     if (0..=0xFFFFFF).contains(&color) {
@@ -420,7 +419,6 @@ pub async fn handle_settings_modal(ctx: &Context, interaction: &MI, db: &Arc<Dat
                     }
                   }
                 }
-              }
               1 => settings.leave_alert_desc = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
               2 => settings.leave_alert_footer = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },
               3 => settings.leave_alert_img = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) },

@@ -26,7 +26,7 @@ pub fn build_settings_buttons(settings: &crate::db::repo::UserPreferences) -> Ve
 /// Build settings buttons with guild-specific ping notification toggle
 pub async fn build_settings_buttons_with_ping(
   settings: &crate::db::repo::UserPreferences,
-  ctx: &Context,
+  _ctx: &Context,
   db: &Arc<Database>,
   guild_id: GI,
   user_id: UI,
@@ -175,7 +175,7 @@ pub async fn nav_guild_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -
 }
 
 /// Build a CIR navigating back to the server configuration page
-pub async fn nav_server_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
+pub async fn nav_server_config(ctx: &Context, _db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
   let guild_name = guild_name(ctx, guild_id);
   let system = get_menu_system();
   system.build_response(MenuPage::ServerConfig, &guild_name)
@@ -210,7 +210,7 @@ pub async fn nav_roles_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -
 }
 
 /// Build a CIR for the ELO configuration sub-menu
-pub async fn nav_elo_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, page: usize) -> Result<CIR> {
+pub async fn nav_elo_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, _page: usize) -> Result<CIR> {
   let guild_name = guild_name(ctx, guild_id);
   let system = get_menu_system();
 
@@ -293,7 +293,7 @@ pub async fn nav_general_config(ctx: &Context, db: &Arc<Database>, guild_id: GI)
 }
 
 /// Build a CIR for the VC configuration sub-menu
-pub async fn nav_vc_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, page: usize) -> Result<CIR> {
+pub async fn nav_vc_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, _page: usize) -> Result<CIR> {
   let guild_name = guild_name(ctx, guild_id);
   let system = get_menu_system();
 

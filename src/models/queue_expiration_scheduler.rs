@@ -53,7 +53,7 @@ impl QueueExpirationScheduler {
 
     let duration = Duration::from_secs(queue_expiration_minutes as u64 * 60);
     let manager = self.manager.clone();
-    let db = self.db.clone();
+    let _db = self.db.clone();
     let ctx = self.ctx.clone();
 
     // Capture player data for the async block

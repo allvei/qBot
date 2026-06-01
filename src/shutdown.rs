@@ -224,7 +224,7 @@ impl ShutdownHandler {
 
           // If keep_minimum is enabled, preserve one empty pair (lowest set_index)
           if keep_minimum && !empty_pairs.is_empty() {
-            empty_pairs.sort_by(|a, b| a.set_index.cmp(&b.set_index));
+            empty_pairs.sort_by_key(|a| a.set_index);
             occupied_pairs.push(empty_pairs.remove(0));
           }
 

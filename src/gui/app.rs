@@ -68,7 +68,7 @@ impl eframe::App for MyApp {
     self.trigger_shutdown();
   }
 
-  fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+  fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
     let ctx = ui.ctx();
 
     // Apply theme and font settings

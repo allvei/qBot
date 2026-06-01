@@ -606,7 +606,7 @@ pub async fn shuffle(cc: &CmC<'_>, guild: &mut QGuild) -> Result<()> {
     if sg.name == target_fmt_name {
       if let Some(last_session) = sg.sessions.last_mut() {
         last_session.pool.clear();
-        last_session.pool.extend(red_team.into_iter().chain(blu_team.into_iter()));
+        last_session.pool.extend(red_team.into_iter().chain(blu_team));
       }
       break;
     }

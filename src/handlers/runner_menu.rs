@@ -58,7 +58,7 @@ pub async fn handle_change_result_button(ctx: &Context, interaction: &CI, db: &A
   // Revert ELO changes if they exist
   let mut reverted_count = 0;
   for player in &players {
-    if let Some(elo_after) = player.elo_after {
+    if let Some(_elo_after) = player.elo_after {
       let user_id = UI::new(player.user_id as u64);
       // Determine if this player won based on their team and the old result
       let old_result = match_details.result.as_deref();

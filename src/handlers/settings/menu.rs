@@ -444,7 +444,7 @@ impl AsSettingsMenu for EloConfigDisplay {
       .filter(|t| t.column.contains("elo"))
       .collect();
 
-    let total_pages = (elo_toggles.len() + DISCORD_MAX_BUTTONS_PER_ROW - 1) / DISCORD_MAX_BUTTONS_PER_ROW;
+    let total_pages = elo_toggles.len().div_ceil(DISCORD_MAX_BUTTONS_PER_ROW);
     let page_info = if total_pages > 1 {
       format!("Page {}/{}", self.page + 1, total_pages)
     } else {
@@ -557,7 +557,7 @@ impl AsSettingsMenu for VcConfigDisplay {
       .filter(|t| t.column.starts_with("default_vc_"))
       .collect();
 
-    let total_pages = (vc_toggles.len() + DISCORD_MAX_BUTTONS_PER_ROW - 1) / DISCORD_MAX_BUTTONS_PER_ROW;
+    let total_pages = vc_toggles.len().div_ceil(DISCORD_MAX_BUTTONS_PER_ROW);
     let page_info = if total_pages > 1 {
       format!("Page {}/{}", self.page + 1, total_pages)
     } else {

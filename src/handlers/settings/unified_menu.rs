@@ -102,6 +102,15 @@ where
     pub button_handlers: HashMap<&'static str, &'static str>, // button_id -> handler_function_name
 }
 
+impl<Page, Context> Default for MenuSystem<Page, Context>
+where
+    Page: Clone + Copy + PartialEq + Eq + Hash,
+ {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<Page, Context> MenuSystem<Page, Context>
 where
     Page: Clone + Copy + PartialEq + Eq + Hash,
@@ -248,7 +257,7 @@ where
         Some(CIR::UpdateMessage(CIRM::new().embed(embed).components(components)))
     }
 
-    pub fn get_back_button_id(&self, parent: Page) -> &'static str {
+    pub fn get_back_button_id(&self, _parent: Page) -> &'static str {
         // This should be overridden by the macro with proper mapping
         "back"
     }

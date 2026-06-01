@@ -352,7 +352,7 @@ impl MenuSystem {
     }
 
     /// Build an embed for a given menu page with dynamic field data
-    pub fn build_embed_with_dynamic(&self, page: MenuPage, guild_name: &str, dynamic_data: &[(&str, String)]) -> Option<CE> {
+    pub fn build_embed_with_dynamic(&self, page: MenuPage, guild_name: &str, _dynamic_data: &[(&str, String)]) -> Option<CE> {
         let menu = self.get_menu(page)?;
         let mut embed = CE::new()
             .title(format!("{} - {}", guild_name, menu.title))

@@ -796,7 +796,7 @@ impl Category {
     cc.reply_acknowledge().await?;
 
     let user_id = cc.component.user.id;
-    let guild_id = cc.component.guild_id.unwrap();
+    let _guild_id = cc.component.guild_id.unwrap();
 
     // Store channel IDs before any borrows
     let _dashboard_channel = self.channels.dashboard;
@@ -1270,7 +1270,7 @@ impl Category {
     }
 
     // Extract queue_vc before mutable borrow
-    let queue_vc = self.channels.queue_vc;
+    let _queue_vc = self.channels.queue_vc;
 
     // Find the active session
     let active_session = self.format_mut(fmt_id).and_then(|sg| sg.sessions.iter_mut().find(|s| s.status == SessionStatus::Live));
@@ -1881,7 +1881,7 @@ impl Category {
     use serenity::all::{ButtonStyle, CreateActionRow, CreateButton, CreateInteractionResponse, CreateInteractionResponseMessage};
     use std::time::{Duration, SystemTime};
 
-    let user_id = cc.component.user.id;
+    let _user_id = cc.component.user.id;
     let guild_id = cc.component.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
 
     // Check if user is a runner (for cooldown duration)

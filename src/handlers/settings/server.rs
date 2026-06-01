@@ -506,7 +506,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
           let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
           let bot_id = ctx.cache.current_user().id;
           let has_permission = ctx.cache.channel(*channel_id)
-            .map(|channel_ref| channel_ref.permissions_for_user(ctx, bot_id).ok().map_or(false, |p| p.send_messages()))
+            .map(|channel_ref| channel_ref.permissions_for_user(ctx, bot_id).ok().is_some_and(|p| p.send_messages()))
             .unwrap_or(true); // If we can't check, assume it's OK
 
           if !has_permission {
@@ -537,7 +537,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
           let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
           let bot_id = ctx.cache.current_user().id;
           let has_permission = ctx.cache.channel(*channel_id)
-            .map(|channel_ref| channel_ref.permissions_for_user(ctx, bot_id).ok().map_or(false, |p| p.send_messages()))
+            .map(|channel_ref| channel_ref.permissions_for_user(ctx, bot_id).ok().is_some_and(|p| p.send_messages()))
             .unwrap_or(true); // If we can't check, assume it's OK
 
           if !has_permission {

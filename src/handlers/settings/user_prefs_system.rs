@@ -86,7 +86,7 @@ fn queue_timeout_buttons_component(prefs: &UserPreferences) -> Option<CAR> {
 
 // Dynamic field callbacks
 fn queue_timeout_field(prefs: &UserPreferences) -> Option<String> {
-    let text = if prefs.queue_expiration >= 60 && prefs.queue_expiration % 60 == 0 {
+    let text = if prefs.queue_expiration >= 60 && prefs.queue_expiration.is_multiple_of(60) {
         format!("{}h", prefs.queue_expiration / 60)
     } else {
         format!("{}m", prefs.queue_expiration)
@@ -98,6 +98,12 @@ fn queue_timeout_field(prefs: &UserPreferences) -> Option<String> {
 // The macro ensures all buttons are defined and have handlers
 pub struct UserPrefsMenuSystem {
     pub inner: crate::handlers::settings::unified_menu::MenuSystem<UserPrefsPage, UserPreferences>,
+}
+
+impl Default for UserPrefsMenuSystem {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl UserPrefsMenuSystem {
@@ -300,7 +306,7 @@ impl UserPrefsMenuSystem {
             // Find and replace back button in last row
             if let Some(CAR::Buttons(buttons)) = components.last_mut() {
                 // Check if last button is a back button (has "back" in ID or label "Back")
-                if let Some(last_button) = buttons.last() {
+                if let Some(_last_button) = buttons.last() {
                     // We need to rebuild the button with correct ID
                     // Remove last button and add new one with correct ID
                     buttons.pop();
