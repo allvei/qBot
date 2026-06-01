@@ -39,15 +39,30 @@ use serenity::all::{ButtonStyle as BS, CreateActionRow as CAR, CreateButton as C
 use std::collections::HashMap;
 use std::hash::Hash;
 
+/// Navigation button action type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavAction {
+    /// Open a menu or enter a submenu
+    Open,
+    /// Go back to parent menu
+    Back,
+    /// Go to next page (for paginated menus)
+    Next,
+    /// Go to previous page (for paginated menus)
+    Previous,
+}
+
 /// Button type for menu actions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonType {
+    /// Navigation button (open, back, next, previous)
+    Navigation(NavAction),
     /// Toggle button (on/off state)
     Toggle,
     /// Edit button (opens modal/selector)
     Edit,
-    /// Navigation button (goes to another page)
-    Nav,
+    /// Selection button (select one of multiple options)
+    Selection,
     /// Action button (performs an action)
     Action,
 }
@@ -164,26 +179,29 @@ where
             }
         }
 
-        // Add static buttons (skip toggle buttons handled by dynamic components)
+        // Add static buttons (skip toggle and selection buttons handled by dynamic components)
         if !menu.buttons.is_empty() {
             let mut current_row = Vec::new();
 
             for button in &menu.buttons {
+                // Skip toggle and selection buttons that are handled by dynamic components
+                if matches!(button.button_type, ButtonType::Toggle | ButtonType::Selection) {
+                    continue;
+                }
+
                 let style = match button.button_type {
-                    ButtonType::Toggle => BS::Secondary, // Will be overridden by dynamic components
+                    ButtonType::Navigation(NavAction::Back) => BS::Secondary,
+                    ButtonType::Navigation(_) => BS::Primary,
                     ButtonType::Edit => BS::Primary,
-                    ButtonType::Nav => BS::Primary,
                     ButtonType::Action => BS::Primary,
+                    _ => BS::Primary,
                 };
 
-                // Skip toggle buttons that are handled by dynamic components
-                if button.button_type != ButtonType::Toggle {
-                    current_row.push(CB::new(button.id).label(button.label).style(style));
+                current_row.push(CB::new(button.id).label(button.label).style(style));
 
-                    if current_row.len() == 5 {
-                        components.push(CAR::Buttons(current_row.clone()));
-                        current_row.clear();
-                    }
+                if current_row.len() == 5 {
+                    components.push(CAR::Buttons(current_row.clone()));
+                    current_row.clear();
                 }
             }
 
@@ -192,10 +210,13 @@ where
             }
         }
 
-        // Add back button if parent exists
+        // Add back button if parent exists (unless already present in buttons)
         if let Some(parent) = menu.parent {
-            let back_id = self.get_back_button_id(parent);
-            components.push(CAR::Buttons(vec![CB::new(back_id).label("Back").style(BS::Secondary)]));
+            let has_back_button = menu.buttons.iter().any(|b| matches!(b.button_type, ButtonType::Navigation(NavAction::Back)));
+            if !has_back_button {
+                let back_id = self.get_back_button_id(parent);
+                components.push(CAR::Buttons(vec![CB::new(back_id).label("Back").style(BS::Secondary)]));
+            }
         }
 
         if components.is_empty() {
@@ -222,7 +243,8 @@ where
         let mut missing = Vec::new();
         for menu in self.menus.values() {
             for button in &menu.buttons {
-                if button.button_type != ButtonType::Nav && !self.button_handlers.contains_key(button.id) {
+                // Navigation buttons don't need handlers (they're handled by the menu system)
+                if !matches!(button.button_type, ButtonType::Navigation(_)) && !self.button_handlers.contains_key(button.id) {
                     missing.push(button.id);
                 }
             }

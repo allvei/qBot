@@ -3,7 +3,7 @@
 //! This module uses the unified menu system to define user preference menus
 //! with compile-time guarantees that all buttons are properly handled.
 
-use crate::handlers::settings::unified_menu::ButtonType;
+use crate::handlers::settings::unified_menu::{ButtonType, NavAction};
 use crate::db::repo::UserPreferences;
 use serenity::all::{ButtonStyle as BS, CreateActionRow as CAR, CreateButton as CB};
 
@@ -55,20 +55,32 @@ fn vc_leave_queue_component(prefs: &UserPreferences) -> Option<CAR> {
     ]))
 }
 
-fn queue_timeout_buttons_component(_prefs: &UserPreferences) -> Option<CAR> {
-    Some(CAR::Buttons(vec![
-        CB::new("settings_queue_expiration:30m").label("30 minutes").style(BS::Primary),
-        CB::new("settings_queue_expiration:1h").label("1 hour").style(BS::Primary),
-        CB::new("settings_queue_expiration:2h").label("2 hours").style(BS::Primary),
-    ]))
-}
+fn queue_timeout_buttons_component(prefs: &UserPreferences) -> Option<CAR> {
+    let timeout_options = vec![
+        ("30m", 30, "30 minutes"),
+        ("1h", 60, "1 hour"),
+        ("2h", 120, "2 hours"),
+        ("3h", 180, "3 hours"),
+        ("4h", 240, "4 hours"),
+    ];
 
-fn queue_timeout_cancel_component(_prefs: &UserPreferences) -> Option<CAR> {
-    Some(CAR::Buttons(vec![
-        CB::new("settings_queue_expiration:3h").label("3 hours").style(BS::Primary),
-        CB::new("settings_queue_expiration:4h").label("4 hours").style(BS::Primary),
-        CB::new("settings_queue_expiration:cancel").label("Cancel").style(BS::Secondary),
-    ]))
+    let mut buttons = Vec::new();
+    for (id, minutes, label) in timeout_options {
+        let style = if prefs.queue_expiration == minutes {
+            BS::Success // Green if selected
+        } else {
+            BS::Secondary // Gray if not selected
+        };
+        buttons.push(CB::new(format!("settings_queue_expiration:{}", id)).label(label).style(style));
+    }
+
+    // Split into rows of max 5 buttons
+    let mut rows = Vec::new();
+    for chunk in buttons.chunks(5) {
+        rows.push(CAR::Buttons(chunk.to_vec()));
+    }
+
+    rows.into_iter().next()
 }
 
 // Dynamic field callbacks
@@ -104,21 +116,21 @@ impl UserPrefsMenuSystem {
                     label: "Queue Settings",
                     description: Some("Configure queue timeout, auto-join, and auto-leave settings"),
                     target_page: Some(UserPrefsPage::QueueSettings),
-                    button_type: ButtonType::Nav,
+                    button_type: ButtonType::Navigation(NavAction::Open),
                 },
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "user_prefs_alert_settings",
                     label: "Alert Settings",
                     description: Some("Configure join/leave alerts and DM notifications"),
                     target_page: Some(UserPrefsPage::AlertSettings),
-                    button_type: ButtonType::Nav,
+                    button_type: ButtonType::Navigation(NavAction::Open),
                 },
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "user_prefs_ping_settings",
                     label: "Ping Settings",
                     description: Some("Configure ping notifications for each server"),
                     target_page: Some(UserPrefsPage::PingSettings),
-                    button_type: ButtonType::Nav,
+                    button_type: ButtonType::Navigation(NavAction::Open),
                 },
             ],
             fields: vec![],
@@ -139,7 +151,7 @@ impl UserPrefsMenuSystem {
                     label: "Queue Timeout",
                     description: Some("Set how long before you're automatically removed from the queue"),
                     target_page: Some(UserPrefsPage::QueueTimeoutSettings),
-                    button_type: ButtonType::Nav,
+                    button_type: ButtonType::Navigation(NavAction::Open),
                 },
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_vc_auto_join",
@@ -188,7 +200,6 @@ impl UserPrefsMenuSystem {
             ],
             dynamic_components: vec![
                 queue_timeout_buttons_component,
-                queue_timeout_cancel_component,
             ],
         });
 
