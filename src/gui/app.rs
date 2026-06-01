@@ -148,6 +148,9 @@ impl eframe::App for MyApp {
           if ui.button("Quit").clicked() {
             self.state.send_cmd(crate::gui::commands::GuiCommand::GracefulShutdown);
           }
+          if ui.button("Restart").clicked() {
+            self.state.send_cmd(crate::gui::commands::GuiCommand::GracefulRestart);
+          }
           if ui.button("Refresh").clicked() {
             self.refresh_data();
           }

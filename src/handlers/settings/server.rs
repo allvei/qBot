@@ -114,6 +114,29 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
         }
       }
 
+      // When hide_elo is toggled, refresh all dashboards to show/hide ELO
+      if toggle.column == "hide_elo" {
+        let mut categories_to_refresh = Vec::new();
+        {
+          let mut manager_lock = manager.lock().await;
+          if let Ok(server) = manager_lock.get_qguild(guild_id) {
+            for category in server.categories.iter() {
+              categories_to_refresh.push(category.id);
+            }
+          }
+        }
+
+        // Refresh dashboards after releasing lock
+        for category_id in categories_to_refresh {
+          let mut manager_lock = manager.lock().await;
+          if let Ok(server) = manager_lock.get_qguild(guild_id) {
+            if let Some(category) = server.categories.iter().find(|c| c.id == category_id) {
+              category.queue_dash_update(ctx, guild_id).await;
+            }
+          }
+        }
+      }
+
       // Route to appropriate page based on toggle type
       if toggle.column.starts_with("default_vc_") {
         // VC config toggles - stay on VC config page
@@ -383,9 +406,6 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
           }
         }
       }
-    }
-    "guild_config_categories_back" => {
-      send_nav!(interaction, ctx, db, nav_guild_config, guild_id)?;
     }
     "guild_config_edit_post_game_confirm_time" => {
       // Show modal to edit post-game timeout

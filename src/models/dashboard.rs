@@ -1272,12 +1272,6 @@ impl Category {
     // Extract queue_vc before mutable borrow
     let queue_vc = self.channels.queue_vc;
 
-    // Get current idle session pool to check who is still in the queue (before mutable borrow)
-    let idle_pool_user_ids: std::collections::HashSet<_> = self.format(fmt_id)
-      .and_then(|sg| sg.sessions.iter().find(|s| s.is_idle()))
-      .map(|idle| idle.pool.iter().map(|sp| sp.player.user_id).collect())
-      .unwrap_or_default();
-
     // Find the active session
     let active_session = self.format_mut(fmt_id).and_then(|sg| sg.sessions.iter_mut().find(|s| s.status == SessionStatus::Live));
 
@@ -1294,19 +1288,12 @@ impl Category {
       return Ok(());
     }
 
-    // Restore the pre-match queue order, filtering out players who left the queue
+    // Restore the pre-match queue order
+    // All players in pre_match_pool are still in this Live session, so restore them all
     if let Some(pre_match_pool) = session.pre_match_pool.take() {
-      let original_count = pre_match_pool.len();
-
-      // Filter out players who are no longer in the queue (on the dashboard)
-      let restored_pool: Vec<_> = pre_match_pool
-        .into_iter()
-        .filter(|sp| idle_pool_user_ids.contains(&sp.player.user_id))
-        .collect();
-
-      let removed_count = original_count - restored_pool.len();
-      session.pool = restored_pool;
-      info!("Match cancelled - queue order restored for {} players ({} removed for leaving queue)", session.pool.len(), removed_count);
+      let player_count = pre_match_pool.len();
+      session.pool = pre_match_pool;
+      info!("Match cancelled - queue order restored for {} players", player_count);
     } else {
       warn!("No pre-match queue backup found, clearing session");
       session.pool.clear();
@@ -1701,10 +1688,18 @@ impl Category {
       }
       // Handle user prefs navigation buttons
       action if action.starts_with("user_prefs_") => {
-        use crate::handlers::settings::user_prefs_system::{get_user_prefs_menu_system, get_user_prefs_navigation_info};
+        use crate::handlers::settings::user_prefs_system::{get_user_prefs_menu_system, get_user_prefs_navigation_info, UserPrefsPage};
         let user_id = cc.component.user.id;
 
         if let Some(target_page) = get_user_prefs_navigation_info(action) {
+          // Special handling for PingSettings page - needs guild context and database access
+          if target_page == UserPrefsPage::PingSettings {
+            use crate::handlers::settings::build_ping_settings_response;
+            let response = build_ping_settings_response(user_id, cc.component.guild_id, &cc.db).await?;
+            cc.component.create_response(&cc.ctx.http, response).await?;
+            return Ok(());
+          }
+          
           let system = get_user_prefs_menu_system();
           let settings = match cc.db.players.get_prefs(user_id).await {
             Ok(s) => s,

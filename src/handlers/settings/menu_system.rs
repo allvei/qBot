@@ -209,8 +209,19 @@ impl MenuSystem {
             description: "Configure ELO and rank settings",
             color: MenuColor::Standard,
             parent: Some(MenuPage::ServerConfig),
-            buttons: vec![],
-            fields: vec![],
+            buttons: vec![
+                MenuButton {
+                    id: "guild_config_ranks",
+                    label: "Manage Ranks",
+                    description: Some("Configure rank roles and ELO thresholds"),
+                    target_page: Some(MenuPage::RankConfig),
+                },
+            ],
+            fields: vec![
+                ("Dynamic ELO", "Toggle dynamic ELO calculations using the buttons below", false),
+                ("ELO Visibility", "Show or hide ELO values from players", false),
+                ("ELO-Rank Linking", "Link ELO to rank roles automatically", false),
+            ],
             dynamic_fields: vec![],
             dynamic_components: vec![],
         });
@@ -223,7 +234,12 @@ impl MenuSystem {
             color: MenuColor::Standard,
             parent: Some(MenuPage::ServerConfig),
             buttons: vec![],
-            fields: vec![],
+            fields: vec![
+                ("VC Auto-join", "Server default for automatically joining voice channel when queuing", false),
+                ("VC Auto-leave", "Server default for automatically leaving voice channel when unqueuing", false),
+                ("VC Leave Queue", "Server default for leaving queue when exiting voice channel", false),
+                ("Post-game Auto-remove", "Automatically remove players from queue after game ends", false),
+            ],
             dynamic_fields: vec![],
             dynamic_components: vec![],
         });
@@ -450,7 +466,7 @@ impl MenuSystem {
                         MenuPage::VcConfig => "guild_config_vc_back",
                         MenuPage::GeneralConfig => "guild_config_general_back",
                         MenuPage::RankConfig => "guild_config_rank_back",
-                        MenuPage::CategoryList => "guild_config_categories_back",
+                        MenuPage::CategoryList => "guild_config_back",
                         MenuPage::CategorySettings => "guild_config_category_back",
                     };
                     menu.buttons.push(MenuButton {
@@ -504,7 +520,7 @@ pub fn get_back_button_id(parent: MenuPage) -> &'static str {
         MenuPage::VcConfig => "guild_config_vc_back",
         MenuPage::GeneralConfig => "guild_config_general_back",
         MenuPage::RankConfig => "guild_config_rank_back",
-        MenuPage::CategoryList => "guild_config_categories_back",
+        MenuPage::CategoryList => "guild_config_back",
         MenuPage::CategorySettings => "guild_config_category_back",
     }
 }
@@ -535,7 +551,6 @@ pub fn get_navigation_info(button_id: &str) -> Option<(&'static str, Option<usiz
             "guild_config_vc_back" => MenuPage::VcConfig,
             "guild_config_general_back" => MenuPage::GeneralConfig,
             "guild_config_rank_back" => MenuPage::RankConfig,
-            "guild_config_categories_back" => MenuPage::CategoryList,
             "guild_config_category_back" => MenuPage::CategorySettings,
             _ => return None,
         };

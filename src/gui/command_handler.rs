@@ -730,8 +730,8 @@ pub async fn handle_command(
       Ok(None)
     }
     GuiCommand::GracefulRestart => {
-      info!("[GUI] GracefulRestart — state will be persisted, bot will restart");
-      std::process::exit(0);
+      info!("[GUI] GracefulRestart — handled by application.rs command task");
+      Ok(None)
     }
     GuiCommand::GracefulShutdown => {
       info!("[GUI] GracefulShutdown — handled by application.rs command task");

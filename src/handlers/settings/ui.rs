@@ -212,7 +212,6 @@ pub async fn nav_roles_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -
 /// Build a CIR for the ELO configuration sub-menu
 pub async fn nav_elo_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, page: usize) -> Result<CIR> {
   let guild_name = guild_name(ctx, guild_id);
-  let settings = get_guild_config(db, guild_id).await?;
   let system = get_menu_system();
 
   // Get toggle states for ELO settings (filter SERVER_CONFIG_TOGGLES for ELO-related columns)
@@ -221,29 +220,36 @@ pub async fn nav_elo_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, pag
     .filter(|t| t.column.contains("elo"))
     .collect();
 
+  // Build embed using menu system
+  let embed = system.build_embed(MenuPage::EloConfig, &guild_name)
+    .ok_or_else(|| anyhow::anyhow!("Failed to build ELO config embed"))?;
+
+  // Get base components from menu system (includes "Manage Ranks" button and back button)
+  let mut components = system.build_components(MenuPage::EloConfig).unwrap_or_default();
+
+  // Add toggle buttons before the back button
   let mut toggle_buttons = Vec::new();
   for toggle in &elo_toggles {
-    let state = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
+    let mut state = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
+    // Invert hide_elo since the column is named "hide_elo" but button shows "ELO is visible" when true
+    if toggle.column == "hide_elo" {
+      state = !state;
+    }
     let label = if state { toggle.label_on } else { toggle.label_off };
-    let style = if state { BS::Success } else { BS::Danger };
+    let style = if state { BS::Success } else { BS::Secondary };
     toggle_buttons.push(CB::new(toggle.button_id).label(label).style(style));
   }
 
-  // Add pagination buttons if needed
-  let total_pages = (elo_toggles.len() + 4) / 5;
-  if total_pages > 1 {
-    if page > 0 {
-      toggle_buttons.push(CB::new(format!("guild_config_elo_page_{}", page - 1)).label("◀ Prev").style(BS::Secondary));
-    }
-    if page < total_pages - 1 {
-      toggle_buttons.push(CB::new(format!("guild_config_elo_page_{}", page + 1)).label("Next ▶").style(BS::Secondary));
+  if !toggle_buttons.is_empty() {
+    // Insert toggle buttons before the last component (back button)
+    if !components.is_empty() {
+      components.insert(components.len() - 1, CAR::Buttons(toggle_buttons));
+    } else {
+      components.push(CAR::Buttons(toggle_buttons));
     }
   }
 
-  let extra_components = vec![CAR::Buttons(toggle_buttons)];
-
-  system.build_response_with_extra(MenuPage::EloConfig, &guild_name, extra_components)
-    .ok_or_else(|| anyhow::anyhow!("Failed to build ELO config response"))
+  Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(components)))
 }
 
 /// Build a CIR for the general configuration sub-menu
@@ -270,12 +276,18 @@ pub async fn nav_general_config(ctx: &Context, db: &Arc<Database>, guild_id: GI)
 
   let mut components = system.build_components(MenuPage::GeneralConfig).unwrap_or_default();
 
-  // Add ping_users_enabled toggle button
+  // Add ping_users_enabled toggle button before the back button
   let ping_users_enabled = db.config.get_ping_users_enabled(guild_id).await.unwrap_or(true);
   let ping_toggle_label = if ping_users_enabled { "Users can ping" } else { "Only runners can ping" };
-  let ping_toggle_style = if ping_users_enabled { BS::Success } else { BS::Danger };
+  let ping_toggle_style = if ping_users_enabled { BS::Success } else { BS::Secondary };
   let ping_toggle_button = CB::new("server_cfg_ping_users_enabled").label(ping_toggle_label).style(ping_toggle_style);
-  components.push(CAR::Buttons(vec![ping_toggle_button]));
+  
+  // Insert before the last component (back button)
+  if !components.is_empty() {
+    components.insert(components.len() - 1, CAR::Buttons(vec![ping_toggle_button]));
+  } else {
+    components.push(CAR::Buttons(vec![ping_toggle_button]));
+  }
 
   Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(components)))
 }
@@ -283,38 +295,40 @@ pub async fn nav_general_config(ctx: &Context, db: &Arc<Database>, guild_id: GI)
 /// Build a CIR for the VC configuration sub-menu
 pub async fn nav_vc_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, page: usize) -> Result<CIR> {
   let guild_name = guild_name(ctx, guild_id);
-  let settings = get_guild_config(db, guild_id).await?;
   let system = get_menu_system();
 
   // Get toggle states for VC settings (filter SERVER_CONFIG_TOGGLES for VC-related columns)
   let vc_toggles: Vec<&crate::handlers::settings::menu::ConfigToggle> = crate::handlers::settings::menu::SERVER_CONFIG_TOGGLES
     .iter()
-    .filter(|t| t.column.starts_with("default_vc_"))
+    .filter(|t| t.column.starts_with("default_vc_") || t.column == "post_game_auto_leave")
     .collect();
 
+  // Build embed using menu system
+  let embed = system.build_embed(MenuPage::VcConfig, &guild_name)
+    .ok_or_else(|| anyhow::anyhow!("Failed to build VC config embed"))?;
+
+  // Get base components from menu system (includes back button)
+  let mut components = system.build_components(MenuPage::VcConfig).unwrap_or_default();
+
+  // Add toggle buttons before the back button
   let mut toggle_buttons = Vec::new();
   for toggle in &vc_toggles {
     let state = db.config.get_bool(guild_id, toggle.column, toggle.default).await?;
     let label = if state { toggle.label_on } else { toggle.label_off };
-    let style = if state { BS::Success } else { BS::Danger };
+    let style = if state { BS::Success } else { BS::Secondary };
     toggle_buttons.push(CB::new(toggle.button_id).label(label).style(style));
   }
 
-  // Add pagination buttons if needed
-  let total_pages = (vc_toggles.len() + 4) / 5;
-  if total_pages > 1 {
-    if page > 0 {
-      toggle_buttons.push(CB::new(format!("guild_config_vc_page_{}", page - 1)).label("◀ Prev").style(BS::Secondary));
-    }
-    if page < total_pages - 1 {
-      toggle_buttons.push(CB::new(format!("guild_config_vc_page_{}", page + 1)).label("Next ▶").style(BS::Secondary));
+  if !toggle_buttons.is_empty() {
+    // Insert toggle buttons before the last component (back button)
+    if !components.is_empty() {
+      components.insert(components.len() - 1, CAR::Buttons(toggle_buttons));
+    } else {
+      components.push(CAR::Buttons(toggle_buttons));
     }
   }
 
-  let extra_components = vec![CAR::Buttons(toggle_buttons)];
-
-  system.build_response_with_extra(MenuPage::VcConfig, &guild_name, extra_components)
-    .ok_or_else(|| anyhow::anyhow!("Failed to build VC config response"))
+  Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(components)))
 }
 
 /// Build a CIR navigating back to the rank configuration page

@@ -33,9 +33,19 @@ where
       return;
     }
 
-    // Format the log line
+    // Format the log line with file and line info
     let mut message = String::new();
     message.push_str(&format!("[{}] ", level));
+    
+    // Add file and line number if available
+    if let Some(file) = metadata.file() {
+      if let Some(line) = metadata.line() {
+        message.push_str(&format!("{}:{} ", file, line));
+      }
+    }
+    
+    // Add target (module path)
+    message.push_str(&format!("{}: ", target));
 
     // Try to extract the message
     let mut visitor = MessageVisitor::new(&mut message);

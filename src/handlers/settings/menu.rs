@@ -949,7 +949,7 @@ impl AsSettingsMenu for CategoryListDisplay {
     if !self.categories.is_empty() {
       buttons.push(SB::action("guild_config_remove_category", "Remove a category", Sbs::Danger));
     }
-    buttons.push(SB::action("guild_config_categories_back", "Back", Sbs::Secondary));
+    buttons.push(SB::action("guild_config_back", "Back", Sbs::Secondary));
     menu = menu.row(SR::Buttons(buttons));
 
     menu
@@ -991,7 +991,7 @@ impl CategoryListDisplay {
       buttons.push(CB::new("guild_config_remove_category").label("Remove a category").style(BS::Danger));
     }
 
-    buttons.push(Eph::back("guild_config_categories_back"));
+    buttons.push(Eph::back("guild_config_back"));
     components.push(CAR::Buttons(buttons));
 
     components

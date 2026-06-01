@@ -25,6 +25,18 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
     // Handle user prefs navigation
     button_id if get_user_prefs_navigation_info(button_id).is_some() => {
       let target_page = get_user_prefs_navigation_info(button_id).unwrap();
+      debug!("Navigating to user prefs page: {:?} from button: {}", target_page, button_id);
+      
+      // Special handling for PingSettings page - needs guild context and database access
+      if target_page == UserPrefsPage::PingSettings {
+        debug!("Using custom builder for PingSettings page with guild_id: {:?}", interaction.guild_id);
+        let response = build_ping_settings_response(user_id, interaction.guild_id, db).await?;
+        interaction.create_response(&ctx.http, response).await?;
+        debug!("Successfully sent PingSettings response");
+        return Ok(());
+      }
+      
+      debug!("Using standard menu system for page: {:?}", target_page);
       let system = get_user_prefs_menu_system();
       let settings = db.players.get_prefs(user_id).await?;
 
@@ -151,13 +163,9 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
         debug!("No guild context - ping notifications button is disabled in DM");
       }
 
-      // Acknowledge and update the settings menu directly (no popup)
-      let settings = db.players.get_prefs(user_id).await?;
-      let system = get_user_prefs_menu_system();
-
-      if let Some(response) = system.build_response(UserPrefsPage::PingSettings, &settings) {
-        interaction.create_response(&ctx.http, response).await?;
-      }
+      // Refresh the ping settings page with updated button state
+      let response = build_ping_settings_response(user_id, interaction.guild_id, db).await?;
+      interaction.create_response(&ctx.http, response).await?;
     }
     "user_prefs_ping_back" => {
       // Back button from ping settings menu
@@ -517,4 +525,66 @@ pub fn parse_mid(hex_str: &str) -> Result<u64> {
 /// Create a standard settings embed with title and description
 fn create_settings_embed(title: &str, description: &str, color: u32) -> CE {
   CE::new().title(title).description(description).color(color)
+}
+
+/// Build ping settings response with proper button state
+pub async fn build_ping_settings_response(
+  user_id: UI,
+  guild_id: Option<GI>,
+  db: &Arc<Database>,
+) -> Result<CIR> {
+  debug!("Building ping settings response for user {} with guild context: {:?}", user_id, guild_id);
+  
+  let system = get_user_prefs_menu_system();
+  let settings = db.players.get_prefs(user_id).await?;
+  
+  // Build the base embed
+  let embed = system.build_embed(UserPrefsPage::PingSettings, &settings)
+    .unwrap_or_else(|| CE::new()
+      .title("Ping Settings")
+      .description("Manage per-server ping notification preferences")
+      .color(0x5865F2)
+      .field("Note", "Ping settings are per-server and managed from the server dashboard. This menu is read-only in DM context.", false)
+    );
+  
+  let mut components = Vec::new();
+  
+  // Add ping toggle button if we have guild context
+  if let Some(guild_id) = guild_id {
+    // Fetch current ping state
+    let ping_enabled = db.user_server_prefs.get_ping_notification_enabled(user_id, guild_id).await.unwrap_or(None);
+    debug!("Ping state for user {} in guild {}: {:?}", user_id, guild_id, ping_enabled);
+    
+    // Determine button style based on state
+    let style = match ping_enabled {
+      Some(true) => BS::Success,  // Green when enabled
+      Some(false) | None => BS::Secondary,  // Gray when disabled or not set
+    };
+    
+    let button = CB::new("settings_ping_notifications")
+      .label("Ping Notifications")
+      .style(style);
+    
+    debug!("Adding enabled ping button with style: {:?}", style);
+    components.push(CAR::Buttons(vec![button]));
+  } else {
+    // In DM context, show disabled button
+    debug!("No guild context - adding disabled ping button");
+    let button = CB::new("settings_ping_notifications")
+      .label("Ping Notifications")
+      .style(BS::Secondary)
+      .disabled(true);
+    
+    components.push(CAR::Buttons(vec![button]));
+  }
+  
+  // Add back button
+  components.push(CAR::Buttons(vec![
+    CB::new("user_prefs_ping_back")
+      .label("Back")
+      .style(BS::Secondary)
+  ]));
+  
+  debug!("Built ping settings response with {} component rows", components.len());
+  Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(components)))
 }

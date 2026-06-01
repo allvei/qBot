@@ -99,11 +99,13 @@ impl ShutdownHandler {
   }
 
   /// Mark all dashboards with a restarting indicator
-  async fn mark_dashboards_restarting(&self) {
+  pub async fn mark_dashboards_restarting(&self) {
     if let Ok(mut manager_lock) = self.manager.try_lock() {
       info!("Marking dashboards as restarting...");
 
       let mut tasks = tokio::task::JoinSet::new();
+      let expected_online_time = chrono::Utc::now() + chrono::Duration::minutes(3);
+      let timestamp = expected_online_time.timestamp();
 
       for server in &mut manager_lock.qguilds {
         let guild_id = server.id;
@@ -112,7 +114,10 @@ impl ShutdownHandler {
         for category in &mut server.categories {
           category.restarting = true;
 
-          let restart_embed = CreateEmbed::new().title("qBot is restarting...").description("Bot will be back online shortly.\nQueues and active games will be preserved.").color(0xFFA500);
+          let restart_embed = CreateEmbed::new()
+            .title("🟠 qBot is restarting...")
+            .description(format!("Queues and live games will be restored.\nBot should be online <t:{}:R> or less.", timestamp))
+            .color(0xFFA500);
 
           let chn_id = category.channels.dashboard;
           let msg_id = category.dashboard_msg;
@@ -170,7 +175,7 @@ impl ShutdownHandler {
   }
 
   /// Save current manager state to database
-  async fn save_manager_state(&self) {
+  pub async fn save_manager_state(&self) {
     let manager = self.manager.lock().await;
     match self.db.state.save_manager(&manager).await {
       Ok(_) => {
@@ -186,7 +191,7 @@ impl ShutdownHandler {
   /// Clean up empty team voice channels.
   /// Respects `keep_minimum` - preserves at least one empty pair per category when the setting is enabled.
   /// Skips deletion of channels that currently have players in them.
-  async fn cleanup_team_vcs(&self) {
+  pub async fn cleanup_team_vcs(&self) {
     if let Ok(mut manager_lock) = self.manager.try_lock() {
       let mut deleted_count = 0;
 

@@ -306,6 +306,32 @@ impl Application {
                     break;
                   }
 
+                  // Handle GracefulRestart specially - same as shutdown but skip mark_dashboards_offline
+                  if matches!(command, GuiCommand::GracefulRestart) {
+                    info!("[GUI] GracefulRestart — performing cleanup (save state, cleanup team VCs) and exiting");
+                    let shutdown_handler = crate::shutdown::ShutdownHandler::new(
+                      manager.clone(),
+                      dashboard_queue_cmd.clone(),
+                      cache_cmd.clone(),
+                      http_cmd.clone(),
+                      db.clone(),
+                    );
+                    shutdown_handler.save_manager_state().await;
+                    {
+                      let mut queue_lock = dashboard_queue_cmd.lock().await;
+                      let _ = queue_lock.take();
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    shutdown_handler.cleanup_team_vcs().await;
+                    shutdown_handler.mark_dashboards_restarting().await;
+                    shutdown_flag_cmd.store(true, std::sync::atomic::Ordering::Relaxed);
+                    // Signal GUI that shutdown is complete
+                    if let Some(gui_state) = shared_state_cmd.as_ref() {
+                      gui_state.shutdown_complete.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    std::process::exit(0);
+                  }
+
                   let (snapshot, affected_guild) = {
                     let mut manager_lock = manager.lock().await;
                     let ctx_opt: Option<Arc<serenity::all::Context>> = shared_state_cmd.as_ref()
@@ -1258,7 +1284,7 @@ impl EventHandler for Handler {
 
         let comp_ctx = ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
 
-        debug!("Handling button interaction: '{}' | User: {} | Message: {} | Token: {:?}", itx.data.custom_id, itx.user.id, itx.message.id, itx.token);
+        debug!("Handling button interaction: '{}' | User: {} | Message: {}", itx.data.custom_id, itx.user.id, itx.message.id);
 
         // Run the handler without holding the manager lock
         let result = category.dash_handle_button_interaction(&comp_ctx).await;
@@ -1275,13 +1301,12 @@ impl EventHandler for Handler {
 
         if let Err(e) = result {
           error!(
-            "Error handling button '{}': {} | User: {} | Guild: {} | Message: {} | Token: {:?}",
+            "Error handling button '{}': {} | User: {} | Guild: {} | Message: {}",
             itx.data.custom_id,
             e,
             itx.user.id,
             itx.guild_id.unwrap_or_default(),
-            itx.message.id,
-            itx.token
+            itx.message.id
           );
           if is_interaction_valid(&pl) {
             InteractionHelpers::send_component_error_embed(itx, &ctx, "An error occurred while processing your button click").await;

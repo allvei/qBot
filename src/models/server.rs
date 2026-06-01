@@ -752,6 +752,8 @@ impl Category {
     // Sync VC status with actual Discord state before making timeout decisions
     self.verify_vc(ctx, guild_id).await;
 
+    debug!("check_hot_confirm_time: category confirm_time={}, post_game_confirm_time={:?}", self.confirm_time, post_game_confirm_time);
+
     // Check hot sessions across all formats
     for sg in &mut self.formats {
       let quota = sg.quota as usize;
@@ -765,6 +767,8 @@ impl Category {
           // Use post-game timeout if this is a post-game scenario and post_game_confirm_time is provided
           let confirm_time_seconds =
             if s.match_ended_at.is_some() { post_game_confirm_time.map(|t| t as u64).unwrap_or(self.confirm_time as u64) } else { self.confirm_time as u64 };
+
+          debug!("Session {}: is_hot={}, match_ended={:?}, using confirm_time={}", idx, s.is_hot(), s.match_ended_at.is_some(), confirm_time_seconds);
 
           if s.is_hot_confirm_time(confirm_time_seconds) {
             Some(idx)
@@ -1018,17 +1022,20 @@ impl Category {
     // Extract overflow players (those beyond quota)
     let overflow_players: Vec<_> = if game_pool_len > quota { game.pool.drain(quota..).collect() } else { Vec::new() };
 
-    // Create new idle session for next game in this format
-    self.create_session_format(format_id)?;
+    // Create new idle session for next game in this format (only if one doesn't exist)
+    let has_idle = self.format(format_id).map(|sg| sg.sessions.iter().any(|s| s.is_idle())).unwrap_or(false);
+    if !has_idle {
+      self.create_session_format(format_id)?;
+    }
 
-    // Add overflow players to the new idle session
+    // Add overflow players to the idle session
     if !overflow_players.is_empty() {
       let overflow_count = overflow_players.len();
       let idle_session = self.get_queue_fmt(format_id).await?;
       for player in overflow_players {
         idle_session.pool.push(player);
       }
-      info!("Moved {} overflow players to new idle session in format {}", overflow_count, format_id);
+      info!("Moved {} overflow players to idle session in format {}", overflow_count, format_id);
     }
 
     // Clear recently freed teams since we're now using team channels

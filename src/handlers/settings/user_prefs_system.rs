@@ -31,18 +31,6 @@ fn dm_toggle_component(prefs: &UserPreferences) -> Option<CAR> {
     ]))
 }
 
-fn ping_notifications_toggle_component(_prefs: &UserPreferences) -> Option<CAR> {
-    // Ping notifications are per-server and can only be toggled from guild context
-    // This button is disabled in DM context
-    // Note: This component always renders a disabled button because we don't have guild context here
-    // Per-server ping settings should be managed from the guild dashboard instead
-    Some(CAR::Buttons(vec![
-        CB::new("settings_ping_notifications")
-            .label("Ping Notifications")
-            .style(BS::Secondary)
-            .disabled(true),
-    ]))
-}
 
 fn vc_auto_join_component(prefs: &UserPreferences) -> Option<CAR> {
     Some(CAR::Buttons(vec![
@@ -254,28 +242,20 @@ impl UserPrefsMenuSystem {
         });
 
         // Register PingSettings page
+        // Note: Ping button is handled specially in core.rs since it needs guild context and database access
+        // The button is NOT defined here - it's created dynamically in build_ping_settings_response()
         inner.add_page(crate::handlers::settings::unified_menu::MenuDefinition {
             page: UserPrefsPage::PingSettings,
             title: "Ping Settings",
             description: "Manage per-server ping notification preferences",
             color: 0x5865F2,
             parent: Some(UserPrefsPage::Main),
-            buttons: vec![
-                crate::handlers::settings::unified_menu::MenuButton {
-                    id: "settings_ping_notifications",
-                    label: "Ping Notifications",
-                    description: Some("Toggle ping notifications for this server (guild context only)"),
-                    target_page: None,
-                    button_type: ButtonType::Toggle,
-                },
-            ],
+            buttons: vec![],
             fields: vec![
-                ("Note", "Ping settings are per-server and managed from the server dashboard. This menu is read-only in DM context.", true),
+                ("Note", "Ping settings are per-server and managed from the server dashboard. This menu is read-only in DM context.", false),
             ],
             dynamic_fields: vec![],
-            dynamic_components: vec![
-                ping_notifications_toggle_component,
-            ],
+            dynamic_components: vec![],
         });
 
         // Register handlers for non-nav buttons
@@ -308,7 +288,32 @@ impl UserPrefsMenuSystem {
     }
 
     pub fn build_components(&self, page: UserPrefsPage, prefs: &UserPreferences) -> Option<Vec<CAR>> {
-        self.inner.build_components(page, prefs)
+        // Build components using inner system, then fix back button IDs
+        let menu = self.inner.get_menu(page)?;
+        let mut components = self.inner.build_components(page, prefs).unwrap_or_default();
+        
+        // Replace the back button with correct ID if parent exists
+        if let Some(parent) = menu.parent {
+            use serenity::all::{CreateButton as CB, ButtonStyle as BS};
+            let correct_back_id = self.get_back_button_id(parent);
+            
+            // Find and replace back button in last row
+            if let Some(CAR::Buttons(buttons)) = components.last_mut() {
+                // Check if last button is a back button (has "back" in ID or label "Back")
+                if let Some(last_button) = buttons.last() {
+                    // We need to rebuild the button with correct ID
+                    // Remove last button and add new one with correct ID
+                    buttons.pop();
+                    buttons.push(CB::new(correct_back_id).label("Back").style(BS::Secondary));
+                }
+            }
+        }
+        
+        if components.is_empty() {
+            None
+        } else {
+            Some(components)
+        }
     }
 
     pub fn build_components_with_context(&self, page: UserPrefsPage, prefs: &UserPreferences, context: MenuContext) -> Option<Vec<CAR>> {
@@ -316,7 +321,9 @@ impl UserPrefsMenuSystem {
     }
 
     pub fn build_response(&self, page: UserPrefsPage, prefs: &UserPreferences) -> Option<CIR> {
-        self.inner.build_response(page, prefs)
+        let embed = self.build_embed(page, prefs)?;
+        let components = self.build_components(page, prefs).unwrap_or_default();
+        Some(CIR::UpdateMessage(CIRM::new().embed(embed).components(components)))
     }
 
     pub fn build_response_with_context(&self, page: UserPrefsPage, prefs: &UserPreferences, context: MenuContext) -> Option<CIR> {

@@ -50,14 +50,13 @@ pub fn is_server_config_back_button(button_id: &str) -> bool {
 /// Get the parent page from a back button ID
 pub fn get_server_config_parent_from_back_button(button_id: &str) -> Option<MenuPage> {
     match button_id {
-        "guild_config_main_back" => Some(MenuPage::GuildConfig),
+        "guild_config_back" => Some(MenuPage::GuildConfig),
         "guild_config_server_back" => Some(MenuPage::ServerConfig),
         "guild_config_roles_back" => Some(MenuPage::RolesConfig),
         "guild_config_elo_back" => Some(MenuPage::EloConfig),
         "guild_config_vc_back" => Some(MenuPage::VcConfig),
         "guild_config_general_back" => Some(MenuPage::GeneralConfig),
         "guild_config_rank_back" => Some(MenuPage::RankConfig),
-        "guild_config_category_list_back" => Some(MenuPage::CategoryList),
         "guild_config_category_back" => Some(MenuPage::CategorySettings),
         _ => None,
     }

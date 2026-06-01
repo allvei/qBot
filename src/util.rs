@@ -96,18 +96,17 @@ pub fn init_logging(log_buffer: Option<std::sync::Arc<tokio::sync::Mutex<std::co
 
   let console_layer = tracing_subscriber::fmt::layer()
     .with_ansi(true)
-    .with_target(false)
+    .with_target(true)
     .with_timer(timer.clone())
     .with_thread_ids(false)
     .with_thread_names(false)
-    .with_file(false)
-    .with_line_number(false)
+    .with_file(true)
+    .with_line_number(true)
     .with_level(false)
-    .compact()
     .with_filter(console_filter);
 
   // File layer with application logs only - filter out spam
-  let file_filter = EnvFilter::new("qbot=info")
+  let file_filter = EnvFilter::new("qbot=debug")
     .add_directive("serenity=warn".parse().unwrap())
     .add_directive("tokio_tungstenite=warn".parse().unwrap())
     .add_directive("tokio=warn".parse().unwrap())
