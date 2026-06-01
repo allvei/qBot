@@ -1,5 +1,4 @@
 use crate::handlers::settings::alerts::{build_join_alert_embed, build_leave_alert_embed};
-use crate::handlers::settings::ui::{build_settings_buttons, build_settings_embed};
 use crate::handlers::settings::user_prefs_system::{get_user_prefs_menu_system, get_user_prefs_navigation_info, UserPrefsPage};
 use crate::handlers::settings::utils::{create_paragraph_input_with_value, create_short_input_opt, track_dm_activity};
 use crate::Database;
@@ -47,38 +46,26 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
       }
     }
     "settings_queue_expiration" => {
-      // Show time selection buttons inline (replace current message temporarily)
+      // Navigate to queue timeout selection page
       let settings = db.players.get_prefs(user_id).await?;
-      let current_minutes = settings.queue_expiration;
+      let system = get_user_prefs_menu_system();
 
-      let time_buttons = vec![
-        CB::new("settings_queue_expiration:30m").label("30 min").style(if current_minutes == 30 { BS::Success } else { BS::Secondary }),
-        CB::new("settings_queue_expiration:1h").label("1 hour").style(if current_minutes == 60 { BS::Success } else { BS::Secondary }),
-        CB::new("settings_queue_expiration:2h").label("2 hours").style(if current_minutes == 120 { BS::Success } else { BS::Secondary }),
-        CB::new("settings_queue_expiration:3h").label("3 hours").style(if current_minutes == 180 { BS::Success } else { BS::Secondary }),
-        CB::new("settings_queue_expiration:4h").label("4 hours").style(if current_minutes == 240 { BS::Success } else { BS::Secondary }),
-      ];
-
-      let cancel_button = vec![CB::new("settings_queue_expiration:cancel").label("Cancel").style(BS::Danger)];
-
-      let embed = CE::new().title("Set expiration duration").description("Choose how long before you're automatically removed from the queue:").color(settings.join_alert_color);
-
-      let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(time_buttons), CAR::Buttons(cancel_button)]));
-
-      interaction.create_response(&ctx.http, response).await?;
+      if let Some(response) = system.build_response(UserPrefsPage::QueueTimeoutSettings, &settings) {
+        interaction.create_response(&ctx.http, response).await?;
+      }
     }
     button_id if button_id.starts_with("settings_queue_expiration:") => {
       // Handle auto-leave time selection or cancel
       let time_str = button_id.split(':').nth(1).unwrap_or("30m");
 
       if time_str == "cancel" {
-        // Just restore the settings menu
+        // Go back to queue settings
         let settings = db.players.get_prefs(user_id).await?;
-        let embed = build_settings_embed(&settings);
-        let buttons = build_settings_buttons(&settings);
+        let system = get_user_prefs_menu_system();
 
-        let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
-        interaction.create_response(&ctx.http, response).await?;
+        if let Some(response) = system.build_response(UserPrefsPage::QueueSettings, &settings) {
+          interaction.create_response(&ctx.http, response).await?;
+        }
       } else {
         let minutes = match time_str {
           "30m" => 30,
@@ -94,7 +81,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
         settings.queue_expiration = minutes;
         db.players.update_prefs(user_id, &settings).await?;
 
-        // Update the settings menu directly (no confirmation popup)
+        // Go back to queue settings after selection
         let system = get_user_prefs_menu_system();
 
         if let Some(response) = system.build_response(UserPrefsPage::QueueSettings, &settings) {
@@ -449,11 +436,11 @@ where
 
   // Get updated settings and rebuild UI
   let settings = db.players.get_prefs(user_id).await?;
-  let embed = build_settings_embed(&settings);
-  let buttons = build_settings_buttons(&settings);
+  let system = get_user_prefs_menu_system();
 
-  let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
-  interaction.create_response(&ctx.http, response).await?;
+  if let Some(response) = system.build_response(UserPrefsPage::Main, &settings) {
+    interaction.create_response(&ctx.http, response).await?;
+  }
   Ok(())
 }
 
@@ -461,9 +448,7 @@ where
 async fn update_settings_menu_from_modal(ctx: &Context, interaction: &MI, db: &Arc<Database>) -> Result<()> {
   let user_id = interaction.user.id;
   let settings = db.players.get_prefs(user_id).await?;
-
-  let embed = build_settings_embed(&settings);
-  let buttons = build_settings_buttons(&settings);
+  let system = get_user_prefs_menu_system();
 
   // Find the settings menu message in the DM channel and update it
   if let Ok(channel) = user_id.create_dm_channel(&ctx.http).await {
@@ -473,8 +458,11 @@ async fn update_settings_menu_from_modal(ctx: &Context, interaction: &MI, db: &A
       for msg in messages {
         if msg.author.id == ctx.cache.current_user().id && msg.embeds.iter().any(|e| e.title.as_deref() == Some("qBot preferences")) {
           // Update this message
-          let mut message = msg.clone();
-          message.edit(&ctx.http, EditMessage::new().embed(embed).components(buttons)).await?;
+          if let Some(embed) = system.build_embed(UserPrefsPage::Main, &settings) {
+            let components = system.build_components(UserPrefsPage::Main, &settings).unwrap_or_default();
+            let mut message = msg.clone();
+            message.edit(&ctx.http, EditMessage::new().embed(embed).components(components)).await?;
+          }
           break;
         }
       }

@@ -13,6 +13,8 @@ pub enum UserPrefsPage {
     Main,
     /// Queue settings page (timeout, auto-join, auto-leave, etc.)
     QueueSettings,
+    /// Queue timeout selection page
+    QueueTimeoutSettings,
     /// Alert settings page (join/leave alerts, DM alerts)
     AlertSettings,
     /// Ping notifications page (per-server ping preferences)
@@ -119,8 +121,8 @@ impl UserPrefsMenuSystem {
                     id: "settings_queue_expiration",
                     label: "Queue Timeout",
                     description: Some("Set how long before you're automatically removed from the queue"),
-                    target_page: None,
-                    button_type: UserPrefsButtonType::Edit,
+                    target_page: Some(UserPrefsPage::QueueTimeoutSettings),
+                    button_type: UserPrefsButtonType::Nav,
                 },
                 UserPrefsButton {
                     id: "settings_vc_auto_join",
@@ -171,6 +173,43 @@ impl UserPrefsMenuSystem {
                         CB::new("settings_vc_leave_queue")
                             .label("Leave Queue on VC Disconnect")
                             .style(if prefs.vc_leave_queue { BS::Success } else { BS::Danger }),
+                    ]))
+                },
+            ],
+        });
+
+        // Queue Timeout Settings Page
+        menus.insert(UserPrefsPage::QueueTimeoutSettings, UserPrefsMenuDefinition {
+            page: UserPrefsPage::QueueTimeoutSettings,
+            title: "Queue Timeout",
+            description: "Select how long before you're automatically removed from the queue",
+            color: 0x5865F2,
+            parent: Some(UserPrefsPage::QueueSettings),
+            buttons: vec![],
+            fields: vec![],
+            dynamic_fields: vec![
+                ("Current Value", |prefs: &crate::db::repo::UserPreferences| {
+                    let text = if prefs.queue_expiration >= 60 && prefs.queue_expiration % 60 == 0 {
+                        format!("{}h", prefs.queue_expiration / 60)
+                    } else {
+                        format!("{}m", prefs.queue_expiration)
+                    };
+                    Some(text)
+                }, true),
+            ],
+            dynamic_components: vec![
+                |_prefs| {
+                    Some(CAR::Buttons(vec![
+                        CB::new("settings_queue_expiration:30m").label("30 minutes").style(BS::Primary),
+                        CB::new("settings_queue_expiration:1h").label("1 hour").style(BS::Primary),
+                        CB::new("settings_queue_expiration:2h").label("2 hours").style(BS::Primary),
+                    ]))
+                },
+                |_prefs| {
+                    Some(CAR::Buttons(vec![
+                        CB::new("settings_queue_expiration:3h").label("3 hours").style(BS::Primary),
+                        CB::new("settings_queue_expiration:4h").label("4 hours").style(BS::Primary),
+                        CB::new("settings_queue_expiration:cancel").label("Cancel").style(BS::Secondary),
                     ]))
                 },
             ],
@@ -236,7 +275,7 @@ impl UserPrefsMenuSystem {
                 },
             ],
             fields: vec![
-                ("Note", "Ping settings are configured per-server", true),
+                ("Note", "Ping settings are configured per-server. This toggle works when accessed from a server context (dashboard).", true),
             ],
             dynamic_fields: vec![],
             dynamic_components: vec![],
@@ -354,6 +393,7 @@ impl UserPrefsMenuSystem {
         match parent {
             UserPrefsPage::Main => "user_prefs_main_back",
             UserPrefsPage::QueueSettings => "user_prefs_queue_back",
+            UserPrefsPage::QueueTimeoutSettings => "user_prefs_queue_back",
             UserPrefsPage::AlertSettings => "user_prefs_alert_back",
             UserPrefsPage::PingSettings => "user_prefs_ping_back",
         }

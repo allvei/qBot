@@ -1,5 +1,5 @@
 use crate::handlers::settings::{build_guild_config_buttons, build_guild_config_embed, ServerSettings};
-use crate::handlers::{build_settings_buttons, build_settings_embed};
+use crate::handlers::settings::user_prefs_system::{get_user_prefs_menu_system, UserPrefsPage};
 use crate::repo::UserPreferences;
 use serenity::all::{ButtonStyle as BS, CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
 
@@ -11,9 +11,13 @@ impl Ephemeral {
   }
 
   pub fn send_prefs(prefs: &UserPreferences) -> CIR {
-    let embed = build_settings_embed(prefs);
-    let buttons = build_settings_buttons(prefs);
-    CIR::Message(CIRM::new().embed(embed).components(buttons).ephemeral(true))
+    let system = get_user_prefs_menu_system();
+    if let Some(response) = system.build_response(UserPrefsPage::Main, prefs) {
+      response
+    } else {
+      // Fallback to empty response if build fails
+      CIR::Message(CIRM::new().content("Failed to build settings menu").ephemeral(true))
+    }
   }
 
   pub fn send_config(settings: &ServerSettings, guild_name: &str) -> CIR {
