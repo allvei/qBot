@@ -31,6 +31,16 @@ fn dm_toggle_component(prefs: &UserPreferences) -> Option<CAR> {
     ]))
 }
 
+fn ping_notifications_toggle_component(_prefs: &UserPreferences) -> Option<CAR> {
+    // Ping notifications are per-server and managed via UserServerPrefs
+    // This toggle is a placeholder for future per-user ping settings
+    Some(CAR::Buttons(vec![
+        CB::new("settings_ping_notifications")
+            .label("Ping Notifications")
+            .style(BS::Secondary),
+    ]))
+}
+
 fn vc_auto_join_component(prefs: &UserPreferences) -> Option<CAR> {
     Some(CAR::Buttons(vec![
         CB::new("settings_vc_auto_join")
@@ -260,7 +270,9 @@ impl UserPrefsMenuSystem {
                 ("Note", "Ping settings are configured per-server. This toggle works when accessed from a server context (dashboard).", true),
             ],
             dynamic_fields: vec![],
-            dynamic_components: vec![],
+            dynamic_components: vec![
+                ping_notifications_toggle_component,
+            ],
         });
 
         // Register handlers for non-nav buttons

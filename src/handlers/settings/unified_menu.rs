@@ -63,6 +63,8 @@ pub enum ButtonType {
     Edit,
     /// Selection button (select one of multiple options)
     Selection,
+    /// Info button (opens an info embed with back button only)
+    Info,
     /// Action button (performs an action)
     Action,
 }
@@ -193,6 +195,7 @@ where
                     ButtonType::Navigation(NavAction::Back) => BS::Secondary,
                     ButtonType::Navigation(_) => BS::Primary,
                     ButtonType::Edit => BS::Primary,
+                    ButtonType::Info => BS::Primary,
                     ButtonType::Action => BS::Primary,
                     _ => BS::Primary,
                 };
