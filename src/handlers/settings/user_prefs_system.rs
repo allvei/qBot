@@ -34,6 +34,8 @@ fn dm_toggle_component(prefs: &UserPreferences) -> Option<CAR> {
 fn ping_notifications_toggle_component(_prefs: &UserPreferences) -> Option<CAR> {
     // Ping notifications are per-server and can only be toggled from guild context
     // This button is disabled in DM context
+    // Note: This component always renders a disabled button because we don't have guild context here
+    // Per-server ping settings should be managed from the guild dashboard instead
     Some(CAR::Buttons(vec![
         CB::new("settings_ping_notifications")
             .label("Ping Notifications")
@@ -309,8 +311,18 @@ impl UserPrefsMenuSystem {
         self.inner.build_components(page, prefs)
     }
 
+    pub fn build_components_with_context(&self, page: UserPrefsPage, prefs: &UserPreferences, context: MenuContext) -> Option<Vec<CAR>> {
+        self.inner.build_components_filtered(page, prefs, &|button_id| should_show_button(button_id, context))
+    }
+
     pub fn build_response(&self, page: UserPrefsPage, prefs: &UserPreferences) -> Option<CIR> {
         self.inner.build_response(page, prefs)
+    }
+
+    pub fn build_response_with_context(&self, page: UserPrefsPage, prefs: &UserPreferences, context: MenuContext) -> Option<CIR> {
+        let embed = self.build_embed(page, prefs)?;
+        let components = self.build_components_with_context(page, prefs, context).unwrap_or_default();
+        Some(CIR::UpdateMessage(CIRM::new().embed(embed).components(components)))
     }
 
     pub fn get_back_button_id(&self, parent: UserPrefsPage) -> &'static str {
@@ -328,7 +340,7 @@ impl UserPrefsMenuSystem {
     }
 }
 
-use serenity::all::{CreateInteractionResponse as CIR, CreateEmbed as CE};
+use serenity::all::{CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, CreateEmbed as CE};
 
 /// Helper functions for navigation
 pub fn get_user_prefs_target_page(button_id: &str) -> Option<UserPrefsPage> {
@@ -358,9 +370,33 @@ pub fn get_user_prefs_navigation_info(button_id: &str) -> Option<UserPrefsPage> 
 }
 
 use std::sync::OnceLock;
+use serenity::all::GuildId as GI;
 
 static USER_PREFS_MENU_SYSTEM: OnceLock<UserPrefsMenuSystem> = OnceLock::new();
 
 pub fn get_user_prefs_menu_system() -> &'static UserPrefsMenuSystem {
     USER_PREFS_MENU_SYSTEM.get_or_init(UserPrefsMenuSystem::new)
+}
+
+/// Context for menu rendering - determines which buttons are visible
+#[derive(Debug, Clone, Copy)]
+pub enum MenuContext {
+    /// DM context - only user-level preferences
+    DirectMessage,
+    /// Guild context - user-level + guild-specific preferences
+    Guild(GI),
+    /// Dashboard context - all preferences
+    Dashboard,
+    /// EGUI context - all preferences
+    AdminPanel,
+}
+
+/// Filter buttons based on context
+pub fn should_show_button(button_id: &str, context: MenuContext) -> bool {
+    match button_id {
+        // Ping settings only visible in guild, dashboard, or admin contexts
+        "user_prefs_ping_settings" => !matches!(context, MenuContext::DirectMessage),
+        // All other buttons visible in all contexts
+        _ => true,
+    }
 }

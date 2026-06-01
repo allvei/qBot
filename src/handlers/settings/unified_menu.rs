@@ -171,6 +171,13 @@ where
     }
 
     pub fn build_components(&self, page: Page, context: &Context) -> Option<Vec<CAR>> {
+        self.build_components_filtered(page, context, &|_| true)
+    }
+
+    pub fn build_components_filtered<F>(&self, page: Page, context: &Context, filter: &F) -> Option<Vec<CAR>>
+    where
+        F: Fn(&str) -> bool,
+    {
         let menu = self.get_menu(page)?;
         let mut components = Vec::new();
 
@@ -188,6 +195,11 @@ where
             for button in &menu.buttons {
                 // Skip toggle and selection buttons that are handled by dynamic components
                 if matches!(button.button_type, ButtonType::Toggle | ButtonType::Selection) {
+                    continue;
+                }
+
+                // Skip buttons filtered out by the filter function
+                if !filter(button.id) {
                     continue;
                 }
 

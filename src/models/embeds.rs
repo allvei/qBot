@@ -11,8 +11,10 @@ impl Ephemeral {
   }
 
   pub fn send_prefs(prefs: &UserPreferences) -> CIR {
+    use crate::handlers::settings::user_prefs_system::MenuContext;
     let system = get_user_prefs_menu_system();
-    if let Some(response) = system.build_response(UserPrefsPage::Main, prefs) {
+    // Use DM context for /prefs command - only show user-level preferences
+    if let Some(response) = system.build_response_with_context(UserPrefsPage::Main, prefs, MenuContext::DirectMessage) {
       response
     } else {
       // Fallback to empty response if build fails

@@ -129,17 +129,26 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
       }
     }
     "settings_ping_notifications" => {
+      debug!("Ping notifications button pressed. Guild context: {:?}", interaction.guild_id);
+      
       // Toggle ping notifications - only works in guild context
       if let Some(guild_id) = interaction.guild_id {
+        debug!("Guild context found: {}", guild_id);
+        
         // Get current ping notification preference for this server
         let current = db.user_server_prefs.get_ping_notification_enabled(user_id, guild_id).await.unwrap_or(None);
+        debug!("Current ping state for guild {}: {:?}", guild_id, current);
+        
         let new_value = match current {
           Some(true) => Some(false),
           Some(false) => Some(true),
           None => Some(true), // Default to enabled on first interaction
         };
 
+        debug!("Setting new ping state for guild {} to: {:?}", guild_id, new_value);
         db.user_server_prefs.set_ping_notification_enabled(user_id, guild_id, new_value).await?;
+      } else {
+        debug!("No guild context - ping notifications button is disabled in DM");
       }
 
       // Acknowledge and update the settings menu directly (no popup)
