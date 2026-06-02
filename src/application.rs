@@ -628,20 +628,40 @@ impl EventHandler for Handler {
       tokio::spawn(async move {
         use tokio::time::{interval, Duration};
         let mut check_interval = interval(Duration::from_secs(60)); // Check every minute
+        let mut lock_cleanup_interval = interval(Duration::from_secs(120)); // Cleanup every 2 minutes
 
         loop {
-          check_interval.tick().await;
+          tokio::select! {
+            _ = check_interval.tick() => {
+              let mut manager_lock = manager.lock().await;
 
-          let mut manager_lock = manager.lock().await;
-
-          // Validate pending team switches (commit if stable for 2+ minutes)
-          for server in &mut manager_lock.qguilds {
-            for category in &mut server.categories {
-              for fmt in &mut category.formats {
-                for session in &mut fmt.sessions {
-                  if session.pending_team_switch.is_some() {
-                    session.validate_and_commit_team_switch(&ctx_clone, server.id);
+              // Validate pending team switches (commit if stable for 2+ minutes)
+              for server in &mut manager_lock.qguilds {
+                for category in &mut server.categories {
+                  for fmt in &mut category.formats {
+                    for session in &mut fmt.sessions {
+                      if session.pending_team_switch.is_some() {
+                        session.validate_and_commit_team_switch(&ctx_clone, server.id);
+                      }
+                    }
                   }
+                }
+              }
+            }
+            _ = lock_cleanup_interval.tick() => {
+              let mut manager_lock = manager.lock().await;
+              let removed = manager_lock.cleanup_stale_interaction_locks();
+              
+              if removed > 0 {
+                info!("Periodic cleanup removed {} stale interaction locks", removed);
+              }
+              
+              // Log stats if there are active locks
+              let (count, locks) = manager_lock.get_interaction_lock_stats();
+              if count > 0 {
+                debug!("Active interaction locks: {} total", count);
+                for (action, age) in locks.iter().take(5) {
+                  debug!("  - {} (age: {}s)", action, age);
                 }
               }
             }
@@ -1626,13 +1646,9 @@ impl EventHandler for Handler {
               }
             }
 
-            // Get post-game confirm time window from database
-            let post_game_confirm_time = self.db.config.get_post_game_confirm_time(guild_id).await.ok();
-
-            if category.check_hot_confirm_time(&ctx, guild_id, post_game_confirm_time).await {
-              info!("Hot session confirm time detected, updating dashboard");
-              category.queue_dash_update(&ctx, guild_id).await;
-            }
+            // Note: check_hot_confirm_time is now handled by scheduled deadline timers
+            // spawned in hot_fmt(). This reduces event-driven overhead and prevents
+            // excessive log spam when multiple users join VC simultaneously.
           }
         }
         Err(_) => {
