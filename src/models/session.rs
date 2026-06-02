@@ -50,6 +50,11 @@ impl Session {
   /// Add a player to the session
   /// Returns Ok(position) with the player's 1-indexed position in the queue
   pub fn add_ply(&mut self, player: Player, in_vc: bool) -> Result<usize> {
+    // Check for duplicates
+    if self.pool.iter().any(|p| p.player.user_id == player.user_id) {
+      return Err(anyhow::anyhow!("Player {} (ID: {}) is already in this session", player.tag, player.user_id));
+    }
+    
     let mut session_player = SessionPlayer::add(player);
     session_player.in_vc = in_vc;
     self.pool.push(session_player);

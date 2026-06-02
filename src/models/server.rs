@@ -1015,12 +1015,17 @@ impl Category {
     let quota = sg.quota as usize;
     let session_idx = sg.sessions.iter().position(|s| s.status == SessionStatus::Push).ok_or(anyhow!("Push session not found in format {}", format_id))?;
     let game = &mut sg.sessions[session_idx];
-    game.live();
+    game.status = SessionStatus::Live;
+    game.started_at = Some(std::time::SystemTime::now());
 
     let game_pool_len = game.pool.len();
 
     // Extract overflow players (those beyond quota)
     let overflow_players: Vec<_> = if game_pool_len > quota { game.pool.drain(quota..).collect() } else { Vec::new() };
+    
+    // Backup the queue order AFTER removing overflow players (for potential cancellation)
+    // This ensures pre_match_pool only contains players actually in this game
+    game.pre_match_pool = Some(game.pool.clone());
 
     // Create new idle session for next game in this format (only if one doesn't exist)
     let has_idle = self.format(format_id).map(|sg| sg.sessions.iter().any(|s| s.is_idle())).unwrap_or(false);
