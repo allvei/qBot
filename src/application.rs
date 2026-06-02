@@ -329,7 +329,7 @@ impl Application {
                     if let Some(gui_state) = shared_state_cmd.as_ref() {
                       gui_state.shutdown_complete.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
-                    std::process::exit(0);
+                    break;
                   }
 
                   let (snapshot, affected_guild) = {
