@@ -371,7 +371,9 @@ impl Category {
     }
 
     // Last row: Preferences, Runner Menu, and Help
-    buttons.push(Self::create_dashboard_footer_buttons());
+    if !self.restarting {
+      buttons.push(Self::create_dashboard_footer_buttons());
+    }
 
     Ok(buttons)
   }
@@ -1099,6 +1101,13 @@ impl Category {
     use crate::handlers::player::is_role_component;
     use crate::models::Role;
 
+    // Try to acquire interaction lock to prevent duplicate processing
+    let action_key = format!("start_match_{}_{}", self.id, fmt_id);
+    if !cc.try_lock_interaction(&action_key).await? {
+      cc.reply_acknowledge().await?;
+      return Ok(());
+    }
+
     let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
     match is_role_component(cc, &Role::Runner).await {
@@ -1107,11 +1116,13 @@ impl Category {
       }
       Ok(false) => {
         cc.reply_ephemeral("Only runners can start matches.").await?;
+        cc.unlock_interaction().await;
         return Ok(());
       }
       Err(e) => {
         warn!("Failed to check runner role: {e}");
         cc.reply_ephemeral("Failed to verify permissions.").await?;
+        cc.unlock_interaction().await;
         return Ok(());
       }
     }
@@ -1121,6 +1132,7 @@ impl Category {
 
     if !has_hot_game {
       cc.reply_ephemeral("No hot game ready to start.").await?;
+      cc.unlock_interaction().await;
       return Ok(());
     }
 
@@ -1129,46 +1141,13 @@ impl Category {
 
     if has_active_game {
       cc.reply_ephemeral("A game is already in progress. Wait for it to finish.").await?;
+      cc.unlock_interaction().await;
       return Ok(());
     }
 
-    // Check if someone is already starting this match
-    {
-      let mgr = cc.manager.lock().await;
-      if let Some(starting_user_id) = mgr.get_active_match_start(guild_id, self.id, fmt_id) {
-        if starting_user_id != cc.component.user.id {
-          let starting_user_tag = crate::log::get_user_tag(cc.ctx, starting_user_id, &cc.db).await;
-          cc.reply_ephemeral(&format!("{} started this match already", starting_user_tag)).await?;
-          return Ok(());
-        }
-      }
-    }
-
-    // Mark this user as starting
-    {
-      let mut mgr = cc.manager.lock().await;
-      mgr.set_active_match_start(guild_id, self.id, fmt_id, cc.component.user.id);
-    }
-
-    // Check for duplicate action within 5 seconds on the same hot session
-    // Also transition Hot → Push immediately to prevent race conditions
+    // Transition Hot → Push immediately to prevent race conditions
     if let Some(fmt) = self.format_mut(fmt_id) {
       if let Some(hot_session) = fmt.sessions.iter_mut().find(|s| s.is_hot()) {
-        if let Some(last_action) = hot_session.last_action_at {
-          if let Ok(elapsed) = SystemTime::now().duration_since(last_action) {
-            if elapsed < Duration::from_secs(5) {
-              // Duplicate action within 5 seconds - acknowledge silently
-              cc.reply_acknowledge().await?;
-              {
-                let mut mgr = cc.manager.lock().await;
-                mgr.clear_active_match_start(guild_id, self.id, fmt_id);
-              }
-              return Ok(());
-            }
-          }
-        }
-        // Update last action timestamp and transition to Push immediately
-        // This prevents race conditions where multiple clicks process the same Hot session
         hot_session.last_action_at = Some(SystemTime::now());
         hot_session.push();
       }
@@ -1177,14 +1156,10 @@ impl Category {
     cc.reply_update_message().await?;
 
     // Move players to team channels (Push → Live)
-    // Note: Session is already Push status from above to prevent race conditions
     let result = self.push_fmt(fmt_id, cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await;
 
-    // Clear the active match start tracking
-    {
-      let mut mgr = cc.manager.lock().await;
-      mgr.clear_active_match_start(guild_id, self.id, fmt_id);
-    }
+    // Release interaction lock
+    cc.unlock_interaction().await;
 
     match result {
       Ok(_) => {
@@ -1265,11 +1240,19 @@ impl Category {
     use crate::handlers::player::is_role_component;
     use crate::models::Role;
 
+    // Try to acquire interaction lock to prevent duplicate processing
+    let action_key = format!("cancel_match_{}_{}", self.id, fmt_id);
+    if !cc.try_lock_interaction(&action_key).await? {
+      cc.reply_acknowledge().await?;
+      return Ok(());
+    }
+
     let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
     // Check if user is a runner
     if !is_role_component(cc, &Role::Runner).await? {
       cc.reply_ephemeral("Only runners can cancel matches.").await?;
+      cc.unlock_interaction().await;
       return Ok(());
     }
 
@@ -1281,6 +1264,7 @@ impl Category {
 
     if active_session.is_none() {
       cc.reply_ephemeral("No active match to cancel.").await?;
+      cc.unlock_interaction().await;
       return Ok(());
     }
 
@@ -1289,6 +1273,7 @@ impl Category {
     // Check if match can still be cancelled
     if !session.can_cancel_match() {
       cc.reply_ephemeral("Match has been running for 5+ minutes and cannot be cancelled.").await?;
+      cc.unlock_interaction().await;
       return Ok(());
     }
 
@@ -1317,6 +1302,9 @@ impl Category {
 
     cc.reply_ephemeral("Match cancelled. Queue order has been restored.").await?;
     self.queue_dash_update(cc.ctx, guild_id).await;
+
+    // Release interaction lock
+    cc.unlock_interaction().await;
 
     Ok(())
   }
@@ -1348,31 +1336,24 @@ impl Category {
     let category_id = category_id.unwrap();
     let format_id = format_id.unwrap();
 
-    // Guard against double-end: if the session already has score_reported set, silently acknowledge and return
-    let already_reported = self.format(format_id).and_then(|sg| sg.sessions.iter().find(|s| s.is_active())).map(|s| s.score_reported).unwrap_or(false);
-
-    if already_reported {
+    // Try to acquire interaction lock to prevent duplicate processing
+    let action_key = format!("end_match_result_{}_{}_{}", category_id, format_id, result);
+    if !cc.try_lock_interaction(&action_key).await? {
       cc.reply_acknowledge().await?;
       return Ok(());
     }
 
-    // Check if someone is already submitting a score for this match
-    {
-      let mgr = cc.manager.lock().await;
-      if let Some(submitting_user_id) = mgr.get_active_score_submission(guild_id, category_id, format_id) {
-        if submitting_user_id != cc.component.user.id {
-          let submitting_user_tag = crate::log::get_user_tag(cc.ctx, submitting_user_id, &cc.db).await;
-          cc.reply_ephemeral(&format!("{} started reporting this match already", submitting_user_tag)).await?;
-          return Ok(());
-        }
-      }
+    // Guard against double-end: if the session already has score_reported set
+    let already_reported = self.format(format_id).and_then(|sg| sg.sessions.iter().find(|s| s.is_active())).map(|s| s.score_reported).unwrap_or(false);
+
+    if already_reported {
+      cc.reply_acknowledge().await?;
+      cc.unlock_interaction().await;
+      return Ok(());
     }
 
-    // Mark this user as submitting
-    {
-      let mut mgr = cc.manager.lock().await;
-      mgr.set_active_score_submission(guild_id, category_id, format_id, cc.component.user.id);
-    }
+    // Defer the interaction immediately to prevent Discord timeout
+    cc.reply_defer().await?;
 
     let guild_name_str = guild_name(cc.ctx, guild_id);
     let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
@@ -1451,11 +1432,6 @@ impl Category {
         info!("{} Match ended with {}", log_prefix_category(&guild_name_str, &category_name), result_text);
         self.queue_dash_update(cc.ctx, guild_id).await;
 
-        {
-          let mut mgr = cc.manager.lock().await;
-          mgr.clear_active_score_submission(guild_id, category_id, format_id);
-        }
-
         let result_color = match *result {
           "red" => crate::RED,
           "blu" => crate::BLUE,
@@ -1481,19 +1457,20 @@ impl Category {
 
         let embed = CE::new().title("Match ended").description(format!("**{}** - {}", format_name, result_text)).color(result_color);
 
-        cc.component.create_response(&cc.ctx.http, CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![]))).await?;
+        cc.component.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed).components(vec![])).await?;
+
+        // Release interaction lock
+        cc.unlock_interaction().await;
       }
       Err(e) => {
         error!("Failed to end match: {e}");
 
-        {
-          let mut mgr = cc.manager.lock().await;
-          mgr.clear_active_score_submission(guild_id, category_id, format_id);
-        }
-
         let embed = CE::new().title("Failed to end match").description(format!("Error: {}", e)).color(0xFF0000);
 
-        cc.component.create_response(&cc.ctx.http, CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![]))).await?;
+        cc.component.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed).components(vec![])).await?;
+
+        // Release interaction lock
+        cc.unlock_interaction().await;
       }
     }
 
@@ -2056,13 +2033,26 @@ impl Category {
     let content = format!("{} +{} for {}\nPing by <@{}>", ping_mention, players_needed, format.name, user_id.get());
 
     if let Ok(sent) = ping_channel.send_message(&cc.ctx.http, CM::new().content(content)).await {
+      let message_id = sent.id;
+      let guild_name = guild_name(cc.ctx, guild_id);
+      let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
+      let log_prefix = log_prefix_category(&guild_name, &category_name);
+      
+      info!("{} Ping message sent for {} (msg_id: {}, by: {})", log_prefix, format.name, message_id, user_id.get());
+
       // Delete the message after 15 minutes
       let http = cc.ctx.http.clone();
       let channel_id = ping_channel;
-      let message_id = sent.id;
       tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_secs(15 * 60)).await;
-        let _ = channel_id.delete_message(&http, message_id).await;
+        match channel_id.delete_message(&http, message_id).await {
+          Ok(_) => {
+            debug!("{} Ping message auto-deleted after 15 minutes (msg_id: {})", log_prefix, message_id);
+          }
+          Err(e) => {
+            debug!("{} Ping message already deleted or not found (msg_id: {}): {}", log_prefix, message_id, e);
+          }
+        }
       });
 
       // Confirm in ephemeral
