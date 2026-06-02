@@ -333,6 +333,7 @@ impl Manager {
     });
     let cleaned = before_count - self.active_interactions.len();
     if cleaned > 0 {
+      use tracing::info;
       info!("Cleaned up {} stale interaction locks", cleaned);
     }
 

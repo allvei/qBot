@@ -1044,6 +1044,9 @@ impl Category {
     info!("Moved {} player(s) to team channels: {}", moved_tags.len(), moved_tags.join(", "));
 
     // Set game status to Live and extract overflow players
+    // Capture category_id before mutably borrowing self
+    let category_id = self.id;
+    
     let sg = self.format_mut(format_id).unwrap();
     let quota = sg.quota as usize;
     let session_idx = sg.sessions.iter().position(|s| s.status == SessionStatus::Push).ok_or(anyhow!("Push session not found in format {}", format_id))?;
@@ -1053,7 +1056,6 @@ impl Category {
 
     // Schedule dashboard update when cancel window expires (5 minutes)
     if let Some(mgr) = manager.clone() {
-      let category_id = self.id;
       let ctx_clone = ctx.clone();
       tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
@@ -2395,7 +2397,7 @@ impl Category {
       if let Some(pos) = pending_users.iter().position(|&u| u == user_id) {
         pending_users.remove(pos);
         
-        let user_tag = crate::log::user_id_to_tag(ctx, user_id).await;
+        let user_tag = ctx.cache.user(user_id).map(|u| u.tag()).unwrap_or_else(|| user_id.to_string());
 
         let dashboard = self.channels.dashboard;
 
