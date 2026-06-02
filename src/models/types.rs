@@ -177,6 +177,37 @@ impl ComponentContext<'_> {
     let response = CIR::UpdateMessage(CIRM::new());
     self.create_response(response).await
   }
+
+  /// Try to acquire a lock for this interaction to prevent duplicate processing.
+  /// Use this at the start of any destructive action.
+  ///
+  /// ### Arguments
+  /// * `action_key` - A descriptive key for the action (e.g., "cancel_match_0_0")
+  ///
+  /// ### Returns
+  /// * `Ok(true)` if lock was acquired and action should proceed
+  /// * `Ok(false)` if already being processed (silently acknowledge and return)
+  pub async fn try_lock_interaction(&self, action_key: &str) -> Result<bool, anyhow::Error> {
+    use tracing::debug;
+
+    let mut mgr = self.manager.lock().await;
+    let interaction_id = self.component.message.id;
+    let acquired = mgr.try_lock_interaction(interaction_id, action_key.to_string());
+    
+    if !acquired {
+      debug!("Interaction already in progress, silently acknowledging: {} (user: {})", action_key, self.component.user.tag());
+    }
+    
+    Ok(acquired)
+  }
+
+  /// Release the lock for this interaction after completion or error.
+  /// Always call this in a finally block or at the end of processing.
+  pub async fn unlock_interaction(&self) {
+    let mut mgr = self.manager.lock().await;
+    let interaction_id = self.component.message.id;
+    mgr.unlock_interaction(interaction_id);
+  }
 }
 
 /// Player ELO rating (0+ scale)

@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use serenity::all::{Cache, ChannelId as CI, Context, GuildId as GI, UserId as UI};
+use serenity::all::{Cache, ChannelId as CI, Context, GuildId as GI, MessageId as MI, UserId as UI};
 use std::collections::HashMap;
 use std::time::SystemTime;
 
@@ -20,6 +20,10 @@ pub struct Manager {
   pub active_score_submissions: HashMap<(GI, u8, u8), (UI, SystemTime)>,
   /// Tracks active match starts: (guild_id, category_id, format_id) -> (user_id, start_time)
   pub active_match_starts: HashMap<(GI, u8, u8), (UI, SystemTime)>,
+  /// Generic interaction lock to prevent duplicate processing of any destructive action
+  /// Maps interaction_id -> (action_key, start_time)
+  #[serde(skip)]
+  pub active_interactions: HashMap<MI, (String, SystemTime)>,
 }
 
 impl Manager {
@@ -32,6 +36,7 @@ impl Manager {
       qguilds: vec![QGuild::new(guild_id, "Unknown".to_string(), Roles::empty())],
       active_score_submissions: HashMap::new(),
       active_match_starts: HashMap::new(),
+      active_interactions: HashMap::new(),
     }
   }
 
@@ -48,7 +53,7 @@ impl Manager {
       let guild_name = cache.guild(*g).map(|guild| guild.name.clone()).unwrap_or_else(|| "Unknown".to_string());
       qguilds.push(QGuild::new(*g, guild_name, Roles::empty()));
     });
-    Self { qguilds, active_score_submissions: HashMap::new(), active_match_starts: HashMap::new() }
+    Self { qguilds, active_score_submissions: HashMap::new(), active_match_starts: HashMap::new(), active_interactions: HashMap::new() }
   }
 
   /// Find a server by its guild ID
@@ -293,5 +298,115 @@ impl Manager {
   /// Check if there are any sessions in progress
   pub fn has_active_sessions(&self) -> bool {
     self.count_active_sessions() > 0
+  }
+
+  /// Try to acquire a lock for a destructive interaction
+  /// Returns true if lock was acquired, false if already in progress
+  ///
+  /// ### Arguments
+  /// * `interaction_id` - The Discord interaction ID (unique per interaction)
+  /// * `action_key` - A descriptive key for the action (e.g., "cancel_match_0_0")
+  ///
+  /// ### Returns
+  /// * `true` if lock was acquired, `false` if action is already in progress
+  pub fn try_lock_interaction(&mut self, interaction_id: MI, action_key: String) -> bool {
+    use tracing::{debug, warn};
+
+    // Check if this exact interaction is already being processed
+    if let Some((existing_action, start_time)) = self.active_interactions.get(&interaction_id) {
+      let elapsed = start_time.elapsed().unwrap_or(std::time::Duration::from_secs(0)).as_secs();
+      warn!("Duplicate interaction detected: {} (existing: {}, age: {}s)", action_key, existing_action, elapsed);
+      return false;
+    }
+
+    // Clean up stale interactions (older than 5 minutes)
+    let timeout = std::time::Duration::from_secs(300);
+    let before_count = self.active_interactions.len();
+    self.active_interactions.retain(|id, (action, start_time)| {
+      let age = start_time.elapsed().unwrap_or(timeout);
+      if age >= timeout {
+        warn!("Cleaned up stale interaction lock: {} (interaction_id: {}, age: {}s)", action, id, age.as_secs());
+        false
+      } else {
+        true
+      }
+    });
+    let cleaned = before_count - self.active_interactions.len();
+    if cleaned > 0 {
+      info!("Cleaned up {} stale interaction locks", cleaned);
+    }
+
+    // Acquire the lock
+    debug!("Acquired interaction lock: {} (interaction_id: {})", action_key, interaction_id);
+    self.active_interactions.insert(interaction_id, (action_key, SystemTime::now()));
+    true
+  }
+
+  /// Release a lock for a completed interaction
+  ///
+  /// ### Arguments
+  /// * `interaction_id` - The Discord interaction ID to unlock
+  pub fn unlock_interaction(&mut self, interaction_id: MI) {
+    use tracing::debug;
+
+    if let Some((action_key, start_time)) = self.active_interactions.remove(&interaction_id) {
+      let duration = start_time.elapsed().unwrap_or(std::time::Duration::from_secs(0));
+      debug!("Released interaction lock: {} (interaction_id: {}, held for: {}ms)", action_key, interaction_id, duration.as_millis());
+    } else {
+      use tracing::warn;
+      warn!("Attempted to unlock non-existent interaction: {}", interaction_id);
+    }
+  }
+
+  /// Check if an interaction is currently locked
+  ///
+  /// ### Arguments
+  /// * `interaction_id` - The Discord interaction ID to check
+  ///
+  /// ### Returns
+  /// * `true` if locked, `false` if available
+  pub fn is_interaction_locked(&self, interaction_id: MI) -> bool {
+    self.active_interactions.contains_key(&interaction_id)
+  }
+
+  /// Get diagnostic information about active interaction locks
+  ///
+  /// ### Returns
+  /// * Count of active locks and list of actions with their ages
+  pub fn get_interaction_lock_stats(&self) -> (usize, Vec<(String, u64)>) {
+    let count = self.active_interactions.len();
+    let mut locks: Vec<(String, u64)> = self
+      .active_interactions
+      .values()
+      .map(|(action, start_time)| {
+        let age_secs = start_time.elapsed().unwrap_or(std::time::Duration::from_secs(0)).as_secs();
+        (action.clone(), age_secs)
+      })
+      .collect();
+    locks.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by age descending
+    (count, locks)
+  }
+
+  /// Manually cleanup stale interaction locks (for periodic cleanup tasks)
+  ///
+  /// ### Returns
+  /// * Number of stale locks removed
+  pub fn cleanup_stale_interaction_locks(&mut self) -> usize {
+    use tracing::warn;
+
+    let timeout = std::time::Duration::from_secs(300);
+    let before_count = self.active_interactions.len();
+    
+    self.active_interactions.retain(|id, (action, start_time)| {
+      let age = start_time.elapsed().unwrap_or(timeout);
+      if age >= timeout {
+        warn!("Periodic cleanup: removed stale interaction lock: {} (interaction_id: {}, age: {}s)", action, id, age.as_secs());
+        false
+      } else {
+        true
+      }
+    });
+    
+    before_count - self.active_interactions.len()
   }
 }
