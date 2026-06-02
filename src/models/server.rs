@@ -19,6 +19,10 @@ use tracing::{debug, info, warn};
 
 use crate::models::{Player, Session, SessionPlayer, SessionStatus, TeamChannel};
 
+// Voice channel movement configuration to prevent Discord client bugs
+const VC_MOVE_BATCH_SIZE: usize = 4; // Number of users to move in parallel per batch
+const VC_MOVE_BATCH_DELAY_MS: u64 = 50; // Delay between batches in milliseconds
+
 /// Context parameters for queue operations
 pub struct QueueContext<'a> {
   pub ctx: &'a Context,
@@ -939,6 +943,9 @@ impl Category {
   }
 
   pub async fn push_fmt(&mut self, format_id: u8, ctx: &Context, guild_id: GI, db: &DB, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
+    // Clear any pending VC notifications since the game is starting
+    self.clear_vc_notification(ctx).await;
+
     // Ensure a free team VC pair exists (creates one if needed)
     self.ensure_team_vcs(ctx, guild_id, db).await?;
 
@@ -1043,6 +1050,22 @@ impl Category {
     let game = &mut sg.sessions[session_idx];
     game.status = SessionStatus::Live;
     game.started_at = Some(std::time::SystemTime::now());
+
+    // Schedule dashboard update when cancel window expires (5 minutes)
+    if let Some(mgr) = manager.clone() {
+      let category_id = self.id;
+      let ctx_clone = ctx.clone();
+      tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
+        let mut manager_lock = mgr.lock().await;
+        if let Ok(server) = manager_lock.get_qguild(guild_id) {
+          if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
+            category.queue_dash_update(&ctx_clone, guild_id).await;
+            debug!("Dashboard updated after cancel window expired (5 minutes)");
+          }
+        }
+      });
+    }
 
     let game_pool_len = game.pool.len();
 
@@ -1359,6 +1382,9 @@ impl Category {
   }
 
   pub async fn pull_fmt(&mut self, fmt_id: u8, ctx: &Context, guild_id: GI, db: &DB, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
+    // Clear any pending VC notifications since the game is ending
+    self.clear_vc_notification(ctx).await;
+
     // Extract queue vc channel ID
     let queue_vc = self.channels.queue_vc;
 
@@ -1422,45 +1448,55 @@ impl Category {
     // Build tag lookup for readable log messages
     let tag_map: std::collections::HashMap<UI, String> = players_to_requeue.iter().map(|p| (p.user_id, p.tag.clone())).collect();
 
-    // Move all users to queue VC in parallel
-    let move_tasks: Vec<_> = users_to_move
-      .into_iter()
-      .map(|user_id| {
-        let http = ctx.http.clone();
-        let gid = guild_id;
-        let qvc = queue_vc;
-        let cache = ctx.cache.clone();
-        let tag = tag_map.get(&user_id).cloned().unwrap_or_else(|| user_id.to_string());
-        tokio::spawn(async move {
-          // Check if already in queue VC
-          if let Some(guild) = cache.guild(gid) {
-            if let Some(vs) = guild.voice_states.get(&user_id) {
-              if vs.channel_id == Some(qvc) {
-                info!("User {} already in queue VC", tag);
-                return (user_id, true);
+    // Move users to queue VC in batches with delays to prevent Discord client bugs
+    let mut successfully_moved = std::collections::HashSet::new();
+    
+    for (batch_idx, batch) in users_to_move.chunks(VC_MOVE_BATCH_SIZE).enumerate() {
+      // Add delay between batches (except before first batch)
+      if batch_idx > 0 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(VC_MOVE_BATCH_DELAY_MS)).await;
+      }
+
+      // Move this batch in parallel
+      let move_tasks: Vec<_> = batch
+        .iter()
+        .map(|&user_id| {
+          let http = ctx.http.clone();
+          let gid = guild_id;
+          let qvc = queue_vc;
+          let cache = ctx.cache.clone();
+          let tag = tag_map.get(&user_id).cloned().unwrap_or_else(|| user_id.to_string());
+          tokio::spawn(async move {
+            // Check if already in queue VC
+            if let Some(guild) = cache.guild(gid) {
+              if let Some(vs) = guild.voice_states.get(&user_id) {
+                if vs.channel_id == Some(qvc) {
+                  info!("User {} already in queue VC", tag);
+                  return (user_id, true);
+                }
               }
             }
-          }
 
-          match http.edit_member(gid, user_id, &EditMember::new().voice_channel(qvc), Some("Moving user back to queue VC after game end")).await {
-            Ok(_) => {
-              info!("Moved user {} back to queue VC after game end", tag);
-              (user_id, true)
+            match http.edit_member(gid, user_id, &EditMember::new().voice_channel(qvc), Some("Moving user back to queue VC after game end")).await {
+              Ok(_) => {
+                info!("Moved user {} back to queue VC after game end", tag);
+                (user_id, true)
+              }
+              Err(e) => {
+                warn!("Failed to move user {} back to queue VC: {}", tag, e);
+                (user_id, false)
+              }
             }
-            Err(e) => {
-              warn!("Failed to move user {} back to queue VC: {}", tag, e);
-              (user_id, false)
-            }
-          }
+          })
         })
-      })
-      .collect();
+        .collect();
 
-    let mut successfully_moved = std::collections::HashSet::new();
-    for task in move_tasks {
-      if let Ok((user_id, success)) = task.await {
-        if success {
-          successfully_moved.insert(user_id);
+      // Wait for this batch to complete
+      for task in move_tasks {
+        if let Ok((user_id, success)) = task.await {
+          if success {
+            successfully_moved.insert(user_id);
+          }
         }
       }
     }
@@ -2281,16 +2317,28 @@ impl Category {
       if let Ok(sent) = dashboard.send_message(&ctx.http, msg).await {
         // Store pending notification for tracking
         self.pending_vc_notification = Some((sent.id, players_to_dm.clone()));
+        
+        info!("{} Match ready notification created (msg_id: {}, players: {})", full_prefix, sent.id, player_mentions.len());
 
         // Delete the message after confirm expiry duration
         let http = ctx.http.clone();
         let channel_id = dashboard;
         let message_id = sent.id;
         let confirm_time = self.confirm_time;
+        let log_prefix = full_prefix.clone();
         tokio::spawn(async move {
           tokio::time::sleep(tokio::time::Duration::from_secs(confirm_time as u64)).await;
-          let _ = channel_id.delete_message(&http, message_id).await;
+          match channel_id.delete_message(&http, message_id).await {
+            Ok(_) => {
+              debug!("{} Match ready notification auto-deleted after timeout (msg_id: {})", log_prefix, message_id);
+            }
+            Err(e) => {
+              debug!("{} Match ready notification already deleted or not found (msg_id: {}): {}", log_prefix, message_id, e);
+            }
+          }
         });
+      } else {
+        warn!("{} Failed to send match ready notification", full_prefix);
       }
     }
 
@@ -2346,13 +2394,20 @@ impl Category {
       // Check if this user was in the pending list
       if let Some(pos) = pending_users.iter().position(|&u| u == user_id) {
         pending_users.remove(pos);
+        
+        let user_tag = crate::log::user_id_to_tag(ctx, user_id).await;
 
         let dashboard = self.channels.dashboard;
 
         if pending_users.is_empty() {
           // All players have joined - delete the notification
-          if let Err(e) = dashboard.delete_message(&ctx.http, msg_id).await {
-            warn!("Failed to delete VC notification message: {}", e);
+          match dashboard.delete_message(&ctx.http, msg_id).await {
+            Ok(_) => {
+              info!("Match ready notification deleted - all players joined VC (msg_id: {}, last player: {})", msg_id, user_tag);
+            }
+            Err(e) => {
+              warn!("Failed to delete match ready notification (msg_id: {}): {}", msg_id, e);
+            }
           }
           self.pending_vc_notification = None;
         } else {
@@ -2362,8 +2417,13 @@ impl Category {
           let content = remaining_mentions.join(" ");
 
           let edit = serenity::all::EditMessage::new().embed(embed).content(content);
-          if let Err(e) = dashboard.edit_message(&ctx.http, msg_id, edit).await {
-            warn!("Failed to edit VC notification message: {}", e);
+          match dashboard.edit_message(&ctx.http, msg_id, edit).await {
+            Ok(_) => {
+              debug!("Match ready notification updated - {} joined, {} remaining (msg_id: {})", user_tag, pending_users.len(), msg_id);
+            }
+            Err(e) => {
+              warn!("Failed to edit match ready notification (msg_id: {}): {}", msg_id, e);
+            }
           }
         }
       }
@@ -2372,8 +2432,15 @@ impl Category {
 
   /// Clear the pending VC notification (e.g., when game starts or ends)
   pub async fn clear_vc_notification(&mut self, ctx: &Context) {
-    if let Some((msg_id, _)) = self.pending_vc_notification.take() {
-      let _ = self.channels.dashboard.delete_message(&ctx.http, msg_id).await;
+    if let Some((msg_id, pending_users)) = self.pending_vc_notification.take() {
+      match self.channels.dashboard.delete_message(&ctx.http, msg_id).await {
+        Ok(_) => {
+          info!("Match ready notification cleared - game starting (msg_id: {}, {} players still pending)", msg_id, pending_users.len());
+        }
+        Err(e) => {
+          debug!("Match ready notification already deleted (msg_id: {}): {}", msg_id, e);
+        }
+      }
     }
   }
 }
