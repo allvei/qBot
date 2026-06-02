@@ -941,10 +941,15 @@ impl Category {
     let red_vc = team_pair.red_vc;
     let blu_vc = team_pair.blu_vc;
 
-    // Get the hot game in the target format and collect player IDs for timeout cancellation
+    // Get the hot/push game in the target format and collect player IDs for timeout cancellation
+    // Note: Session may already be Push if called from dash_start (to prevent race conditions)
     let player_ids_for_queue_expiration: Vec<UI> = {
       let format = self.format(format_id).ok_or_else(|| anyhow!("Format {} not found for push", format_id))?;
-      let game = format.sessions.iter().find(|s| s.status == SessionStatus::Hot).ok_or(anyhow!("No hot session found for push in format {}", format_id))?;
+      let game = format
+        .sessions
+        .iter()
+        .find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Push)
+        .ok_or(anyhow!("No hot/push session found for push in format {}", format_id))?;
       game.pool.iter().map(|p| p.player.user_id).collect()
     };
 
@@ -955,13 +960,19 @@ impl Category {
 
     // Now get mutable reference for the rest of the operation
     let sg = self.format_mut(format_id).ok_or_else(|| anyhow!("Format {} not found for push", format_id))?;
-    let game = sg.sessions.iter_mut().find(|s| s.status == SessionStatus::Hot).ok_or(anyhow!("No hot session found for push in format {}", format_id))?;
+    let game = sg
+      .sessions
+      .iter_mut()
+      .find(|s| s.status == SessionStatus::Hot || s.status == SessionStatus::Push)
+      .ok_or(anyhow!("No hot/push session found for push in format {}", format_id))?;
 
     // Store the team channels on the session
     game.team_channels = Some(team_pair);
 
-    // Set status to Push and extract player moves
-    game.push();
+    // Set status to Push if not already (may already be Push from dash_start)
+    if game.status != SessionStatus::Push {
+      game.push();
+    }
 
     let player_moves: Vec<(UI, CI, String)> = game
       .pool

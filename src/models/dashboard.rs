@@ -1151,6 +1151,7 @@ impl Category {
     }
 
     // Check for duplicate action within 5 seconds on the same hot session
+    // Also transition Hot → Push immediately to prevent race conditions
     if let Some(fmt) = self.format_mut(fmt_id) {
       if let Some(hot_session) = fmt.sessions.iter_mut().find(|s| s.is_hot()) {
         if let Some(last_action) = hot_session.last_action_at {
@@ -1166,14 +1167,17 @@ impl Category {
             }
           }
         }
-        // Update last action timestamp
+        // Update last action timestamp and transition to Push immediately
+        // This prevents race conditions where multiple clicks process the same Hot session
         hot_session.last_action_at = Some(SystemTime::now());
+        hot_session.push();
       }
     }
 
     cc.reply_update_message().await?;
 
-    // Move players to team channels (Hot → Push → Live)
+    // Move players to team channels (Push → Live)
+    // Note: Session is already Push status from above to prevent race conditions
     let result = self.push_fmt(fmt_id, cc.ctx, guild_id, &cc.db, Some(cc.manager.clone())).await;
 
     // Clear the active match start tracking
