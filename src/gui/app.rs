@@ -109,7 +109,7 @@ impl eframe::App for MyApp {
     });
 
     // Top bar with title and status
-    egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
+    egui::Panel::top("top_bar").show(ctx, |ui| {
       ui.horizontal(|ui| {
         ui.heading("qBot Host Management Panel");
         ui.separator();
@@ -135,7 +135,7 @@ impl eframe::App for MyApp {
     });
 
     // Tab navigation with action buttons
-    egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
+    egui::Panel::top("tab_bar").show(ctx, |ui| {
       ui.horizontal(|ui| {
         ui.selectable_value(&mut self.selected_tab, PanelTab::Logs, "Logs");
         ui.selectable_value(&mut self.selected_tab, PanelTab::Queue, "Queues");

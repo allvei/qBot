@@ -27,7 +27,7 @@ pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
   sel_guild = sel_guild.min(manager.qguilds.len().saturating_sub(1));
 
   // ── Sidebar: guild list ────────────────────────────────────────────────────
-  egui::SidePanel::left("q_guild_panel").resizable(false).exact_width(160.0).show_inside(ui, |ui| {
+  egui::Panel::left("q_guild_panel").resizable(false).exact_width(160.0).show_inside(ui, |ui| {
     ui.add_space(4.0);
     ui.label(RichText::new("Guilds").strong());
     ui.separator();
