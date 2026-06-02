@@ -1306,6 +1306,15 @@ impl Category {
     // Reset the session to idle
     session.idle();
 
+    // Clean up any empty Idle sessions (e.g., overflow sessions created during start_match)
+    // This prevents multiple Idle sessions from interfering with quota checks
+    if let Some(fmt) = self.format_mut(fmt_id) {
+      let removed = fmt.cleanup_empty_idle_sessions();
+      if removed > 0 {
+        info!("Cleaned up {} empty Idle session(s) after match cancellation", removed);
+      }
+    }
+
     cc.reply_ephemeral("Match cancelled. Queue order has been restored.").await?;
     self.queue_dash_update(cc.ctx, guild_id).await;
 

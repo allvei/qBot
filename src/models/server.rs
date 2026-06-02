@@ -276,6 +276,21 @@ impl Format {
   pub fn get_player(&self, user_id: UI) -> Result<Player> {
     self.sessions.get_player(user_id)
   }
+
+  /// Remove empty Idle sessions, ensuring at least one Idle session remains
+  /// Returns the number of sessions removed
+  pub fn cleanup_empty_idle_sessions(&mut self) -> usize {
+    let before = self.sessions.len();
+    self.sessions.retain(|s| !(s.is_idle() && s.pool.is_empty()));
+    let removed = before - self.sessions.len();
+    
+    // Ensure at least one Idle session exists
+    if !self.sessions.iter().any(|s| s.is_idle()) {
+      self.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
+    }
+    
+    removed
+  }
 }
 
 trait FindPlayer {
