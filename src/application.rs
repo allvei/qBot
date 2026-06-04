@@ -1573,10 +1573,10 @@ impl EventHandler for Handler {
                 // This ensures the "PUG Starting" alert is deleted/updated when players join VC
                 category.on_player_joined_vc(&ctx, user_id).await;
 
-                // Update dashboard if player was missing in a hot session
-                // This removes them from the "Missing players" list
-                if was_hot && was_missing {
-                  info!("{} joined VC during hot session, updating dashboard", tag);
+                // Always update dashboard when player joins VC to show "In VC" status
+                // This applies to all session types, not just hot sessions
+                if was_missing {
+                  info!("{} joined VC, updating dashboard to show In VC status", tag);
                   category.queue_dash_update(&ctx, guild_id).await;
                 }
               }
@@ -1649,6 +1649,20 @@ impl EventHandler for Handler {
             // Note: check_hot_confirm_time is now handled by scheduled deadline timers
             // spawned in hot_fmt(). This reduces event-driven overhead and prevents
             // excessive log spam when multiple users join VC simultaneously.
+          } else if category.is_team_vc(new.channel_id.unwrap()) {
+            // Player joined a team VC - check if they're in the queue and update dashboard
+            if let Ok(session) = category.get_user_sesh(user_id).await {
+              if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+                let was_missing = !player.in_vc;
+                player.vc_on();
+
+                // Update dashboard to show "In VC" status when joining team VC
+                if was_missing {
+                  info!("{} joined team VC, updating dashboard to show In VC status", tag);
+                  category.queue_dash_update(&ctx, guild_id).await;
+                }
+              }
+            }
           }
         }
         Err(_) => {
