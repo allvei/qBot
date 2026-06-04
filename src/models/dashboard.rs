@@ -1352,8 +1352,8 @@ impl Category {
       return Ok(());
     }
 
-    // Defer the interaction immediately to prevent Discord timeout
-    cc.reply_defer().await?;
+    // Defer the interaction ephemerally to prevent Discord timeout and keep response private
+    cc.reply_defer_ephemeral().await?;
 
     let guild_name_str = guild_name(cc.ctx, guild_id);
     let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();

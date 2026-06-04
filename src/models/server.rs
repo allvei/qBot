@@ -700,6 +700,9 @@ impl Category {
       return Ok(());
     }
 
+    // Check if session is already Hot to prevent duplicate notifications (race condition)
+    let was_already_hot = session.is_hot();
+
     let _ = session.hot();
 
     // Create team VCs if policy is OnHot
@@ -718,11 +721,16 @@ impl Category {
       self.reload_player_ranks(ctx, gid, database).await;
     }
 
-    // Notify requires guild_id for VC validation
-    if let Some(gid) = guild_id {
-      self.notify_fmt(format_id, ctx, gid, db, post_game).await;
+    // Only notify if session wasn't already Hot (prevents duplicate notifications from race condition)
+    if !was_already_hot {
+      // Notify requires guild_id for VC validation
+      if let Some(gid) = guild_id {
+        self.notify_fmt(format_id, ctx, gid, db, post_game).await;
+      } else {
+        warn!("Cannot notify: guild_id not provided");
+      }
     } else {
-      warn!("Cannot notify: guild_id not provided");
+      debug!("Skipping notification - session was already Hot (race condition prevented)");
     }
 
     // Generate teams - guild_id is required for dashboard updates

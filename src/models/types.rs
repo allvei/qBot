@@ -173,6 +173,11 @@ impl ComponentContext<'_> {
     self.create_response(response).await
   }
 
+  pub async fn reply_defer_ephemeral(&self) -> Result<(), anyhow::Error> {
+    let response = CIR::Defer(CIRM::new().ephemeral(true));
+    self.create_response(response).await
+  }
+
   pub async fn reply_update_message(&self) -> Result<(), anyhow::Error> {
     let response = CIR::UpdateMessage(CIRM::new());
     self.create_response(response).await
