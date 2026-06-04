@@ -2091,7 +2091,12 @@ impl Category {
               }
               
               info!("Created new Idle session and moved {} overflow players from Hot session in format {}", overflow_count, fmt_id);
-              
+
+              // Update dashboard to reflect overflow session creation
+              if let Some(gid) = queue_ctx.guild_id {
+                self.queue_dash_update(queue_ctx.ctx, gid).await;
+              }
+
               // Check if the new Idle session now meets quota for a 2nd simultaneous game
               if self.is_quota_fmt(fmt_id) {
                 info!("New Idle session meets quota, transitioning to Hot for 2nd simultaneous game");
