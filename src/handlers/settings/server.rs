@@ -1815,6 +1815,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
 
             // Delete Discord channels
             let mut deleted_count = 0;
+            let mut failed_channels = Vec::new();
             for channel_id in channels_to_delete {
               let channel_id: CI = channel_id;
               match channel_id.delete(&ctx.http).await {
@@ -1824,6 +1825,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
                 }
                 Err(e) => {
                   warn!("[{}] Failed to delete channel {}: {}", guild_name, channel_id.get(), e);
+                  failed_channels.push(format!("<#{}>", channel_id.get()));
                 }
               }
             }
@@ -1833,9 +1835,23 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
             let display = CategoryListDisplay { guild_name: guild_name.clone(), categories };
 
             let success_msg = if let Some(name) = category_name {
-              format!("Successfully removed category: {}\nDeleted {} Discord channels", name, deleted_count)
+              if failed_channels.is_empty() {
+                format!("Successfully removed category: {}\nDeleted {} Discord channels", name, deleted_count)
+              } else {
+                format!(
+                  "Successfully removed category: {}\nDeleted {} Discord channel(s)\n\n⚠️ Failed to delete {} channel(s):\n{}\n\nYou may need to delete these manually.",
+                  name, deleted_count, failed_channels.len(), failed_channels.join(", ")
+                )
+              }
             } else {
-              format!("Successfully removed category {}\nDeleted {} Discord channels", category_id, deleted_count)
+              if failed_channels.is_empty() {
+                format!("Successfully removed category {}\nDeleted {} Discord channels", category_id, deleted_count)
+              } else {
+                format!(
+                  "Successfully removed category {}\nDeleted {} Discord channel(s)\n\n⚠️ Failed to delete {} channel(s):\n{}\n\nYou may need to delete these manually.",
+                  category_id, deleted_count, failed_channels.len(), failed_channels.join(", ")
+                )
+              }
             };
 
             let response = CIR::UpdateMessage(CIRM::new().content(success_msg).embed(display.build_embed()).components(display.build_components()));
