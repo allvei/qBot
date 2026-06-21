@@ -295,16 +295,5 @@ pub async fn process_match_elo(
     info!("  {} {} -> {} ({:+}) K={:.1} matches={}", user_tag, c.old_elo, c.new_elo, c.change, config.k_factor(games, last_game_timestamp), games);
   }
 
-  // Normalization check (operates on dynamic_elo column only)
-  if let Ok(avg) = db.elo.get_guild_average_dynamic_elo(guild_id).await {
-    let offset = config.normalization_offset(avg);
-    if offset != 0 {
-      info!("Normalization triggered: guild dynamic avg={:.1}, anchor={}, applying offset {}", avg, config.anchor, offset);
-      if let Err(e) = db.elo.apply_normalization_offset(guild_id, offset).await {
-        warn!("Failed to apply normalization offset: {}", e);
-      }
-    }
-  }
-
   Ok(Some(changes))
 }

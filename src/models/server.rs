@@ -1799,6 +1799,7 @@ impl Category {
           let user_id = player.player.user_id.get();
           
           // Player is in VC if they're in queue VC OR in their team VC (if session is Hot)
+          let actual_in_vc = if let Some((red_vc, blu_vc)) = team_vc_ids {
             let in_team_vc = guild.voice_states.iter().any(|(uid, vs)| {
               uid.get() == user_id && (vs.channel_id.map(|c| c.get()) == Some(red_vc) || vs.channel_id.map(|c| c.get()) == Some(blu_vc))
             });
