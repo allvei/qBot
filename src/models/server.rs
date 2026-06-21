@@ -1767,7 +1767,7 @@ impl Category {
   }
 
   /// Validate and correct in_queue_vc flags against actual Discord voice states
-  /// This prevents desync where cached flags don't match reality
+  /// This prevents desync where cached flags don't match realitycd
   pub async fn verify_vc(&mut self, ctx: &Context, guild_id: GI) {
     // Get actual voice states from Discord
     let guild = match ctx.cache.guild(guild_id) {
@@ -1781,16 +1781,31 @@ impl Category {
     let queue_vc_id = self.channels.queue_vc.get();
 
     // Get set of users actually in queue VC
-    let users_in_vc: std::collections::HashSet<u64> =
+    let users_in_queue_vc: std::collections::HashSet<u64> =
       guild.voice_states.iter().filter_map(|(user_id, vs)| if vs.channel_id.map(|c| c.get()) == Some(queue_vc_id) { Some(user_id.get()) } else { None }).collect();
 
     // Update flags for all players in all sessions across all formats
     let mut corrected: Vec<String> = Vec::new();
     for sg in &mut self.formats {
       for session in &mut sg.sessions {
+        // For Hot sessions with team channels, also check if players are in their team VCs
+        let team_vc_ids = if session.is_hot() {
+          session.team_channels.as_ref().map(|tc| (tc.red_vc.get(), tc.blu_vc.get()))
+        } else {
+          None
+        };
+
         for player in &mut session.pool {
           let user_id = player.player.user_id.get();
-          let actual_in_vc = users_in_vc.contains(&user_id);
+          
+          // Player is in VC if they're in queue VC OR in their team VC (if session is Hot)
+            let in_team_vc = guild.voice_states.iter().any(|(uid, vs)| {
+              uid.get() == user_id && (vs.channel_id.map(|c| c.get()) == Some(red_vc) || vs.channel_id.map(|c| c.get()) == Some(blu_vc))
+            });
+            users_in_queue_vc.contains(&user_id) || in_team_vc
+          } else {
+            users_in_queue_vc.contains(&user_id)
+          };
 
           if player.in_vc != actual_in_vc {
             corrected.push(player.player.tag.clone());

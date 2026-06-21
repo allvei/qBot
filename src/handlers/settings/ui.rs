@@ -202,7 +202,7 @@ pub async fn nav_roles_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -
     }).placeholder("Select admin role")),
     CAR::SelectMenu(CSM::new("guild_config_ping_role", CSMK::Role {
       default_roles: ping_default.map(|r| vec![r]),
-    }).placeholder("Select ping role (empty for @here)")),
+    }).placeholder("Select ping role (empty for @here)").min_values(0).max_values(1)),
   ];
 
   system.build_response_with_extra(MenuPage::RolesConfig, &guild_name, extra_components)

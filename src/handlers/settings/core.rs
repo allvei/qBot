@@ -159,6 +159,25 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
 
         debug!("Setting new ping state for guild {} to: {:?}", guild_id, new_value);
         db.user_server_prefs.set_ping_notification_enabled(user_id, guild_id, new_value).await?;
+
+        // Handle role assignment/removal based on new preference
+        let ping_role_str = db.config.get_ping_role_id(guild_id).await.ok().flatten();
+        if let Some(ref role_str) = ping_role_str {
+          if let Ok(role_id) = role_str.parse::<u64>() {
+            let role_id = RoleId::new(role_id);
+            if let Ok(member) = guild_id.member(&ctx.http, user_id).await {
+              if new_value == Some(true) {
+                if !member.roles.contains(&role_id) {
+                  let _ = member.add_role(&ctx.http, role_id).await;
+                }
+              } else if new_value == Some(false) {
+                if member.roles.contains(&role_id) {
+                  let _ = member.remove_role(&ctx.http, role_id).await;
+                }
+              }
+            }
+          }
+        }
       } else {
         debug!("No guild context - ping notifications button is disabled in DM");
       }

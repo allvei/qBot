@@ -394,37 +394,33 @@ impl Category {
     ])
   }
 
-  /// Record a match to the database with all player information
-  async fn record_match_to_database(
+  /// Record a match to the database with all player information. Returns the match ID if recorded.
+  pub async fn record_match_to_database(
     db: &crate::Database,
     guild_id: GI,
     category_id: u8,
     format_id: u8,
-    session: &Session,
+    started_at: Option<std::time::SystemTime>,
+    session_id: Option<String>,
     team_red: &[SessionPlayer],
     team_blu: &[SessionPlayer],
-  ) -> Result<()> {
+  ) -> Result<Option<i64>> {
     use crate::db::repo::MatchPlayerInsert;
-    use std::time::SystemTime;
 
     // Only record if match was actually started (has started_at timestamp)
-    if let Some(started_at) = session.started_at {
-      let ended_at = SystemTime::now();
+    if let Some(started_at) = started_at {
+      let ended_at = std::time::SystemTime::now();
       let duration_secs = ended_at.duration_since(started_at).map(|d| d.as_secs()).unwrap_or(0);
 
       // Reject matches shorter than 2 minutes (likely double-report or error)
       const MIN_MATCH_DURATION_SECS: u64 = 120;
       if duration_secs < MIN_MATCH_DURATION_SECS {
         warn!("Match duration too short ({}s), skipping database recording", duration_secs);
-        return Ok(());
+        return Ok(None);
       }
 
       // Insert match record
-      match db
-        .matches
-        .insert_match(guild_id, category_id as i64, format_id as i64, session.team_channels.as_ref().and_then(|tc| tc.session_id.clone()), started_at, ended_at, duration_secs)
-        .await
-      {
+      match db.matches.insert_match(guild_id, category_id as i64, format_id as i64, session_id, started_at, ended_at, duration_secs).await {
         Ok(match_id) => {
           // Insert match players
           let mut players = Vec::new();
@@ -440,6 +436,8 @@ impl Category {
           if let Err(e) = db.matches.insert_match_players(match_id, players).await {
             error!("Failed to insert match players: {e}");
           }
+
+          return Ok(Some(match_id));
         }
         Err(e) => {
           error!("Failed to insert match record: {e}");
@@ -447,7 +445,7 @@ impl Category {
       }
     }
 
-    Ok(())
+    Ok(None)
   }
 
   pub async fn has_dash(&self, ctx: &Context) -> bool {
@@ -1169,6 +1167,13 @@ impl Category {
       }
       Err(e) => {
         error!("Failed to start match: {e}");
+        // Revert Push → Hot so the session doesn't get stuck on "Moving players to team channels..."
+        if let Some(fmt) = self.format_mut(fmt_id) {
+          if let Some(push_session) = fmt.sessions.iter_mut().find(|s| s.status == crate::models::SessionStatus::Push) {
+            push_session.hot();
+          }
+        }
+        self.queue_dash_update(cc.ctx, guild_id).await;
         Ok(())
       }
     }
@@ -1381,12 +1386,15 @@ impl Category {
     let active_session =
       self.format(format_id).and_then(|sg| sg.sessions.iter().find(|s| s.status == SessionStatus::Live).or_else(|| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot)));
 
-    if let Some(active_session) = active_session {
+    let match_id = if let Some(active_session) = active_session {
       let quota = self.format(format_id).map(|sg| sg.quota as usize).unwrap_or(0);
       let (team_red, team_blu) = get_sorted_teams(&active_session.pool, quota);
-
-      Self::record_match_to_database(&cc.db, guild_id, self.id, format_id, active_session, &team_red, &team_blu).await?;
-    }
+      let started_at = active_session.started_at;
+      let session_id = active_session.team_channels.as_ref().and_then(|tc| tc.session_id.clone());
+      Self::record_match_to_database(&cc.db, guild_id, self.id, format_id, started_at, session_id, &team_red, &team_blu).await.ok().flatten()
+    } else {
+      None
+    };
 
     // Process match result with ELO using shared function
     let elo_changes = match crate::models::session::process_match_result_with_elo(cc.db.clone(), guild_id, category_id, &session_players, result, cc.ctx).await {
@@ -1450,12 +1458,20 @@ impl Category {
           }
 
           chat_embed = TeamDisplay::new(team_red, team_blu, hide_elo, dynamic_elo_active).add_to_embed(chat_embed, &cc.db, guild_id).await;
-          chat_embed = chat_embed.footer(serenity::all::CreateEmbedFooter::new(format!("Reported by {}", reporter_tag)));
+          let footer_text = match match_id {
+            Some(id) => format!("Reported by {} · Game #{}", reporter_tag, id),
+            None => format!("Reported by {}", reporter_tag),
+          };
+          chat_embed = chat_embed.footer(serenity::all::CreateEmbedFooter::new(footer_text));
 
           let _ = queue_chat.send_message(&cc.ctx.http, CM::new().embed(chat_embed)).await;
         }
 
-        let embed = CE::new().title("Match ended").description(format!("**{}** - {}", format_name, result_text)).color(result_color);
+        let description = match match_id {
+          Some(id) => format!("**{}** - {} (Game #{})", format_name, result_text, id),
+          None => format!("**{}** - {}", format_name, result_text),
+        };
+        let embed = CE::new().title("Match ended").description(description).color(result_color);
 
         cc.component.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed).components(vec![])).await?;
 

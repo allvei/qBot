@@ -349,7 +349,9 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
         let quota = category.formats.iter().find(|f| f.id == format_id).map(|f| f.quota as usize).unwrap_or(0);
         let (team_red, team_blu) = crate::models::dashboard::get_sorted_teams_pub(&session.pool, quota);
         let duration = session.started_at.and_then(|started| std::time::SystemTime::now().duration_since(started).ok()).map(|d| d.as_secs());
-        Some((queue_chat, team_red, team_blu, duration))
+        let started_at = session.started_at;
+        let session_id = session.team_channels.as_ref().and_then(|tc| tc.session_id.clone());
+        Some((queue_chat, team_red, team_blu, duration, started_at, session_id))
       } else {
         None
       }
@@ -371,6 +373,16 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
     mgr.clear_active_score_submission(guild_id, category_id, format_id);
   }
 
+  // Record match to database (after manager lock is released)
+  let match_id = if let Some((_, team_red, team_blu, _, started_at, session_id)) = chat_embed_data.as_ref() {
+    crate::models::Category::record_match_to_database(db, guild_id, category_id, format_id, *started_at, session_id.clone(), team_red, team_blu)
+      .await
+      .ok()
+      .flatten()
+  } else {
+    None
+  };
+
   match pull_result {
     Ok(_) => {
       info!("{} Match ended with {}", log_prefix_category(&guild_name_str, &category_name), result_text);
@@ -382,7 +394,7 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
       };
 
       // Post match result embed to queue chat
-      if let Some((queue_chat, team_red, team_blu, duration)) = chat_embed_data {
+      if let Some((queue_chat, team_red, team_blu, duration, _, _)) = chat_embed_data {
         let hide_elo = db.config.get_bool(guild_id, "hide_elo", false).await.unwrap_or(false);
         let dynamic_elo_active = db.config.get_active_elo(guild_id).await.unwrap_or(false);
 
@@ -393,12 +405,20 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
         }
 
         chat_embed = crate::models::dashboard::build_team_fields(chat_embed, team_red, team_blu, hide_elo, dynamic_elo_active, db, guild_id).await;
-        chat_embed = chat_embed.footer(serenity::all::CreateEmbedFooter::new(format!("Reported by {}", interaction.user.tag())));
+        let footer_text = match match_id {
+          Some(id) => format!("Reported by {} · Game #{}", interaction.user.tag(), id),
+          None => format!("Reported by {}", interaction.user.tag()),
+        };
+        chat_embed = chat_embed.footer(serenity::all::CreateEmbedFooter::new(footer_text));
 
         let _ = queue_chat.send_message(&ctx.http, serenity::all::CreateMessage::new().embed(chat_embed)).await;
       }
 
-      let embed = CE::new().title("Match ended").description(format!("**{}** - {}", format_name, result_text)).color(result_color);
+      let description = match match_id {
+        Some(id) => format!("**{}** - {} (Game #{})", format_name, result_text, id),
+        None => format!("**{}** - {}", format_name, result_text),
+      };
+      let embed = CE::new().title("Match ended").description(description).color(result_color);
 
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![]));
       interaction.create_response(&ctx.http, response).await?;
