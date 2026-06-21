@@ -211,9 +211,9 @@ pub async fn show_end_match_selection(ctx: &Context, interaction: &CI, db: &Arc<
 
   let buttons = vec![
     CAR::Buttons(vec![
-      CB::new(format!("runner_end_red_{}_{}", category_id, format_id)).label("RED WON").style(BS::Danger),
-      CB::new(format!("runner_end_draw_{}_{}", category_id, format_id)).label("DRAW").style(BS::Secondary),
       CB::new(format!("runner_end_blu_{}_{}", category_id, format_id)).label("BLU WON").style(BS::Primary),
+      CB::new(format!("runner_end_draw_{}_{}", category_id, format_id)).label("DRAW").style(BS::Secondary),
+      CB::new(format!("runner_end_red_{}_{}", category_id, format_id)).label("RED WON").style(BS::Danger),
     ]),
     CAR::Buttons(vec![Eph::back("runner_menu_back")]),
   ];

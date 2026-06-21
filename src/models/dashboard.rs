@@ -1229,9 +1229,9 @@ impl Category {
     let embed = CE::new().title(format!("End {} - Select winner", format_name)).description("Choose the winning team to end the match:").color(0x00AAFF);
 
     let buttons = vec![CAR::Buttons(vec![
-      CB::new(format!("dash_end_red_{}_{}", self.id, fmt_id)).label("RED WON").style(BS::Danger),
-      CB::new(format!("dash_end_draw_{}_{}", self.id, fmt_id)).label("DRAW").style(BS::Secondary),
       CB::new(format!("dash_end_blu_{}_{}", self.id, fmt_id)).label("BLU WON").style(BS::Primary),
+      CB::new(format!("dash_end_draw_{}_{}", self.id, fmt_id)).label("DRAW").style(BS::Secondary),
+      CB::new(format!("dash_end_red_{}_{}", self.id, fmt_id)).label("RED WON").style(BS::Danger),
     ])];
 
     let response = CIR::Message(CIRM::new().embed(embed).components(buttons).ephemeral(true));
