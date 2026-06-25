@@ -17,8 +17,10 @@ pub struct Manager {
   /// Collection of servers managed by this instance
   pub qguilds: Vec<QGuild>,
   /// Tracks active score submissions: (guild_id, category_id, format_id) -> (user_id, start_time)
+  #[serde(skip)]
   pub active_score_submissions: HashMap<(GI, u8, u8), (UI, SystemTime)>,
   /// Tracks active match starts: (guild_id, category_id, format_id) -> (user_id, start_time)
+  #[serde(skip)]
   pub active_match_starts: HashMap<(GI, u8, u8), (UI, SystemTime)>,
   /// Generic interaction lock to prevent duplicate processing of any destructive action
   /// Maps interaction_id -> (action_key, start_time)

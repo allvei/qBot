@@ -497,7 +497,6 @@ impl Handler {
         // hasn't sent guild_create events yet, causing all guilds to be removed
         let manager_clone = self.manager.clone();
         let ctx_clone = ctx.clone();
-        let db_clone = self.db.clone();
         tokio::spawn(async move {
           tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
           let mut mgr = manager_clone.lock().await;
@@ -518,9 +517,7 @@ impl Handler {
                     }
                     for session_player in &session.pool {
                       let player = session_player.player.clone();
-                      let queue_expiration = db_clone.players.get_prefs(player.user_id).await
-                        .map(|prefs| prefs.queue_expiration)
-                        .unwrap_or(30);
+                      let queue_expiration = session_player.queue_expiration;
                       scheduler.schedule_queue_expiration(guild_id, category.id, format.id, player, queue_expiration);
                     }
                   }
@@ -1748,17 +1745,20 @@ impl Handler {
         }
       };
 
-      // Track if we need to schedule rejoin expiration (player left VC but in queue)
-      let should_schedule_rejoin_expiration = if !should_remove_player {
+      // Track if we need to schedule rejoin expiration (player left VC but in queue).
+      // Capture the session-specific queue_expiration so the timer respects any value
+      // the player set via "Edit timeout", not just their DB default.
+      let session_queue_expiration: Option<u8> = if !should_remove_player {
         if let Some(player) = sesh.pool.iter_mut().find(|p| p.player.user_id == user_id) {
+          let expiration = player.queue_expiration;
           player.joined_at = std::time::SystemTime::now();
           player.in_vc = false;
-          true // player left VC but in queue - schedule expiration
+          Some(expiration)
         } else {
-          false
+          None
         }
       } else {
-        false
+        None
       };
 
       // Capture position before removal for logging
@@ -1786,7 +1786,7 @@ impl Handler {
         }
       }
 
-      (was_hot && pool_len >= quota, should_remove_player, should_schedule_rejoin_expiration)
+      (was_hot && pool_len >= quota, should_remove_player, session_queue_expiration)
     } else {
       // Player not found in any session
       let format = category.formats[0].clone();
@@ -1797,7 +1797,7 @@ impl Handler {
           warn!("Failed to log queue toggle: {e}");
         }
       }
-      (false, false, false)
+      (false, false, None)
     };
 
     // Cancel expiration if player was removed, or schedule new one if they left VC but stayed in queue
@@ -1805,11 +1805,11 @@ impl Handler {
       for format in &category.formats {
         category.cancel_player_rejoin_expiration(ctx, guild_id, format.id, user_id).await;
       }
-    } else if should_schedule_queue_expiration {
-      // Player left VC but is still in queue - schedule expiration
+    } else if let Some(expiration) = should_schedule_queue_expiration {
+      // Player left VC but is still in queue - reschedule using session-specific expiration
+      // (respects any override the player set via "Edit timeout")
       if let Some(player) = player {
-        let duration = queue_ctx.db.unwrap().players.get_prefs(user_id).await.unwrap().queue_expiration;
-        category.set_player_rejoin_expiration(ctx, guild_id, player, duration).await;
+        category.set_player_rejoin_expiration(ctx, guild_id, player, expiration).await;
       }
     }
 

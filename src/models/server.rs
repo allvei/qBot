@@ -4,11 +4,11 @@
 //! A Server represents a Discord guild with associated categories and games.
 
 use std::time::{Instant, SystemTime};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use crate::{
   guild_name, log_prefix_format,
-  models::constants::{DEFAULT_ACTIVE_ELO, MAX_QUEUE_EXPIRATION, MIN_QUEUE_EXPIRATION},
+  models::constants::DEFAULT_ACTIVE_ELO,
   Database as DB, Manager, Rank, GREEN,
 };
 use anyhow::{anyhow, Error, Result};
@@ -844,102 +844,6 @@ impl Category {
       let hot_fmt_ids: Vec<u8> = self.formats.iter().filter(|sg| sg.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= sg.quota as usize)).map(|sg| sg.id).collect();
       for fmt_id in hot_fmt_ids {
         self.generate_teams_fmt(fmt_id, ctx, guild_id, None).await;
-      }
-    }
-
-    changes_made
-  }
-
-  /// Check idle sessions for timeout timeouts and handle accordingly
-  /// Returns true if any changes were made that require dashboard update
-  pub async fn check_confirm_time(&mut self, db: &DB, ctx: &Context, guild_id: GI) -> bool {
-    let mut changes_made = false;
-
-    // Collect all active game players first (outside the format loop)
-    let mut active_game_players = std::collections::HashSet::new();
-    let mut player_tags = std::collections::HashMap::new();
-
-    for fmt in &self.formats {
-      for session in &fmt.sessions {
-        if session.status == SessionStatus::Live || session.status == SessionStatus::Hot {
-          for player in &session.pool {
-            active_game_players.insert(player.player.user_id);
-            player_tags.insert(player.player.user_id, (player.player.tag.clone(), fmt.name.clone()));
-          }
-        }
-      }
-    }
-
-    // Check idle sessions across all formats (not hot/push/live)
-    for fmt in &mut self.formats {
-      for session in fmt.sessions.iter_mut() {
-        if !session.is_idle() {
-          continue;
-        }
-
-        let mut players_to_remove = Vec::new();
-
-        // First, check for expired VC leave grace periods
-        for player in &session.pool {
-          if let Some(grace_until) = player.vc_leave_grace_until {
-            let now = SystemTime::now();
-            if now >= grace_until {
-              // Calculate how long the grace period actually was
-              let elapsed = if let Ok(duration) = now.duration_since(grace_until) { format!("{}s ago", duration.as_secs()) } else { "unknown".to_string() };
-              info!("VC leave grace period expired for {} (expired {}), removing from queue", player.player.tag, elapsed);
-              players_to_remove.push(player.player.user_id);
-            }
-          }
-        }
-
-        // Then check regular timeouts
-
-        for player in &session.pool {
-          let queue_expiration = player.queue_expiration;
-
-          // Clamp to valid range (EXPIRY_MIN to EXPIRY_MAX)
-          let expiry_mins = queue_expiration.clamp(MIN_QUEUE_EXPIRATION, MAX_QUEUE_EXPIRATION);
-
-          // Skip if timeout is disabled (below EXPIRY_MIN)
-          if expiry_mins < MIN_QUEUE_EXPIRATION {
-            continue;
-          }
-
-          // Check if player has exceeded their timeout time
-          if let Ok(elapsed) = SystemTime::now().duration_since(player.joined_at) {
-            if elapsed.as_secs() >= Duration::from_mins(expiry_mins as u64).as_secs() {
-              let guild_name = crate::models::constants::guild_name(ctx, guild_id);
-              let ctg_nm = self.name.as_deref().unwrap_or("Unknown");
-              let fmt_nm = &fmt.name;
-              info!("{} Timeout {} after {}m", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player.player.tag, (elapsed.as_secs() as f64 / 60.0).round());
-              players_to_remove.push(player.player.user_id);
-            }
-          }
-        }
-
-        if !players_to_remove.is_empty() {
-          // Remove the timed-out players
-          for user_id in &players_to_remove {
-            if let Some((_tag, _fmt_name)) = player_tags.get(user_id) {
-              // Player is in an active game, don't remove them
-            } else {
-              // Remove the player
-              session.remove_player(*user_id);
-
-              // Optionally: disconnect from VC if vc_kick is enabled
-              if let Ok(settings) = db.players.get_prefs(*user_id).await {
-                if settings.vc_auto_leave {
-                  if let Ok(member) = guild_id.member(&ctx.http, *user_id).await {
-                    if let Err(e) = member.disconnect_from_voice(&ctx.http).await {
-                      warn!("Failed to disconnect timed-out player from VC: {e}");
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-        changes_made = true;
       }
     }
 
