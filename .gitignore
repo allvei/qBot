@@ -3,7 +3,7 @@
 .env
 qbot.code-workspace
 add.bat
-qbot.db
+*.db
 .qbot_history
 bch.md
 trends_api.md

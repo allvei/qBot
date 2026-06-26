@@ -72,11 +72,6 @@ category.queue_dash_update(ctx, guild_id).await;
     - Discord and steam link
   - Command to list stats
   - Captain team generation
-- Burger!
-  [11:39]Kafri: can you make it so if a burger adds up the bot reacts their add
-  [11:39]Kafri: or pings them with "BURGER!!!"
-  [11:39]Kafri: it would be awesome
-  rare chance! 0.05
 
 ## Aligning with Russ and his website
 
