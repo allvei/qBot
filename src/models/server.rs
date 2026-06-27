@@ -1385,19 +1385,19 @@ impl Category {
             if let Some(guild) = cache.guild(gid) {
               if let Some(vs) = guild.voice_states.get(&user_id) {
                 if vs.channel_id == Some(qvc) {
-                  info!("User {} already in queue VC", tag);
+                  info!("{} is already in queue VC", tag);
                   return (user_id, true);
                 }
               }
             }
 
-            match http.edit_member(gid, user_id, &EditMember::new().voice_channel(qvc), Some("Moving user back to queue VC after game end")).await {
+            match http.edit_member(gid, user_id, &EditMember::new().voice_channel(qvc), Some("Moving user to queue VC")).await {
               Ok(_) => {
-                info!("Moved user {} back to queue VC after game end", tag);
+                info!("Moved {} to queue VC", tag);
                 (user_id, true)
               }
               Err(e) => {
-                warn!("Failed to move user {} back to queue VC: {}", tag, e);
+                warn!("Failed to move {} to queue VC: {}", tag, e);
                 (user_id, false)
               }
             }
@@ -1418,7 +1418,7 @@ impl Category {
     // Log spectators moved (they go to VC but not queue)
     let spectators_moved: Vec<_> = spectators_to_move.iter().filter(|uid| successfully_moved.contains(uid)).collect();
     if !spectators_moved.is_empty() {
-      info!("Moved {} spectators to queue VC (not added to queue)", spectators_moved.len());
+      info!("Moved {} spectators to queue VC", spectators_moved.len());
     }
 
     // Check if quota will be met after re-queuing players to avoid unnecessary VC deletion/recreation
@@ -1677,7 +1677,7 @@ impl Category {
     let guild = match ctx.cache.guild(guild_id) {
       Some(g) => g,
       None => {
-        warn!("[validate_vc_status] Guild {} not in cache", guild_id);
+        warn!("Guild {} not in cache", guild_id);
         return;
       }
     };
@@ -1716,7 +1716,7 @@ impl Category {
             corrected.push(player.player.tag.clone());
             let old_value = player.in_vc;
             player.in_vc = actual_in_vc;
-            info!("[validate_vc_status] Corrected in_queue_vc for player {} (was {}, now {})", player.player.tag, old_value, actual_in_vc);
+            info!("Corrected in_queue_vc for {} ({}→{})", player.player.tag, old_value, actual_in_vc);
           }
         }
       }
@@ -2055,7 +2055,7 @@ impl Category {
     let current_name = match queue_vc.name(&ctx.http).await {
       Ok(name) => name,
       Err(e) => {
-        warn!("[UPDATE_VC_NAME] Failed to get channel name: {}", e);
+        warn!("Failed to get channel name: {}", e);
         return;
       }
     };
@@ -2097,7 +2097,7 @@ impl Category {
     if new_name != current_name {
       match ctx.http.edit_channel(queue_vc, &EditChannel::new().name(&new_name), Some("Update queue count")).await {
         Ok(_) => {}
-        Err(e) => warn!("[UPDATE_VC_NAME] Failed to update channel name: {}", e),
+        Err(e) => warn!("Failed to update channel name: {}", e),
       }
     }
   }

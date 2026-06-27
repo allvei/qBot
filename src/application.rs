@@ -289,7 +289,7 @@ impl Application {
                 Some(command) => {
                   // Handle GracefulShutdown specially - trigger cleanup then exit
                   if matches!(command, GuiCommand::GracefulShutdown) {
-                    info!("[GUI] GracefulShutdown — performing cleanup and exiting");
+                    info!("GracefulShutdown — performing cleanup and exiting");
                     let shutdown_handler = crate::shutdown::ShutdownHandler::new(
                       manager.clone(),
                       dashboard_queue_cmd.clone(),
@@ -308,7 +308,7 @@ impl Application {
 
                   // Handle GracefulRestart specially - same as shutdown but skip mark_dashboards_offline
                   if matches!(command, GuiCommand::GracefulRestart) {
-                    info!("[GUI] GracefulRestart — performing cleanup (save state, cleanup team VCs) and exiting");
+                    info!("GracefulRestart — performing cleanup (save state, cleanup team VCs) and exiting");
                     let shutdown_handler = crate::shutdown::ShutdownHandler::new(
                       manager.clone(),
                       dashboard_queue_cmd.clone(),

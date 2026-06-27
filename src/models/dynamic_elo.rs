@@ -292,7 +292,7 @@ pub async fn process_match_elo(
     let participant = team_red.iter().chain(team_blu.iter()).find(|p| p.user_id == c.user_id);
     let games = participant.map(|p| p.games).unwrap_or(0);
     let last_game_timestamp = participant.and_then(|p| p.last_game_timestamp);
-    info!("  {} {} -> {} ({:+}) K={:.1} matches={}", user_tag, c.old_elo, c.new_elo, c.change, config.k_factor(games, last_game_timestamp), games);
+    info!("  {} {}→{} ({:+}) K={:.1} games={}", user_tag, c.old_elo, c.new_elo, c.change, config.k_factor(games, last_game_timestamp), games);
   }
 
   Ok(Some(changes))

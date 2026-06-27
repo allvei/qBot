@@ -2653,7 +2653,7 @@ pub async fn handle_guild_config_balance_select(ctx: &Context, interaction: &CoI
   let guild_id = interaction.guild_id.expect("Guild ID not found");
 
   let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
-  info!("[Guild config] {} selected team balance method", user_tag);
+  info!("{} selected team balance method", user_tag);
 
   // Extract selected value
   let method_str = match &interaction.data.kind {

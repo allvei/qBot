@@ -820,10 +820,10 @@ impl Category {
     // Check if we have an idle or hot session to join in the target format
     let has_joinable_session = self.format(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)).unwrap_or(false);
 
-    debug!("{} attempting to join format {}: has_joinable_session={}", user_tag, fmt_id, has_joinable_session);
+    debug!("{} attempting to join {}: has_joinable_session={}", user_tag, fmt_id, has_joinable_session);
 
     if !has_joinable_session {
-      debug!("{} blocked from joining format {}: no joinable session (match in progress)", user_tag, fmt_id);
+      debug!("{} blocked from joining {}: no joinable session (match in progress)", user_tag, fmt_id);
       use serenity::all::CreateInteractionResponseFollowup as CIRF;
       let followup = CIRF::new().content("Cannot join - match is in progress. Please wait.").ephemeral(true);
       cc.component.create_followup(&cc.ctx.http, followup).await?;
@@ -835,7 +835,7 @@ impl Category {
     if let Some(guild_id) = cc.component.guild_id {
       // When dynamic ELO is enabled, check if this player needs skill selection first.
       let dynamic_elo_active = cc.db.config.get_active_elo(guild_id).await.unwrap_or(false);
-      debug!("{} checking dynamic ELO: dynamic_elo_active={}", user_tag, dynamic_elo_active);
+      debug!("{} checking dynamic ELO: {}", user_tag, dynamic_elo_active);
       if dynamic_elo_active {
         let needs_selection = cc.db.elo.needs_skill_selection(user_id, guild_id).await.unwrap_or(false);
         debug!("{} needs skill selection: {}", user_tag, needs_selection);
@@ -893,11 +893,11 @@ impl Category {
       let queue_context = crate::QueueContext::new(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone()));
       let is_user_in_vc = self.is_user_in_queue_vc(&cc.ctx.http, user_id).await;
 
-      debug!("{} attempting to queue with VC status: is_user_in_vc={}", user_tag, is_user_in_vc);
+      debug!("Attempting to queue {} with VC status: {}", user_tag, is_user_in_vc);
       if let Err(e) = self.queue_player_with_vc_status_fmt(fmt_id, player.clone(), discord_rank, queue_context, is_user_in_vc).await {
-        error!("Failed to queue player {}: {e}", user_tag);
+        error!("Failed to queue {}: {e}", user_tag);
       } else {
-        debug!("Successfully queued player {} in format {}", user_tag, fmt_id);
+        debug!("Successfully queued {} in {}", user_tag, fmt_id);
         // Log AFTER queue operation so position and count are accurate
         if let Some(format) = self.format(fmt_id) {
           if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, self.id, format, &player, "joined", None).await {
@@ -1366,9 +1366,9 @@ impl Category {
     let format_name = self.format(format_id).map(|sg| sg.name.clone()).unwrap_or_else(|| "Match".to_string());
 
     let result_text = match *result {
-      "red" => "RED team victory",
+      "red" => "RED won",
       "draw" => "Draw",
-      "blu" => "BLU team victory",
+      "blu" => "BLU won",
       _ => "Result",
     };
 
@@ -1985,6 +1985,7 @@ impl Category {
     use std::time::{Duration, SystemTime};
 
     let user_id = cc.component.user.id;
+    let user_tag = cc.component.user.tag();
     let guild_id = cc.component.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
 
     // Check if user is a runner (for cooldown duration)
@@ -2055,7 +2056,7 @@ impl Category {
       let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
       let log_prefix = log_prefix_category(&guild_name, &category_name);
       
-      info!("{} Ping message sent for {} (msg_id: {}, by: {})", log_prefix, format.name, message_id, user_id.get());
+      info!("{} Sent ping by {} for {} (msg_id: {})", log_prefix, user_tag, format.name, message_id);
 
       // Delete the message after 15 minutes
       let http = cc.ctx.http.clone();
@@ -2067,7 +2068,7 @@ impl Category {
             debug!("{} Ping message auto-deleted after 15 minutes (msg_id: {})", log_prefix, message_id);
           }
           Err(e) => {
-            debug!("{} Ping message already deleted or not found (msg_id: {}): {}", log_prefix, message_id, e);
+            debug!("{} Ping message not found (msg_id: {}): {}", log_prefix, message_id, e);
           }
         }
       });

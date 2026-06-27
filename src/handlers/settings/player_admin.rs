@@ -204,7 +204,7 @@ pub async fn handle_player_settings_button(ctx: &Context, interaction: &CI, db: 
   let target_uid = UI::new(target_user_id);
   let target_tag = crate::log::get_user_tag(ctx, target_uid, db).await;
   let action = button_id.trim_end_matches(&format!("_{}", target_user_id)).replace("player_settings_", "");
-  info!("[Player Settings] {} pressed {} on {}", user_tag, action, target_tag);
+  info!("{} pressed {} on {}", user_tag, action, target_tag);
 
   // Get current player data (ensure user exists)
   let player = db.players.check_user(target_uid, None).await?;
@@ -288,7 +288,7 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
   let target_uid = UI::new(target_user_id);
   let target_tag = crate::log::get_user_tag(ctx, target_uid, db).await;
   let action = modal_id.trim_end_matches(&format!("_{}", target_user_id)).replace("player_settings_modal_", "");
-  info!("[Player Settings] {} submitted {} for {}", user_tag, action, target_tag);
+  info!("{} submitted {} for {}", user_tag, action, target_tag);
 
   if modal_id.starts_with("player_settings_modal_steam_") {
     let steam_str = get_modal_input!(interaction);
@@ -560,7 +560,7 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
     interaction.create_response(&ctx.http, response).await?;
 
-    info!("[Player Settings] Updated alerts for {}", target_tag);
+    info!("Updated alerts for {}", target_tag);
   } else {
     warn!("Unknown player settings modal: {}", modal_id);
   }

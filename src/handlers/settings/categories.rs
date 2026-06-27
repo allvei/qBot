@@ -71,7 +71,7 @@ pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db
   let button_id = &interaction.data.custom_id;
 
   let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
-  info!("[Category Settings] {} pressed {}", user_tag, button_id);
+  info!("{} pressed {}", user_tag, button_id);
 
   // Handle format remove confirmation (button: category_fmt_confirm_remove_{gid}_{sgid}, select: category_fmt_confirm_remove with value gid_fmtid)
   if button_id == "category_fmt_confirm_remove" || button_id.starts_with("category_fmt_confirm_remove_") {
@@ -645,7 +645,7 @@ pub async fn handle_category_settings_select(ctx: &Context, interaction: &CI, _d
   let guild_id = interaction.guild_id.expect("Guild ID not found");
 
   let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, _db).await;
-  info!("[Category Settings] {} selected category", user_tag);
+  info!("{} selected category", user_tag);
 
   // Extract selected category_id from the interaction
   let category_id: u8 = match &interaction.data.kind {
@@ -774,7 +774,7 @@ pub async fn handle_category_settings_modal(ctx: &Context, interaction: &MI, db:
   let modal_id = &interaction.data.custom_id;
 
   let user_tag = crate::log::get_user_tag(ctx, interaction.user.id, db).await;
-  info!("[Category Settings] {} submitted modal {}", user_tag, modal_id);
+  info!("{} submitted modal {}", user_tag, modal_id);
 
   // Handle format modals first (format: category_fmt_modal_{action}_{category_id}_{fmt_id})
   // These have two trailing IDs so they must be handled before the generic rsplit extraction.

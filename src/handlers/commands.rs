@@ -129,7 +129,7 @@ pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
   let embed = CE::new().title("Migration Complete").description(desc).color(GREEN);
   cc.intax.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
 
-  info!("[migrate] Assigned ELO {} to {}/{} members with role {} in guild {}", elo, success, total, role_id, guild_id);
+  info!("Assigned ELO {} to {}/{} members with role {} in guild {}", elo, success, total, role_id, guild_id);
   Ok(())
 }
 
