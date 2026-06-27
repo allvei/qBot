@@ -380,8 +380,8 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
         }
         ui.end_row();
 
-        ui.label("Ping discord gateway:");
-        if ui.button("Test discord API").clicked() {
+        ui.label("Ping Discord gateway:");
+        if ui.button("Test Discord API").clicked() {
           send(GuiCommand::TestDiscordApi);
         }
         ui.end_row();

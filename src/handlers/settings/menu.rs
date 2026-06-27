@@ -890,7 +890,7 @@ impl RankRoleConfigDisplay {
     vec![
       CAR::SelectMenu(
         CSM::new(format!("guild_config_rank_role_{}", self.rank_key), CSMK::Role { default_roles: Some(vec![self.role_id]) })
-          .placeholder("Link discord Role")
+          .placeholder("Link Discord Role")
           .min_values(0)
           .max_values(1),
       ),
