@@ -608,8 +608,8 @@ impl EventHandler for Handler {
         let errors = crate::services::validate_system_message_channels(&ctx_clone, &db_clone).await;
         if !errors.is_empty() {
           error!("System message channel validation found {} issue(s):", errors.len());
-          for (guild_id, guild_name, error) in errors {
-            error!("[{}] {}: {}", guild_id, guild_name, error);
+          for (guild_name, error) in errors {
+            error!("[{}] {}", guild_name, error);
           }
         } else {
           info!("All system message channels validated successfully");

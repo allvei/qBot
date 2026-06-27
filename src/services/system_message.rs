@@ -89,7 +89,7 @@ pub async fn broadcast_system_message(ctx: &Context, db: &Database, content: &st
 
 /// Validate that all guilds have a valid system message channel configured
 /// Returns a list of (guild_id, guild_name, error) for guilds with issues
-pub async fn validate_system_message_channels(ctx: &Context, db: &Database) -> Vec<(GuildId, String, String)> {
+pub async fn validate_system_message_channels(ctx: &Context, db: &Database) -> Vec<(String, String)> {
   let guilds: Vec<GuildId> = ctx.cache.guilds().to_vec();
   let mut errors = Vec::new();
 
@@ -100,14 +100,14 @@ pub async fn validate_system_message_channels(ctx: &Context, db: &Database) -> V
       Ok(Some(channel_id)) => {
         // Check if channel exists
         if let Err(e) = ctx.http.get_channel(channel_id).await {
-          errors.push((guild_id, guild_name, format!("Channel {} not found: {}", channel_id, e)));
+          errors.push((guild_name, format!("Channel {} not found: {}", channel_id, e)));
         }
       }
       Ok(None) => {
-        errors.push((guild_id, guild_name, "No system message channel configured".to_string()));
+        errors.push((guild_name, "No system message channel configured".to_string()));
       }
       Err(e) => {
-        errors.push((guild_id, guild_name, format!("Database error: {}", e)));
+        errors.push((guild_name, format!("Database error: {}", e)));
       }
     }
   }
