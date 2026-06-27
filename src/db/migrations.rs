@@ -989,8 +989,8 @@ impl DatabaseMigrations {
           immunity_level    INTEGER NOT NULL DEFAULT 0,
           last_fatkidded_at INTEGER,
           UNIQUE(guild_id, user_id),
-          FOREIGN KEY (user_id)  REFERENCES users(user_id)  ON DELETE CASCADE,
-          FOREIGN KEY (guild_id) REFERENCES guilds(guild_d) ON DELETE CASCADE,
+          FOREIGN KEY (user_id)  REFERENCES users(user_id)   ON DELETE CASCADE,
+          FOREIGN KEY (guild_id) REFERENCES guilds(guild_id)  ON DELETE CASCADE,
         )",
       )
       .execute(&self.pool)
@@ -1006,52 +1006,50 @@ impl DatabaseMigrations {
 
   /// Add foreign key constraint to config table after both tables exist
   async fn add_config_foreign_key(&self) -> Result<()> {
-    // Check if foreign key already exists by trying to query pragma_foreign_key_list
+    // Check if config already has FK to guilds
     let has_foreign_key = sqlx::query("PRAGMA foreign_key_list(config)").fetch_all(&self.pool).await?.into_iter().any(|row| {
-      if let Ok(table) = row.try_get::<String, _>("table") {
-        table == "ranks"
-      } else {
-        false
-      }
+      row.try_get::<String, _>("table").map(|t| t == "guilds").unwrap_or(false)
     });
 
     if !has_foreign_key {
       // SQLite doesn't support adding foreign keys to existing tables directly
       // We need to recreate the table
-      info!("Adding foreign key constraint to config table...");
+      info!("Adding guilds foreign key constraint to config table...");
 
-      // Backup existing data
-      let backup_data = sqlx::query("SELECT guild_id, runner_id, admin_id, active_elo, default_rank FROM config").fetch_all(&self.pool).await?;
+      // Backup base columns only (extra columns are re-added by verify_config)
+      let backup_data = sqlx::query("SELECT guild_id, runner_id, admin_id, active_elo, default_rank FROM config").fetch_all(&self.pool).await.unwrap_or_default();
 
-      // Drop and recreate table with foreign key
-      sqlx::query("DROP TABLE config").execute(&self.pool).await?;
+      // Drop and recreate table with correct foreign keys
+      sqlx::query("DROP TABLE IF EXISTS config").execute(&self.pool).await?;
 
       sqlx::query(
         "CREATE TABLE config (
           guild_id     INTEGER NOT NULL,
           runner_id    INTEGER,
           admin_id     INTEGER,
-          active_elo   INTEGER,
+          active_elo   INTEGER DEFAULT 0,
           default_rank INTEGER,
           PRIMARY KEY(guild_id),
-          FOREIGN KEY (default_rank) REFERENCES ranks(role_id)  ON DELETE SET NULL
-          FOREIGN KEY (guild_id)     REFERENCES guilds(guild_d) ON DELETE CASCADE,
+          FOREIGN KEY (guild_id)     REFERENCES guilds(guild_id) ON DELETE CASCADE,
+          FOREIGN KEY (default_rank) REFERENCES ranks(id)        ON DELETE SET NULL
         )",
       )
       .execute(&self.pool)
       .await?;
 
-      // Restore data
+      // Restore base data
       for row in backup_data {
-        let guild_id: i64 = row.get("guild_id");
+        let guild_id: i64 = match row.try_get("guild_id") {
+          Ok(v) => v,
+          Err(_) => continue,
+        };
         let runner_id: Option<i64> = row.try_get("runner_id").ok();
         let admin_id: Option<i64> = row.try_get("admin_id").ok();
         let active_elo: Option<i64> = row.try_get("active_elo").ok();
         let default_rank: Option<i64> = row.try_get("default_rank").ok();
 
-        sqlx::query(
-          "INSERT INTO config (guild_id, runner_id, admin_id, active_elo, default_rank)
-                     VALUES (?, ?, ?, ?, ?)",
+        let _ = sqlx::query(
+          "INSERT OR IGNORE INTO config (guild_id, runner_id, admin_id, active_elo, default_rank) VALUES (?, ?, ?, ?, ?)",
         )
         .bind(guild_id)
         .bind(runner_id)
@@ -1059,10 +1057,10 @@ impl DatabaseMigrations {
         .bind(active_elo)
         .bind(default_rank)
         .execute(&self.pool)
-        .await?;
+        .await;
       }
 
-      info!("Successfully added foreign key constraint to config table");
+      info!("Successfully added guilds foreign key constraint to config table");
     }
 
     Ok(())

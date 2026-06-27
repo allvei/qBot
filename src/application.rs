@@ -21,7 +21,6 @@ use crate::gui::command_handler;
 use crate::gui::commands::GuiCommand;
 use crate::handlers::{admin, InteractionHelpers};
 use crate::models::server::QueueContext;
-use crate::repo::GuildRepository;
 use crate::state_transfer::StateTransfer;
 use crate::{
   guild_name, log_prefix_category, log_prefix_format, log_queue_toggle, ButtonType, Category, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database,
@@ -705,7 +704,7 @@ impl EventHandler for Handler {
     match self.db.guilds.exists(&guild_id).await {
       Ok(false) => {
         let qguild = QGuild::new(guild.id, guild.name.clone(), Roles::empty());
-        if let Err(e) = GuildRepository::add(&qguild).await {
+        if let Err(e) = self.db.guilds.add(&qguild).await {
           error!("Failed to save new guild {} to database: {}", guild_id, e);
         }
       }
@@ -743,6 +742,14 @@ impl EventHandler for Handler {
         self.check_existing_voice_users(&ctx, &guild, &mut manager).await;
         self.create_dashboard_from_manager(&ctx, &guild, &mut manager).await;
       }
+    }
+  }
+
+  /// When a guild's metadata changes (e.g. server rename) — keep guilds table in sync
+  async fn guild_update(&self, _ctx: Context, _old: Option<serenity::all::Guild>, new: serenity::all::PartialGuild) {
+    let qguild = QGuild::new(new.id, new.name.clone(), Roles::empty());
+    if let Err(e) = self.db.guilds.update_name(&qguild).await {
+      error!("Failed to update guild name for {} in database: {}", new.id, e);
     }
   }
 

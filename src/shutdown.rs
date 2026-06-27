@@ -128,7 +128,7 @@ impl ShutdownHandler {
           tasks.spawn(async move {
             match chn_id.edit_message(&http, msg_id, EditMessage::new().embed(restart_embed)).await {
               Ok(_) => {
-                info!("{} Dashboard marked as restarting", log_prefix_category(&guild_name_clone, &ctg_nm));
+                info!("{} Dashboard restarting", log_prefix_category(&guild_name_clone, &ctg_nm));
               }
               Err(e) => {
                 warn!("{} Failed to mark dashboard as restarting: {}", log_prefix_category(&guild_name_clone, &ctg_nm), e);
@@ -272,7 +272,7 @@ impl ShutdownHandler {
           tasks.spawn(async move {
             match chn_id.edit_message(&http, msg_id, EditMessage::new().embed(offline_embed).components(vec![])).await {
               Ok(_) => {
-                info!("{} Dashboard now offline", log_prefix_category(&guild_name_clone, &ctg_nm));
+                info!("{} Dashboard offline", log_prefix_category(&guild_name_clone, &ctg_nm));
               }
               Err(e) => {
                 warn!("{} Failed to update dashboard: {}", log_prefix_category(&guild_name_clone, &ctg_nm), e);

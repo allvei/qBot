@@ -128,13 +128,20 @@ impl CategoryRepository {
     let name = result.try_get::<Option<String>, _>("name").ok().flatten();
     let connect_info = result.try_get::<Option<String>, _>("connect_info").ok().flatten();
 
+    let guild_name: Option<String> = sqlx::query_scalar("SELECT COALESCE(nick, name) FROM guilds WHERE guild_id = ?")
+      .bind(guild_id.get() as i64)
+      .fetch_optional(&self.pool)
+      .await
+      .ok()
+      .flatten();
+
     // TODO: teams are loaded in teams.rs not here
     // Load teams from teams table; fallback to legacy red/blu columns only if they hold real IDs
     let teams = self.get_teams_for_category(guild_id, category_id).await?;
 
     let mut category = Category::new(
       guild_id,
-      None,
+      guild_name.clone(),
       category_id,
       name,
       result.try_get::<i64, _>("quota").unwrap_or(8) as u8,
@@ -170,7 +177,7 @@ impl CategoryRepository {
         // No DB formats yet - keep the default created by Category::new
         // and apply connect_info from the categories table to all formats
         let category_name = category.name.as_deref().unwrap_or("Unknown");
-        info!("{} Using default formats", log_prefix_category("Unknown", category_name));
+        info!("{} Using default formats", log_prefix_category(guild_name.as_deref().unwrap_or("Unknown"), category_name));
         if let Some(ref cat_connect_info) = connect_info {
           for fmt in &mut category.formats {
             fmt.connect_info = Some(cat_connect_info.clone());
@@ -264,8 +271,6 @@ impl CategoryRepository {
         .await?;
 
     // Fetch guild-wide settings from their proper tables
-    let guild_name: Option<String> = sqlx::query_scalar("SELECT name FROM guilds WHERE guild_id = ?").bind(guild_id.get() as i64).fetch_optional(&self.pool).await.ok().flatten();
-
     let team_balance_method: String = sqlx::query_scalar("SELECT COALESCE(team_balance_method, 'bch') FROM config WHERE guild_id = ?")
       .bind(guild_id.get() as i64)
       .fetch_optional(&self.pool)
@@ -278,7 +283,6 @@ impl CategoryRepository {
     for row in rows {
       match self.build_category_from_row_async(&row).await {
         Ok(mut category) => {
-          category.guild_name = guild_name.clone();
           category.team_balance_method = crate::models::TeamBalanceMethod::parse(&team_balance_method);
           categories.push(category);
         }

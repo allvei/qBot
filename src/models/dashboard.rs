@@ -869,7 +869,7 @@ impl Category {
           return Ok(());
         }
       };
-
+      // Todo: player.tag is actually the player nickname, not discord tag
       debug!("{} resolved as player: tag={}, rank={}", user_tag, player.tag, discord_rank.name);
 
       // Fetch discord tag from component user for performance (avoid extra API call)

@@ -13,13 +13,15 @@ impl GuildRepository {
     Self { pool }
   }
 
-  pub async fn add(guild: &QGuild) -> Result<()> {
+  pub async fn add(&self, guild: &QGuild) -> Result<()> {
     cinfo!("{GREEN}Adding a new guild to the database: {} {}", guild.name, guild.id);
+    sqlx::query("INSERT OR IGNORE INTO guilds (guild_id, name) VALUES (?, ?)").bind(guild.id.get() as i64).bind(&guild.name).execute(&self.pool).await?;
     Ok(())
   }
 
-  pub async fn remove(guild: &QGuild) -> Result<()> {
+  pub async fn remove(&self, guild: &QGuild) -> Result<()> {
     cinfo!("{RED}Removing a guild from the database: {} {}", guild.name, guild.id);
+    sqlx::query("DELETE FROM guilds WHERE guild_id = ?").bind(guild.id.get() as i64).execute(&self.pool).await?;
     Ok(())
   }
 
@@ -29,10 +31,15 @@ impl GuildRepository {
     Ok(())
   }
 
+  /// Returns nick if set, otherwise the Discord name, or None if the guild is not in the DB.
+  pub async fn get_display_name(&self, guild_id: serenity::all::GuildId) -> Result<Option<String>> {
+    let name: Option<String> =
+      sqlx::query_scalar("SELECT COALESCE(nick, name) FROM guilds WHERE guild_id = ?").bind(guild_id.get() as i64).fetch_optional(&self.pool).await?;
+    Ok(name)
+  }
+
   pub async fn exists(&self, guild_id: &serenity::all::GuildId) -> Result<bool> {
-    match sqlx::query("SELECT * FROM guilds WHERE guild_id = ?").bind(guild_id.get() as i64).execute(&self.pool).await {
-      Ok(_) => Ok(true),
-      Err(e) => Err(anyhow::anyhow!("{e}")),
-    }
+    let row = sqlx::query("SELECT 1 FROM guilds WHERE guild_id = ?").bind(guild_id.get() as i64).fetch_optional(&self.pool).await?;
+    Ok(row.is_some())
   }
 }

@@ -68,8 +68,8 @@ pub async fn send_system_message(ctx: &Context, db: &Database, guild_id: GuildId
     }
     None => {
       let guild_name = crate::models::constants::guild_name(ctx, guild_id);
-      warn!("[{}] No system message channel configured", guild_name);
-      Err(anyhow!("No system message channel configured for guild {}", guild_id))
+      warn!("[{}] System messages channel is not set", guild_name);
+      Err(anyhow!("System messages channel is not set for guild {}", guild_id))
     }
   }
 }
