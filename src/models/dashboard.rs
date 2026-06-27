@@ -646,7 +646,7 @@ impl Category {
       // Only show if action was within the last 10 minutes
       if let Ok(elapsed) = SystemTime::now().duration_since(*timestamp) {
         if elapsed.as_secs() < 600 {
-          embed = embed.footer(serenity::all::CreateEmbedFooter::new(format!("Last action: {} {}", user_tag, action_desc)));
+          embed = embed.footer(serenity::all::CreateEmbedFooter::new(format!("{} {}", user_tag, action_desc)));
         }
       }
     }

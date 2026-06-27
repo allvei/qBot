@@ -1764,15 +1764,15 @@ impl Category {
     let pool_size = quota.min(game.pool.len());
     let players_to_balance: Vec<(usize, u32)> = players_with_elo.into_iter().take(pool_size).collect();
 
-    // Generate all possible team splits using BCH (deterministic)
+    // Score all possible team splits using BCH, then pick randomly from the top few
+    // so that each shuffle produces a different but still well-balanced result.
     let team_size = pool_size / 2;
-    let mut best_split: Option<(Vec<usize>, Vec<usize>)> = None;
-    let mut best_score = f64::INFINITY;
+    let mut all_splits: Vec<(f64, Vec<usize>, Vec<usize>)> = Vec::new();
 
     for team_a_indices in (0..pool_size).combinations(team_size) {
       let team_b_indices: Vec<usize> = (0..pool_size).filter(|i| !team_a_indices.contains(i)).collect();
 
-      // Get ELOs for each team
+      // Get ratings for each team
       let team_a_elos: Vec<f64> = team_a_indices.iter().map(|&i| players_to_balance[i].1 as f64).collect();
       let team_b_elos: Vec<f64> = team_b_indices.iter().map(|&i| players_to_balance[i].1 as f64).collect();
 
@@ -1780,52 +1780,25 @@ impl Category {
       let (avg_a, med_a, std_a) = calculate_stats(&team_a_elos);
       let (avg_b, med_b, std_b) = calculate_stats(&team_b_elos);
 
-      // BCH score: weighted sum prioritizing average ELO balance
-      // Average is weighted 3x higher because it directly determines team strength
+      // BCH score: weighted sum prioritising average balance
       let score = 3.0 * (avg_a - avg_b).abs() + (med_a - med_b).abs() + (std_a - std_b).abs();
 
-      if score < best_score {
-        best_score = score;
-        best_split = Some((team_a_indices, team_b_indices));
-      }
+      all_splits.push((score, team_a_indices, team_b_indices));
     }
 
-    if let Some((mut red_indices, mut blu_indices)) = best_split {
-      use rand::seq::SliceRandom;
-      use std::collections::HashMap;
+    if !all_splits.is_empty() {
+      use rand::RngExt;
 
-      // Randomize by swapping players with the same ELO
-      // Category players by ELO, then shuffle within each ELO category
+      // Sort best-first, then pick randomly from the top 5 to introduce variety
+      all_splits.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+      let top_n = 5.min(all_splits.len());
       let mut rng = rand::rng();
+      let chosen = rng.random_range(0..top_n);
+      let (_, mut red_indices, mut blu_indices) = all_splits.remove(chosen);
 
-      // Create map of ELO -> Vec<indices in players_to_balance>
-      let mut elo_categories: HashMap<u32, Vec<usize>> = HashMap::new();
-      for (i, player) in players_to_balance.iter().enumerate().take(pool_size) {
-        let elo = player.1;
-        elo_categories.entry(elo).or_default().push(i);
-      }
-
-      // Store original team assignments before shuffling
-      let original_red = red_indices.clone();
-      let original_blu = blu_indices.clone();
-
-      // For each ELO category with multiple players, shuffle them across teams
-      for indices in elo_categories.values_mut() {
-        if indices.len() > 1 {
-          // Count how many of this ELO are on each team (using ORIGINAL assignments)
-          let red_count = indices.iter().filter(|&&i| original_red.contains(&i)).count();
-          let _blu_count = indices.iter().filter(|&&i| original_blu.contains(&i)).count();
-
-          // Shuffle the indices with this ELO
-          indices.shuffle(&mut rng);
-
-          // Reassign to teams with the same distribution
-          red_indices.retain(|&i| !indices.contains(&i));
-          blu_indices.retain(|&i| !indices.contains(&i));
-
-          red_indices.extend_from_slice(&indices[..red_count]);
-          blu_indices.extend_from_slice(&indices[red_count..]);
-        }
+      // Randomly flip the colour assignment for additional variety
+      if rng.random_bool(0.5) {
+        std::mem::swap(&mut red_indices, &mut blu_indices);
       }
 
       // Clear all team assignments first, then assign new ones
@@ -1835,13 +1808,11 @@ impl Category {
       }
 
       // Assign teams in-place to preserve in_queue_vc flag
-      // First assign red team
       for &idx in &red_indices {
         let pool_idx = players_to_balance[idx].0;
         game.pool[pool_idx].set_team(crate::models::Team::Red);
       }
 
-      // Then assign blue team
       for &idx in &blu_indices {
         let pool_idx = players_to_balance[idx].0;
         game.pool[pool_idx].set_team(crate::models::Team::Blu);
