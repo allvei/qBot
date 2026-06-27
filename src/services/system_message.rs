@@ -94,7 +94,11 @@ pub async fn validate_system_message_channels(ctx: &Context, db: &Database) -> V
   let mut errors = Vec::new();
 
   for guild_id in guilds {
-    let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+    let guild_name = if let Some(name) = ctx.cache.guild(guild_id).map(|g| g.name.clone()) {
+      name
+    } else {
+      db.guilds.get_display_name(guild_id).await.ok().flatten().unwrap_or_else(|| guild_id.to_string())
+    };
 
     match db.config.get_system_message_channel(guild_id).await {
       Ok(Some(channel_id)) => {
