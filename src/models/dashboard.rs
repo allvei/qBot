@@ -1460,8 +1460,8 @@ impl Category {
 
           chat_embed = TeamDisplay::new(team_red, team_blu, hide_elo, dynamic_elo_active).add_to_embed(chat_embed, &cc.db, guild_id).await;
           let footer_text = match match_id {
-            Some(id) => format!("Reported by {} · Game #{}", reporter_tag, id),
-            None => format!("Reported by {}", reporter_tag),
+            Some(id) => format!("Logged by {} · Game #{}", reporter_tag, id),
+            None => format!("Logged by {}", reporter_tag),
           };
           chat_embed = chat_embed.footer(serenity::all::CreateEmbedFooter::new(footer_text));
 

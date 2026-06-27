@@ -406,8 +406,8 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
 
         chat_embed = crate::models::dashboard::build_team_fields(chat_embed, team_red, team_blu, hide_elo, dynamic_elo_active, db, guild_id).await;
         let footer_text = match match_id {
-          Some(id) => format!("Reported by {} · Game #{}", interaction.user.tag(), id),
-          None => format!("Reported by {}", interaction.user.tag()),
+          Some(id) => format!("Logged by {} · Game #{}", interaction.user.tag(), id),
+          None => format!("Logged by {}", interaction.user.tag()),
         };
         chat_embed = chat_embed.footer(serenity::all::CreateEmbedFooter::new(footer_text));
 

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use sqlx::SqlitePool;
+use tracing::info;
 
 use crate::{ansi::*, cinfo, QGuild};
 
@@ -14,13 +15,13 @@ impl GuildRepository {
   }
 
   pub async fn add(&self, guild: &QGuild) -> Result<()> {
-    cinfo!("{GREEN}Adding a new guild to the database: {} {}", guild.name, guild.id);
+    info!("Adding a new guild to the database: {} {}", guild.name, guild.id);
     sqlx::query("INSERT OR IGNORE INTO guilds (guild_id, name) VALUES (?, ?)").bind(guild.id.get() as i64).bind(&guild.name).execute(&self.pool).await?;
     Ok(())
   }
 
   pub async fn remove(&self, guild: &QGuild) -> Result<()> {
-    cinfo!("{RED}Removing a guild from the database: {} {}", guild.name, guild.id);
+    info!("Removing a guild from the database: {} {}", guild.name, guild.id);
     sqlx::query("DELETE FROM guilds WHERE guild_id = ?").bind(guild.id.get() as i64).execute(&self.pool).await?;
     Ok(())
   }
