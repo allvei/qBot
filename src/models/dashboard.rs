@@ -40,7 +40,7 @@ async fn format_team_display(
     })
     .collect();
 
-  embed.field(format!("{} ({})", label, pool.len()), formatted_players.join("\n"), false)
+  embed.field(format!("{label} ({})", pool.len()), formatted_players.join("\n"), false)
 }
 
 /// Add waiting players field to embed
@@ -796,6 +796,7 @@ impl Category {
     cc.reply_acknowledge().await?;
 
     let user_id = cc.component.user.id;
+    let user_tag = cc.component.user.tag();
     let _guild_id = cc.component.guild_id.unwrap();
 
     // Store channel IDs before any borrows
@@ -803,7 +804,7 @@ impl Category {
 
     // If player is already in this format, refresh their timeout and return
     if self.is_user_in_fmt(fmt_id, user_id) {
-      debug!("User {} ({}) already in format {}, refreshing timeout", user_id, cc.component.user.tag(), fmt_id);
+      debug!("{} already in format {}, refreshing timeout", user_tag, fmt_id);
       if let Some(sg) = self.format_mut(fmt_id) {
         for session in &mut sg.sessions {
           if let Some(sp) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
@@ -819,10 +820,10 @@ impl Category {
     // Check if we have an idle or hot session to join in the target format
     let has_joinable_session = self.format(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)).unwrap_or(false);
 
-    debug!("User {} ({}) attempting to join format {}: has_joinable_session={}", user_id, cc.component.user.tag(), fmt_id, has_joinable_session);
+    debug!("{} attempting to join format {}: has_joinable_session={}", user_tag, fmt_id, has_joinable_session);
 
     if !has_joinable_session {
-      debug!("User {} ({}) blocked from joining format {}: no joinable session (match in progress)", user_id, cc.component.user.tag(), fmt_id);
+      debug!("{} blocked from joining format {}: no joinable session (match in progress)", user_tag, fmt_id);
       use serenity::all::CreateInteractionResponseFollowup as CIRF;
       let followup = CIRF::new().content("Cannot join - match is in progress. Please wait.").ephemeral(true);
       cc.component.create_followup(&cc.ctx.http, followup).await?;
@@ -834,10 +835,10 @@ impl Category {
     if let Some(guild_id) = cc.component.guild_id {
       // When dynamic ELO is enabled, check if this player needs skill selection first.
       let dynamic_elo_active = cc.db.config.get_active_elo(guild_id).await.unwrap_or(false);
-      debug!("User {} ({}) checking dynamic ELO: dynamic_elo_active={}", user_id, cc.component.user.tag(), dynamic_elo_active);
+      debug!("{} checking dynamic ELO: dynamic_elo_active={}", user_tag, dynamic_elo_active);
       if dynamic_elo_active {
         let needs_selection = cc.db.elo.needs_skill_selection(user_id, guild_id).await.unwrap_or(false);
-        debug!("User {} ({}) needs skill selection: {}", user_id, cc.component.user.tag(), needs_selection);
+        debug!("{} needs skill selection: {}", user_tag, needs_selection);
         if needs_selection {
           let gamemode = cc.db.config.get_gamemode(guild_id).await.unwrap_or(None);
           let prompt = match &gamemode {
@@ -861,7 +862,7 @@ impl Category {
       let (mut player, discord_rank, _rank_mismatch) = match resolve_player_for_queue(cc.ctx, &cc.db, guild_id, user_id).await {
         Ok(result) => result,
         Err(e) => {
-          error!("Failed to resolve player {} ({}) for queue: {e}", user_id, cc.component.user.tag());
+          error!("Failed to resolve player {} for queue: {e}", user_tag);
           use serenity::all::CreateInteractionResponseFollowup as CIRF;
           let followup = CIRF::new().content("Failed to join queue. Please try again.").ephemeral(true);
           cc.component.create_followup(&cc.ctx.http, followup).await?;
@@ -869,7 +870,7 @@ impl Category {
         }
       };
 
-      debug!("User {} ({}) resolved as player: tag={}, rank={}", user_id, cc.component.user.tag(), player.tag, discord_rank.name);
+      debug!("{} resolved as player: tag={}, rank={}", user_tag, player.tag, discord_rank.name);
 
       // Fetch discord tag from component user for performance (avoid extra API call)
       player.tag = cc.component.user.tag();
@@ -892,11 +893,11 @@ impl Category {
       let queue_context = crate::QueueContext::new(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone()));
       let is_user_in_vc = self.is_user_in_queue_vc(&cc.ctx.http, user_id).await;
 
-      debug!("User {} ({}) attempting to queue with VC status: is_user_in_vc={}", user_id, cc.component.user.tag(), is_user_in_vc);
+      debug!("{} attempting to queue with VC status: is_user_in_vc={}", user_tag, is_user_in_vc);
       if let Err(e) = self.queue_player_with_vc_status_fmt(fmt_id, player.clone(), discord_rank, queue_context, is_user_in_vc).await {
-        error!("Failed to queue player {} ({}): {e}", user_id, cc.component.user.tag());
+        error!("Failed to queue player {}: {e}", user_tag);
       } else {
-        debug!("Successfully queued player {} ({}) in format {}", user_id, cc.component.user.tag(), fmt_id);
+        debug!("Successfully queued player {} in format {}", user_tag, fmt_id);
         // Log AFTER queue operation so position and count are accurate
         if let Some(format) = self.format(fmt_id) {
           if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, self.id, format, &player, "joined", None).await {
