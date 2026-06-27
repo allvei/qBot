@@ -571,7 +571,7 @@ impl Category {
       // No users - safe to delete the pair
       if red_exists {
         if let Err(e) = team.red_vc.delete(&ctx.http).await {
-          if !e.to_string().contains("Unknown Channel") {
+          if !e.to_string().contains("Unknown channel") {
             warn!("[{}] Failed to delete RED team VC {}: {}", guild.name, team.red_vc, e);
             surviving_teams.push(team.clone());
             continue;
@@ -580,7 +580,7 @@ impl Category {
       }
       if blu_exists {
         if let Err(e) = team.blu_vc.delete(&ctx.http).await {
-          if !e.to_string().contains("Unknown Channel") {
+          if !e.to_string().contains("Unknown channel") {
             warn!("[{}] Failed to delete BLU team VC {}: {}", guild.name, team.blu_vc, e);
             surviving_teams.push(team.clone());
             continue;
@@ -1196,7 +1196,7 @@ impl Category {
     for task in delete_tasks {
       if let Ok((_, result, team, name, set_idx)) = task.await {
         if let Err(e) = result {
-          let hint = if e.to_string().contains("Missing Access") { "(Missing \"Manage Channels\" permissions)" } else { "" };
+          let hint = if e.to_string().contains("Missing access") { "(Missing \"Manage channels\" permissions)" } else { "" };
           warn!("Failed to delete {} VC #{} ({}): {}{}", team, set_idx, name, e, hint);
         } else {
           info!("Deleted {} team VC #{} ({})", team, set_idx, name);
@@ -1519,7 +1519,7 @@ impl Category {
       let has_existing_idle = sg.sessions.iter().any(|s| s.status == SessionStatus::Idle);
       let idle_session_idx = if !post_game && has_existing_idle {
         // Pulling a Hot session with existing Idle - create new Idle for these players
-        info!("Pulling Hot session with existing Idle, creating new Idle session for re-queuing players in format {}", fmt_id + 1);
+        info!("Pulling hot session with existing Idle, creating new Idle session for re-queuing players in format {}", fmt_id + 1);
         sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
         sg.sessions.len() - 1
       } else {
@@ -2244,7 +2244,7 @@ impl Category {
       info!("{} Quota met - notifying all {} players in match", full_prefix, player_mentions.len());
 
       // Use embed for header and raw pings in message content to properly ping users
-      let embed = CreateEmbed::new().title("PUG Starting").description("Please join the queue channel!");
+      let embed = CreateEmbed::new().title("PUG starting").description("Please join the queue channel!");
 
       let content = player_mentions.join(" ");
       let msg = CM::new().embed(embed).content(content);
@@ -2286,7 +2286,7 @@ impl Category {
         match database.players.get_pm_hot_alert(user_id).await {
           Ok(true) => {
             let dm_embed = CreateEmbed::new()
-              .title("PUG Ready!")
+              .title("PUG ready!")
               .description(format!(
                 "A game is ready in **{}**!\nPlease join the queue channel.",
                 ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "the server".to_string())
@@ -2348,7 +2348,7 @@ impl Category {
         } else {
           // Edit the message to show remaining players
           let remaining_mentions: Vec<String> = pending_users.iter().map(|u| format!("<@{}>", u)).collect();
-          let embed = CreateEmbed::new().title("PUG Starting").description("Please join the queue channel!");
+          let embed = CreateEmbed::new().title("PUG starting").description("Please join the queue channel!");
           let content = remaining_mentions.join(" ");
 
           let edit = serenity::all::EditMessage::new().embed(embed).content(content);

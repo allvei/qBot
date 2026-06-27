@@ -216,17 +216,17 @@ impl InteractionHelpers {
 
   /// Create a standardized configuration updated embed
   pub fn config_updated(key: &str, value: &str) -> CE {
-    EmbedHelpers::success("Config Updated", &format!("Set `{}` = `{}`", key, value))
+    EmbedHelpers::success("Config updated", &format!("Set `{}` = `{}`", key, value))
   }
 
   /// Create a standardized role updated embed
   pub fn role_updated(role_type: &str, role_id: u64) -> CE {
-    EmbedHelpers::success("Role Updated", &format!("Set {} role to <@&{}>", role_type.to_lowercase(), role_id))
+    EmbedHelpers::success("Role updated", &format!("Set {} role to <@&{}>", role_type.to_lowercase(), role_id))
   }
 
   /// Create a standardized permission denied embed
   pub fn permission_denied(role: &str) -> CE {
-    EmbedHelpers::error("Permission Denied", &format!("This command is reserved for {}s", role.to_lowercase()))
+    EmbedHelpers::error("Permission denied", &format!("This command is reserved for {}s", role.to_lowercase()))
   }
 }
 

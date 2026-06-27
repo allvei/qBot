@@ -53,7 +53,7 @@ pub fn default_ranks() -> Vec<(String, u16)> {
     ("Journeyman".to_string(), 65),
     ("Expert".to_string(), 75),
     ("Master".to_string(), 85),
-    ("Master Elite".to_string(), 90),
+    ("Master elite".to_string(), 90),
     ("Grandmaster".to_string(), 95),
   ]
 }

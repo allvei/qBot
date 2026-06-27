@@ -17,12 +17,12 @@
 //!     button_type: MyButton,
 //!     pages: [
 //!         MyPage::Main => {
-//!             title: "Main Menu",
+//!             title: "Main menu",
 //!             description: "Overview",
 //!             color: 0x5865F2,
 //!             parent: None,
 //!             buttons: [
-//!                 (my_button_id, "Button Label", Some("Description"), Some(MyPage::SubPage), ButtonType::Nav),
+//!                 (my_button_id, "Button label", Some("Description"), Some(MyPage::SubPage), ButtonType::Nav),
 //!             ],
 //!             fields: [],
 //!             dynamic_fields: [],

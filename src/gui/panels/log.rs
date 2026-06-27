@@ -48,7 +48,7 @@ pub fn show_log_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     if logs.is_empty() {
       ui.vertical_centered(|ui| {
         ui.add_space(50.0);
-        ui.heading("No Logs Yet");
+        ui.heading("No logs yet");
         ui.add_space(20.0);
         ui.label("Waiting for the bot to generate log messages...");
         ui.add_space(10.0);

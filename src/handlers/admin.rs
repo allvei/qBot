@@ -158,13 +158,13 @@ pub async fn create_category_channels(
   let bot_perms = guild.member_permissions(&bot_member);
   info!("[{}] Bot permissions: {:?} | MFA level: {:?}", guild_name, bot_perms, guild.mfa_level);
   let required = [
-    (Permissions::MANAGE_CHANNELS, "Manage Channels"),
-    (Permissions::MANAGE_ROLES, "Manage Roles"),
-    (Permissions::SEND_MESSAGES, "Send Messages"),
-    (Permissions::EMBED_LINKS, "Embed Links"),
-    (Permissions::VIEW_CHANNEL, "View Channels"),
+    (Permissions::MANAGE_CHANNELS, "Manage channels"),
+    (Permissions::MANAGE_ROLES, "Manage roles"),
+    (Permissions::SEND_MESSAGES, "Send messages"),
+    (Permissions::EMBED_LINKS, "Embed links"),
+    (Permissions::VIEW_CHANNEL, "View channels"),
     (Permissions::CONNECT, "Connect"),
-    (Permissions::MOVE_MEMBERS, "Move Members"),
+    (Permissions::MOVE_MEMBERS, "Move members"),
   ];
   let missing: Vec<&str> = required.iter().filter(|(perm, _)| !bot_perms.contains(*perm)).map(|(_, name)| *name).collect();
   if !missing.is_empty() {
@@ -249,7 +249,7 @@ pub async fn create_category_channels(
   };
 
   // Step 3: Test dashboard message send - CRITICAL STEP
-  let test_embed = CreateEmbed::new().title("PUG Dashboard").description("Setting up queue system...").color(ORANGE);
+  let test_embed = CreateEmbed::new().title("PUG dashboard").description("Setting up queue system...").color(ORANGE);
 
   let test_msg = dashboard_channel.id.send_message(&ctx.http, CreateMessage::new().embed(test_embed)).await;
 
@@ -823,7 +823,7 @@ async fn handle_admin_selection(ctx: &Context, interaction: &CX, role_id: u64, d
 
   // Create the initial dashboard message
   let dashboard_channel_id = CI::new(dashboard_channel);
-  let initial_embed = CE::new().title("PUG Queue Dashboard").description("Queue is empty. Be the first to join!").color(CYAN);
+  let initial_embed = CE::new().title("PUG queue dashboard").description("Queue is empty. Be the first to join!").color(CYAN);
 
   let dashboard_message = match dashboard_channel_id.send_message(&ctx.http, CreateMessage::new().embed(initial_embed)).await {
     Ok(msg) => msg,
@@ -1310,7 +1310,7 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
       let dyn_value = guild_elo.dynamic_elo.unwrap_or(1500);
       embed = embed.field("Dynamic ELO", format!("**{}**", dyn_value), true);
     } else {
-      embed = embed.field("ELO Rating", format!("**{}**", guild_elo.elo), true);
+      embed = embed.field("ELO rating", format!("**{}**", guild_elo.elo), true);
     }
   }
 

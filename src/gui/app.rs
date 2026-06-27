@@ -111,7 +111,7 @@ impl eframe::App for MyApp {
     // Top bar with title and status
     egui::Panel::top("top_bar").show(ctx, |ui| {
       ui.horizontal(|ui| {
-        ui.heading("qBot Host Management Panel");
+        ui.heading("qBot host management panel");
         ui.separator();
 
         // Connection status indicator

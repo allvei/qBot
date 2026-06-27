@@ -224,7 +224,7 @@ pub async fn nav_elo_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, _pa
   let embed = system.build_embed(MenuPage::EloConfig, &guild_name)
     .ok_or_else(|| anyhow::anyhow!("Failed to build ELO config embed"))?;
 
-  // Get base components from menu system (includes "Manage Ranks" button and back button)
+  // Get base components from menu system (includes "Manage ranks" button and back button)
   let mut components = system.build_components(MenuPage::EloConfig).unwrap_or_default();
 
   // Add toggle buttons before the back button

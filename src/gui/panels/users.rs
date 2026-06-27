@@ -47,7 +47,7 @@ pub fn show_users_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
       ui.label(RichText::new("User ID").strong().monospace());
       ui.label(RichText::new("Tag").strong());
       ui.label(RichText::new("Steam ID").strong().monospace());
-      ui.label(RichText::new("Queue Exp").strong());
+      ui.label(RichText::new("Queue exp").strong());
       ui.end_row();
       ui.separator();
       ui.end_row();
@@ -78,7 +78,7 @@ pub fn show_users_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
   if modal_open {
     if let Some(uid) = modal_user_id {
       if let Some(player) = results.iter().find(|p| p.user_id.get() == uid) {
-        let title = format!("Edit User — {} ({})", player.tag, uid);
+        let title = format!("Edit user — {} ({})", player.tag, uid);
         let mut window_open = modal_open;
 
         egui::Window::new(title).open(&mut window_open).resizable(true).default_size([500.0, 400.0]).show(ui.ctx(), |ui| {
@@ -103,13 +103,13 @@ pub fn show_users_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
               });
               ui.end_row();
 
-              ui.label("Queue Expiration:");
+              ui.label("Queue expiration:");
               ui.add(egui::DragValue::new(&mut edit_expiry).range(0..=255));
               ui.end_row();
             });
 
             ui.horizontal(|ui| {
-              if ui.button("Save Global").clicked() {
+              if ui.button("Save global").clicked() {
                 let mut updated = false;
                 if edit_tag != player.tag {
                   state.send_cmd(GuiCommand::UpdateUserTag { user_id: uid, tag: edit_tag.clone() });

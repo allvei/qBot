@@ -1003,7 +1003,7 @@ impl EventHandler for Handler {
                 serenity::all::CreateInteractionResponseMessage::new()
                   .embed(
                     serenity::all::CreateEmbed::new()
-                      .title("DM Notifications Disabled")
+                      .title("DM notifications disabled")
                       .description("You will no longer receive direct messages when a game is ready.\n\nYou can re-enable this in your settings using `/prefs`.")
                       .color(0x00FF00),
                   )
@@ -1567,7 +1567,7 @@ impl EventHandler for Handler {
                 }
 
                 // Always check if this player was in the pending VC notification list
-                // This ensures the "PUG Starting" alert is deleted/updated when players join VC
+                // This ensures the "PUG starting" alert is deleted/updated when players join VC
                 category.on_player_joined_vc(&ctx, user_id).await;
 
                 // Always update dashboard when player joins VC to show "In VC" status

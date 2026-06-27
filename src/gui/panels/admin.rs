@@ -64,7 +64,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
   };
 
   // ── Target selector UI ─────────────────────────────────────────────────────
-  ui.heading("Admin Commands");
+  ui.heading("Admin commands");
   ui.separator();
 
   egui::Grid::new("adm_selectors").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
@@ -145,39 +145,39 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
 
   ScrollArea::vertical().show(ui, |ui| {
     // ── Queue Management ───────────────────────────────────────────────────
-    ui.collapsing("Queue Management", |ui| {
+    ui.collapsing("Queue management", |ui| {
       egui::Grid::new("adm_qm").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
         // Clear Queue
         ui.label("Clear all idle players:");
-        if ui.button("Clear Queue").clicked() {
+        if ui.button("Clear queue").clicked() {
           send(GuiCommand::ClearQueue { guild_id, category_id: cat_id, fmt_id });
         }
         ui.end_row();
 
         // Force End Game
         ui.label("End live game immediately:");
-        if ui.button("Force End Game").clicked() {
+        if ui.button("Force end game").clicked() {
           send(GuiCommand::ForceEndGame { guild_id, category_id: cat_id, fmt_id, session_index });
         }
         ui.end_row();
 
         // Force Team Regeneration
         ui.label("Regenerate teams:");
-        if ui.button("Regen Teams").clicked() {
+        if ui.button("Regen teams").clicked() {
           send(GuiCommand::ForceTeamRegeneration { guild_id, category_id: cat_id, fmt_id, session_index });
         }
         ui.end_row();
 
         // Swap Teams
         ui.label("Swap Red ↔ Blue:");
-        if ui.button("Swap Teams").clicked() {
+        if ui.button("Swap teams").clicked() {
           send(GuiCommand::SwapTeams { guild_id, category_id: cat_id, fmt_id, session_index });
         }
         ui.end_row();
 
         // Reset Session Timer
         ui.label("Reset confirm timer:");
-        if ui.button("Reset Timer").clicked() {
+        if ui.button("Reset timer").clicked() {
           send(GuiCommand::ResetSessionTimer { guild_id, category_id: cat_id, fmt_id, session_index });
         }
         ui.end_row();
@@ -195,7 +195,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
 
         // Force Quota Met
         ui.label("Force hot (bypass quota):");
-        if ui.button("Force Hot").clicked() {
+        if ui.button("Force hot").clicked() {
           send(GuiCommand::ForceQuotaMet { guild_id, category_id: cat_id, fmt_id });
         }
         ui.end_row();
@@ -236,7 +236,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
         ui.label("Add dummy players:");
         ui.horizontal(|ui| {
           ui.add(egui::DragValue::new(&mut dummy_count).range(1..=32).suffix(" players"));
-          if ui.button("Add Dummies").clicked() {
+          if ui.button("Add dummies").clicked() {
             send(GuiCommand::AddDummyPlayers { guild_id, category_id: cat_id, fmt_id, count: dummy_count, role_id: None });
           }
         });
@@ -244,7 +244,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
 
         // Simulate Game Flow
         ui.label("Run full game cycle:");
-        if ui.button("Simulate Game").clicked() {
+        if ui.button("Simulate game").clicked() {
           send(GuiCommand::SimulateGameFlow { guild_id, category_id: cat_id, fmt_id });
         }
         ui.end_row();
@@ -261,14 +261,14 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
 
         // Test Balance Methods
         ui.label("Compare balance algorithms:");
-        if ui.button("Test Balance").clicked() {
+        if ui.button("Test balance").clicked() {
           send(GuiCommand::TestBalanceMethods { guild_id, category_id: cat_id, fmt_id });
         }
         ui.end_row();
 
         // Simulate VC Timeout
         ui.label("Simulate VC confirm timeout:");
-        if ui.button("Simulate Timeout").clicked() {
+        if ui.button("Simulate timeout").clicked() {
           send(GuiCommand::SimulateVCTimeout { guild_id, category_id: cat_id, fmt_id });
         }
         ui.end_row();
@@ -278,34 +278,34 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     ui.add_space(4.0);
 
     // ── Recovery ──────────────────────────────────────────────────────────
-    ui.collapsing("Recovery from Bugs", |ui| {
+    ui.collapsing("Recovery from bugs", |ui| {
       egui::Grid::new("adm_rec").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
         ui.label("Delete all team VCs:");
-        if ui.button("Clear Team VCs").clicked() {
+        if ui.button("Clear team VCs").clicked() {
           send(GuiCommand::ClearAllTeamVCs { guild_id, category_id: cat_id });
         }
         ui.end_row();
 
         ui.label("Full category reset:");
-        if ui.button("Reset Category").clicked() {
+        if ui.button("Reset category").clicked() {
           send(GuiCommand::ResetCategoryState { guild_id, category_id: cat_id });
         }
         ui.end_row();
 
         ui.label("Delete sessions with no players:");
-        if ui.button("Remove Orphaned Sessions").clicked() {
+        if ui.button("Remove orphaned sessions").clicked() {
           send(GuiCommand::RemoveOrphanedSessions { guild_id, category_id: cat_id });
         }
         ui.end_row();
 
         ui.label("Clear pending team switches:");
-        if ui.button("Clear Pending Switches").clicked() {
+        if ui.button("Clear pending Switches").clicked() {
           send(GuiCommand::ClearPendingTeamSwitches { guild_id, category_id: cat_id, fmt_id });
         }
         ui.end_row();
 
         ui.label("Reset voice state tracking:");
-        if ui.button("Reset VC Tracking").clicked() {
+        if ui.button("Reset VC tracking").clicked() {
           send(GuiCommand::ResetVoiceStateTracking { guild_id });
         }
         ui.end_row();
@@ -332,10 +332,10 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     ui.add_space(4.0);
 
     // ── Voice Channel Management ───────────────────────────────────────────
-    ui.collapsing("Voice Channel Management", |ui| {
+    ui.collapsing("Voice channel management", |ui| {
       egui::Grid::new("adm_vc").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
         ui.label("Resync VC flags:");
-        if ui.button("Sync VC State").clicked() {
+        if ui.button("Sync VC state").clicked() {
           send(GuiCommand::SyncVCState { guild_id, category_id: cat_id });
         }
         ui.end_row();
@@ -356,7 +356,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     ui.add_space(4.0);
 
     // ── System Control ────────────────────────────────────────────────────
-    ui.collapsing("System Control", |ui| {
+    ui.collapsing("System control", |ui| {
       egui::Grid::new("adm_sys").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
         ui.label("Restart bot gracefully:");
         if ui.button("🔄 Graceful Restart").clicked() {
@@ -375,19 +375,19 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
     ui.collapsing("Debugging", |ui| {
       egui::Grid::new("adm_dbg").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
         ui.label("Export full state to log:");
-        if ui.button("Dump State").clicked() {
+        if ui.button("Dump state").clicked() {
           send(GuiCommand::DumpStateToLog { guild_id });
         }
         ui.end_row();
 
-        ui.label("Ping Discord gateway:");
-        if ui.button("Test Discord API").clicked() {
+        ui.label("Ping discord gateway:");
+        if ui.button("Test discord API").clicked() {
           send(GuiCommand::TestDiscordApi);
         }
         ui.end_row();
 
         ui.label("View session details (log):");
-        if ui.button("View Session").clicked() {
+        if ui.button("View session").clicked() {
           send(GuiCommand::ViewSessionDetails { guild_id, category_id: cat_id, fmt_id, session_index });
         }
         ui.end_row();
@@ -398,7 +398,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
 
     // ── Global ────────────────────────────────────────────────────────────
     ui.collapsing("Global", |ui| {
-      if ui.button("Refresh Snapshot (Ctrl+R)").clicked() {
+      if ui.button("Refresh snapshot (Ctrl+R)").clicked() {
         send(GuiCommand::RefreshSnapshot);
       }
     });

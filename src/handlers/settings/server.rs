@@ -216,7 +216,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
         "Role name",
         "ping_role_name",
         "e.g., qBot Ping",
-        "qBot Ping",
+        "qBot ping",
       )]);
 
       let response = CIR::Modal(modal);
@@ -305,7 +305,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
 
       let modal = CM::new(format!("guild_config_rank_modal_link_{}", selected_role_id.get()), "Link existing rank").components(vec![
         create_value_input_sh("Rank name", "name", "e.g., Bronze, Gold, Platinum", &role_name),
-        create_input_sh_cap("ELO Threshold", "elo", "Minimum ELO for this rank", 1, 3),
+        create_input_sh_cap("ELO threshold", "elo", "Minimum ELO for this rank", 1, 3),
       ]);
 
       let response = CIR::Modal(modal);
@@ -320,7 +320,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       if let Ok(Some(guild_rank)) = db.ranks.get_rank_by_name(guild_id, rank_name).await {
         let modal = CM::new(format!("guild_config_rank_modal_{}", rank_name), format!("Edit {} rank", guild_rank.name)).components(vec![
           create_value_input_sh("Rank name", "name", "e.g., Beginner, Expert, Champion", &guild_rank.name),
-          create_value_input_sh_cap("ELO Threshold", "elo", "Minimum ELO for this rank", &guild_rank.elo.to_string(), 1, 3),
+          create_value_input_sh_cap("ELO threshold", "elo", "Minimum ELO for this rank", &guild_rank.elo.to_string(), 1, 3),
         ]);
 
         let response = CIR::Modal(modal);
@@ -331,7 +331,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       // Show modal to add a new rank
 
       let modal = CM::new("guild_config_rank_modal_add", "Add new rank")
-        .components(vec![create_input_sh("Rank name", "name", "e.g., Champion, Legend, Elite"), create_input_sh_cap("ELO Threshold", "elo", "Minimum ELO for this rank", 1, 3)]);
+        .components(vec![create_input_sh("Rank name", "name", "e.g., Champion, Legend, Elite"), create_input_sh_cap("ELO threshold", "elo", "Minimum ELO for this rank", 1, 3)]);
 
       let response = CIR::Modal(modal);
       interaction.create_response(&ctx.http, response).await?;
@@ -477,7 +477,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       let mut components = vec![CAR::SelectMenu(select_menu)];
       add_back_button(&mut components, MenuPage::GeneralConfig);
       let embed = CE::new()
-        .title("Edit System Message Channel")
+        .title("Edit system message channel")
         .description("Select the channel where system messages will be sent.")
         .color(0x5865F2);
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
@@ -493,7 +493,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       let mut components = vec![CAR::SelectMenu(select_menu)];
       add_back_button(&mut components, MenuPage::GeneralConfig);
       let embed = CE::new()
-        .title("Edit Community Updates Channel")
+        .title("Edit community updates channel")
         .description("Select the channel where community updates will be sent.")
         .color(0x5865F2);
       let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(components));
@@ -511,7 +511,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
 
           if !has_permission {
             let embed = CE::new()
-              .title("Permission Error")
+              .title("Permission error")
               .description(format!("**{}**\n\nThe bot does not have **SEND_MESSAGES** permission in <#{}>.\n\nPlease grant the bot the necessary permissions and try again.", guild_name, channel_id))
               .color(0xED4245);
             let components = vec![
@@ -542,7 +542,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
 
           if !has_permission {
             let embed = CE::new()
-              .title("Permission Error")
+              .title("Permission error")
               .description(format!("**{}**\n\nThe bot does not have **SEND_MESSAGES** permission in <#{}>.\n\nPlease grant the bot the necessary permissions and try again.", guild_name, channel_id))
               .color(0xED4245);
             let components = vec![
@@ -590,7 +590,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
 
       let components = if total_players > 0 && without_dynamic_elo > 0 {
         let mut comps = vec![CAR::Buttons(vec![
-          CB::new("guild_config_migrate_elo_confirm").label("Confirm Migration").style(BS::Danger),
+          CB::new("guild_config_migrate_elo_confirm").label("Confirm migration").style(BS::Danger),
         ])];
         add_back_button(&mut comps, MenuPage::EloConfig);
         comps
@@ -649,7 +649,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       // Create Runner role if not configured
       let runner_role = db.config.get_runner_role_id(guild_id).await?;
       if runner_role.is_none() {
-        match guild_id.create_role(&ctx.http, ER::new().name("PUG Runner").colour(crate::RUNNER).permissions(Permissions::empty())).await {
+        match guild_id.create_role(&ctx.http, ER::new().name("PUG runner").colour(crate::RUNNER).permissions(Permissions::empty())).await {
           Ok(role) => {
             if let Err(e) = db.config.set_runner_role_id(guild_id, role.id).await {
               warn!("Failed to save runner_role config: {e}");
@@ -665,7 +665,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       // Create Admin role if not configured
       let admin_role = db.config.get_admin_role_id(guild_id).await?;
       if admin_role.is_none() {
-        match guild_id.create_role(&ctx.http, ER::new().name("PUG Admin").colour(crate::ADMIN).permissions(Permissions::empty())).await {
+        match guild_id.create_role(&ctx.http, ER::new().name("PUG admin").colour(crate::ADMIN).permissions(Permissions::empty())).await {
           Ok(role) => {
             if let Err(e) = db.config.set_admin_role_id(guild_id, role.id).await {
               warn!("Failed to save admin_role config: {e}");
@@ -693,7 +693,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       let modal = CM::new("guild_config_modal_create_category", "Create a new category").components(vec![
         create_input_sh("Category name", "category_name", "e.g., NA PUGs, EU Competitive"),
         create_input_sh("Channel prefix", "channel_prefix", "e.g., pug, na, eu"),
-        create_value_input_sh("Category name", "discord_category", "e.g., PUG Queue", "PUG Queue"),
+        create_value_input_sh("Category name", "discord_category", "e.g., PUG Queue", "PUG queue"),
         create_value_input_sh_cap("Quota (players per game)", "quota", "e.g., 12", &crate::DEFAULT_QUOTA.to_string(), 1, 3),
         create_paragraph_input_with_value("Bot-only dashboard (yes/no)", "bot_only_dashboard", "Set to 'yes' to restrict dashboard channel to bot-only messages", "yes"),
       ]);
@@ -908,11 +908,11 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
               // Build status message
               let mut status = String::from("**Channel Linking Progress:**\n\n");
               status.push_str(&format!("Dashboard: {}\n", if let Some(id) = dashboard_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
-              status.push_str(&format!("Queue Chat: {}\n", if let Some(id) = queue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
-              status.push_str(&format!("Ping Channel: {}\n", if let Some(id) = ping_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
-              status.push_str(&format!("Queue Voice: {}\n", if let Some(id) = queue_vc_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
-              status.push_str(&format!("Red Team: {}\n", if let Some(id) = red_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
-              status.push_str(&format!("Blue Team: {}\n", if let Some(id) = blue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
+              status.push_str(&format!("Queue chat: {}\n", if let Some(id) = queue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
+              status.push_str(&format!("Ping channel: {}\n", if let Some(id) = ping_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
+              status.push_str(&format!("Queue voice: {}\n", if let Some(id) = queue_vc_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
+              status.push_str(&format!("Red team: {}\n", if let Some(id) = red_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
+              status.push_str(&format!("Blue team: {}\n", if let Some(id) = blue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
 
               let embed = CE::new()
                 .title(format!("{} - Link Channels", guild_name))
@@ -1436,10 +1436,10 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
 
               let mut status = String::from("**Channel Linking Progress:**\n\n");
               status.push_str(&format!("Dashboard: {}\n", if let Some(id) = dashboard_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
-              status.push_str(&format!("Queue Chat: {}\n", if let Some(id) = queue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
-              status.push_str(&format!("Queue Voice: {}\n", if let Some(id) = queue_vc_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
-              status.push_str(&format!("Red Team: {}\n", if let Some(id) = red_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
-              status.push_str(&format!("Blue Team: {}\n", if let Some(id) = blue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
+              status.push_str(&format!("Queue chat: {}\n", if let Some(id) = queue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
+              status.push_str(&format!("Queue voice: {}\n", if let Some(id) = queue_vc_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
+              status.push_str(&format!("Red team: {}\n", if let Some(id) = red_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
+              status.push_str(&format!("Blue team: {}\n", if let Some(id) = blue_channel { format!("<#{}>", id.get()) } else { "Not selected".to_string() }));
 
               let embed = CE::new()
                 .title(format!("{} - Link Channels", guild_name))

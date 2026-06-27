@@ -880,7 +880,7 @@ impl RankRoleConfigDisplay {
     CE::new()
       .title(format!("{} - {} Rank", self.guild_name, self.rank_name))
       .field("Name", &self.rank_name, true)
-      .field("ELO Threshold", self.elo.to_string(), true)
+      .field("ELO threshold", self.elo.to_string(), true)
       .field("Discord role", role_display, true)
       .color(0x5865F2)
       .footer(CreateEmbedFooter::new("Edit name, ELO, or link a Discord role"))
@@ -1144,7 +1144,7 @@ impl AsSettingsMenu for PlayerSettingsDisplay {
       .field(SF::new("Wins", format!("{}", self.wins)))
       .field(SF::new("Winrate", winrate))
       .color(0x5865F2)
-      .row(SR::Buttons(vec![SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit Steam ID"), SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO")]))
+      .row(SR::Buttons(vec![SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit steam ID"), SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO")]))
       .row(SR::Buttons(vec![SB::edit(format!("player_settings_edit_alerts_{uid}"), "Edit alerts")]))
   }
 }
@@ -1170,9 +1170,9 @@ pub async fn build_player_settings_menu(settings: &PlayerSettingsDisplay, db: &c
     .field(SF::new("Winrate", winrate))
     .color(0x5865F2)
     .row(SR::Buttons(vec![
-      SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit Steam ID"),
+      SB::edit(format!("player_settings_edit_steam_{uid}"), "Edit steam ID"),
       SB::edit(format!("player_settings_edit_elo_{uid}"), "Edit ELO"),
-      SB::edit(format!("player_settings_edit_dynamic_elo_{uid}"), "Edit Dynamic ELO"),
+      SB::edit(format!("player_settings_edit_dynamic_elo_{uid}"), "Edit dynamic ELO"),
     ]));
 
   if !ranks.is_empty() {

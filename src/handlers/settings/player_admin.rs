@@ -70,7 +70,7 @@ pub async fn handle_player_settings_rank_select(ctx: &Context, interaction: &CI,
 
       // Send error message to user
       let error_embed = CE::new()
-        .title("Rank Not Found")
+        .title("Rank not found")
         .description(format!("The rank for role <@&{}> was not found in the database. Please ensure ranks are properly configured in guild config.", selected_role_id))
         .color(RED);
       let response = CIR::Message(CIRM::new().embed(error_embed).ephemeral(true));
@@ -212,7 +212,7 @@ pub async fn handle_player_settings_button(ctx: &Context, interaction: &CI, db: 
   let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
 
   if button_id.starts_with("player_settings_edit_steam_") {
-    let modal = CM::new(format!("player_settings_modal_steam_{target_user_id}"), "Edit Steam ID").components(vec![create_short_input_opt(
+    let modal = CM::new(format!("player_settings_modal_steam_{target_user_id}"), "Edit steam ID").components(vec![create_short_input_opt(
       "Steam ID (64-bit)",
       "steam_id",
       "e.g., 76561198012345678",
@@ -234,7 +234,7 @@ pub async fn handle_player_settings_button(ctx: &Context, interaction: &CI, db: 
     let response = CIR::Modal(modal);
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("player_settings_edit_dynamic_elo_") {
-    let modal = CM::new(format!("player_settings_modal_dynamic_elo_{target_user_id}"), "Edit Dynamic ELO").components(vec![create_value_input_sh_cap(
+    let modal = CM::new(format!("player_settings_modal_dynamic_elo_{target_user_id}"), "Edit dynamic ELO").components(vec![create_value_input_sh_cap(
       "Dynamic ELO",
       "dynamic_elo",
       "e.g., 1500",
@@ -299,7 +299,7 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
       match steam_str.trim().parse::<u64>() {
         Ok(id) => Some(id),
         Err(_) => {
-          send_modal_error_response(interaction, ctx, "Invalid Steam ID. Must be a 64-bit number.").await;
+          send_modal_error_response(interaction, ctx, "Invalid steam ID. Must be a 64-bit number.").await;
           return Ok(());
         }
       }
@@ -338,7 +338,7 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
         let username = ctx.http.get_user(target_uid).await.map(|u| u.name.clone()).unwrap_or_else(|_| target_user_id.to_string());
 
         let confirm_embed = CE::new()
-          .title("Rank Change Required")
+          .title("Rank change required")
           .description(format!(
             "Setting **{}'s** ELO to **{}** will change their rank:\n\n\
                         **Current:** {} (ELO {})\n\
@@ -409,14 +409,14 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
       match dynamic_elo_str.trim().parse() {
         Ok(e) => Some(e),
         _ => {
-          send_modal_error_response(interaction, ctx, "Invalid Dynamic ELO. Must be a valid number.").await;
+          send_modal_error_response(interaction, ctx, "Invalid dynamic ELO. Must be a valid number.").await;
           return Ok(());
         }
       }
     };
 
     db.elo.set_dynamic_elo(target_uid, guild_id, dynamic_elo).await?;
-    info!("Updated Dynamic ELO for {} to {:?}", target_tag, dynamic_elo);
+    info!("Updated dynamic ELO for {} to {:?}", target_tag, dynamic_elo);
 
     // Update in-memory player data and dashboards where this player is queued
     {

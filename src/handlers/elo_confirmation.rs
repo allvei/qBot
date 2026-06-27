@@ -134,7 +134,7 @@ pub async fn handle_elo_change_confirmation(
     };
 
     let success_embed = CE::new()
-      .title("ELO and Rank Updated")
+      .title("ELO and rank updated")
       .description(format!(
         "Successfully updated **{}'s** profile:\n\n\
                 **ELO:** {} → **{}**\n\

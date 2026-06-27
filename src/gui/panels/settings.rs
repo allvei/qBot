@@ -54,7 +54,7 @@ fn show_appearance_settings(ui: &mut egui::Ui, state: &GuiSharedState) {
 
       // Font size adjustment
       ui.horizontal(|ui| {
-        ui.label("Font Size:");
+        ui.label("Font size:");
         let mut font_size = settings.font_size;
         if ui.add(egui::Slider::new(&mut font_size, 10.0..=20.0).suffix(" px")).changed() {
           settings.font_size = font_size;
@@ -66,7 +66,7 @@ fn show_appearance_settings(ui: &mut egui::Ui, state: &GuiSharedState) {
 
       // Log buffer size
       ui.horizontal(|ui| {
-        ui.label("Log Buffer:");
+        ui.label("Log buffer:");
         let mut buffer_size = settings.log_buffer_size;
         if ui.add(egui::Slider::new(&mut buffer_size, 100..=5000).suffix(" lines")).changed() {
           settings.log_buffer_size = buffer_size;
@@ -86,7 +86,7 @@ fn show_appearance_settings(ui: &mut egui::Ui, state: &GuiSharedState) {
 
 fn show_connection_status(ui: &mut egui::Ui, state: &GuiSharedState) {
   ui.group(|ui| {
-    ui.heading("Connection Status");
+    ui.heading("Connection status");
     ui.separator();
 
     // Database connection status
@@ -101,7 +101,7 @@ fn show_connection_status(ui: &mut egui::Ui, state: &GuiSharedState) {
     });
 
     ui.horizontal(|ui| {
-      ui.label("Pool Size:");
+      ui.label("Pool size:");
       ui.label(format!("{} connections", state.db.pool.size()));
     });
 
@@ -109,7 +109,7 @@ fn show_connection_status(ui: &mut egui::Ui, state: &GuiSharedState) {
 
     // Discord gateway status (check if context is available)
     ui.horizontal(|ui| {
-      ui.label("Discord Gateway:");
+      ui.label("Discord gateway:");
       let ctx_available = state.ctx.lock().map(|ctx| ctx.is_some()).unwrap_or(false);
       if ctx_available {
         ui.label(RichText::new("● Connected").color(Color32::GREEN));
@@ -136,7 +136,7 @@ fn show_connection_status(ui: &mut egui::Ui, state: &GuiSharedState) {
 
 fn show_config_editor(ui: &mut egui::Ui, state: &GuiSharedState) {
   ui.group(|ui| {
-    ui.heading("Live Config Editor");
+    ui.heading("Live config editor");
     ui.separator();
 
     ui.label(RichText::new("Edit server configuration in real-time").small());
@@ -204,7 +204,7 @@ fn show_config_editor(ui: &mut egui::Ui, state: &GuiSharedState) {
         }
       }
 
-      ui.label(RichText::new("Server Config Options:").strong());
+      ui.label(RichText::new("Server config options:").strong());
       ui.add_space(3.0);
 
       // Display toggles from config_schema
@@ -287,19 +287,19 @@ fn show_actions(ui: &mut egui::Ui, state: &GuiSharedState) {
 
   // System info panel
   ui.group(|ui| {
-    ui.heading("System Info");
+    ui.heading("System info");
     ui.separator();
 
     if let Ok(manager_opt) = state.latest_manager.try_read() {
       if let Some(manager) = manager_opt.as_ref() {
-        ui.label(format!("Active Guilds: {}", manager.qguilds.len()));
+        ui.label(format!("Active guilds: {}", manager.qguilds.len()));
         
         let session_count: usize = manager.qguilds.iter()
           .flat_map(|g| &g.categories)
           .flat_map(|c| &c.formats)
           .map(|f| f.sessions.len())
           .sum();
-        ui.label(format!("Total Sessions: {}", session_count));
+        ui.label(format!("Total sessions: {}", session_count));
 
         let active_sessions: usize = manager.qguilds.iter()
           .flat_map(|g| &g.categories)
@@ -307,7 +307,7 @@ fn show_actions(ui: &mut egui::Ui, state: &GuiSharedState) {
           .flat_map(|f| &f.sessions)
           .filter(|s| s.is_active())
           .count();
-        ui.label(format!("Active Games: {}", active_sessions));
+        ui.label(format!("Active games: {}", active_sessions));
       } else {
         ui.label("Waiting for data...");
       }

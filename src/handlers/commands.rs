@@ -61,7 +61,7 @@ pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
   let rank = match crate::Rank::from_elo(&cc.db, guild_id, elo).await {
     Ok(r) => r,
     Err(_) => {
-      let embed = CE::new().title("Migration Failed").description(format!("No rank configured for ELO {}. Set up ranks first.", elo)).color(RED);
+      let embed = CE::new().title("Migration failed").description(format!("No rank configured for ELO {}. Set up ranks first.", elo)).color(RED);
       cc.reply_embed(embed).await?;
       return Ok(());
     }
@@ -79,7 +79,7 @@ pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
       Ok(m) => m,
       Err(e) => {
         let embed = CE::new()
-          .title("Migration Failed")
+          .title("Migration failed")
           .description(format!("Failed to fetch guild members: {}\n\nEnsure the bot has the **Server Members** privileged intent enabled.", e))
           .color(RED);
         cc.intax.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
@@ -100,7 +100,7 @@ pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
   let matching: Vec<_> = all_members.iter().filter(|m| m.roles.contains(&role_id)).collect();
 
   if matching.is_empty() {
-    let embed = CE::new().title("Migration Complete").description(format!("No members found with <@&{}>.", role_id)).color(YELLOW);
+    let embed = CE::new().title("Migration complete").description(format!("No members found with <@&{}>.", role_id)).color(YELLOW);
     cc.intax.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
     return Ok(());
   }
@@ -110,7 +110,7 @@ pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
 
   // Batch ensure all users exist, then batch set ELO (2 queries instead of 2*N)
   if let Err(e) = cc.db.players.batch_ensure(&user_ids).await {
-    let embed = CE::new().title("Migration Failed").description(format!("Failed to create user records: {}", e)).color(RED);
+    let embed = CE::new().title("Migration failed").description(format!("Failed to create user records: {}", e)).color(RED);
     cc.intax.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
     return Ok(());
   }
@@ -118,7 +118,7 @@ pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
   let success = match cc.db.elo.batch_set(guild_id, elo, &rank, &user_ids).await {
     Ok(n) => n,
     Err(e) => {
-      let embed = CE::new().title("Migration Failed").description(format!("Failed to set ELO: {}", e)).color(RED);
+      let embed = CE::new().title("Migration failed").description(format!("Failed to set ELO: {}", e)).color(RED);
       cc.intax.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
       return Ok(());
     }
@@ -126,7 +126,7 @@ pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
 
   let desc = format!("Assigned **{} ELO** (rank: {}) to **{}** member(s) with <@&{}>.", elo, rank.name, success, role_id);
 
-  let embed = CE::new().title("Migration Complete").description(desc).color(GREEN);
+  let embed = CE::new().title("Migration complete").description(desc).color(GREEN);
   cc.intax.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
 
   info!("Assigned ELO {} to {}/{} members with role {} in guild {}", elo, success, total, role_id, guild_id);
@@ -159,7 +159,7 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
     Ok(elo) => elo,
     Err(e) if e.to_string().contains("Failed to get default rank") => {
       let error_embed = CE::new()
-        .title("Configuration Error")
+        .title("Configuration error")
         .description("A default rank has not been set for this server.\n\nPlease configure a default rank in the guild config before editing players.")
         .color(RED);
       cc.reply_embed(error_embed).await?;

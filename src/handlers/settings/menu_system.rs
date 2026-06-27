@@ -111,7 +111,7 @@ impl MenuSystem {
         // Guild Config Page
         menus.insert(MenuPage::GuildConfig, MenuDefinition {
             page: MenuPage::GuildConfig,
-            title: "Guild Configuration",
+            title: "Guild configuration",
             description: "**Configuration Overview:**\n\n**Server-wide settings**\n• Roles (runner/admin permissions)\n• Team balance method\n• ELO & Rank linking\n\n**Rank management**\n• Add, remove & link ranks\n• Set default rank\n\n**Category management**\n• Queue channels & voice channels\n• Team channels & game settings",
             color: MenuColor::Standard,
             parent: None,
@@ -143,7 +143,7 @@ impl MenuSystem {
         // Server Config Page
         menus.insert(MenuPage::ServerConfig, MenuDefinition {
             page: MenuPage::ServerConfig,
-            title: "Server Configuration",
+            title: "Server configuration",
             description: "Configure server-wide settings",
             color: MenuColor::Standard,
             parent: Some(MenuPage::GuildConfig),
@@ -168,7 +168,7 @@ impl MenuSystem {
                 },
                 MenuButton {
                     id: "guild_config_vc_menu",
-                    label: "Voice Chat",
+                    label: "Voice chat",
                     description: Some("Configure voice channel settings like auto-join, auto-leave, and VC policies"),
                     target_page: Some(MenuPage::VcConfig),
                 },
@@ -181,7 +181,7 @@ impl MenuSystem {
         // Roles Config Page
         menus.insert(MenuPage::RolesConfig, MenuDefinition {
             page: MenuPage::RolesConfig,
-            title: "Roles Configuration",
+            title: "Roles configuration",
             description: "Configure runner, admin, and ping roles",
             color: MenuColor::Standard,
             parent: Some(MenuPage::ServerConfig),
@@ -194,9 +194,9 @@ impl MenuSystem {
                 },
             ],
             fields: vec![
-                ("Runner Role", "Select runner role", true),
-                ("Admin Role", "Select admin role", true),
-                ("Ping Role", "Select ping role (empty for @here)", true),
+                ("Runner role", "Select runner role", true),
+                ("Admin role", "Select admin role", true),
+                ("Ping role", "Select ping role (empty for @here)", true),
             ],
             dynamic_fields: vec![],
             dynamic_components: vec![],
@@ -205,21 +205,21 @@ impl MenuSystem {
         // ELO Config Page
         menus.insert(MenuPage::EloConfig, MenuDefinition {
             page: MenuPage::EloConfig,
-            title: "ELO Configuration",
+            title: "ELO configuration",
             description: "Configure ELO and rank settings",
             color: MenuColor::Standard,
             parent: Some(MenuPage::ServerConfig),
             buttons: vec![
                 MenuButton {
                     id: "guild_config_ranks",
-                    label: "Manage Ranks",
+                    label: "Manage ranks",
                     description: Some("Configure rank roles and ELO thresholds"),
                     target_page: Some(MenuPage::RankConfig),
                 },
             ],
             fields: vec![
                 ("Dynamic ELO", "Toggle dynamic ELO calculations using the buttons below", false),
-                ("ELO Visibility", "Show or hide ELO values from players", false),
+                ("ELO visibility", "Show or hide ELO values from players", false),
                 ("ELO-Rank Linking", "Link ELO to rank roles automatically", false),
             ],
             dynamic_fields: vec![],
@@ -229,15 +229,15 @@ impl MenuSystem {
         // VC Config Page
         menus.insert(MenuPage::VcConfig, MenuDefinition {
             page: MenuPage::VcConfig,
-            title: "Voice Chat Configuration",
+            title: "Voice chat configuration",
             description: "Configure voice channel settings",
             color: MenuColor::Standard,
             parent: Some(MenuPage::ServerConfig),
             buttons: vec![],
             fields: vec![
-                ("VC Auto-join", "Server default for automatically joining voice channel when queuing", false),
-                ("VC Auto-leave", "Server default for automatically leaving voice channel when unqueuing", false),
-                ("VC Leave Queue", "Server default for leaving queue when exiting voice channel", false),
+                ("VC auto-join", "Server default for automatically joining voice channel when queuing", false),
+                ("VC auto-leave", "Server default for automatically leaving voice channel when unqueuing", false),
+                ("VC leave queue", "Server default for leaving queue when exiting voice channel", false),
                 ("Post-game Auto-remove", "Automatically remove players from queue after game ends", false),
             ],
             dynamic_fields: vec![],
@@ -247,7 +247,7 @@ impl MenuSystem {
         // General Config Page
         menus.insert(MenuPage::GeneralConfig, MenuDefinition {
             page: MenuPage::GeneralConfig,
-            title: "General Configuration",
+            title: "General configuration",
             description: "Configure general server settings",
             color: MenuColor::Standard,
             parent: Some(MenuPage::ServerConfig),
@@ -297,7 +297,7 @@ impl MenuSystem {
         // Rank Config Page
         menus.insert(MenuPage::RankConfig, MenuDefinition {
             page: MenuPage::RankConfig,
-            title: "Rank Configuration",
+            title: "Rank configuration",
             description: "Configure rank settings",
             color: MenuColor::Standard,
             parent: Some(MenuPage::EloConfig),
@@ -310,7 +310,7 @@ impl MenuSystem {
         // Category List Page
         menus.insert(MenuPage::CategoryList, MenuDefinition {
             page: MenuPage::CategoryList,
-            title: "Category List",
+            title: "Category list",
             description: "Select a category to manage",
             color: MenuColor::Standard,
             parent: Some(MenuPage::ServerConfig),
@@ -323,7 +323,7 @@ impl MenuSystem {
         // Category Settings Page
         menus.insert(MenuPage::CategorySettings, MenuDefinition {
             page: MenuPage::CategorySettings,
-            title: "Category Settings",
+            title: "Category settings",
             description: "Configure category-specific settings",
             color: MenuColor::Standard,
             parent: Some(MenuPage::CategoryList),

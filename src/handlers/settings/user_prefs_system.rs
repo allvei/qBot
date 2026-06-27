@@ -26,7 +26,7 @@ pub enum UserPrefsPage {
 fn dm_toggle_component(prefs: &UserPreferences) -> Option<CAR> {
     Some(CAR::Buttons(vec![
         CB::new("settings_toggle_dm")
-            .label("DM Alerts")
+            .label("DM alerts")
             .style(if prefs.pm_hot_alert { BS::Success } else { BS::Secondary }),
     ]))
 }
@@ -35,7 +35,7 @@ fn dm_toggle_component(prefs: &UserPreferences) -> Option<CAR> {
 fn vc_auto_join_component(prefs: &UserPreferences) -> Option<CAR> {
     Some(CAR::Buttons(vec![
         CB::new("settings_vc_auto_join")
-            .label("VC Auto-join")
+            .label("VC auto-join")
             .style(if prefs.vc_auto_join { BS::Success } else { BS::Secondary }),
     ]))
 }
@@ -43,7 +43,7 @@ fn vc_auto_join_component(prefs: &UserPreferences) -> Option<CAR> {
 fn vc_auto_leave_component(prefs: &UserPreferences) -> Option<CAR> {
     Some(CAR::Buttons(vec![
         CB::new("settings_vc_auto_leave")
-            .label("VC Auto-leave")
+            .label("VC auto-leave")
             .style(if prefs.vc_auto_leave { BS::Success } else { BS::Secondary }),
     ]))
 }
@@ -51,7 +51,7 @@ fn vc_auto_leave_component(prefs: &UserPreferences) -> Option<CAR> {
 fn vc_leave_queue_component(prefs: &UserPreferences) -> Option<CAR> {
     Some(CAR::Buttons(vec![
         CB::new("settings_vc_leave_queue")
-            .label("Leave Queue on VC Disconnect")
+            .label("Leave queue on VC disconnect")
             .style(if prefs.vc_leave_queue { BS::Success } else { BS::Secondary }),
     ]))
 }
@@ -113,28 +113,28 @@ impl UserPrefsMenuSystem {
         // Register Main page
         inner.add_page(crate::handlers::settings::unified_menu::MenuDefinition {
             page: UserPrefsPage::Main,
-            title: "qBot Preferences",
+            title: "qBot preferences",
             description: "Configure your queue preferences and notification settings",
             color: 0x5865F2,
             parent: None,
             buttons: vec![
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "user_prefs_queue_settings",
-                    label: "Queue Settings",
+                    label: "Queue settings",
                     description: Some("Configure queue timeout, auto-join, and auto-leave settings"),
                     target_page: Some(UserPrefsPage::QueueSettings),
                     button_type: ButtonType::Navigation(NavAction::Open),
                 },
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "user_prefs_alert_settings",
-                    label: "Alert Settings",
+                    label: "Alert settings",
                     description: Some("Configure join/leave alerts and DM notifications"),
                     target_page: Some(UserPrefsPage::AlertSettings),
                     button_type: ButtonType::Navigation(NavAction::Open),
                 },
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "user_prefs_ping_settings",
-                    label: "Ping Settings",
+                    label: "Ping settings",
                     description: Some("Configure ping notifications for each server"),
                     target_page: Some(UserPrefsPage::PingSettings),
                     button_type: ButtonType::Navigation(NavAction::Open),
@@ -148,35 +148,35 @@ impl UserPrefsMenuSystem {
         // Register QueueSettings page
         inner.add_page(crate::handlers::settings::unified_menu::MenuDefinition {
             page: UserPrefsPage::QueueSettings,
-            title: "Queue Settings",
+            title: "Queue settings",
             description: "Configure queue behavior and voice channel settings",
             color: 0x5865F2,
             parent: Some(UserPrefsPage::Main),
             buttons: vec![
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_queue_expiration",
-                    label: "Queue Timeout",
+                    label: "Queue timeout",
                     description: Some("Set how long before you're automatically removed from the queue"),
                     target_page: Some(UserPrefsPage::QueueTimeoutSettings),
                     button_type: ButtonType::Navigation(NavAction::Open),
                 },
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_vc_auto_join",
-                    label: "VC Auto-join",
+                    label: "VC auto-join",
                     description: Some("Automatically join voice channel when joining queue"),
                     target_page: None,
                     button_type: ButtonType::Toggle,
                 },
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_vc_auto_leave",
-                    label: "VC Auto-leave",
+                    label: "VC auto-leave",
                     description: Some("Automatically leave voice channel when leaving queue"),
                     target_page: None,
                     button_type: ButtonType::Toggle,
                 },
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_vc_leave_queue",
-                    label: "Leave Queue on VC Disconnect",
+                    label: "Leave queue on VC disconnect",
                     description: Some("Automatically leave queue when disconnecting from voice channel"),
                     target_page: None,
                     button_type: ButtonType::Toggle,
@@ -184,7 +184,7 @@ impl UserPrefsMenuSystem {
             ],
             fields: vec![],
             dynamic_fields: vec![
-                ("Queue Timeout", queue_timeout_field, true),
+                ("Queue timeout", queue_timeout_field, true),
             ],
             dynamic_components: vec![
                 vc_auto_join_component,
@@ -196,14 +196,14 @@ impl UserPrefsMenuSystem {
         // Register QueueTimeoutSettings page
         inner.add_page(crate::handlers::settings::unified_menu::MenuDefinition {
             page: UserPrefsPage::QueueTimeoutSettings,
-            title: "Queue Timeout",
+            title: "Queue timeout",
             description: "Select how long before you're automatically removed from the queue",
             color: 0x5865F2,
             parent: Some(UserPrefsPage::QueueSettings),
             buttons: vec![],
             fields: vec![],
             dynamic_fields: vec![
-                ("Current Value", queue_timeout_field, true),
+                ("Current value", queue_timeout_field, true),
             ],
             dynamic_components: vec![
                 queue_timeout_buttons_component,
@@ -213,28 +213,28 @@ impl UserPrefsMenuSystem {
         // Register AlertSettings page
         inner.add_page(crate::handlers::settings::unified_menu::MenuDefinition {
             page: UserPrefsPage::AlertSettings,
-            title: "Alert Settings",
+            title: "Alert settings",
             description: "Configure custom alerts and notification preferences",
             color: 0x5865F2,
             parent: Some(UserPrefsPage::Main),
             buttons: vec![
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_toggle_dm",
-                    label: "DM Alerts",
+                    label: "DM alerts",
                     description: Some("Receive DM notifications when games are ready"),
                     target_page: None,
                     button_type: ButtonType::Toggle,
                 },
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_edit_alert",
-                    label: "Edit Join Alert",
+                    label: "Edit join alert",
                     description: Some("Customize your join announcement embed"),
                     target_page: None,
                     button_type: ButtonType::Edit,
                 },
                 crate::handlers::settings::unified_menu::MenuButton {
                     id: "settings_edit_leave_alert",
-                    label: "Edit Leave Alert",
+                    label: "Edit leave alert",
                     description: Some("Customize your leave announcement embed"),
                     target_page: None,
                     button_type: ButtonType::Edit,
@@ -252,7 +252,7 @@ impl UserPrefsMenuSystem {
         // The button is NOT defined here - it's created dynamically in build_ping_settings_response()
         inner.add_page(crate::handlers::settings::unified_menu::MenuDefinition {
             page: UserPrefsPage::PingSettings,
-            title: "Ping Settings",
+            title: "Ping settings",
             description: "Manage per-server ping notification preferences",
             color: 0x5865F2,
             parent: Some(UserPrefsPage::Main),

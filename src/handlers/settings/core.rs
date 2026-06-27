@@ -199,7 +199,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
       // Show modal for customizing join announcement embed
       let settings = db.players.get_prefs(user_id).await?;
       let modal = CreateModal::new("settings_modal_announcement", "Customize join announcement").components(vec![
-        create_short_input_opt("HEX Color", "join_alert_color", "e.g., 3447003 or FF5733", &format!("{:06X}", settings.join_alert_color)),
+        create_short_input_opt("HEX color", "join_alert_color", "e.g., 3447003 or FF5733", &format!("{:06X}", settings.join_alert_color)),
         create_paragraph_input_with_value("Message", "join_alert", "e.g., Kafri: defense", &settings.join_alert_desc.unwrap_or_default()),
         create_short_input_opt("Footer text", "join_alert_footer", "e.g., Good luck!", &settings.join_alert_footer.unwrap_or_default()),
         create_short_input_opt("Thumbnail URL", "join_alert_img", "https://example.com/thumb.png", &settings.join_alert_img.unwrap_or_default()),
@@ -226,7 +226,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
         if let Some(guild_id_str) = values.first() {
           if let Ok(guild_id) = guild_id_str.parse::<u64>() {
             let guild_id = GI::new(guild_id);
-            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown Server".to_string());
+            let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown server".to_string());
 
             // Get current ping notification preference for this server
             let ping_enabled = db.user_server_prefs.get_ping_notification_enabled(user_id, guild_id).await.unwrap_or(None);
@@ -248,7 +248,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
             ];
 
             let embed = CE::new()
-              .title(format!("Ping Notifications - {}", guild_name))
+              .title(format!("Ping notifications - {}", guild_name))
               .description("Toggle whether you want to receive ping notifications when games are ready in this server.")
               .color(0x5865F2);
 
@@ -299,7 +299,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
         }
 
         // Update the button to reflect new state
-        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown Server".to_string());
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown server".to_string());
         let (enabled, label) = match new_value {
           Some(true) => (true, "Ping notifications enabled"),
           Some(false) => (false, "Ping notifications disabled"),
@@ -316,7 +316,7 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
         ];
 
         let embed = CE::new()
-          .title(format!("Ping Notifications - {}", guild_name))
+          .title(format!("Ping notifications - {}", guild_name))
           .description("Toggle whether you want to receive ping notifications when games are ready in this server.")
           .color(0x5865F2);
 
@@ -558,7 +558,7 @@ pub async fn build_ping_settings_response(
   // Build the base embed
   let embed = system.build_embed(UserPrefsPage::PingSettings, &settings)
     .unwrap_or_else(|| CE::new()
-      .title("Ping Settings")
+      .title("Ping settings")
       .description("Manage per-server ping notification preferences")
       .color(0x5865F2)
       .field("Note", "Ping settings are per-server and managed from the server dashboard. This menu is read-only in DM context.", false)
@@ -579,7 +579,7 @@ pub async fn build_ping_settings_response(
     };
     
     let button = CB::new("settings_ping_notifications")
-      .label("Ping Notifications")
+      .label("Ping notifications")
       .style(style);
     
     debug!("Adding enabled ping button with style: {:?}", style);
@@ -588,7 +588,7 @@ pub async fn build_ping_settings_response(
     // In DM context, show disabled button
     debug!("No guild context - adding disabled ping button");
     let button = CB::new("settings_ping_notifications")
-      .label("Ping Notifications")
+      .label("Ping notifications")
       .style(BS::Secondary)
       .disabled(true);
     

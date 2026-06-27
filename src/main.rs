@@ -94,7 +94,7 @@ fn run_gui() -> Result<()> {
   }
 
   let result = eframe::run_native(
-    "qBot Host Management Panel",
+    "qBot host management panel",
     native_options,
     Box::new(|cc| {
       // Configure custom font

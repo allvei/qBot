@@ -29,17 +29,17 @@ impl Default for BroadcastPanel {
 
 impl BroadcastPanel {
   pub fn ui(&mut self, ui: &mut Ui, state: Arc<Mutex<GuiState>>) {
-    ui.heading("Broadcast Message");
+    ui.heading("Broadcast message");
     ui.separator();
 
     // Message type toggle
     ui.horizontal(|ui| {
       ui.label("Message type:");
       ui.add_space(10.0);
-      if ui.radio(self.message_type == MessageType::SystemMessage, "System Message").clicked() {
+      if ui.radio(self.message_type == MessageType::SystemMessage, "System message").clicked() {
         self.message_type = MessageType::SystemMessage;
       }
-      if ui.radio(self.message_type == MessageType::CommunityUpdate, "Community Update").clicked() {
+      if ui.radio(self.message_type == MessageType::CommunityUpdate, "Community update").clicked() {
         self.message_type = MessageType::CommunityUpdate;
       }
     });
@@ -114,7 +114,7 @@ impl BroadcastPanel {
 
     // Send button
     let can_send = !self.message_content.trim().is_empty();
-    if ui.add_enabled(can_send, egui::Button::new("Send Message")).clicked() {
+    if ui.add_enabled(can_send, egui::Button::new("Send message")).clicked() {
       self.send_message(state.clone());
     }
 
@@ -122,7 +122,7 @@ impl BroadcastPanel {
     if let Some(ref result) = self.last_result {
       ui.add_space(10.0);
       ui.separator();
-      ui.label("Last Result:");
+      ui.label("Last result:");
       ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
         ui.label(result);
       });
@@ -133,8 +133,8 @@ impl BroadcastPanel {
 
     // Validation section
     let validate_button_text = match self.message_type {
-      MessageType::SystemMessage => "Validate System Message Channels",
-      MessageType::CommunityUpdate => "Validate Community Updates Channels",
+      MessageType::SystemMessage => "Validate system message channels",
+      MessageType::CommunityUpdate => "Validate community updates channels",
     };
     if ui.button(validate_button_text).clicked() {
       self.validate_channels(state.clone());

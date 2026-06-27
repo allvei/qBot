@@ -176,7 +176,7 @@ pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db
       }
 
       let embed = CE::new()
-        .title("ELO Gate - Select minimum rank")
+        .title("ELO gate - Select minimum rank")
         .description("Select the **minimum** rank that can view this category's category.\nAll ranks from min to max (inclusive) will have access.")
         .color(0x5865F2);
 
@@ -219,7 +219,7 @@ pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db
       let min_rank_name = if min_idx == 0 { "No minimum" } else { ranks.get(min_idx).map(|r| r.name.as_str()).unwrap_or("?") };
 
       let embed = CE::new()
-        .title("ELO Gate - Select maximum rank")
+        .title("ELO gate - Select maximum rank")
         .description(format!("Minimum rank: **{}**\n\nNow select the **maximum** rank that can view this category's category.", min_rank_name))
         .color(0x5865F2);
 
@@ -269,7 +269,7 @@ pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db
           let min_name = if min_idx == 0 { "No minimum" } else { ranks.get(min_idx).map(|r| r.name.as_str()).unwrap_or("?") };
           let max_name = if max_idx >= ranks.len().saturating_sub(1) { "No maximum" } else { ranks.get(max_idx).map(|r| r.name.as_str()).unwrap_or("?") };
           let embed = CE::new()
-            .title("ELO Gate Applied")
+            .title("ELO gate applied")
             .description(format!("Category visibility restricted to ranks **{}** through **{}**.\n{} rank role(s) granted view access.", min_name, max_name, count))
             .color(crate::GREEN);
 
@@ -281,12 +281,12 @@ pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db
           interaction.create_response(&ctx.http, response).await?;
         }
         Err(e) => {
-          let hint = if e.to_string().contains("Missing Access") {
+          let hint = if e.to_string().contains("Missing access") {
             "\n\nThe bot may lack **Manage Roles** or **Manage Channels** permission on this category. Check the bot's channel-level permissions."
           } else {
             ""
           };
-          let embed = CE::new().title("ELO Gate Failed").description(format!("Failed to apply permissions: {}{}", e, hint)).color(RED);
+          let embed = CE::new().title("ELO gate failed").description(format!("Failed to apply permissions: {}{}", e, hint)).color(RED);
           let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![
             CB::new(format!("category_settings_elo_gate_{category_id}")).label("Retry").style(BS::Primary),
             CB::new(format!("category_settings_back_{category_id}")).label("Back").style(BS::Secondary),
@@ -310,7 +310,7 @@ pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db
 
       match clear_elo_gate(ctx, guild_id, category_id).await {
         Ok(_) => {
-          let embed = CE::new().title("ELO Gate Cleared").description("Category is now visible to everyone.").color(crate::GREEN);
+          let embed = CE::new().title("ELO gate cleared").description("Category is now visible to everyone.").color(crate::GREEN);
           let response = CIR::UpdateMessage(
             CIRM::new()
               .embed(embed)
@@ -319,7 +319,7 @@ pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db
           interaction.create_response(&ctx.http, response).await?;
         }
         Err(e) => {
-          let embed = CE::new().title("Clear ELO Gate Failed").description(format!("Failed to clear permissions: {}", e)).color(RED);
+          let embed = CE::new().title("Clear ELO gate failed").description(format!("Failed to clear permissions: {}", e)).color(RED);
           let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![
             CB::new(format!("elo_gate_clear_{category_id}")).label("Retry").style(BS::Primary),
             CB::new(format!("category_settings_back_{category_id}")).label("Back").style(BS::Secondary),
@@ -548,7 +548,7 @@ pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db
         drop(manager_lock);
 
         let embed = CE::new()
-          .title("Dashboard Message Linked")
+          .title("Dashboard message linked")
           .description(format!(
             "Successfully linked existing dashboard message to this category.\n\n\
                         Message ID: `{}`\n\n\
@@ -693,7 +693,7 @@ pub async fn handle_category_link_msg_modal(ctx: &Context, interaction: &MI, db:
   let dashboard_msg_id = if message_input.contains("discord.com/channels/") {
     // Extract message ID from Discord link
     // Format: https://discord.com/channels/{guild_id}/{channel_id}/{message_id}
-    message_input.split('/').next_back().and_then(|s| s.parse::<u64>().ok()).ok_or_else(|| anyhow::anyhow!("Invalid Discord message link format"))?
+    message_input.split('/').next_back().and_then(|s| s.parse::<u64>().ok()).ok_or_else(|| anyhow::anyhow!("Invalid discord message link format"))?
   } else {
     // Parse as direct message ID
     message_input.trim().parse::<u64>().map_err(|_| anyhow::anyhow!("Invalid message ID: must be a number or Discord message link"))?
@@ -722,7 +722,7 @@ pub async fn handle_category_link_msg_modal(ctx: &Context, interaction: &MI, db:
           drop(manager_lock);
 
           let embed = CE::new()
-            .title("Dashboard Message Linked")
+            .title("Dashboard message linked")
             .description(format!(
               "Successfully linked dashboard message to this category.\n\n\
                             Message ID: `{}`\n\
@@ -748,7 +748,7 @@ pub async fn handle_category_link_msg_modal(ctx: &Context, interaction: &MI, db:
     Err(e) => {
       warn!("Message {} not found in channel {}: {}", dashboard_msg_id, dashboard_channel, e);
       let embed = CE::new()
-        .title("Message Not Found")
+        .title("Message not found")
         .description(format!(
           "Could not find message `{}` in <#{}>.\n\n\
                     Please verify:\n\

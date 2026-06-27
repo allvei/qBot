@@ -50,7 +50,7 @@ pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
       resp.context_menu(|ui| {
         ui.label(RichText::new(&guild.name).strong());
         ui.separator();
-        if ui.button("Copy Guild ID").clicked() {
+        if ui.button("Copy guild ID").clicked() {
           ui.ctx().copy_text(guild.id.get().to_string());
           ui.close_menu();
         }
@@ -89,10 +89,10 @@ pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
                 send(GuiCommand::AddDummyPlayers { guild_id, category_id: cat_id, fmt_id: fid, count: dummy_count, role_id: None });
               }
               ui.separator();
-              if ui.small_button("Clear Queue").clicked() {
+              if ui.small_button("Clear queue").clicked() {
                 send(GuiCommand::ClearQueue { guild_id, category_id: cat_id, fmt_id: fid });
               }
-              if ui.small_button("Force Hot").clicked() {
+              if ui.small_button("Force hot").clicked() {
                 send(GuiCommand::ForceQuotaMet { guild_id, category_id: cat_id, fmt_id: fid });
               }
             });
@@ -116,7 +116,7 @@ pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
             cols[1].label(RichText::new("Sessions").strong());
             let has_active = format.sessions.iter().any(|s| !s.is_idle());
             if !has_active {
-              cols[1].label("No active sessions");
+              cols[1].label("-");
             } else {
               // Pass the real index into format.sessions so session commands work correctly
               for (sess_idx, session) in format.sessions.iter().enumerate() {
@@ -211,7 +211,7 @@ fn player_row(ui: &mut egui::Ui, sp: &crate::models::SessionPlayer, guild_id: u6
     ui.label(RichText::new(&sp.player.tag).strong());
     ui.label(RichText::new(format!("ID: {}", uid)).weak());
     ui.separator();
-    if ui.button("Copy Player ID").clicked() {
+    if ui.button("Copy player ID").clicked() {
       ui.ctx().copy_text(uid.to_string());
       ui.close_menu();
     }
@@ -238,7 +238,7 @@ fn player_row(ui: &mut egui::Ui, sp: &crate::models::SessionPlayer, guild_id: u6
       ui.close_menu();
     }
     ui.separator();
-    if ui.button("Fix VC State").on_hover_text("Reset stuck in_vc flag for this player").clicked() {
+    if ui.button("Fix VC state").on_hover_text("Reset stuck in_vc flag for this player").clicked() {
       state.send_cmd(GuiCommand::FixPlayerVCState { guild_id, category_id: cat_id, user_id: uid });
       ui.close_menu();
     }

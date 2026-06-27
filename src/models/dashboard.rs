@@ -1534,7 +1534,7 @@ impl Category {
     }
 
     // Create modal for score input with category_id and format_id embedded
-    let modal = CreateModal::new(format!("report_score_modal_{}_{}", category_id, format_id), "Report Match Score").components(vec![
+    let modal = CreateModal::new(format!("report_score_modal_{}_{}", category_id, format_id), "Report match score").components(vec![
       CAR::InputText(
         CreateInputText::new(InputTextStyle::Short, "Blue team score", "blu_score")
           .placeholder(format!("0-{}", crate::models::constants::MAX_MATCH_SCORE))
@@ -1897,7 +1897,7 @@ impl Category {
     // Check if regular users are allowed to ping
     let ping_users_enabled = cc.db.config.get_ping_users_enabled(guild_id).await.unwrap_or(true);
     if !is_runner && !ping_users_enabled {
-      cc.reply_ephemeral("Only runners can use the Ping button.").await?;
+      cc.reply_ephemeral("Only runners can use the ping button.").await?;
       return Ok(());
     }
 
@@ -2342,7 +2342,7 @@ impl DashboardUpdateQueue {
           }
           Err(e) => {
             // Check if message was deleted (404 error)
-            if e.to_string().contains("404") || e.to_string().contains("Unknown Message") {
+            if e.to_string().contains("404") || e.to_string().contains("Unknown message") {
               warn!("[{}] Dashboard message was deleted in #{}, recreating...", guild_name, channel_name);
 
               // Recreate the dashboard message
@@ -2370,7 +2370,7 @@ impl DashboardUpdateQueue {
                 }
               }
             } else {
-              let hint = if e.to_string().contains("Missing Access") { " (check that the bot has View Channel and Send Messages permissions on this channel)" } else { "" };
+              let hint = if e.to_string().contains("Missing access") { " (check that the bot has View Channel and Send Messages permissions on this channel)" } else { "" };
               warn!("[{}] Failed to update dashboard in #{}:{}{}", guild_name, channel_name, e, hint);
             }
           }
