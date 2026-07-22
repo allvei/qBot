@@ -52,7 +52,7 @@ pub fn show_queue_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
         ui.separator();
         if ui.button("Copy guild ID").clicked() {
           ui.ctx().copy_text(guild.id.get().to_string());
-          ui.close_menu();
+          ui.close();
         }
       });
     }
@@ -213,34 +213,34 @@ fn player_row(ui: &mut egui::Ui, sp: &crate::models::SessionPlayer, guild_id: u6
     ui.separator();
     if ui.button("Copy player ID").clicked() {
       ui.ctx().copy_text(uid.to_string());
-      ui.close_menu();
+      ui.close();
     }
     if ui.button("Copy tag").clicked() {
       ui.ctx().copy_text(sp.player.tag.clone());
-      ui.close_menu();
+      ui.close();
     }
     ui.separator();
     if ui.button("Remove").clicked() {
       state.send_cmd(GuiCommand::RemovePlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
-      ui.close_menu();
+      ui.close();
     }
     if ui.button("Buffer (move to front)").clicked() {
       state.send_cmd(GuiCommand::BufferPlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
-      ui.close_menu();
+      ui.close();
     }
     if ui.button("Fatkid (move to end)").clicked() {
       state.send_cmd(GuiCommand::FatkidPlayer { guild_id, category_id: cat_id, fmt_id, user_id: uid });
-      ui.close_menu();
+      ui.close();
     }
     ui.separator();
     if ui.button("Delete from database").on_hover_text("Remove from all queues in this guild and delete guild ELO record").clicked() {
       state.send_cmd(GuiCommand::DeletePlayerFromDb { guild_id, user_id: uid });
-      ui.close_menu();
+      ui.close();
     }
     ui.separator();
     if ui.button("Fix VC state").on_hover_text("Reset stuck in_vc flag for this player").clicked() {
       state.send_cmd(GuiCommand::FixPlayerVCState { guild_id, category_id: cat_id, user_id: uid });
-      ui.close_menu();
+      ui.close();
     }
   });
 }

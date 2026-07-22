@@ -13,7 +13,7 @@ use crate::{
   repo::GuildRepository,
 };
 use migrations::DatabaseMigrations;
-use repo::{CategoryRepository, ConfigRepository, EloRepository, FatkidRepository, MatchRepo, PlayerRepository, RankRepository, StateRepository, TeamRepository, UserServerPrefsRepository};
+use repo::{CaptainDraftRepository, CategoryRepository, ConfigRepository, EloRepository, FatkidRepository, GameReadyNotifRepository, MatchRepo, PlayerRepository, RankRepository, StateRepository, TeamRepository, UserServerPrefsRepository};
 
 /// Main database interface that orchestrates all repositories
 #[derive(Clone)]
@@ -30,6 +30,8 @@ pub struct Database {
   pub fatkids: FatkidRepository,
   pub user_server_prefs: UserServerPrefsRepository,
   pub state: StateRepository,
+  pub game_ready_notifs: GameReadyNotifRepository,
+  pub captain_drafts: CaptainDraftRepository,
 }
 
 impl Database {
@@ -69,11 +71,13 @@ impl Database {
     let fatkids = FatkidRepository::new(pool.clone());
     let user_server_prefs = UserServerPrefsRepository::new(pool.clone());
     let state = StateRepository::new(&pool);
+    let game_ready_notifs = GameReadyNotifRepository::new(pool.clone());
+    let captain_drafts = CaptainDraftRepository::new(pool.clone());
 
     // Verify schemas after all repositories are created
     migrations.verify_schemas().await?;
 
-    Ok(Self { pool, guilds, players: users, categories, config, elo: elos, ranks, teams, matches, fatkids, user_server_prefs, state })
+    Ok(Self { pool, guilds, players: users, categories, config, elo: elos, ranks, teams, matches, fatkids, user_server_prefs, state, game_ready_notifs, captain_drafts })
   }
 
   /// Get the underlying connection pool for advanced operations

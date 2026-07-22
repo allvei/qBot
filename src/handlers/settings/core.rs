@@ -170,11 +170,10 @@ pub async fn handle_settings_button(ctx: &Context, interaction: &CI, db: &Arc<Da
                 if !member.roles.contains(&role_id) {
                   let _ = member.add_role(&ctx.http, role_id).await;
                 }
-              } else if new_value == Some(false) {
-                if member.roles.contains(&role_id) {
+              } else if new_value == Some(false)
+                && member.roles.contains(&role_id) {
                   let _ = member.remove_role(&ctx.http, role_id).await;
                 }
-              }
             }
           }
         }

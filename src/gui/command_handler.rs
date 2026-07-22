@@ -28,7 +28,7 @@ fn find_session(manager: &mut Manager, guild_id: u64, category_id: u8, fmt_id: u
 //
 // Classic BCH pattern for N players sorted by ELO descending:
 //   index (0-based): 0→Red, 1→Blu, 2→Blu, 3→Red, 4→Red, 5→Blu, …
-fn bch_assign_teams(players: &mut [SessionPlayer]) {
+pub fn bch_assign_teams(players: &mut [SessionPlayer]) {
   // Sort descending by ELO
   players.sort_by(|a, b| b.player.elo.cmp(&a.player.elo));
   for (i, sp) in players.iter_mut().enumerate() {

@@ -215,11 +215,81 @@ pub async fn show_end_match_selection(ctx: &Context, interaction: &CI, db: &Arc<
       CB::new(format!("runner_end_draw_{}_{}", category_id, format_id)).label("DRAW").style(BS::Secondary),
       CB::new(format!("runner_end_red_{}_{}", category_id, format_id)).label("RED WON").style(BS::Danger),
     ]),
+    CAR::Buttons(vec![
+      CB::new(format!("runner_end_force_{}_{}", category_id, format_id)).label("Force End (no score)").style(BS::Danger),
+    ]),
     CAR::Buttons(vec![Eph::back("runner_menu_back")]),
   ];
 
   let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
   interaction.create_response(&ctx.http, response).await?;
+
+  Ok(())
+}
+
+/// Handle force end button (runner_end_force_{category_id}_{format_id})
+/// Ends match without score reporting, bypassing the active submission check.
+pub async fn handle_force_end_match(ctx: &Context, interaction: &CI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<Manager>>) -> Result<()> {
+  let cc = CC { ctx, component: interaction, db: db.clone(), manager };
+
+  if !is_role_component(&cc, &Role::Runner).await? {
+    let embed = CE::new().title("Only runners can use this action.").color(0xFF0000);
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
+    interaction.create_response(&ctx.http, response).await?;
+    return Ok(());
+  }
+
+  let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
+
+  let custom_id = &interaction.data.custom_id;
+  let parts: Vec<&str> = custom_id.split('_').collect();
+  let category_id = parts.get(3).and_then(|s| s.parse::<u8>().ok());
+  let format_id = parts.get(4).and_then(|s| s.parse::<u8>().ok());
+
+  if category_id.is_none() || format_id.is_none() {
+    let embed = CE::new().title("Invalid action").color(0xFF0000);
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
+    interaction.create_response(&ctx.http, response).await?;
+    return Ok(());
+  }
+
+  let category_id = category_id.unwrap();
+  let format_id = format_id.unwrap();
+
+  let (guild_name_str, category_name, format_name) = {
+    let mut mgr = manager.lock().await;
+    let server = mgr.get_qguild(guild_id)?;
+    let category = server.categories.iter().find(|c| c.id == category_id).ok_or_else(|| anyhow::anyhow!("Category not found"))?;
+    let format = category.formats.iter().find(|f| f.id == format_id).ok_or_else(|| anyhow::anyhow!("Format not found"))?;
+    (guild_name(ctx, guild_id), category.name.as_deref().unwrap_or("Unknown").to_string(), format.name.clone())
+  };
+
+  info!("{} Runner {} force-ended match (no score)", log_prefix_category(&guild_name_str, &category_name), interaction.user.tag());
+
+  interaction.create_response(&ctx.http, CIR::Defer(CIRM::new().ephemeral(true))).await?;
+
+  let result = {
+    let mut mgr = manager.lock().await;
+    let server = mgr.get_qguild(guild_id)?;
+    let category = server.categories.iter_mut().find(|c| c.id == category_id).ok_or_else(|| anyhow::anyhow!("Category not found"))?;
+    let pull_result = category.pull_fmt(format_id, ctx, guild_id, db, Some(manager.clone())).await;
+    if pull_result.is_ok() {
+      category.queue_dash_update(ctx, guild_id).await;
+    }
+    pull_result
+  };
+
+  match result {
+    Ok(_) => {
+      let embed = CE::new().title("Match force-ended").description(format!("Ended {} match without recording score.", format_name)).color(0x00FF00);
+      interaction.edit_response(&ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
+    }
+    Err(e) => {
+      error!("Failed to force-end match: {e}");
+      let embed = CE::new().title("Failed to end match").description(format!("Error: {}", e)).color(0xFF0000);
+      interaction.edit_response(&ctx.http, serenity::all::EditInteractionResponse::new().embed(embed)).await?;
+    }
+  }
 
   Ok(())
 }

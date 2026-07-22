@@ -2,7 +2,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use tracing::info;
 
-use crate::{ansi::*, cinfo, QGuild};
+use crate::QGuild;
 
 #[derive(Clone)]
 pub struct GuildRepository {

@@ -78,6 +78,8 @@ impl DatabaseMigrations {
     self.create_fatkid_table().await?;
     self.create_guilds_table().await?;
     self.create_bot_state_table().await?;
+    self.create_game_ready_notifs_table().await?;
+    self.create_captain_drafts_table().await?;
 
     // Add foreign key constraint after both tables exist
     self.add_config_foreign_key().await?;
@@ -97,6 +99,8 @@ impl DatabaseMigrations {
     self.verify_fatkids().await?;
     self.verify_guilds().await?;
     self.verify_bot_state().await?;
+    self.verify_game_ready_notifs().await?;
+    self.verify_captain_drafts().await?;
     Ok(())
   }
 
@@ -1001,6 +1005,63 @@ impl DatabaseMigrations {
   async fn verify_fatkids(&self) -> Result<()> {
     let required_columns = vec!["id", "guild_id", "user_id", "immunity_level", "last_fatkidded_at"];
     self.verify_columns("fatkids", &required_columns).await?;
+    Ok(())
+  }
+
+  async fn create_game_ready_notifs_table(&self) -> Result<()> {
+    if !self.check_table("game_ready_notifs").await? {
+      sqlx::query(
+        "CREATE TABLE game_ready_notifs (
+          id         INTEGER PRIMARY KEY,
+          channel_id INTEGER NOT NULL,
+          message_id INTEGER NOT NULL,
+          created_at INTEGER NOT NULL,
+          UNIQUE(channel_id, message_id)
+        )",
+      )
+      .execute(&self.pool)
+      .await?;
+    }
+    Ok(())
+  }
+  async fn verify_game_ready_notifs(&self) -> Result<()> {
+    let required_columns = vec!["id", "channel_id", "message_id", "created_at"];
+    self.verify_columns("game_ready_notifs", &required_columns).await?;
+
+    // One-time cleanup: Check if table has any entries, if so delete all (migration cleanup)
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM game_ready_notifs").fetch_optional(&self.pool).await?.unwrap_or(0);
+    if count > 0 {
+      info!("Found {} existing game_ready_notifs entries, performing migration cleanup", count);
+      sqlx::query("DELETE FROM game_ready_notifs").execute(&self.pool).await?;
+      info!("Cleared all game_ready_notifs entries for migration");
+    }
+
+    Ok(())
+  }
+
+  async fn create_captain_drafts_table(&self) -> Result<()> {
+    if !self.check_table("captain_drafts").await? {
+      sqlx::query(
+        "CREATE TABLE captain_drafts (
+          id           INTEGER PRIMARY KEY,
+          guild_id     INTEGER NOT NULL,
+          category_id  INTEGER NOT NULL,
+          format_id    INTEGER NOT NULL,
+          channel_id   INTEGER NOT NULL,
+          message_id   INTEGER NOT NULL,
+          created_at   INTEGER NOT NULL,
+          FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+        )",
+      )
+      .execute(&self.pool)
+      .await?;
+    }
+    Ok(())
+  }
+
+  async fn verify_captain_drafts(&self) -> Result<()> {
+    let required_columns = vec!["id", "guild_id", "category_id", "format_id", "channel_id", "message_id", "created_at"];
+    self.verify_columns("captain_drafts", &required_columns).await?;
     Ok(())
   }
 

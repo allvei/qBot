@@ -1,7 +1,9 @@
+pub mod captain_draft;
 pub mod category;
 pub mod config;
 pub mod elo;
 pub mod fatkid;
+pub mod game_ready_notif;
 pub mod guilds;
 pub mod r#match;
 pub mod rank;
@@ -10,10 +12,12 @@ pub mod team;
 pub mod user;
 pub mod user_server_prefs;
 
+pub use captain_draft::CaptainDraftRepository;
 pub use category::CategoryRepository;
 pub use config::ConfigRepository;
 pub use elo::{EloRepository, GuildElo};
 pub use fatkid::FatkidRepository;
+pub use game_ready_notif::GameReadyNotifRepository;
 pub use guilds::GuildRepository;
 pub use r#match::{MatchPlayerInsert, MatchRecord, MatchRepo, PlayerStats};
 pub use rank::{GuildRank, RankRepository};

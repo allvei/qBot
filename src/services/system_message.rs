@@ -108,7 +108,7 @@ pub async fn validate_system_message_channels(ctx: &Context, db: &Database) -> V
         }
       }
       Ok(None) => {
-        errors.push((guild_name, "No system message channel configured".to_string()));
+        errors.push((guild_name, "System messages channel is unset".to_string()));
       }
       Err(e) => {
         errors.push((guild_name, format!("Database error: {}", e)));

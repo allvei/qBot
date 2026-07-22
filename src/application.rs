@@ -599,6 +599,16 @@ impl EventHandler for Handler {
       ctx.data.write().await.insert::<crate::models::QueueExpirationSchedulerKey>(scheduler_arc);
     }
 
+    // Cleanup stale captain draft embeds
+    {
+      let ctx_clone = ctx.clone();
+      let db_clone = self.db.clone();
+      let manager_clone = self.manager.clone();
+      tokio::spawn(async move {
+        Self::cleanup_stale_captain_drafts(&ctx_clone, &db_clone, &manager_clone).await;
+      });
+    }
+
     // Validate system message channels
     {
       let ctx_clone = ctx.clone();
@@ -1094,6 +1104,50 @@ impl EventHandler for Handler {
           return;
         }
 
+        // Handle captain mode interactions
+        if itx.data.custom_id.starts_with("captain_") {
+          if let Some(guild_id) = itx.guild_id {
+            if itx.data.custom_id.starts_with("captain_pick_") {
+              // captain_pick_USERID_TURN
+              let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
+              if parts.len() >= 4 {
+                let user_id = parts[2].parse::<u64>().ok().map(serenity::all::UserId::new);
+                let turn = parts[3].parse::<usize>().ok();
+                if let (Some(uid), Some(t)) = (user_id, turn) {
+                  let result = crate::handlers::captain_mode::handle_captain_pick(&ctx, itx, &self.db, &self.manager, guild_id, uid, t).await;
+                  if let Err(e) = result {
+                    error!("Error handling captain pick: {e}");
+                  }
+                }
+              }
+            } else if itx.data.custom_id == "captain_cancel" {
+              let result = crate::handlers::captain_mode::handle_captain_cancel(&ctx, itx, &self.db, &self.manager, guild_id).await;
+              if let Err(e) = result {
+                error!("Error handling captain cancel: {e}");
+              }
+            } else if itx.data.custom_id == "captain_start" {
+              let result = crate::handlers::captain_mode::handle_captain_start(&ctx, itx, &self.db, &self.manager, guild_id).await;
+              if let Err(e) = result {
+                error!("Error handling captain start: {e}");
+              }
+            } else if itx.data.custom_id.starts_with("captain_select_") {
+              // captain_select_CATEGORYID_FORMATID
+              let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
+              if parts.len() >= 4 {
+                let category_id = parts[2].parse::<u8>().ok();
+                let format_id = parts[3].parse::<u8>().ok();
+                if let (Some(cat_id), Some(fmt_id)) = (category_id, format_id) {
+                  let result = crate::handlers::captain_mode::start_captain_draft(&ctx, itx, &self.db, &self.manager, guild_id, cat_id, fmt_id).await;
+                  if let Err(e) = result {
+                    error!("Error handling captain format select: {e}");
+                  }
+                }
+              }
+            }
+          }
+          return;
+        }
+
         // Handle runner menu back button
         if itx.data.custom_id == "runner_menu_back" {
           let cc = crate::models::ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
@@ -1123,11 +1177,18 @@ impl EventHandler for Handler {
           return;
         }
 
-        // Handle runner menu end match buttons (runner_end_red/draw/blu_{category_id}_{format_id})
+        // Handle runner menu end match buttons (runner_end_red/draw/blu/force_{category_id}_{format_id})
         if itx.data.custom_id.starts_with("runner_end_") {
-          let result = crate::handlers::runner_menu::handle_end_match_result(&ctx, itx, &self.db, &self.manager).await;
-          if let Err(e) = result {
-            error!("Error handling runner end match: {e}");
+          if itx.data.custom_id.contains("force") {
+            let result = crate::handlers::runner_menu::handle_force_end_match(&ctx, itx, &self.db, &self.manager).await;
+            if let Err(e) = result {
+              error!("Error handling runner force end match: {e}");
+            }
+          } else {
+            let result = crate::handlers::runner_menu::handle_end_match_result(&ctx, itx, &self.db, &self.manager).await;
+            if let Err(e) = result {
+              error!("Error handling runner end match: {e}");
+            }
           }
           return;
         }
@@ -1146,12 +1207,19 @@ impl EventHandler for Handler {
           let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
           if let (Some(cat_id), Some(fmt_id)) = (parts.get(2).and_then(|s| s.parse::<u8>().ok()), parts.get(3).and_then(|s| s.parse::<u8>().ok())) {
             let guild_id = itx.guild_id.unwrap();
-            let mut manager = self.manager.lock().await;
-            if let Ok(server) = manager.get_qguild(guild_id) {
-              if let Some(category) = server.categories.iter_mut().find(|c| c.id == cat_id) {
-                let cc = crate::models::ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
-                if let Err(e) = category.handle_ping_format(&cc, fmt_id).await {
-                  error!("Error handling ping format: {e}");
+            let category_clone = {
+              let mut manager = self.manager.lock().await;
+              manager.get_qguild(guild_id).ok().and_then(|server| server.categories.iter().find(|c| c.id == cat_id)).cloned()
+            };
+            if let Some(mut category) = category_clone {
+              let cc = crate::models::ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
+              if let Err(e) = category.handle_ping_format(&cc, fmt_id).await {
+                error!("Error handling ping format: {e}");
+              }
+              let mut manager = self.manager.lock().await;
+              if let Ok(server) = manager.get_qguild(guild_id) {
+                if let Some(existing) = server.categories.iter_mut().find(|c| c.id == cat_id) {
+                  *existing = category;
                 }
               }
             }
@@ -1194,38 +1262,50 @@ impl EventHandler for Handler {
                   );
                   let _ = itx.create_response(&ctx.http, ack).await;
 
-                  // Now queue the player using the category found by cat_id
-                  let mut manager = self.manager.lock().await;
-                  if let Ok(server) = manager.get_qguild(guild_id) {
-                    if let Some(category) = server.categories.iter_mut().find(|c| c.id == cat_id) {
-                      let is_user_in_vc = category.is_user_in_queue_vc(&ctx.http, user_id).await;
-                      let queue_context = QueueContext::new(&ctx, Some(guild_id), Some(&self.db), Some(self.manager.clone()));
-                      let fmt_name_owned = category.format(fmt_id).map(|sg| sg.name.to_string());
-                      let player_rank_name = discord_rank.name.clone();
+                  // Clone the category out so the manager lock can be released before the handler
+                  // runs. queue_player_with_vc_status_fmt makes HTTP calls (role management,
+                  // notifications, DMs) and re-locks the manager internally; holding the lock
+                  // across it would deadlock and block every other concurrent interaction.
+                  let category_clone = {
+                    let mut manager = self.manager.lock().await;
+                    manager.get_qguild(guild_id).ok().and_then(|server| server.categories.iter().find(|c| c.id == cat_id)).cloned()
+                  };
+                  if let Some(mut category) = category_clone {
+                    let is_user_in_vc = category.is_user_in_queue_vc(&ctx.cache, user_id);
+                    let queue_context = QueueContext::new(&ctx, Some(guild_id), Some(&self.db), Some(self.manager.clone()));
+                    let fmt_name_owned = category.format(fmt_id).map(|sg| sg.name.to_string());
+                    let player_rank_name = discord_rank.name.clone();
 
-                      if let Err(e) = category.queue_player_with_vc_status_fmt(fmt_id, player.clone(), discord_rank, queue_context, is_user_in_vc).await {
-                        warn!("Failed to queue player after skill selection: {e}");
-                      } else {
-                        if let Some(format) = category.format(fmt_id) {
-                          if let Err(e) = crate::log_queue_toggle(&ctx, &self.db, guild_id, category.id, format, &player, "joined", None).await {
-                            warn!("Failed to log queue toggle: {e}");
-                          }
+                    if let Err(e) = category.queue_player_with_vc_status_fmt(fmt_id, player.clone(), discord_rank, queue_context, is_user_in_vc).await {
+                      warn!("Failed to queue player after skill selection: {e}");
+                    } else {
+                      if let Some(format) = category.format(fmt_id) {
+                        if let Err(e) = crate::log_queue_toggle(&ctx, &self.db, guild_id, category.id, format, &player, "joined", None).await {
+                          warn!("Failed to log queue toggle: {e}");
                         }
-                        use crate::models::alert_limiter::{schedule_alert, AlertType};
-                        schedule_alert(
-                          ctx.clone(),
-                          category.channels.queue_chat,
-                          guild_id,
-                          user_id,
-                          self.db.clone(),
-                          cat_id,
-                          fmt_id,
-                          AlertType::Join,
-                          fmt_name_owned,
-                          player_rank_name,
-                        );
                       }
-                      category.queue_dash_update(&ctx, guild_id).await;
+                      use crate::models::alert_limiter::{schedule_alert, AlertType};
+                      schedule_alert(
+                        ctx.clone(),
+                        category.channels.queue_chat,
+                        guild_id,
+                        user_id,
+                        self.db.clone(),
+                        cat_id,
+                        fmt_id,
+                        AlertType::Join,
+                        fmt_name_owned,
+                        player_rank_name,
+                      );
+                    }
+                    category.queue_dash_update(&ctx, guild_id).await;
+
+                    // Write the updated category back into the manager
+                    let mut manager = self.manager.lock().await;
+                    if let Ok(server) = manager.get_qguild(guild_id) {
+                      if let Some(existing) = server.categories.iter_mut().find(|c| c.id == cat_id) {
+                        *existing = category;
+                      }
                     }
                   }
                 }
@@ -1557,7 +1637,7 @@ impl EventHandler for Handler {
           if category.channels.queue_vc == new.channel_id.unwrap() {
             // Check if player is already in any session and mark them as in VC
             if let Ok(session) = category.get_user_sesh(user_id).await {
-              let was_hot = session.is_hot();
+              let _was_hot = session.is_hot();
               if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == user_id) {
                 let was_missing = !player.in_vc;
                 player.vc_on();
@@ -1575,7 +1655,7 @@ impl EventHandler for Handler {
 
                 // Always check if this player was in the pending VC notification list
                 // This ensures the "PUG starting" alert is deleted/updated when players join VC
-                category.on_player_joined_vc(&ctx, user_id).await;
+                category.on_player_joined_vc(&ctx, user_id, Some(&self.db)).await;
 
                 // Always update dashboard when player joins VC to show "In VC" status
                 // This applies to all session types, not just hot sessions
@@ -1681,7 +1761,7 @@ impl Handler {
   /// Handle a player leaving the queue VC (disconnect or move away).
   /// Checks auto-leave preference, removes or resets queue expiration time, and regenerates teams if needed.
   async fn handle_player_leave_vc(&self, ctx: &Context, category: &mut Category, guild_id: GuildId, user_id: UserId, _tag: &str) {
-    let queue_ctx = QueueContext { ctx, guild_id: Some(guild_id), db: Some(&self.db), manager: Some(self.manager.clone()) };
+    let _queue_ctx = QueueContext { ctx, guild_id: Some(guild_id), db: Some(&self.db), manager: Some(self.manager.clone()) };
     let guild_name = guild_name(ctx, guild_id);
     let ctg_nm = category.name.as_deref().unwrap_or("Unknown").to_string();
     let fmt_nm = category.get_user_fmt_name(user_id);
@@ -2214,6 +2294,59 @@ impl Handler {
         category.queue_dash_update(ctx, guild.id).await;
       }
     }
+  }
+
+  /// Cleanup stale captain draft embeds on bot startup
+  async fn cleanup_stale_captain_drafts(ctx: &Context, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<Manager>>) {
+    info!("Cleaning up stale captain draft embeds...");
+
+    let guilds = ctx.cache.guilds();
+    let mut total_cleaned = 0;
+
+    for guild_id in guilds {
+      // Get all draft records for this guild
+      let drafts = match db.captain_drafts.get_all_for_guild(guild_id).await {
+        Ok(d) => d,
+        Err(e) => {
+          error!("Failed to get captain drafts for guild {}: {}", guild_id, e);
+          continue;
+        }
+      };
+
+      for (channel_id, message_id) in drafts {
+        let channel = serenity::all::ChannelId::new(channel_id);
+        let message = serenity::all::MessageId::new(message_id);
+
+        // Try to delete the message
+        match channel.delete_message(&ctx.http, message).await {
+          Ok(_) => {
+            info!("Deleted stale captain draft message {} in channel {}", message_id, channel_id);
+            total_cleaned += 1;
+          }
+          Err(e) => {
+            warn!("Failed to delete stale captain draft message {} in channel {}: {}", message_id, channel_id, e);
+          }
+        }
+      }
+
+      // Clear all draft records for this guild from database
+      let _ = db.captain_drafts.delete_all_for_guild(guild_id).await;
+    }
+
+    // Clear in-memory draft state
+    let mut mgr = manager.lock().await;
+    for server in &mut mgr.qguilds {
+      for category in &mut server.categories {
+        for format in &mut category.formats {
+          if format.captain_draft.is_some() {
+            info!("Clearing in-memory captain draft state for category {} format {}", category.id, format.id);
+            format.captain_draft = None;
+          }
+        }
+      }
+    }
+
+    info!("Cleanup complete: {} stale captain draft embeds removed", total_cleaned);
   }
 
   /// Creates dashboard for a guild using in-memory categories from manager

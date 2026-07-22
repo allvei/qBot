@@ -262,11 +262,31 @@ pub struct Format {
   pub quota: u8,
   pub sessions: Vec<Session>,
   pub connect_info: Option<String>,
+  /// Active captain draft state for this format
+  #[serde(skip)]
+  pub captain_draft: Option<CaptainDraft>,
+}
+
+/// Captain draft state for manual team picking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptainDraft {
+  /// The two captains (highest ELO players)
+  pub captains: (serenity::all::UserId, serenity::all::UserId),
+  /// Which captain's turn it is (0 = Red/first, 1 = Blue/second)
+  pub current_turn: usize,
+  /// Pick order (ABBAAB pattern)
+  pub pick_order: Vec<usize>,
+  /// Current pick index in the order
+  pub current_pick_index: usize,
+  /// Channel ID where the draft embed is displayed
+  pub draft_channel_id: serenity::all::ChannelId,
+  /// Message ID of the draft embed
+  pub draft_message_id: serenity::all::MessageId,
 }
 
 impl Format {
   pub fn new(id: u8, name: String, quota: u8) -> Self {
-    Self { id, name, quota, sessions: Vec::new(), connect_info: None }
+    Self { id, name, quota, sessions: Vec::new(), connect_info: None, captain_draft: None }
   }
 
   pub fn name(&self) -> &str {
@@ -333,9 +353,12 @@ pub struct Category {
   /// Bot is restarting - hide join buttons
   #[serde(skip)]
   pub restarting: bool,
-  /// Pending VC notification: (message_id, list of user_ids still needing to join)
+  /// Pending VC notification message_id (database-backed)
   #[serde(skip)]
-  pub pending_vc_notification: Option<(MI, Vec<UI>)>,
+  pub pending_vc_notification: Option<MI>,
+  /// Pending users for VC notification (in-memory only, for editing message content)
+  #[serde(skip)]
+  pub pending_users: Vec<UI>,
   /// Last ping time per user (for cooldown tracking)
   #[serde(skip)]
   pub last_ping_time: Option<SystemTime>,
@@ -376,6 +399,7 @@ impl Category {
       last_action: None,
       restarting: false,
       pending_vc_notification: None,
+      pending_users: Vec::new(),
       last_ping_time: None,
     }
   }
@@ -660,12 +684,12 @@ impl Category {
     self.formats.iter().any(|f| f.id != fmt_id && f.contains_user(user_id))
   }
 
-  /// Check if a user is currently in the queue voice channel
-  pub async fn is_user_in_queue_vc(&self, http: &serenity::all::Http, user_id: UI) -> bool {
-    match self.guild_id.get_user_voice_state(http, user_id).await {
-      Ok(voice_state) => voice_state.channel_id == Some(self.channels.queue_vc),
-      Err(_) => false,
-    }
+  /// Check if a user is currently in the queue voice channel (cache-only, no HTTP call).
+  pub fn is_user_in_queue_vc(&self, cache: &serenity::all::Cache, user_id: UI) -> bool {
+    cache
+      .guild(self.guild_id)
+      .map(|g| g.voice_states.get(&user_id).and_then(|vs| vs.channel_id) == Some(self.channels.queue_vc))
+      .unwrap_or(false)
   }
 
   pub fn get_session_player(&mut self, user_id: UI) -> Result<&mut SessionPlayer> {
@@ -856,7 +880,7 @@ impl Category {
 
   pub async fn push_fmt(&mut self, format_id: u8, ctx: &Context, guild_id: GI, db: &DB, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
     // Clear any pending VC notifications since the game is starting
-    self.clear_vc_notification(ctx).await;
+    self.clear_ready_notif(ctx, Some(db)).await;
 
     // Ensure a free team VC pair exists (creates one if needed)
     self.ensure_team_vcs(ctx, guild_id, db).await?;
@@ -1266,7 +1290,9 @@ impl Category {
 
     for sg in &self.formats {
       for session in &sg.sessions {
-        if !session.is_active() {
+        // Only auto-end Live or Push sessions — Pull is already being torn down by pull_fmt,
+        // and triggering it again would race against the in-progress teardown.
+        if !matches!(session.status, SessionStatus::Live | SessionStatus::Push) {
           continue;
         }
         let tc = match &session.team_channels {
@@ -1297,7 +1323,7 @@ impl Category {
 
   pub async fn pull_fmt(&mut self, fmt_id: u8, ctx: &Context, guild_id: GI, db: &DB, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
     // Clear any pending VC notifications since the game is ending
-    self.clear_vc_notification(ctx).await;
+    self.clear_ready_notif(ctx, Some(db)).await;
 
     // Extract queue vc channel ID
     let queue_vc = self.channels.queue_vc;
@@ -1891,8 +1917,11 @@ impl Category {
           // Get current DB preference
           let db_ping_enabled = db.user_server_prefs.get_ping_notification_enabled(user_id, guild_id).await.unwrap_or(None);
           
-          // Get member to check current role status
-          if let Ok(member) = guild_id.member(&ctx.http, user_id).await {
+          // Get member from cache first to avoid HTTP calls on every join.
+          // Unconditional HTTP member fetches on concurrent joins burst the rate limiter,
+          // causing serenity to globally block all HTTP calls (including reply_acknowledge()).
+          let member_cached = ctx.cache.guild(guild_id).and_then(|g| g.members.get(&user_id).cloned());
+          if let Some(member) = member_cached {
             let has_role = member.roles.contains(&role_id);
             
             // Handle consistency checks and role assignment
@@ -2221,8 +2250,14 @@ impl Category {
       let msg = CM::new().embed(embed).content(content);
       let dashboard = self.channels.dashboard;
       if let Ok(sent) = dashboard.send_message(&ctx.http, msg).await {
-        // Store pending notification for tracking
-        self.pending_vc_notification = Some((sent.id, players_to_dm.clone()));
+        // Save notification to database
+        if let Some(db) = db {
+          let _ = db.game_ready_notifs.save_notification(dashboard.get(), sent.id.get()).await;
+        }
+        // Store message_id in-memory
+        self.pending_vc_notification = Some(sent.id);
+        // Store pending users in-memory
+        self.pending_users = players_to_dm.clone();
         
         info!("{} Match ready notification created (msg_id: {}, players: {})", full_prefix, sent.id, player_mentions.len());
 
@@ -2295,37 +2330,38 @@ impl Category {
   }
 
   /// Called when a player joins the queue VC. Updates/deletes the pending notification if applicable.
-  pub async fn on_player_joined_vc(&mut self, ctx: &Context, user_id: UI) {
-    if let Some((msg_id, ref mut pending_users)) = self.pending_vc_notification {
+  pub async fn on_player_joined_vc(&mut self, ctx: &Context, user_id: UI, db: Option<&DB>) {
+    if let Some(msg_id) = self.pending_vc_notification {
+      // Check if notification exists in database before proceeding
+      if let Some(db) = db {
+        if !db.game_ready_notifs.notification_exists(self.channels.dashboard.get(), msg_id.get()).await.unwrap_or(false) {
+          // Notification doesn't exist in database, clear in-memory state
+          self.pending_vc_notification = None;
+          self.pending_users.clear();
+          return;
+        }
+      }
+      
       // Check if this user was in the pending list
-      if let Some(pos) = pending_users.iter().position(|&u| u == user_id) {
-        pending_users.remove(pos);
+      if let Some(pos) = self.pending_users.iter().position(|&u| u == user_id) {
+        self.pending_users.remove(pos);
         
         let user_tag = ctx.cache.user(user_id).map(|u| u.tag()).unwrap_or_else(|| user_id.to_string());
 
         let dashboard = self.channels.dashboard;
 
-        if pending_users.is_empty() {
-          // All players have joined - delete the notification
-          match dashboard.delete_message(&ctx.http, msg_id).await {
-            Ok(_) => {
-              info!("Match ready notification deleted - all players joined VC (msg_id: {}, last player: {})", msg_id, user_tag);
-            }
-            Err(e) => {
-              warn!("Failed to delete match ready notification (msg_id: {}): {}", msg_id, e);
-            }
-          }
-          self.pending_vc_notification = None;
+        if self.pending_users.is_empty() {
+          self.clear_ready_notif(ctx, db).await;
         } else {
           // Edit the message to show remaining players
-          let remaining_mentions: Vec<String> = pending_users.iter().map(|u| format!("<@{}>", u)).collect();
+          let remaining_mentions: Vec<String> = self.pending_users.iter().map(|u| format!("<@{}>", u)).collect();
           let embed = CreateEmbed::new().title("PUG starting").description("Please join the queue channel!");
           let content = remaining_mentions.join(" ");
 
           let edit = serenity::all::EditMessage::new().embed(embed).content(content);
           match dashboard.edit_message(&ctx.http, msg_id, edit).await {
             Ok(_) => {
-              debug!("Match ready notification updated - {} joined, {} remaining (msg_id: {})", user_tag, pending_users.len(), msg_id);
+              debug!("Match ready notification updated - {} joined, {} remaining (msg_id: {})", user_tag, self.pending_users.len(), msg_id);
             }
             Err(e) => {
               warn!("Failed to edit match ready notification (msg_id: {}): {}", msg_id, e);
@@ -2337,16 +2373,22 @@ impl Category {
   }
 
   /// Clear the pending VC notification (e.g., when game starts or ends)
-  pub async fn clear_vc_notification(&mut self, ctx: &Context) {
-    if let Some((msg_id, pending_users)) = self.pending_vc_notification.take() {
+  pub async fn clear_ready_notif(&mut self, ctx: &Context, db: Option<&DB>) {
+    if let Some(msg_id) = self.pending_vc_notification.take() {
       match self.channels.dashboard.delete_message(&ctx.http, msg_id).await {
         Ok(_) => {
-          info!("Match ready notification cleared - game starting (msg_id: {}, {} players still pending)", msg_id, pending_users.len());
+          info!("Match ready notification cleared - game starting (msg_id: {}, {} players still pending)", msg_id, self.pending_users.len());
         }
         Err(e) => {
           debug!("Match ready notification already deleted (msg_id: {}): {}", msg_id, e);
         }
       }
+      // Delete from database
+      if let Some(db) = db {
+        let _ = db.game_ready_notifs.delete_notification(self.channels.dashboard.get(), msg_id.get()).await;
+      }
+      // Clear in-memory fields
+      self.pending_users.clear();
     }
   }
 }

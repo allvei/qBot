@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod captain_mode;
 pub mod commands;
 pub mod elo_confirmation;
 pub mod player;

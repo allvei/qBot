@@ -4,6 +4,8 @@ use serenity::all::{
   CreateInteractionResponseMessage as CIRM, GuildId as GI, UserId as UI,
 };
 use std::sync::Arc;
+
+use crate::handlers::captain_mode::handle_captain_mode;
 use tracing::info;
 
 use crate::db::Database;
@@ -13,8 +15,8 @@ use crate::models::embeds::Ephemeral as Eph;
 use crate::models::{ComponentContext as CC, Role};
 use crate::{guild_name, log_prefix_guild, Manager, CYAN};
 
-mod runner_menu_end;
-pub use runner_menu_end::{handle_end_match_result, handle_end_without_score, show_end_match_selection};
+pub mod runner_menu_end;
+pub use runner_menu_end::{handle_end_match_result, handle_end_without_score, handle_force_end_match, show_end_match_selection};
 
 pub async fn handle_change_result_button(ctx: &Context, interaction: &CI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<Manager>>, button_id: &str) -> Result<()> {
   let cc = CC { ctx, component: interaction, db: db.clone(), manager };
@@ -62,11 +64,7 @@ pub async fn handle_change_result_button(ctx: &Context, interaction: &CI, db: &A
       let user_id = UI::new(player.user_id as u64);
       // Determine if this player won based on their team and the old result
       let old_result = match_details.result.as_deref();
-      let old_won = match (old_result, player.team.as_str()) {
-        (Some("red"), "red") => true,
-        (Some("blu"), "blu") => true,
-        _ => false,
-      };
+      let old_won = matches!(old_result, Some("red") | Some("blu")) && old_result.unwrap() == player.team.as_str();
 
       // Revert the ELO change
       if let Err(e) = db.elo.revert_match_elo(user_id, guild_id, player.elo_before as u16, old_won).await {
@@ -147,6 +145,7 @@ fn build_runner_menu() -> (CE, Vec<CAR>) {
        • **Buffer** - Move a player to the front of queue\n\
        • **Fatkid** - Move a player to the end of queue\n\n\
        **Match control:**\n\
+       • **Captain Mode** - Start captain draft for manual team picking\n\
        • **Accept** - Bypass VC join requirement for players who need more time\n\
        • **End match** - End match and report the winning team\n\
        • **End without score** - End match without reporting score (backup option)\n\
@@ -162,9 +161,12 @@ fn build_runner_menu() -> (CE, Vec<CAR>) {
       CB::new("runner_action_fatkid").label("Fatkid").style(BS::Primary),
     ]),
     CAR::Buttons(vec![
+      CB::new("runner_action_captain_mode").label("Captain Mode").style(BS::Success),
       CB::new("runner_action_accept").label("Force accept").style(BS::Primary),
       CB::new("runner_action_end_match").label("End match").style(BS::Success),
       CB::new("runner_action_end_no_score").label("End without score").style(BS::Danger),
+    ]),
+    CAR::Buttons(vec![
       CB::new("runner_action_change_result").label("Change result").style(BS::Secondary),
     ]),
   ];
@@ -224,6 +226,7 @@ pub async fn handle_runner_action(ctx: &Context, interaction: &CI, db: &Arc<Data
   let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
 
   match action {
+    "captain_mode" => handle_captain_mode(ctx, interaction, db, manager, guild_id).await,
     "accept" => handle_direct_action(ctx, interaction, db, manager, guild_id, action).await,
     "end_match" => show_end_match_selection(ctx, interaction, db, manager, guild_id).await,
     "end_no_score" => handle_end_without_score(ctx, interaction, db, manager, guild_id).await,

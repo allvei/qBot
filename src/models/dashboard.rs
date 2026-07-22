@@ -12,7 +12,7 @@ use std::{
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::models::{Category, ComponentContext, DashboardQueueKey, Session, SessionPlayer, SessionStatus};
+use crate::models::{Category, ComponentContext, DashboardQueueKey, SessionPlayer, SessionStatus};
 
 // Helper methods to reduce code duplication
 
@@ -864,7 +864,12 @@ impl Category {
         Err(e) => {
           error!("Failed to resolve player {} for queue: {e}", user_tag);
           use serenity::all::CreateInteractionResponseFollowup as CIRF;
-          let followup = CIRF::new().content("Failed to join queue. Please try again.").ephemeral(true);
+          let error_message = if e.to_string().contains("No ranks configured") {
+            "This server needs ranks to be created via `/setup` before joining the queue."
+          } else {
+            "Failed to join queue. Please try again, or contact @xcapeest to report the issue."
+          };
+          let followup = CIRF::new().content(error_message).ephemeral(true);
           cc.component.create_followup(&cc.ctx.http, followup).await?;
           return Ok(());
         }
@@ -891,7 +896,7 @@ impl Category {
       let fmt_name_owned = fmt_name.map(|s| s.to_string());
 
       let queue_context = crate::QueueContext::new(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone()));
-      let is_user_in_vc = self.is_user_in_queue_vc(&cc.ctx.http, user_id).await;
+      let is_user_in_vc = self.is_user_in_queue_vc(&cc.ctx.cache, user_id);
 
       debug!("Attempting to queue {} with VC status: {}", user_tag, is_user_in_vc);
       if let Err(e) = self.queue_player_with_vc_status_fmt(fmt_id, player.clone(), discord_rank, queue_context, is_user_in_vc).await {
@@ -1095,7 +1100,6 @@ impl Category {
 
   /// Handles the start match button
   async fn dash_start(&mut self, cc: &ComponentContext<'_>, fmt_id: u8) -> Result<()> {
-    use std::time::Duration;
     // Check if user has Runner role
     use crate::handlers::player::is_role_component;
     use crate::models::Role;
@@ -1360,6 +1364,8 @@ impl Category {
 
     // Defer the interaction ephemerally to prevent Discord timeout and keep response private
     cc.reply_defer_ephemeral().await?;
+    // Remove buttons immediately to prevent spam while we process
+    cc.component.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().content("Ending match...").components(vec![])).await?;
 
     let guild_name_str = guild_name(cc.ctx, guild_id);
     let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
@@ -2072,12 +2078,6 @@ impl Category {
           }
         }
       });
-
-      // Confirm in ephemeral
-      let response = CreateInteractionResponse::UpdateMessage(
-        CreateInteractionResponseMessage::new().content(format!("Pinged for {} (+{})", format.name, players_needed)).embeds(vec![]).components(vec![]),
-      );
-      cc.component.create_response(&cc.ctx.http, response).await?;
     } else {
       let response =
         CreateInteractionResponse::UpdateMessage(CreateInteractionResponseMessage::new().content("Failed to ping. Check bot permissions.").embeds(vec![]).components(vec![]));

@@ -71,10 +71,10 @@ impl SkillTier {
   /// Tiers are evenly spaced at ±100 and ±300 from the anchor.
   pub fn initial_elo(self, anchor: f64) -> u16 {
     let offset: f64 = match self {
-      Self::Beginner => -600.0,
-      Self::Intermediate => -300.0,
-      Self::Expert => 300.0,
-      Self::Veteran => 600.0,
+      Self::Beginner => -800.0,
+      Self::Intermediate => -400.0,
+      Self::Expert => 400.0,
+      Self::Veteran => 800.0,
     };
     (anchor + offset).clamp(0.0, u16::MAX as f64) as u16
   }
