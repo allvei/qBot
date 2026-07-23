@@ -1,4 +1,4 @@
-use crate::{get_user_tag, guild_name, log_prefix_category, log_prefix_guild};
+use crate::{get_user_tag, guild_name, log_prefix_category, log_prefix_format, log_prefix_guild};
 use anyhow::{anyhow, Error, Result};
 use serenity::all::{
   ButtonStyle as BS, ChannelId as CI, Context, CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR,
@@ -540,8 +540,6 @@ impl Category {
               hot_info.push_str(&format!("  • ‹**{}**› <@{}>\n", elo, player.player.user_id));
             }
           }
-        } else if !session.pool.is_empty() {
-          hot_info.push_str("All players ready");
         }
 
         embed = embed.field(&hot_label, hot_info, false);
@@ -1231,13 +1229,7 @@ impl Category {
     // Show winner selection buttons as ephemeral message
     let format_name = self.format(fmt_id).map(|sg| sg.name.clone()).unwrap_or_else(|| "Match".to_string());
 
-    let embed = CE::new().title(format!("End {} - Select winner", format_name)).description("Choose the winning team to end the match:").color(0x00AAFF);
-
-    let buttons = vec![CAR::Buttons(vec![
-      CB::new(format!("dash_end_blu_{}_{}", self.id, fmt_id)).label("BLU WON").style(BS::Primary),
-      CB::new(format!("dash_end_draw_{}_{}", self.id, fmt_id)).label("DRAW").style(BS::Secondary),
-      CB::new(format!("dash_end_red_{}_{}", self.id, fmt_id)).label("RED WON").style(BS::Danger),
-    ])];
+    let (embed, buttons) = crate::handlers::response_helpers::create_end_match_selection(&format_name, self.id, fmt_id, "dash_end", vec![]);
 
     let response = CIR::Message(CIRM::new().embed(embed).components(buttons).ephemeral(true));
     cc.component.create_response(&cc.ctx.http, response).await?;
@@ -1308,6 +1300,14 @@ impl Category {
       if removed > 0 {
         info!("Cleaned up {} empty Idle session(s) after match cancellation", removed);
       }
+    }
+
+    // Check if queue meets quota and regenerate teams if needed
+    let quota = self.format(fmt_id).map(|sg| sg.quota as usize).unwrap_or(0);
+    let pool_len = self.format(fmt_id).and_then(|sg| sg.sessions.iter().find(|s| s.status == SessionStatus::Idle)).map(|s| s.pool.len()).unwrap_or(0);
+    if pool_len >= quota {
+      info!("Queue meets quota after cancellation, regenerating teams");
+      self.generate_teams_fmt(fmt_id, cc.ctx, guild_id, Some(&cc.db)).await;
     }
 
     cc.reply_ephemeral("Match cancelled. Queue order has been restored.").await?;
@@ -2060,9 +2060,10 @@ impl Category {
       let message_id = sent.id;
       let guild_name = guild_name(cc.ctx, guild_id);
       let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
-      let log_prefix = log_prefix_category(&guild_name, &category_name);
+      let format_name = format.name.clone();
+      let log_prefix = log_prefix_format(&guild_name, &category_name, &format_name);
       
-      info!("{} Sent ping by {} for {} (msg_id: {})", log_prefix, user_tag, format.name, message_id);
+      info!("{} Sent ping by {} for {}", log_prefix, user_tag, format_name);
 
       // Delete the message after 15 minutes
       let http = cc.ctx.http.clone();
@@ -2071,10 +2072,10 @@ impl Category {
         tokio::time::sleep(tokio::time::Duration::from_secs(15 * 60)).await;
         match channel_id.delete_message(&http, message_id).await {
           Ok(_) => {
-            debug!("{} Ping message auto-deleted after 15 minutes (msg_id: {})", log_prefix, message_id);
+            debug!("{} Ping deleted after 15m", log_prefix);
           }
-          Err(e) => {
-            debug!("{} Ping message not found (msg_id: {}): {}", log_prefix, message_id, e);
+          Err(_) => {
+            debug!("{} Ping message not found", log_prefix);
           }
         }
       });
