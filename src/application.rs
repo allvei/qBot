@@ -1168,7 +1168,7 @@ impl EventHandler for Handler {
           return;
         }
 
-        // Handle score result buttons (RED WON/DRAW/BLU WON)
+        // Handle score result buttons
         if itx.data.custom_id.starts_with("score_red_") || itx.data.custom_id.starts_with("score_draw_") || itx.data.custom_id.starts_with("score_blu_") {
           let result = self.handle_score_button(&ctx, itx).await;
           if let Err(e) = result {
@@ -1327,7 +1327,10 @@ impl EventHandler for Handler {
         let mut category = {
           let mut manager = self.manager.lock().await;
 
-          match manager.get_category_by_channel(guild_id, channel_id) {
+          // Clone the category first, before any marking on the manager's copy.
+          // The clone must NOT have score_reported pre-set, otherwise the handler's
+          // own already-reported guard (dash_handle_end_match_result) would reject it.
+          let cloned = match manager.get_category_by_channel(guild_id, channel_id) {
             Ok(category) => category.clone(),
             Err(_) => {
               // Category not in manager - try to recover from database
@@ -1382,7 +1385,31 @@ impl EventHandler for Handler {
                 }
               }
             }
+          };
+
+          // If this is a dash_end_* button (end match with result), mark the
+          // session as score_reported in the MANAGER's copy before releasing the
+          // lock. This prevents check_team_vc_empty_auto_end — triggered by voice
+          // state updates when pull_fmt moves players to queue VC — from racing
+          // against the handler's pull_fmt and creating a duplicate notification.
+          // The clone is taken BEFORE this marking, so the handler's own
+          // already-reported guard still sees score_reported=false on its copy.
+          if itx.data.custom_id.starts_with("dash_end_") {
+            let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
+            if let Some(fmt_id) = parts.get(4).and_then(|s| s.parse::<u8>().ok()) {
+              if let Ok(server) = manager.get_qguild(guild_id) {
+                if let Some(existing) = server.categories.iter_mut().find(|c| c.contains_channel(channel_id)) {
+                  if let Some(fmt) = existing.formats.iter_mut().find(|f| f.id == fmt_id) {
+                    if let Some(session) = fmt.sessions.iter_mut().find(|s| s.is_active()) {
+                      session.score_reported = true;
+                    }
+                  }
+                }
+              }
+            }
           }
+
+          cloned
           // manager lock released here
         };
 

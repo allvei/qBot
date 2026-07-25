@@ -7,7 +7,7 @@ use crate::models::embeds::Ephemeral;
 use crate::models::CommandContext as CC;
 use crate::{CYAN, GREEN, RED, YELLOW};
 use anyhow::Result;
-use serenity::all::{ComponentInteraction as CX, Context, CreateActionRow as CAR, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
+use serenity::all::{ButtonStyle as BS, ComponentInteraction as CX, Context, CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE, CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM};
 
 /// Common embed creation helpers
 pub struct EmbedHelpers;
@@ -239,6 +239,21 @@ macro_rules! respond_error {
   ($context:expr, $description:expr) => {
     $context.reply_error("Error", $description).await
   };
+}
+
+/// Create end match selection embed and buttons
+pub fn create_end_match_selection(format_name: &str, category_id: u8, format_id: u8, prefix: &str, additional_rows: Vec<CAR>) -> (CE, Vec<CAR>) {
+  let embed = CE::new().title(format!("End {} - Select winner", format_name)).description("Choose the winning team to end the match:").color(0x00AAFF);
+
+  let mut buttons = vec![CAR::Buttons(vec![
+    CB::new(format!("{}_blu_{}_{}", prefix, category_id, format_id)).label("BLU WON").style(BS::Primary),
+    CB::new(format!("{}_draw_{}_{}", prefix, category_id, format_id)).label("DRAW").style(BS::Secondary),
+    CB::new(format!("{}_red_{}_{}", prefix, category_id, format_id)).label("RED WON").style(BS::Danger),
+  ])];
+
+  buttons.extend(additional_rows);
+
+  (embed, buttons)
 }
 
 /// Macro for creating consistent success responses

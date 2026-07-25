@@ -35,12 +35,3 @@ eframe             = "0.34"
 winit              = { version = "0.30", features = ["x11"] }
 egui               = "0.34"  
 egui-phosphor      = "0.12"  
-
-[lints.clippy]
-# pedantic              = "warn"
-# uninlined_format_args = "warn"
-# unused_imports        = "allow"
-# unused_variables      = "allow"
-# unused_must_use       = "allow"
-too_many_arguments      = "allow"
-type_complexity         = "allow"

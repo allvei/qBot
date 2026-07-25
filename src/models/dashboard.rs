@@ -1448,8 +1448,8 @@ impl Category {
         self.queue_dash_update(cc.ctx, guild_id).await;
 
         let result_color = match *result {
-          "red" => crate::RED,
-          "blu" => crate::BLUE,
+          "red" => crate::TF_RED,
+          "blu" => crate::TF_BLU,
           _ => 0x888888,
         };
 

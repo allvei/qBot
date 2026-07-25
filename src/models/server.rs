@@ -1295,6 +1295,14 @@ impl Category {
         if !matches!(session.status, SessionStatus::Live | SessionStatus::Push) {
           continue;
         }
+        // Skip sessions that are already being ended via a dashboard end-match
+        // button. The dashboard handler runs pull_fmt on a cloned category
+        // without holding the manager lock; marking score_reported here (in the
+        // manager's copy) prevents this auto-end from racing with it and
+        // creating a duplicate match-ready notification.
+        if session.score_reported {
+          continue;
+        }
         let tc = match &session.team_channels {
           Some(tc) => tc,
           None => continue,
@@ -1304,7 +1312,7 @@ impl Category {
         let blu_count = guild.voice_states.values().filter(|vs| vs.channel_id == Some(tc.blu_vc)).count();
 
         if red_count == 0 && blu_count == 0 {
-          info!("All players left team VCs (RED={} BLU={}) for format {}, auto-ending game", tc.red_vc, tc.blu_vc, sg.id);
+          info!("All players left team VCs for format {}, auto-ending game", sg.id);
           to_pull.push(sg.id);
         }
       }

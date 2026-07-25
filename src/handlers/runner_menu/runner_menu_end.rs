@@ -207,19 +207,14 @@ pub async fn show_end_match_selection(ctx: &Context, interaction: &CI, db: &Arc<
     server.categories[cat_idx].formats.iter().find(|f| f.id == format_id).map(|f| f.name.clone()).unwrap_or_else(|| "Match".to_string())
   };
 
-  let embed = CE::new().title(format!("End {} - Select winner", format_name)).description("Choose the winning team to end the match:").color(0x00AAFF);
-
-  let buttons = vec![
-    CAR::Buttons(vec![
-      CB::new(format!("runner_end_blu_{}_{}", category_id, format_id)).label("BLU WON").style(BS::Primary),
-      CB::new(format!("runner_end_draw_{}_{}", category_id, format_id)).label("DRAW").style(BS::Secondary),
-      CB::new(format!("runner_end_red_{}_{}", category_id, format_id)).label("RED WON").style(BS::Danger),
-    ]),
+  let additional_rows = vec![
     CAR::Buttons(vec![
       CB::new(format!("runner_end_force_{}_{}", category_id, format_id)).label("Force End (no score)").style(BS::Danger),
     ]),
     CAR::Buttons(vec![Eph::back("runner_menu_back")]),
   ];
+
+  let (embed, buttons) = crate::handlers::response_helpers::create_end_match_selection(&format_name, category_id, format_id, "runner_end", additional_rows);
 
   let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
   interaction.create_response(&ctx.http, response).await?;
