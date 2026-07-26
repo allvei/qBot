@@ -439,11 +439,11 @@ impl DatabaseMigrations {
       // SQLite doesn't have a direct way to check constraints, so we check if duplicate channels exist
       let has_duplicates: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM (
-          SELECT dashboard FROM categories CATEGORY BY dashboard HAVING COUNT(*) > 1
+          SELECT dashboard FROM categories GROUP BY dashboard HAVING COUNT(*) > 1
           UNION ALL
-          SELECT chat FROM categories CATEGORY BY chat HAVING COUNT(*) > 1
+          SELECT chat FROM categories GROUP BY chat HAVING COUNT(*) > 1
           UNION ALL
-          SELECT queue FROM categories CATEGORY BY queue HAVING COUNT(*) > 1
+          SELECT queue FROM categories GROUP BY queue HAVING COUNT(*) > 1
         )",
       )
       .fetch_one(&self.pool)
