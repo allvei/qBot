@@ -1930,7 +1930,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
                 let settings = CategorySettings::from_category(category);
 
                 let embed = build_category_settings_embed(&settings);
-                let buttons = build_category_settings_buttons(settings.category_id);
+                let buttons = build_category_settings_buttons(&settings);
 
                 let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
                 interaction.create_response(&ctx.http, response).await?;
@@ -2058,7 +2058,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
             let settings = CategorySettings::from_category(category);
 
             let embed = build_category_settings_embed(&settings);
-            let buttons = build_category_settings_buttons(settings.category_id);
+            let buttons = build_category_settings_buttons(&settings);
 
             let response = CIR::UpdateMessage(CIRM::new().content("Successfully linked dashboard message!").embed(embed).components(buttons));
             interaction.create_response(&ctx.http, response).await?;
@@ -2079,7 +2079,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
           let settings = CategorySettings::from_category(category);
 
           let embed = build_category_settings_embed(&settings);
-          let buttons = build_category_settings_buttons(settings.category_id);
+          let buttons = build_category_settings_buttons(&settings);
 
           let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
           interaction.create_response(&ctx.http, response).await?;
@@ -2101,7 +2101,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
             let settings = CategorySettings::from_category(category);
 
             let embed = build_category_settings_embed(&settings);
-            let buttons = build_category_settings_buttons(settings.category_id);
+            let buttons = build_category_settings_buttons(&settings);
 
             let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
             interaction.create_response(&ctx.http, response).await?;
@@ -2392,7 +2392,7 @@ pub async fn handle_guild_config_modal(
           // Show full category settings screen with all buttons
           let settings = CategorySettings::from_category(category);
           let embed = build_category_settings_embed(&settings);
-          let buttons = build_category_settings_buttons(settings.category_id);
+          let buttons = build_category_settings_buttons(&settings);
 
           let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
           interaction.create_response(&ctx.http, response).await?;

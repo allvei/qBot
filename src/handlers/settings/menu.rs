@@ -133,6 +133,11 @@ impl SettingsButton {
   pub fn category_action(action: &str, label: impl Into<String>, style: SettingsButtonStyle, category_id: u8) -> Self {
     Self::action(format!("category_settings_{action}_{category_id}"), label, style)
   }
+
+  /// Create a toggle button scoped to a category: `category_settings_{action}_{category_id}`
+  pub fn category_toggle(action: &str, on_label: impl Into<String>, off_label: impl Into<String>, enabled: bool, category_id: u8) -> Self {
+    Self::toggle(format!("category_settings_{action}_{category_id}"), if enabled { on_label.into() } else { off_label.into() }, enabled)
+  }
 }
 
 #[derive(Clone, Copy)]
@@ -1052,7 +1057,7 @@ impl AsSettingsMenu for CategorySettingsDisplay {
         SB::category_edit("edit_vc_destroy", "VC destroy", gid),
         SB::category_edit("edit_vc_keepmin", "Keep min VCs", gid),
       ]))
-      .row(SR::Buttons(vec![SB::category_edit("toggle_enable_competitive", if self.enable_competitive { "Disable competitive" } else { "Enable competitive" }, gid)]))
+      .row(SR::Buttons(vec![SB::category_toggle("toggle_enable_competitive", "Competitive", "Casual", self.enable_competitive, gid)]))
       .row(SR::Buttons(vec![SB::category_action("elo_gate", "ELO gate", Sbs::Primary, gid), SB::action("guild_config_categories", "Back", Sbs::Secondary)]))
   }
 }

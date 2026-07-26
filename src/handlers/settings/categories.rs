@@ -31,7 +31,7 @@ macro_rules! refresh_category_settings_modal {
   ($interaction:expr, $ctx:expr, $category:expr) => {{
     let settings = CategorySettings::from_category($category);
     let embed = build_category_settings_embed(&settings);
-    let buttons = build_category_settings_buttons(settings.category_id);
+    let buttons = build_category_settings_buttons(&settings);
     send_embed_button_response_modal($interaction, $ctx, embed, buttons).await
   }};
 }
@@ -603,7 +603,7 @@ pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db
     // Back from formats list -> category settings
     let settings = CategorySettings::from_category(&category);
     let embed = build_category_settings_embed(&settings);
-    let buttons = build_category_settings_buttons(settings.category_id);
+    let buttons = build_category_settings_buttons(&settings);
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
     interaction.create_response(&ctx.http, response).await?;
   } else if button_id.starts_with("category_fmt_add_") {
@@ -641,7 +641,7 @@ pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db
       if let Some(category) = categories.iter().find(|g| g.id == category_id) {
         let settings = CategorySettings::from_category(category);
         let embed = build_category_settings_embed(&settings);
-        let buttons = build_category_settings_buttons(settings.category_id);
+        let buttons = build_category_settings_buttons(&settings);
         let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
         interaction.create_response(&ctx.http, response).await?;
       }
@@ -677,7 +677,7 @@ pub async fn handle_category_settings_select(ctx: &Context, interaction: &CI, _d
   let settings = CategorySettings::from_category(&category);
 
   let embed = build_category_settings_embed(&settings);
-  let buttons = build_category_settings_buttons(settings.category_id);
+  let buttons = build_category_settings_buttons(&settings);
 
   let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
   interaction.create_response(&ctx.http, response).await?;
@@ -820,7 +820,7 @@ pub async fn handle_category_settings_modal(ctx: &Context, interaction: &MI, db:
     db.categories.update_name(guild_id, category_id, name.as_deref()).await?;
 
     let embed = build_category_settings_embed(&settings);
-    let buttons = build_category_settings_buttons(settings.category_id);
+    let buttons = build_category_settings_buttons(&settings);
 
     let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
     interaction.create_response(&ctx.http, response).await?;

@@ -96,19 +96,19 @@ pub fn build_category_settings_embed(settings: &CategorySettings) -> CE {
 }
 
 /// Build category settings buttons with category_id embedded in custom_id
-pub fn build_category_settings_buttons(category_id: u8) -> Vec<CAR> {
+pub fn build_category_settings_buttons(settings: &CategorySettings) -> Vec<CAR> {
   use {AsSettingsMenu, CategorySettingsDisplay};
   let display = CategorySettingsDisplay {
-    category_id,
-    name: None,
-    quota: 0,
-    confirm_time: 0,
-    connect_info: None,
-    format_names: Vec::new(),
-    vc_create: String::new(),
-    vc_destroy: String::new(),
-    vc_keep_min: true,
-    enable_competitive: true,
+    category_id: settings.category_id,
+    name: settings.name.clone(),
+    quota: settings.quota,
+    confirm_time: settings.confirm_time,
+    connect_info: settings.connect_info.clone(),
+    format_names: settings.format_names.clone(),
+    vc_create: settings.vc_create.clone(),
+    vc_destroy: settings.vc_destroy.clone(),
+    vc_keep_min: settings.vc_keep_min,
+    enable_competitive: settings.enable_competitive,
   };
   display.as_settings_menu().build_components()
 }

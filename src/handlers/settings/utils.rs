@@ -49,7 +49,7 @@ macro_rules! refresh_category_settings {
   ($interaction:expr, $ctx:expr, $category:expr) => {{
     let settings = CategorySettings::from_category($category);
     let embed = build_category_settings_embed(&settings);
-    let buttons = build_category_settings_buttons(settings.category_id);
+    let buttons = build_category_settings_buttons(&settings);
     $crate::send_embed_button_response($interaction, $ctx, embed, buttons).await
   }};
 }
