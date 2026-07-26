@@ -1,3 +1,56 @@
+# v0.15.0
+
+__26.07.26__
+
+## Users & Admins
+
+__Added__
+
+- __Ping notifications__ - Users can opt in to ping notifications when the queue is ready, with adjustable cooldowns per server. Configurable from the new Preferences menu.
+- __Persistent match-ready alerts__ - Match ready notifications now survive bot restarts and properly clear when a game starts or ends.
+- __Runner match controls__ - Runners can now end a match without reporting a score, force-end a stuck match, or pick the winner directly (Red/Draw/Blu) with ratings updated automatically.
+- __Per-category competitive mode__ - Admins can disable score tracking for casual categories, so ratings only update for categories with competitive mode enabled.
+- __Broadcast panel__ - Admins using the desktop app can compose and send announcements to a specific server or all servers at once.
+- __Community updates channel__ - New server setting for a dedicated channel where community announcements are sent.
+
+__Improved__
+
+- __Preferences and settings menus__ - Redesigned with clearer navigation and consistent back buttons; settings are now only shown when relevant (e.g. server-only settings are hidden while messaging the bot directly).
+- __Toggle buttons__ - Now show green when on and gray when off, instead of red/green, for clearer status at a glance.
+- __Team shuffling__ - Rebalancing teams now produces more varied results while keeping matches fair.
+- __Match result reporting__ - Result confirmations are now private and visible only to the reporting runner; the public result is still posted for everyone else.
+- __Match result footers__ - Now labeled "Logged by" for consistency.
+- __Match result buttons__ - Reordered to match TF2's in-game team layout (Blu, Draw, Red).
+- __Rating adjustments__ - Removed automatic bulk rating corrections so individual rating changes stay accurate over time.
+- __Dashboard reliability__ - Fixed several cases where clicking Start or End quickly could move players twice or leave the dashboard stuck showing "Moving players to team channels...".
+
+__Fixed__
+
+- __Queue status__ - "In VC" status now updates correctly for all players, not just certain match types.
+- __Duplicate players__ - Fixed players occasionally being queued twice after a match with overflow players was canceled.
+- __Stuck queues__ - Fixed leftover empty sessions preventing a full queue from starting a match.
+- __Overflow queue display__ - Players moved to a new queue during overflow now immediately show as waiting on the dashboard.
+- __Match ready alerts__ - Fixed notifications getting stuck showing outdated player lists.
+- __Category removal__ - Deleting a category now shows which channels failed to delete instead of silently reporting success.
+- __Server name display__ - Fixed some servers briefly showing as "Unknown" on startup.
+- __Ping settings__ - Fixed an error when clearing a configured ping target back to default.
+- __Post-cancel teams__ - Fixed teams not regenerating correctly after a match was canceled.
+
+## Developers
+
+__Added__
+
+- __Configuration schema system__ - New single source of truth for server, category, and user settings, generating storage and settings menus automatically.
+- __Interaction lock system__ - Prevents duplicate destructive actions (double match starts, double results) with automatic cleanup of stale locks.
+- __Unified menu framework__ - Shared foundation for building settings and preferences menus with consistent navigation.
+
+__Refactored__
+
+- __Desktop app__ - Broadcast, settings, and log panels rebuilt on the new menu framework; unused panels removed; terminal interface retired in favor of the desktop app.
+- __Preferences and server settings__ - Migrated to the unified menu framework for consistent behavior.
+- __Project naming__ - Continued cleanup from the qBot rename (color spelling, crate references, log filters).
+- __Code quality__ - General clippy fixes and logging cleanups.
+
 # v0.14.0
 
 __21.05.26__
