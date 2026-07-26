@@ -358,7 +358,7 @@ impl Category {
           if live_session.can_cancel_match() {
             row.push(CB::new(format!("cancel_match{fmt_suffix}")).label("Cancel game").style(BS::Danger));
           } else {
-            let end_label = if self.require_score_report { "End & log score" } else { "End" };
+            let end_label = if self.enable_competitive && self.require_score_report { "End & log score" } else { "End" };
             row.push(CB::new(format!("end_match{fmt_suffix}")).label(end_label).style(BS::Danger));
           }
         }
@@ -1198,7 +1198,7 @@ impl Category {
     }
 
     // If require_score_report is enabled, show the score modal instead of ending directly
-    if self.require_score_report {
+    if self.enable_competitive && self.require_score_report {
       return self.dash_report_score(cc).await;
     }
 
@@ -1404,7 +1404,7 @@ impl Category {
     };
 
     // Process match result with ELO using shared function
-    let elo_changes = match crate::models::session::process_match_result_with_elo(cc.db.clone(), guild_id, category_id, &session_players, result, cc.ctx).await {
+    let elo_changes = match crate::models::session::process_match_result_with_elo(cc.db.clone(), guild_id, category_id, &session_players, result, cc.ctx, self.enable_competitive).await {
       Ok(changes) => changes,
       Err(e) => {
         error!("{} Failed to process match result with ELO: {e}", log_prefix_category(&guild_name_str, &category_name));

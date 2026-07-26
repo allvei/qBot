@@ -347,6 +347,8 @@ pub struct Category {
   pub recently_freed_teams: Vec<TeamChannel>,
   /// Require score reporting when ending matches via dashboard
   pub require_score_report: bool,
+  /// Whether this category records match results and processes dynamic ELO
+  pub enable_competitive: bool,
   /// Last dashboard action (user_tag, action_description, timestamp)
   #[serde(skip)]
   pub last_action: Option<(String, String, SystemTime)>,
@@ -396,6 +398,7 @@ impl Category {
       dm_alert_users: Vec::new(),
       recently_freed_teams: Vec::new(),
       require_score_report: false,
+      enable_competitive: true,
       last_action: None,
       restarting: false,
       pending_vc_notification: None,

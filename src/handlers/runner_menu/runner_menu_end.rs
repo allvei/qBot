@@ -360,7 +360,7 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
   info!("{} Runner {} ended match with result: {}", log_prefix_category(&guild_name_str, &category_name), interaction.user.tag(), result_text);
 
   // Capture data needed for ELO processing and mark score as reported, then release the lock.
-  let session_players = {
+  let (session_players, enable_competitive) = {
     let mut mgr = manager.lock().await;
     let server = mgr.get_qguild(guild_id)?;
     let category = server.categories.iter_mut().find(|c| c.id == category_id).ok_or_else(|| anyhow::anyhow!("Category not found"))?;
@@ -372,12 +372,12 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
       session.score_reported = true;
     }
 
-    players
+    (players, category.enable_competitive)
     // mgr lock released here
   };
 
   // Process ELO outside the manager lock (only needs db + ctx)
-  let elo_changes = match crate::models::session::process_match_result_with_elo(db.clone(), guild_id, category_id, &session_players, result, ctx).await {
+  let elo_changes = match crate::models::session::process_match_result_with_elo(db.clone(), guild_id, category_id, &session_players, result, ctx, enable_competitive).await {
     Ok(changes) => changes,
     Err(e) => {
       error!("{} Failed to process match result with ELO: {e}", log_prefix_category(&guild_name_str, &category_name));

@@ -263,6 +263,14 @@ define_category_config! {
         labels: ["Keep minimum VCs enabled", "Keep minimum VCs disabled"],
         description: "Keep at least one set of team VCs even when empty",
     },
+    enable_competitive: bool {
+        column: "enable_competitive",
+        default: true,
+        display: "Competitive mode",
+        button_prefix: "category_cfg_enable_competitive",
+        labels: ["Competitive", "Casual"],
+        description: "Record match results and process dynamic ELO for this category",
+    },
 }
 
 define_user_preferences! {

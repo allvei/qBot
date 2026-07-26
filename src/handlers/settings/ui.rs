@@ -90,6 +90,7 @@ pub fn build_category_settings_embed(settings: &CategorySettings) -> CE {
     vc_create: settings.vc_create.clone(),
     vc_destroy: settings.vc_destroy.clone(),
     vc_keep_min: settings.vc_keep_min,
+    enable_competitive: settings.enable_competitive,
   };
   display.as_settings_menu().build_embed()
 }
@@ -107,6 +108,7 @@ pub fn build_category_settings_buttons(category_id: u8) -> Vec<CAR> {
     vc_create: String::new(),
     vc_destroy: String::new(),
     vc_keep_min: true,
+    enable_competitive: true,
   };
   display.as_settings_menu().build_components()
 }

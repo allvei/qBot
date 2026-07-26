@@ -488,10 +488,11 @@ impl FromStr for Team {
 /// * `category_id` - Category ID
 /// * `session_players` - Session player data for ELO processing
 /// * `result` - Match result ("red", "draw", or "blu")
+/// * `enable_competitive` - Whether the category has competitive mode enabled
 ///
 /// # Returns
 /// * `Ok(Some(changes))` - ELO changes applied (if dynamic ELO enabled)
-/// * `Ok(None)` - No ELO changes (dynamic ELO disabled or no match found)
+/// * `Ok(None)` - No ELO changes (dynamic ELO disabled, category not competitive, or no match found)
 /// * `Err(e)` if database operations fail
 pub async fn process_match_result_with_elo(
   db: std::sync::Arc<crate::db::Database>,
@@ -500,8 +501,13 @@ pub async fn process_match_result_with_elo(
   session_players: &[SessionPlayer],
   result: &str,
   ctx: &serenity::prelude::Context,
+  enable_competitive: bool,
 ) -> Result<Option<Vec<crate::models::dynamic_elo::EloChange>>> {
   use tracing::error;
+
+  if !enable_competitive {
+    return Ok(None);
+  }
 
   // Get latest match ID from database
   if let Some(match_id) = db.matches.get_latest_match_id(guild_id, category_id as i64).await? {

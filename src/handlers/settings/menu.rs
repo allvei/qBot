@@ -1013,6 +1013,7 @@ pub struct CategorySettingsDisplay {
   pub vc_create: String,
   pub vc_destroy: String,
   pub vc_keep_min: bool,
+  pub enable_competitive: bool,
 }
 
 impl AsSettingsMenu for CategorySettingsDisplay {
@@ -1034,6 +1035,7 @@ impl AsSettingsMenu for CategorySettingsDisplay {
       .field(SF::new("Team VC create", &self.vc_create))
       .field(SF::new("Team VC destroy", &self.vc_destroy))
       .field(SF::new("Keep minimum VCs", if self.vc_keep_min { "Yes" } else { "No" }))
+      .field(SF::new("Competitive mode", if self.enable_competitive { "Enabled" } else { "Disabled" }))
       .color(0x5865F2)
       .row(SR::Buttons(vec![
         SB::category_edit("edit_name", "Name", gid),
@@ -1050,6 +1052,7 @@ impl AsSettingsMenu for CategorySettingsDisplay {
         SB::category_edit("edit_vc_destroy", "VC destroy", gid),
         SB::category_edit("edit_vc_keepmin", "Keep min VCs", gid),
       ]))
+      .row(SR::Buttons(vec![SB::category_edit("toggle_enable_competitive", if self.enable_competitive { "Disable competitive" } else { "Enable competitive" }, gid)]))
       .row(SR::Buttons(vec![SB::category_action("elo_gate", "ELO gate", Sbs::Primary, gid), SB::action("guild_config_categories", "Back", Sbs::Secondary)]))
   }
 }

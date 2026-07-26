@@ -432,6 +432,7 @@ impl DatabaseMigrations {
         "team_vc_destroy_policy": "TEXT"    => "'after_pull'",
         "team_vc_keep_minimum":   "INTEGER" => "1",
         "require_score_report":   "INTEGER" => "0",
+        "enable_competitive":     "INTEGER" => "1",
       );
 
       // Check if UNIQUE constraints exist on channel columns

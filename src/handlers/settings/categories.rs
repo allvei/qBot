@@ -47,6 +47,7 @@ pub struct CategorySettings {
   pub vc_create: String,
   pub vc_destroy: String,
   pub vc_keep_min: bool,
+  pub enable_competitive: bool,
 }
 
 impl CategorySettings {
@@ -61,6 +62,7 @@ impl CategorySettings {
       vc_create: category.team_vc_settings.create_policy.to_string(),
       vc_destroy: category.team_vc_settings.destroy_policy.to_string(),
       vc_keep_min: category.team_vc_settings.keep_minimum,
+      enable_competitive: category.enable_competitive,
     }
   }
 }
@@ -432,6 +434,17 @@ pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db
         category.team_vc_settings.keep_minimum = !category.team_vc_settings.keep_minimum;
         let _ = db.categories.update_team_vc_settings(guild_id, category_id, &category.team_vc_settings).await;
         category.reconcile_team_vcs(ctx, guild_id, db).await;
+        refresh_category_settings!(interaction, ctx, category)?;
+      }
+    }
+    drop(manager_lock);
+  } else if button_id.starts_with("category_settings_toggle_enable_competitive_") {
+    // Toggle enable_competitive
+    let mut manager_lock = manager.lock().await;
+    if let Ok(server) = manager_lock.get_qguild(guild_id) {
+      if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
+        category.enable_competitive = !category.enable_competitive;
+        let _ = db.categories.update_enable_competitive(guild_id, category_id, category.enable_competitive).await;
         refresh_category_settings!(interaction, ctx, category)?;
       }
     }

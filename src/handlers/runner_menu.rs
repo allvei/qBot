@@ -54,23 +54,31 @@ pub async fn handle_change_result_button(ctx: &Context, interaction: &CI, db: &A
     }
   };
 
+  // Determine if the match's category currently has competitive mode enabled
+  let enable_competitive = {
+    let mut mgr = manager.lock().await;
+    mgr.get_qguild(guild_id).ok().and_then(|server| server.categories.iter().find(|c| c.id == match_details.category_id).map(|c| c.enable_competitive)).unwrap_or(true)
+  };
+
   // Get match players
   let players = db.matches.get_match_players_with_elo(match_id).await?;
 
-  // Revert ELO changes if they exist
+  // Revert ELO changes if they exist (only if they were applied while competitive)
   let mut reverted_count = 0;
-  for player in &players {
-    if let Some(_elo_after) = player.elo_after {
-      let user_id = UI::new(player.user_id as u64);
-      // Determine if this player won based on their team and the old result
-      let old_result = match_details.result.as_deref();
-      let old_won = matches!(old_result, Some("red") | Some("blu")) && old_result.unwrap() == player.team.as_str();
+  if enable_competitive {
+    for player in &players {
+      if let Some(_elo_after) = player.elo_after {
+        let user_id = UI::new(player.user_id as u64);
+        // Determine if this player won based on their team and the old result
+        let old_result = match_details.result.as_deref();
+        let old_won = matches!(old_result, Some("red") | Some("blu")) && old_result.unwrap() == player.team.as_str();
 
-      // Revert the ELO change
-      if let Err(e) = db.elo.revert_match_elo(user_id, guild_id, player.elo_before as u16, old_won).await {
-        tracing::warn!("Failed to revert ELO for user {}: {}", player.user_id, e);
-      } else {
-        reverted_count += 1;
+        // Revert the ELO change
+        if let Err(e) = db.elo.revert_match_elo(user_id, guild_id, player.elo_before as u16, old_won).await {
+          tracing::warn!("Failed to revert ELO for user {}: {}", player.user_id, e);
+        } else {
+          reverted_count += 1;
+        }
       }
     }
   }
@@ -78,33 +86,35 @@ pub async fn handle_change_result_button(ctx: &Context, interaction: &CI, db: &A
   // Update the match result
   db.matches.update_match_result(match_id, new_result).await?;
 
-  // Recalculate ELO for the new result
-  // Build SessionPlayer objects from match players for ELO calculation
-  let mut session_players = Vec::new();
-  for player in &players {
-    let user_id = UI::new(player.user_id as u64);
-    // Get player data from database
-    if let Ok(db_player) = db.get_player(user_id, ctx).await {
-      let team = match player.team.as_str() {
-        "red" => Some(crate::models::Team::Red),
-        "blu" => Some(crate::models::Team::Blu),
-        _ => None,
-      };
-      let session_player = crate::models::session::SessionPlayer {
-        player: db_player,
-        team,
-        in_vc: false,
-        in_queue: false,
-        joined_at: std::time::SystemTime::now(),
-        queue_expiration: 0,
-        vc_leave_grace_until: None,
-      };
-      session_players.push(session_player);
+  if enable_competitive {
+    // Recalculate ELO for the new result
+    // Build SessionPlayer objects from match players for ELO calculation
+    let mut session_players = Vec::new();
+    for player in &players {
+      let user_id = UI::new(player.user_id as u64);
+      // Get player data from database
+      if let Ok(db_player) = db.get_player(user_id, ctx).await {
+        let team = match player.team.as_str() {
+          "red" => Some(crate::models::Team::Red),
+          "blu" => Some(crate::models::Team::Blu),
+          _ => None,
+        };
+        let session_player = crate::models::session::SessionPlayer {
+          player: db_player,
+          team,
+          in_vc: false,
+          in_queue: false,
+          joined_at: std::time::SystemTime::now(),
+          queue_expiration: 0,
+          vc_leave_grace_until: None,
+        };
+        session_players.push(session_player);
+      }
     }
-  }
 
-  if let Err(e) = crate::models::dynamic_elo::process_match_elo(db, guild_id, match_id, &session_players, new_result, ctx).await {
-    tracing::warn!("Failed to recalculate ELO for new result: {}", e);
+    if let Err(e) = crate::models::dynamic_elo::process_match_elo(db, guild_id, match_id, &session_players, new_result, ctx).await {
+      tracing::warn!("Failed to recalculate ELO for new result: {}", e);
+    }
   }
 
   let guild_name = guild_name(ctx, guild_id);
@@ -513,7 +523,7 @@ pub async fn handle_player_selection(
   Ok(())
 }
 
-async fn show_change_result_selection(ctx: &Context, interaction: &CI, db: &Arc<Database>, _manager: &Arc<tokio::sync::Mutex<Manager>>, guild_id: GI) -> Result<()> {
+async fn show_change_result_selection(ctx: &Context, interaction: &CI, db: &Arc<Database>, manager: &Arc<tokio::sync::Mutex<Manager>>, guild_id: GI) -> Result<()> {
   // Get the latest match for this guild
   let match_id = match db.matches.get_latest_match_id_guild(guild_id).await? {
     Some(id) => id,
@@ -535,6 +545,22 @@ async fn show_change_result_selection(ctx: &Context, interaction: &CI, db: &Arc<
       return Ok(());
     }
   };
+
+  // Non-competitive categories don't record results or ELO, so changing the result doesn't apply
+  let enable_competitive = {
+    let mut mgr = manager.lock().await;
+    mgr.get_qguild(guild_id).ok().and_then(|server| server.categories.iter().find(|c| c.id == match_details.category_id).map(|c| c.enable_competitive)).unwrap_or(true)
+  };
+
+  if !enable_competitive {
+    let embed = CE::new()
+      .title("Change result not available")
+      .description("The latest match's category has competitive mode disabled, so results and ELO are not tracked for it.")
+      .color(0xFFAA00);
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
+    interaction.create_response(&ctx.http, response).await?;
+    return Ok(());
+  }
 
   // Get match players
   let players = db.matches.get_match_players_with_elo(match_id).await?;

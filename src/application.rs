@@ -1961,20 +1961,23 @@ impl Handler {
             } else {
               session.score_reported = true;
               let session_players = session.pool.clone();
+              let enable_competitive = category.enable_competitive;
               drop(mgr);
-              if let Some(match_id) = self.db.matches.get_latest_match_id(guild_id, cat_id).await? {
-                if let Err(e) = self.db.matches.update_match_result(match_id, result).await {
-                  error!("Failed to update match result in database: {e}");
-                }
-
-                // Apply dynamic ELO changes if enabled
-                match crate::models::dynamic_elo::process_match_elo(&self.db, guild_id, match_id, &session_players, result, ctx).await {
-                  Ok(Some(changes)) => {
-                    info!("Dynamic ELO applied: {} players updated", changes.len());
+              if enable_competitive {
+                if let Some(match_id) = self.db.matches.get_latest_match_id(guild_id, cat_id).await? {
+                  if let Err(e) = self.db.matches.update_match_result(match_id, result).await {
+                    error!("Failed to update match result in database: {e}");
                   }
-                  Ok(None) => {}
-                  Err(e) => {
-                    error!("Failed to process dynamic ELO: {e}");
+
+                  // Apply dynamic ELO changes if enabled
+                  match crate::models::dynamic_elo::process_match_elo(&self.db, guild_id, match_id, &session_players, result, ctx).await {
+                    Ok(Some(changes)) => {
+                      info!("Dynamic ELO applied: {} players updated", changes.len());
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                      error!("Failed to process dynamic ELO: {e}");
+                    }
                   }
                 }
               }
@@ -2141,23 +2144,26 @@ impl Handler {
             } else {
               session.score_reported = true;
               let session_players = session.pool.clone();
+              let enable_competitive = category.enable_competitive;
               should_clear_submission = true;
 
               // Update database immediately while holding the lock to prevent race condition
               drop(mgr);
-              if let Some(match_id) = self.db.matches.get_latest_match_id(guild_id, cat_id).await? {
-                if let Err(e) = self.db.matches.update_match_result(match_id, result).await {
-                  error!("Failed to update match result in database: {e}");
-                }
-
-                // Apply dynamic ELO changes if enabled
-                match crate::models::dynamic_elo::process_match_elo(&self.db, guild_id, match_id, &session_players, result, ctx).await {
-                  Ok(Some(changes)) => {
-                    info!("Dynamic ELO applied: {} players updated", changes.len());
+              if enable_competitive {
+                if let Some(match_id) = self.db.matches.get_latest_match_id(guild_id, cat_id).await? {
+                  if let Err(e) = self.db.matches.update_match_result(match_id, result).await {
+                    error!("Failed to update match result in database: {e}");
                   }
-                  Ok(None) => {}
-                  Err(e) => {
-                    error!("Failed to process dynamic ELO: {e}");
+
+                  // Apply dynamic ELO changes if enabled
+                  match crate::models::dynamic_elo::process_match_elo(&self.db, guild_id, match_id, &session_players, result, ctx).await {
+                    Ok(Some(changes)) => {
+                      info!("Dynamic ELO applied: {} players updated", changes.len());
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                      error!("Failed to process dynamic ELO: {e}");
+                    }
                   }
                 }
               }

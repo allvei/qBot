@@ -82,7 +82,7 @@ impl CategoryRepository {
     let result = sqlx::query("UPDATE categories
                                   SET guild_id = ?, category = ?, dashboard = ?, chat = ?, ping = ?, quota = ?
                                   WHERE queue = ?
-                                  RETURNING id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue, ping, dashboard_msg, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report"
+                                  RETURNING id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue, ping, dashboard_msg, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report, enable_competitive"
         )
         .bind(guild_id.get()              as i64)
         .bind(config.channel_category_id          as i64)
@@ -200,6 +200,9 @@ impl CategoryRepository {
     // Load require_score_report setting
     category.require_score_report = result.try_get::<i64, _>("require_score_report").unwrap_or(0) != 0;
 
+    // Load enable_competitive setting (default true so NULL/missing values stay competitive)
+    category.enable_competitive = result.try_get::<i64, _>("enable_competitive").unwrap_or(1) != 0;
+
     Ok(category)
   }
 
@@ -262,7 +265,7 @@ impl CategoryRepository {
 
   /// Get all categories for a guild
   pub async fn get_categories_for_guild(&self, guild_id: GI) -> Result<Vec<Category>> {
-    let rows = sqlx::query("SELECT id, guild_id, category_id, name, confirm_time, category, dashboard, chat, queue, ping, dashboard_msg, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
+    let rows = sqlx::query("SELECT id, guild_id, category_id, name, confirm_time, category, dashboard, chat, queue, ping, dashboard_msg, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report, enable_competitive
                                 FROM categories
                                 WHERE guild_id = ?"
         )
@@ -420,7 +423,7 @@ impl Repository<Category, u8> for CategoryRepository {
   }
 
   async fn get_by_id(&self, category_id: u8) -> Result<Category> {
-    let result = sqlx::query("SELECT id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue, ping, dashboard_msg, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report
+    let result = sqlx::query("SELECT id, category_id, name, confirm_time, guild_id, category, dashboard, chat, queue, ping, dashboard_msg, game_increment, quota, connect_info, team_vc_create_policy, team_vc_destroy_policy, team_vc_keep_minimum, require_score_report, enable_competitive
                                   FROM categories WHERE category_id = ?"
         )
         .bind(category_id as i64)
@@ -586,5 +589,19 @@ impl CategoryRepository {
       .await?;
 
     Ok(result != 0)
+  }
+
+  /// Update enable_competitive setting for a category
+  pub async fn update_enable_competitive(&self, guild_id: GI, category_id: u8, enable_competitive: bool) -> Result<()> {
+    info!("Updating enable_competitive for guild {} category {}: {}", guild_id, category_id, enable_competitive);
+
+    sqlx::query("UPDATE categories SET enable_competitive = ? WHERE guild_id = ? AND category_id = ?")
+      .bind(enable_competitive as i64)
+      .bind(guild_id.get() as i64)
+      .bind(category_id as i64)
+      .execute(&self.pool)
+      .await?;
+
+    Ok(())
   }
 }
