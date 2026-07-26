@@ -702,7 +702,7 @@ impl DatabaseMigrations {
           games     INTEGER NOT NULL DEFAULT 0,
           wins      INTEGER NOT NULL DEFAULT 0,
           UNIQUE(guild_id, user_id),
-          FOREIGN KEY (rank)     REFERENCES ranks(id)        ON DELETE SET NULL,
+          FOREIGN KEY (rank)     REFERENCES ranks(id)        ON DELETE RESTRICT,
           FOREIGN KEY (user_id)  REFERENCES users(user_id)   ON DELETE CASCADE
           FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE,
         )",
