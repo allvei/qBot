@@ -1027,6 +1027,11 @@ impl AsSettingsMenu for CategorySettingsDisplay {
     let connect_display = self.connect_info.as_ref().filter(|s| !s.trim().is_empty()).map(|s| format!("`{s}`")).unwrap_or_else(|| "-".to_string());
 
     let gid = self.category_id;
+    let competitive_desc = crate::config_schema::CATEGORY_CONFIG_DESCRIPTIONS
+      .iter()
+      .find(|(col, _)| *col == "enable_competitive")
+      .map(|(_, desc)| *desc)
+      .unwrap_or("No description");
 
     SettingsMenu::new(format!("{name_display} Settings"))
       .field(SF::new("Name", name_display.clone()))
@@ -1059,6 +1064,7 @@ impl AsSettingsMenu for CategorySettingsDisplay {
       ]))
       .row(SR::Buttons(vec![SB::category_toggle("toggle_enable_competitive", "Competitive", "Casual", self.enable_competitive, gid)]))
       .row(SR::Buttons(vec![SB::category_action("elo_gate", "ELO gate", Sbs::Primary, gid), SB::action("guild_config_categories", "Back", Sbs::Secondary)]))
+      .field(SF::new("Help", format!("**Competitive mode**: {competitive_desc}")).inline(false))
   }
 }
 

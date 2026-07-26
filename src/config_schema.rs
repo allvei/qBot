@@ -86,6 +86,12 @@ macro_rules! define_category_config {
                     )?
                 )*
             ];
+
+            pub const DESCRIPTIONS: &[(&str, &str)] = &[
+                $(
+                    ($column, $description),
+                )*
+            ];
         }
     };
 }
@@ -268,7 +274,7 @@ define_category_config! {
         default: true,
         display: "Competitive mode",
         button_prefix: "category_cfg_enable_competitive",
-        labels: ["Competitive", "Casual"],
+        labels: ["Competitive mode enabled", "Competitive mode disabled"],
         description: "Record match results and process dynamic ELO for this category",
     },
 }
@@ -329,6 +335,7 @@ pub use server_config::TOGGLES as SERVER_CONFIG_TOGGLES;
 pub use server_config::DESCRIPTIONS as SERVER_CONFIG_DESCRIPTIONS;
 pub use category_config::COLUMNS as CATEGORY_CONFIG_COLUMNS;
 pub use category_config::TOGGLES as CATEGORY_CONFIG_TOGGLES;
+pub use category_config::DESCRIPTIONS as CATEGORY_CONFIG_DESCRIPTIONS;
 pub use user_preferences::COLUMNS as USER_PREFERENCES_COLUMNS;
 pub use user_preferences::TOGGLES as USER_PREFERENCES_TOGGLES;
 
