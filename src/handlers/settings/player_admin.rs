@@ -80,6 +80,7 @@ pub async fn handle_player_settings_rank_select(ctx: &Context, interaction: &CI,
   };
 
   let elo_ranks_linked = db.config.get_elo_ranks_linked(guild_id).await?;
+  let active_elo = db.config.get_active_elo(guild_id).await.unwrap_or(false);
 
   if elo_ranks_linked {
     // Linked: update both rank and ELO
@@ -144,8 +145,9 @@ pub async fn handle_player_settings_rank_select(ctx: &Context, interaction: &CI,
         for session in &mut category.formats[0].sessions {
           if let Some(session_player) = session.pool.iter_mut().find(|p| p.player.user_id == target_uid) {
             session_player.player.rank = Some(new_rank.clone());
-            // ELO is updated based on elo_ranks_linked setting
-            if elo_ranks_linked {
+            // ELO is updated based on elo_ranks_linked setting, but never overwrite
+            // the displayed dynamic ELO with the static rank/manual ELO
+            if elo_ranks_linked && !active_elo {
               session_player.player.elo = new_rank.elo;
             }
           }
@@ -328,6 +330,7 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
     let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
     let old_rank = guild_elo.rank.clone();
     let elo_ranks_linked = db.config.get_elo_ranks_linked(guild_id).await?;
+    let active_elo = db.config.get_active_elo(guild_id).await.unwrap_or(false);
 
     if elo_ranks_linked {
       let new_rank = crate::models::types::Rank::from_elo(db, guild_id, elo).await?;
@@ -375,9 +378,12 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
 
       if let Ok(server) = manager_lock.get_qguild(guild_id) {
         for category in &mut server.categories {
-          if category.for_each_player_mut(target_uid, |session_player| {
-            session_player.player.elo = elo;
-          }) {
+          // Never overwrite the displayed dynamic ELO with the static/manual ELO
+          if !active_elo
+            && category.for_each_player_mut(target_uid, |session_player| {
+              session_player.player.elo = elo;
+            })
+          {
             found_in_queue = true;
           }
         }
@@ -454,6 +460,7 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
     let guild_elo = db.elo.get(target_uid, guild_id, db).await?;
     let old_rank = guild_elo.rank;
     let elo_ranks_linked = db.config.get_elo_ranks_linked(guild_id).await?;
+    let active_elo = db.config.get_active_elo(guild_id).await.unwrap_or(false);
 
     if elo_ranks_linked {
       // Linked: update both rank and ELO to the new rank's base
@@ -497,7 +504,8 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
         for category in &mut server.categories {
           if category.for_each_player_mut(target_uid, |session_player| {
             session_player.player.rank = Some(new_rank.clone());
-            if elo_ranks_linked {
+            // Never overwrite the displayed dynamic ELO with the static/manual ELO
+            if elo_ranks_linked && !active_elo {
               session_player.player.elo = new_rank.elo;
             }
           }) {
