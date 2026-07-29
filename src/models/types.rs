@@ -197,7 +197,7 @@ impl ComponentContext<'_> {
 
     let mut mgr = self.manager.lock().await;
     let interaction_id = self.component.message.id;
-    let acquired = mgr.try_lock_interaction(interaction_id, action_key.to_string());
+    let acquired = mgr.try_lock_interaction(interaction_id, action_key.to_string(), self.component.user.tag());
     
     if !acquired {
       debug!("Interaction already in progress, silently acknowledging: {} (user: {})", action_key, self.component.user.tag());

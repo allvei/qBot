@@ -4,7 +4,7 @@ use serenity::all::{
   CreateInteractionResponseMessage as CIRM, GuildId as GI,
 };
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::db::Database;
 use crate::handlers::player::is_role_component;
@@ -356,6 +356,32 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
     "blu" => "BLU team victory",
     _ => "Result",
   };
+
+  // Refuse to proceed if there's no active session in this category/format. A click on a stale
+  // runner-menu result button should not run the ELO/pull pipeline on an already-ended game.
+  let active_session_state = {
+    let mut mgr = manager.lock().await;
+    let server = mgr.get_qguild(guild_id)?;
+    let category = server.categories.iter().find(|c| c.id == category_id).ok_or_else(|| anyhow::anyhow!("Category not found"))?;
+    category.formats.iter().find(|f| f.id == format_id).and_then(|f| f.sessions.iter().find(|s| s.is_active())).map(|s| (s.status, s.score_reported))
+  };
+
+  info!(
+    "runner_end_{} click: category={} format={} interaction_id={} active_session={:?}",
+    result, category_id, format_id, interaction.id, active_session_state
+  );
+
+  if active_session_state.is_none() {
+    warn!("runner_end_{} click but no active session in category={} format={} - match already ended", result, category_id, format_id);
+    let embed = CE::new().title("No active match").description("The match has already ended.").color(0xFFAA00);
+    let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(vec![CAR::Buttons(vec![Eph::back("runner_menu_back")])]));
+    interaction.create_response(&ctx.http, response).await?;
+    {
+      let mut mgr = manager.lock().await;
+      mgr.clear_active_score_submission(guild_id, category_id, format_id);
+    }
+    return Ok(());
+  }
 
   info!("{} Runner {} ended match with result: {}", log_prefix_category(&guild_name_str, &category_name), interaction.user.tag(), result_text);
 

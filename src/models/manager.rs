@@ -7,6 +7,7 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serenity::all::{Cache, ChannelId as CI, Context, GuildId as GI, MessageId as MI, UserId as UI};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use crate::models::{Category, QGuild, Roles, SessionStatus};
@@ -23,9 +24,19 @@ pub struct Manager {
   #[serde(skip)]
   pub active_match_starts: HashMap<(GI, u8, u8), (UI, SystemTime)>,
   /// Generic interaction lock to prevent duplicate processing of any destructive action
-  /// Maps interaction_id -> (action_key, start_time)
+  /// Maps interaction_id -> (action_key, start_time, user_tag)
   #[serde(skip)]
-  pub active_interactions: HashMap<MI, (String, SystemTime)>,
+  pub active_interactions: HashMap<MI, (String, SystemTime, String)>,
+  /// Per-dashboard-channel locks serializing the clone -> handle -> write-back cycle of
+  /// dashboard button dispatch. Without this, a long-running handler (e.g. end-match) can
+  /// overlap with a short handler (e.g. leave_queue) whose stale clone then overwrites the
+  /// finished handler's state on write-back, resurrecting ended sessions.
+  #[serde(skip)]
+  pub category_locks: HashMap<(GI, CI), Arc<tokio::sync::Mutex<()>>>,
+  /// Winner-selection message IDs that already produced a completed end-match.
+  /// Guards against stale ephemeral result messages being clicked after the match ended.
+  #[serde(skip)]
+  pub processed_end_results: HashMap<MI, SystemTime>,
 }
 
 impl Manager {
@@ -39,6 +50,8 @@ impl Manager {
       active_score_submissions: HashMap::new(),
       active_match_starts: HashMap::new(),
       active_interactions: HashMap::new(),
+      category_locks: HashMap::new(),
+      processed_end_results: HashMap::new(),
     }
   }
 
@@ -55,7 +68,14 @@ impl Manager {
       let guild_name = cache.guild(*g).map(|guild| guild.name.clone()).unwrap_or_else(|| "Unknown".to_string());
       qguilds.push(QGuild::new(*g, guild_name, Roles::empty()));
     });
-    Self { qguilds, active_score_submissions: HashMap::new(), active_match_starts: HashMap::new(), active_interactions: HashMap::new() }
+    Self {
+      qguilds,
+      active_score_submissions: HashMap::new(),
+      active_match_starts: HashMap::new(),
+      active_interactions: HashMap::new(),
+      category_locks: HashMap::new(),
+      processed_end_results: HashMap::new(),
+    }
   }
 
   /// Find a server by its guild ID
@@ -308,26 +328,27 @@ impl Manager {
   /// ### Arguments
   /// * `interaction_id` - The Discord interaction ID (unique per interaction)
   /// * `action_key` - A descriptive key for the action (e.g., "cancel_match_0_0")
+  /// * `user_tag` - Tag of the user who triggered the interaction (for diagnostics)
   ///
   /// ### Returns
   /// * `true` if lock was acquired, `false` if action is already in progress
-  pub fn try_lock_interaction(&mut self, interaction_id: MI, action_key: String) -> bool {
+  pub fn try_lock_interaction(&mut self, interaction_id: MI, action_key: String, user_tag: String) -> bool {
     use tracing::{debug, warn};
 
     // Check if this exact interaction is already being processed
-    if let Some((existing_action, start_time)) = self.active_interactions.get(&interaction_id) {
+    if let Some((existing_action, start_time, existing_user)) = self.active_interactions.get(&interaction_id) {
       let elapsed = start_time.elapsed().unwrap_or(std::time::Duration::from_secs(0)).as_secs();
-      warn!("Duplicate interaction detected: {} (existing: {}, age: {}s)", action_key, existing_action, elapsed);
+      warn!("Duplicate interaction detected: {} by {} (existing: {} by {}, age: {}s)", action_key, user_tag, existing_action, existing_user, elapsed);
       return false;
     }
 
     // Clean up stale interactions (older than 5 minutes)
     let timeout = std::time::Duration::from_secs(300);
     let before_count = self.active_interactions.len();
-    self.active_interactions.retain(|id, (action, start_time)| {
+    self.active_interactions.retain(|id, (action, start_time, user)| {
       let age = start_time.elapsed().unwrap_or(timeout);
       if age >= timeout {
-        warn!("Cleaned up stale interaction lock: {} (interaction_id: {}, age: {}s)", action, id, age.as_secs());
+        warn!("Cleaned up stale interaction lock: {} by {} (interaction_id: {}, age: {}s)", action, user, id, age.as_secs());
         false
       } else {
         true
@@ -340,8 +361,8 @@ impl Manager {
     }
 
     // Acquire the lock
-    debug!("Acquired interaction lock: {} (interaction_id: {})", action_key, interaction_id);
-    self.active_interactions.insert(interaction_id, (action_key, SystemTime::now()));
+    debug!("Acquired interaction lock: {} by {} (interaction_id: {})", action_key, user_tag, interaction_id);
+    self.active_interactions.insert(interaction_id, (action_key, SystemTime::now(), user_tag));
     true
   }
 
@@ -352,13 +373,32 @@ impl Manager {
   pub fn unlock_interaction(&mut self, interaction_id: MI) {
     use tracing::debug;
 
-    if let Some((action_key, start_time)) = self.active_interactions.remove(&interaction_id) {
+    if let Some((action_key, start_time, user_tag)) = self.active_interactions.remove(&interaction_id) {
       let duration = start_time.elapsed().unwrap_or(std::time::Duration::from_secs(0));
-      debug!("Released interaction lock: {} (interaction_id: {}, held for: {}ms)", action_key, interaction_id, duration.as_millis());
+      debug!("Released interaction lock: {} by {} (interaction_id: {}, held for: {}ms)", action_key, user_tag, interaction_id, duration.as_millis());
     } else {
       use tracing::warn;
       warn!("Attempted to unlock non-existent interaction: {}", interaction_id);
     }
+  }
+
+  /// Get or create the dispatch lock for a dashboard channel's category.
+  /// Held across the clone -> handle -> write-back cycle to serialize button handlers.
+  pub fn category_lock(&mut self, guild_id: GI, channel_id: CI) -> Arc<tokio::sync::Mutex<()>> {
+    self.category_locks.entry((guild_id, channel_id)).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))).clone()
+  }
+
+  /// Check if a winner-selection message already produced a completed end-match.
+  /// Entries older than 1 hour are considered stale and treated as unprocessed.
+  pub fn is_end_result_processed(&mut self, message_id: MI) -> bool {
+    let ttl = std::time::Duration::from_secs(3600);
+    self.processed_end_results.retain(|_, ts| ts.elapsed().unwrap_or(ttl) < ttl);
+    self.processed_end_results.contains_key(&message_id)
+  }
+
+  /// Mark a winner-selection message as having produced a completed end-match.
+  pub fn mark_end_result_processed(&mut self, message_id: MI) {
+    self.processed_end_results.insert(message_id, SystemTime::now());
   }
 
   /// Check if an interaction is currently locked
@@ -381,7 +421,7 @@ impl Manager {
     let mut locks: Vec<(String, u64)> = self
       .active_interactions
       .values()
-      .map(|(action, start_time)| {
+      .map(|(action, start_time, _user)| {
         let age_secs = start_time.elapsed().unwrap_or(std::time::Duration::from_secs(0)).as_secs();
         (action.clone(), age_secs)
       })
@@ -400,7 +440,7 @@ impl Manager {
     let timeout = std::time::Duration::from_secs(300);
     let before_count = self.active_interactions.len();
     
-    self.active_interactions.retain(|id, (action, start_time)| {
+    self.active_interactions.retain(|id, (action, start_time, _user)| {
       let age = start_time.elapsed().unwrap_or(timeout);
       if age >= timeout {
         warn!("Periodic cleanup: removed stale interaction lock: {} (interaction_id: {}, age: {}s)", action, id, age.as_secs());

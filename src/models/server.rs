@@ -1347,10 +1347,23 @@ impl Category {
       .position(|s| s.status == SessionStatus::Live)
       .or_else(|| sg.sessions.iter().position(|s| s.status == SessionStatus::Hot))
       .ok_or(anyhow!("No active game to pull in format {}", fmt_id))?;
+    // Capture a status summary before taking the mutable borrow on the target session.
+    let session_summaries: Vec<String> = sg.sessions.iter().map(|s| format!("{:?}({})", s.status, s.pool.len())).collect();
     let game = &mut sg.sessions[active_session_idx];
 
     // Determine if this is a post-game scenario (game was Live, not just Hot)
     let post_game = game.status == SessionStatus::Live;
+    let old_status = game.status;
+    let game_pool_len = game.pool.len();
+
+    info!(
+      "pull_fmt: ending format {} session idx {} (status {:?}, {} players); current sessions: {}",
+      fmt_id,
+      active_session_idx,
+      old_status,
+      game_pool_len,
+      session_summaries.join(", ")
+    );
 
     game.pull();
 
@@ -1613,10 +1626,19 @@ impl Category {
 
     // Remove the finished session
     let sg = self.format_mut(fmt_id).unwrap();
+    let queue_size = sg.sessions.iter().find(|s| s.status == SessionStatus::Idle).map(|s| s.pool.len()).unwrap_or(0);
     sg.sessions.retain(|s| s.status != SessionStatus::Pull);
+
+    info!(
+      "pull_fmt: removed pulled session from format {}; idle queue size is {}, remaining sessions: {}",
+      fmt_id,
+      queue_size,
+      sg.sessions.iter().map(|s| format!("{:?}({})", s.status, s.pool.len())).collect::<Vec<_>>().join(", ")
+    );
 
     // Check if the queue now meets quota and transition to Hot if needed
     if self.is_quota_fmt(fmt_id) {
+      info!("pull_fmt: format {} meets quota after re-queue, transitioning to Hot", fmt_id);
       self.hot_fmt(fmt_id, ctx, Some(guild_id), Some(db), manager, true).await?;
     } else if post_game {
       // If this is post-game but quota isn't met, still notify players who are waiting

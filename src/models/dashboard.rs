@@ -1234,6 +1234,20 @@ impl Category {
     let response = CIR::Message(CIRM::new().embed(embed).components(buttons).ephemeral(true));
     cc.component.create_response(&cc.ctx.http, response).await?;
 
+    // Log the interaction ID that will identify the winner-selection message: Discord echoes the
+    // original interaction ID as the ephemeral response's message ID, so dash_end_* button clicks
+    // report this same ID as their Message field, letting us tie duplicate clicks back to this creation.
+    let session_status = active_session.map(|s| format!("{:?}", s.status)).unwrap_or_default();
+    info!(
+      "{} {} opened winner-selection for category={} format={} (ephemeral interaction_id: {}, active session status: {})",
+      log_prefix_category(&guild_name(cc.ctx, guild_id), self.name.as_deref().unwrap_or("Unknown")),
+      cc.component.user.tag(),
+      self.id,
+      fmt_id,
+      cc.component.id,
+      session_status
+    );
+
     Ok(())
   }
 
@@ -1345,6 +1359,7 @@ impl Category {
 
     let category_id = category_id.unwrap();
     let format_id = format_id.unwrap();
+    let ephemeral_msg_id = cc.component.message.id;
 
     // Try to acquire interaction lock to prevent duplicate processing
     let action_key = format!("end_match_result_{}_{}_{}", category_id, format_id, result);
@@ -1353,11 +1368,46 @@ impl Category {
       return Ok(());
     }
 
+    // Idempotency guard: this ephemeral winner-selection message may have already produced a
+    // completed end-match (e.g. Discord delivered a duplicate/late click on a stale message).
+    // Check this before touching session state so repeated clicks on the same message are inert.
+    let already_processed_msg = { cc.manager.lock().await.is_end_result_processed(ephemeral_msg_id) };
+    if already_processed_msg {
+      warn!(
+        "Ignoring stale dash_end_{} click on already-processed ephemeral message (interaction_id: {}, category={} format={})",
+        result, ephemeral_msg_id, category_id, format_id
+      );
+      cc.reply_acknowledge().await?;
+      cc.unlock_interaction().await;
+      return Ok(());
+    }
+
     // Guard against double-end: if the session already has score_reported set
-    let already_reported = self.format(format_id).and_then(|sg| sg.sessions.iter().find(|s| s.is_active())).map(|s| s.score_reported).unwrap_or(false);
+    let active_session_state = self.format(format_id).and_then(|sg| sg.sessions.iter().find(|s| s.is_active())).map(|s| (s.status, s.score_reported));
+
+    info!(
+      "dash_end_{} click: category={} format={} interaction_id={} active_session={:?}",
+      result, category_id, format_id, ephemeral_msg_id, active_session_state
+    );
+
+    let already_reported = active_session_state.map(|(_, reported)| reported).unwrap_or(false);
 
     if already_reported {
       cc.reply_acknowledge().await?;
+      cc.unlock_interaction().await;
+      return Ok(());
+    }
+
+    // No active session at all means the match already ended (and was pulled) via another
+    // path (a different click, runner-menu action, or auto-end). Without this guard, a stale
+    // click here would fall through with empty session_players and a "No active game to pull"
+    // error from pull_fmt that gets silently swallowed by the caller's Ok(()) return.
+    if active_session_state.is_none() {
+      warn!(
+        "dash_end_{} click on category={} format={} but no active session found (interaction_id: {}) - match already ended, ignoring",
+        result, category_id, format_id, ephemeral_msg_id
+      );
+      cc.reply_ephemeral("This match has already ended.").await?;
       cc.unlock_interaction().await;
       return Ok(());
     }
@@ -1482,11 +1532,25 @@ impl Category {
 
         cc.component.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed).components(vec![])).await?;
 
+        // Mark this ephemeral message as processed so any further duplicate/late clicks on it
+        // are recognized as stale rather than re-running the end-match pipeline.
+        {
+          let mut mgr = cc.manager.lock().await;
+          mgr.mark_end_result_processed(ephemeral_msg_id);
+          mgr.clear_active_score_submission(guild_id, category_id, format_id);
+        }
+
         // Release interaction lock
         cc.unlock_interaction().await;
       }
       Err(e) => {
         error!("Failed to end match: {e}");
+
+        // Clear the active score submission so a future click isn't blocked by this failed attempt.
+        {
+          let mut mgr = cc.manager.lock().await;
+          mgr.clear_active_score_submission(guild_id, category_id, format_id);
+        }
 
         let embed = CE::new().title("Failed to end match").description(format!("Error: {}", e)).color(0xFF0000);
 
@@ -1685,9 +1749,8 @@ impl Category {
       }
       action if action.starts_with("dash_end_") => {
         let result = self.dash_handle_end_match_result(cc).await;
-        match &result {
-          Ok(_) => info!("{} {} ended match with result", log_prefix_category(&guild_name, &ctg_nm), user_tag),
-          Err(e) => warn!("{} {} failed to end match with result: {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, e),
+        if let Err(e) = &result {
+          warn!("{} {} failed to end match with result: {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, e);
         }
         result
       }
@@ -2079,6 +2142,12 @@ impl Category {
           }
         }
       });
+
+      // Clear the ephemeral selection message
+      let clear_response = CreateInteractionResponse::UpdateMessage(
+        CreateInteractionResponseMessage::new().content("\u{200b}").embeds(vec![]).components(vec![]),
+      );
+      cc.component.create_response(&cc.ctx.http, clear_response).await?;
     } else {
       let response =
         CreateInteractionResponse::UpdateMessage(CreateInteractionResponseMessage::new().content("Failed to ping. Check bot permissions.").embeds(vec![]).components(vec![]));

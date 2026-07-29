@@ -1321,6 +1321,22 @@ impl EventHandler for Handler {
         let guild_id = itx.guild_id.unwrap();
         let channel_id = itx.channel_id;
 
+        // Serialize the clone -> handle -> write-back cycle per dashboard channel.
+        // Without this, a long-running handler (e.g. end-match taking seconds) can overlap
+        // with a short handler (e.g. leave_queue) whose stale clone is then written back
+        // AFTER the first handler finished, resurrecting ended sessions and wiping newly
+        // created ones (lost-update race).
+        let category_lock = {
+          let mut manager = self.manager.lock().await;
+          manager.category_lock(guild_id, channel_id)
+        };
+        let lock_wait_start = std::time::Instant::now();
+        let _category_guard = category_lock.lock().await;
+        let lock_wait = lock_wait_start.elapsed();
+        if lock_wait.as_millis() > 100 {
+          debug!("Button '{}' waited {}ms for category dispatch lock (channel: {})", itx.data.custom_id, lock_wait.as_millis(), channel_id);
+        }
+
         // Clone the category out of the manager so the lock can be released before the handler runs.
         // The handler does async HTTP/DB work and also re-locks the manager internally, so holding
         // the lock across it causes deadlocks and blocks every other interaction.
@@ -1542,26 +1558,44 @@ impl EventHandler for Handler {
       }
     };
 
-    // First manager lock scope
-    let left_team_vc = {
-      let mut manager = self.manager.lock().await;
-
-      // Determine which channel to use for category lookup based on state
-      // For disconnects/moves, use old channel; for connects, use new channel
-      let lookup_channel = match state {
-        VoiceStateUpdate::Disconnected | VoiceStateUpdate::Moved => match &old {
-          Some(s) => match s.channel_id {
-            Some(ch) => ch,
-            None => return,
-          },
-          None => return,
-        },
-        VoiceStateUpdate::Connected => match new.channel_id {
+    // Determine which channel to use for category lookup based on state
+    // For disconnects/moves, use old channel; for connects, use new channel
+    let lookup_channel = match state {
+      VoiceStateUpdate::Disconnected | VoiceStateUpdate::Moved => match &old {
+        Some(s) => match s.channel_id {
           Some(ch) => ch,
           None => return,
         },
-        VoiceStateUpdate::Reconnected => return,
-      };
+        None => return,
+      },
+      VoiceStateUpdate::Connected => match new.channel_id {
+        Some(ch) => ch,
+        None => return,
+      },
+      VoiceStateUpdate::Reconnected => return,
+    };
+
+    // Resolve the category's dashboard channel to key the dispatch lock, matching the key
+    // used by dashboard button dispatch. This serializes voice-triggered mutations (e.g.
+    // auto-end when team VCs empty out) against the dashboard's clone -> handle -> write-back
+    // cycle, preventing a stale clone from overwriting state changed by voice events (and
+    // vice versa).
+    let dashboard_channel = {
+      let mut manager = self.manager.lock().await;
+      match manager.get_category_by_channel(guild_id, lookup_channel) {
+        Ok(category) => category.channels.dashboard,
+        Err(_) => return,
+      }
+    };
+    let category_lock = {
+      let mut manager = self.manager.lock().await;
+      manager.category_lock(guild_id, dashboard_channel)
+    };
+    let _category_guard = category_lock.lock().await;
+
+    // First manager lock scope
+    let left_team_vc = {
+      let mut manager = self.manager.lock().await;
 
       let category = match manager.get_category_by_channel(guild_id, lookup_channel) {
         Ok(g) => g,
