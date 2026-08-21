@@ -95,6 +95,7 @@ impl Session {
 
   /// Set the session to idle and clear team assignments
   pub fn idle(&mut self) {
+    tracing::info!("session transition: {:?} -> Idle ({} players)", self.status, self.pool.len());
     self.status = SessionStatus::Idle;
     self.ready_at = None;
     self.started_at = None;
@@ -109,6 +110,7 @@ impl Session {
 
   /// Set the session to hot and record the ready timestamp
   pub fn hot(&mut self) -> CE {
+    tracing::info!("session transition: {:?} -> Hot ({} players)", self.status, self.pool.len());
     self.status = SessionStatus::Hot;
     self.ready_at = Some(SystemTime::now());
     // Create an embed message for the game ready notification
@@ -118,11 +120,13 @@ impl Session {
 
   /// Set the session to push
   pub fn push(&mut self) {
+    tracing::info!("session transition: {:?} -> Push ({} players)", self.status, self.pool.len());
     self.status = SessionStatus::Push;
   }
 
   /// Set the session to live and record start time, backing up the current queue order
   pub fn live(&mut self) {
+    tracing::info!("session transition: {:?} -> Live ({} players)", self.status, self.pool.len());
     self.status = SessionStatus::Live;
     self.started_at = Some(SystemTime::now());
     // Backup the queue order before the match starts (for potential cancellation)
@@ -131,6 +135,7 @@ impl Session {
 
   /// Set the session to pull
   pub fn pull(&mut self) {
+    tracing::info!("session transition: {:?} -> Pull ({} players)", self.status, self.pool.len());
     self.status = SessionStatus::Pull;
   }
 

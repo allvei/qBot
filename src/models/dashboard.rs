@@ -7,7 +7,7 @@ use serenity::all::{
 use std::{
   collections::{HashMap, HashSet},
   sync::Arc,
-  time::{Duration, SystemTime},
+  time::{Duration, Instant, SystemTime},
 };
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -28,19 +28,31 @@ async fn format_team_display(
     return embed;
   }
 
-  let formatted_players: Vec<_> = pool
-    .iter()
-    .map(|p| {
-      if hide_elo {
-        format!("<@{}>", p.player.user_id)
-      } else {
-        let elo = if dynamic_elo_active { p.player.dynamic_elo.unwrap_or(p.player.elo) } else { p.player.elo };
-        format!("‹**{}**› <@{}>", elo, p.player.user_id)
-      }
-    })
-    .collect();
+  let mut players_field = String::new();
+  let mut timers_field = String::new();
 
-  embed.field(format!("{label} ({})", pool.len()), formatted_players.join("\n"), false)
+  for p in pool.iter() {
+    let elo_to_display = if dynamic_elo_active { p.player.dynamic_elo.unwrap_or(p.player.elo) } else { p.player.elo };
+    let elo_str = if hide_elo { String::new() } else { format!("‹**{}**› ", elo_to_display) };
+    players_field.push_str(&format!("{elo_str}<@{}>\n", p.player.user_id));
+
+    if p.in_vc {
+      timers_field.push_str("VC\n");
+    } else if p.queue_expiration > 0 {
+      if let Ok(join_time) = p.joined_at.duration_since(std::time::SystemTime::UNIX_EPOCH) {
+        let expiry_timestamp = join_time.as_secs() + (p.queue_expiration as u64 * 60);
+        timers_field.push_str(&format!("Timeout {}\n", crate::timestamp_from_unix(expiry_timestamp as i64, crate::Style::Relative)));
+      } else {
+        timers_field.push_str("-\n");
+      }
+    } else {
+      timers_field.push_str("-\n");
+    }
+  }
+
+  embed
+    .field(format!("{label} ({})", pool.len()), players_field, true)
+    .field("Timeout", timers_field, true)
 }
 
 /// Add waiting players field to embed
@@ -569,21 +581,19 @@ impl Category {
         }
       }
 
-      // --- Idle session (queue for next game) ---
-      if let Some(idle_session) = idle_sessions.first() {
-        let queue_players = idle_session.pool.len();
+      // --- Idle sessions (queue for next game) ---
+      let total_idle_players: usize = idle_sessions.iter().map(|s| s.pool.len()).sum();
 
-        if queue_players > 0 && (has_concurrent || !live_sessions.is_empty()) {
-          // There are active/hot games — show idle players as waiting for next game
-          embed = format_team_display(embed, &idle_session.pool, "Waiting for next game", hide_elo, dynamic_elo_active).await;
-        } else if queue_players == 0 && live_sessions.is_empty() && hot_sessions.is_empty() {
-          // No games at all — show empty queue
-          embed = add_waiting_field(embed, &fmt_label, 0, quota, "*Join to get started!*");
-        } else if queue_players > 0 && live_sessions.is_empty() && hot_sessions.is_empty() {
-          // Only idle with players — show full player list with timers
-          let mut players_field = String::new();
-          let mut timers_field = String::new();
+      if total_idle_players > 0 && (has_concurrent || !live_sessions.is_empty()) {
+        // There are active/hot games — show all idle players as waiting for next game
+        let all_idle_players: Vec<_> = idle_sessions.iter().flat_map(|s| s.pool.iter().cloned()).collect();
+        embed = format_team_display(embed, &all_idle_players, "Waiting for next game", hide_elo, dynamic_elo_active).await;
+      } else if total_idle_players > 0 && live_sessions.is_empty() && hot_sessions.is_empty() {
+        // Only idle sessions with players — show combined player list with timers
+        let mut players_field = String::new();
+        let mut timers_field = String::new();
 
+        for idle_session in &idle_sessions {
           for player in idle_session.pool.iter() {
             let elo_to_display = if dynamic_elo_active { player.player.dynamic_elo.unwrap_or(player.player.elo) } else { player.player.elo };
             let elo_str = if hide_elo { String::new() } else { format!("‹**{}**› ", elo_to_display) };
@@ -612,13 +622,13 @@ impl Category {
               }
             }
           }
-
-          embed = embed.field(format!("{fmt_label} - Idle ({queue_players}/{quota})"), players_field, true);
-          embed = embed.field("Status", timers_field, true);
         }
+
+        embed = embed.field(format!("{fmt_label} - Idle ({total_idle_players}/{quota})"), players_field, true);
+        embed = embed.field("Status", timers_field, true);
       } else if live_sessions.is_empty() && hot_sessions.is_empty() {
-        // No sessions at all
-        embed = add_waiting_field(embed, &fmt_label, 0, quota, "*Empty, join to get started!*");
+        // No active/hot/idle players — show empty queue
+        embed = add_waiting_field(embed, &fmt_label, 0, quota, "*Join to get started!*");
       }
 
       // Separator between formats
@@ -795,6 +805,7 @@ impl Category {
 
     let user_id = cc.component.user.id;
     let user_tag = cc.component.user.tag();
+    debug!("dash_join_queue: user {} joining format {}", user_tag, fmt_id);
     let _guild_id = cc.component.guild_id.unwrap();
 
     // Store channel IDs before any borrows
@@ -818,7 +829,6 @@ impl Category {
     // Check if we have an idle or hot session to join in the target format
     let has_joinable_session = self.format(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot)).unwrap_or(false);
 
-    debug!("{} attempting to join {}: has_joinable_session={}", user_tag, fmt_id, has_joinable_session);
 
     if !has_joinable_session {
       debug!("{} blocked from joining {}: no joinable session (match in progress)", user_tag, fmt_id);
@@ -833,11 +843,12 @@ impl Category {
     if let Some(guild_id) = cc.component.guild_id {
       // When dynamic ELO is enabled, check if this player needs skill selection first.
       let dynamic_elo_active = cc.db.config.get_active_elo(guild_id).await.unwrap_or(false);
-      debug!("{} checking dynamic ELO: {}", user_tag, dynamic_elo_active);
-      if dynamic_elo_active {
-        let needs_selection = cc.db.elo.needs_skill_selection(user_id, guild_id).await.unwrap_or(false);
-        debug!("{} needs skill selection: {}", user_tag, needs_selection);
-        if needs_selection {
+      let needs_selection = if dynamic_elo_active {
+        cc.db.elo.needs_skill_selection(user_id, guild_id).await.unwrap_or(false)
+      } else {
+        false
+      };
+      if needs_selection {
           let gamemode = cc.db.config.get_gamemode(guild_id).await.unwrap_or(None);
           let prompt = match &gamemode {
             Some(gm) => format!("For balancing reasons, please describe your experience with **{}**:", gm),
@@ -855,7 +866,6 @@ impl Category {
           cc.component.create_followup(&cc.ctx.http, followup).await?;
           return Ok(());
         }
-      }
 
       let (mut player, discord_rank, _rank_mismatch) = match resolve_player_for_queue(cc.ctx, &cc.db, guild_id, user_id).await {
         Ok(result) => result,
@@ -873,7 +883,6 @@ impl Category {
         }
       };
       // Todo: player.tag is actually the player nickname, not discord tag
-      debug!("{} resolved as player: tag={}, rank={}", user_tag, player.tag, discord_rank.name);
 
       // Fetch discord tag from component user for performance (avoid extra API call)
       player.tag = cc.component.user.tag();
@@ -896,14 +905,17 @@ impl Category {
       let queue_context = crate::QueueContext::new(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone()));
       let is_user_in_vc = self.is_user_in_queue_vc(&cc.ctx.cache, user_id);
 
-      debug!("Attempting to queue {} with VC status: {}", user_tag, is_user_in_vc);
+      debug!(
+        "dash_join_queue: user={} fmt_id={} has_joinable={} dynamic_elo={} needs_skill_select={} resolved_tag={} rank={} in_vc={}",
+        user_tag, fmt_id, has_joinable_session, dynamic_elo_active, needs_selection, player.tag, discord_rank.name, is_user_in_vc
+      );
+
       if let Err(e) = self.queue_player_with_vc_status_fmt(fmt_id, player.clone(), discord_rank, queue_context, is_user_in_vc).await {
         error!("Failed to queue {}: {e}", user_tag);
       } else {
-        debug!("Successfully queued {} in {}", user_tag, fmt_id);
         // Log AFTER queue operation so position and count are accurate
         if let Some(format) = self.format(fmt_id) {
-          if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, self.id, format, &player, "joined", None).await {
+          if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, self.id, format, &player, "joined", "button", None).await {
             warn!("Failed to log queue toggle: {e}");
           }
         }
@@ -933,6 +945,8 @@ impl Category {
     cc.reply_acknowledge().await?;
 
     let user_id = cc.component.user.id;
+    let user_tag = cc.component.user.tag();
+    info!("dash_leave_queue: user {} leaving format {}", user_tag, format_id);
 
     // Check if player is in a live match - disallow leaving
     if let Ok(session) = self.get_user_sesh_fmt(format_id, user_id) {
@@ -998,7 +1012,7 @@ impl Category {
       // Resolve player for logging
       if let Ok(player) = cc.db.get_player(user_id, cc.ctx).await {
         if let Some(ref format) = format {
-          if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, category_id, format, &player, "left", None).await {
+          if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, category_id, format, &player, "left", "button", None).await {
             warn!("Failed to log queue toggle: {e}");
           }
         }
@@ -1197,14 +1211,32 @@ impl Category {
       return Ok(());
     }
 
-    // If require_score_report is enabled, show the score modal instead of ending directly
+    // If require_score_report is enabled, show the score modal instead of ending directly.
+    // Modals must be the initial response, so don't defer in that path.
     if self.enable_competitive && self.require_score_report {
       return self.dash_report_score(cc).await;
     }
 
+    // Defer immediately so Discord does not time out while we verify role/check for duplicate enders.
+    // All further responses will edit this deferred interaction.
+    match tokio::time::timeout(std::time::Duration::from_secs(3), cc.reply_defer_ephemeral()).await {
+      Ok(Ok(_)) => {}
+      Ok(Err(e)) => {
+        warn!("dash_end: failed to defer for fmt {}: {}", fmt_id, e);
+        return Ok(());
+      }
+      Err(_) => {
+        warn!("dash_end: timed out deferring for fmt {}", fmt_id);
+        return Ok(());
+      }
+    }
+
     // Check if user is a runner (for consistency with runner menu)
     if !is_role_component(cc, &Role::Runner).await? {
-      cc.reply_ephemeral("Only runners can end matches.").await?;
+      let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        cc.component.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().content("Only runners can end matches.").components(vec![]))
+      ).await;
       return Ok(());
     }
 
@@ -1214,7 +1246,11 @@ impl Category {
       if let Some(submitting_user_id) = mgr.get_active_score_submission(guild_id, self.id, fmt_id) {
         if submitting_user_id != cc.component.user.id {
           let submitting_user_tag = crate::log::get_user_tag(cc.ctx, submitting_user_id, &cc.db).await;
-          cc.reply_ephemeral(&format!("{} started ending this match already", submitting_user_tag)).await?;
+          let msg = format!("{} started ending this match already", submitting_user_tag);
+          let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            cc.component.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().content(msg).components(vec![]))
+          ).await;
           return Ok(());
         }
       }
@@ -1231,8 +1267,12 @@ impl Category {
 
     let (embed, buttons) = crate::handlers::response_helpers::create_end_match_selection(&format_name, self.id, fmt_id, "dash_end", vec![]);
 
-    let response = CIR::Message(CIRM::new().embed(embed).components(buttons).ephemeral(true));
-    cc.component.create_response(&cc.ctx.http, response).await?;
+    let edit = serenity::all::EditInteractionResponse::new().embed(embed).components(buttons);
+    match tokio::time::timeout(std::time::Duration::from_secs(10), cc.component.edit_response(&cc.ctx.http, edit)).await {
+      Ok(Ok(_)) => {}
+      Ok(Err(e)) => warn!("dash_end: failed to edit winner-selection for fmt {}: {}", fmt_id, e),
+      Err(_) => warn!("dash_end: timed out editing winner-selection for fmt {}", fmt_id),
+    }
 
     // Log the interaction ID that will identify the winner-selection message: Discord echoes the
     // original interaction ID as the ephemeral response's message ID, so dash_end_* button clicks
@@ -1272,8 +1312,7 @@ impl Category {
       return Ok(());
     }
 
-    // Extract queue_vc before mutable borrow
-    let _queue_vc = self.channels.queue_vc;
+    let queue_vc = self.channels.queue_vc;
 
     // Find the active session
     let active_session = self.format_mut(fmt_id).and_then(|sg| sg.sessions.iter_mut().find(|s| s.status == SessionStatus::Live));
@@ -1293,6 +1332,9 @@ impl Category {
       return Ok(());
     }
 
+    // Capture the team VCs before idle() clears them, so players can be moved back out of them
+    let team_channels = session.team_channels.clone();
+
     // Restore the pre-match queue order
     // All players in pre_match_pool are still in this Live session, so restore them all
     if let Some(pre_match_pool) = session.pre_match_pool.take() {
@@ -1303,6 +1345,8 @@ impl Category {
       warn!("No pre-match queue backup found, clearing session");
       session.pool.clear();
     }
+
+    let players: Vec<_> = session.pool.iter().map(|p| p.player.clone()).collect();
 
     // Reset the session to idle
     session.idle();
@@ -1319,9 +1363,31 @@ impl Category {
     // Check if queue meets quota and regenerate teams if needed
     let quota = self.format(fmt_id).map(|sg| sg.quota as usize).unwrap_or(0);
     let pool_len = self.format(fmt_id).and_then(|sg| sg.sessions.iter().find(|s| s.status == SessionStatus::Idle)).map(|s| s.pool.len()).unwrap_or(0);
-    if pool_len >= quota {
+    let quota_met = pool_len >= quota;
+    if quota_met {
       info!("Queue meets quota after cancellation, regenerating teams");
       self.generate_teams_fmt(fmt_id, cc.ctx, guild_id, Some(&cc.db)).await;
+    }
+
+    // Move players (and any spectators) back from the team VCs to the queue VC
+    if let Some(team_channels) = team_channels {
+      let guild = cc.ctx.cache.guild(guild_id).map(|g| g.clone());
+      let mut users_to_move: Vec<UI> = players.iter().map(|p| p.user_id).collect();
+      let mut tag_map: HashMap<UI, String> = players.iter().map(|p| (p.user_id, p.tag.clone())).collect();
+
+      if let Some(guild) = guild {
+        for vc_id in [team_channels.red_vc, team_channels.blu_vc] {
+          for (uid, vs) in guild.voice_states.iter() {
+            if vs.channel_id == Some(vc_id) && !users_to_move.contains(uid) {
+              users_to_move.push(*uid);
+              tag_map.entry(*uid).or_insert_with(|| uid.to_string());
+            }
+          }
+        }
+      }
+
+      Category::move_users_to_vc(cc.ctx, guild_id, queue_vc, &users_to_move, &tag_map, "Match cancelled, returning to queue VC").await;
+      self.release_team_channel_pair(cc.ctx, guild_id, Some(cc.manager.clone()), team_channels, quota_met).await;
     }
 
     cc.reply_ephemeral("Match cancelled. Queue order has been restored.").await?;
@@ -1413,9 +1479,28 @@ impl Category {
     }
 
     // Defer the interaction ephemerally to prevent Discord timeout and keep response private
-    cc.reply_defer_ephemeral().await?;
+    match tokio::time::timeout(std::time::Duration::from_secs(3), cc.reply_defer_ephemeral()).await {
+      Ok(Ok(_)) => {}
+      Ok(Err(e)) => {
+        warn!("dash_handle_end_match_result: failed to defer for fmt {}: {}", format_id, e);
+        cc.unlock_interaction().await;
+        return Ok(());
+      }
+      Err(_) => {
+        warn!("dash_handle_end_match_result: timed out deferring for fmt {}", format_id);
+        cc.unlock_interaction().await;
+        return Ok(());
+      }
+    }
+
     // Remove buttons immediately to prevent spam while we process
-    cc.component.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().content("Ending match...").components(vec![])).await?;
+    if let Err(e) = tokio::time::timeout(
+      std::time::Duration::from_secs(5),
+      cc.component.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().content("Ending match...").components(vec![]))
+    ).await
+    {
+      warn!("dash_handle_end_match_result: failed/timeout removing winner-selection buttons for fmt {}: {:?}", format_id, e);
+    }
 
     let guild_name_str = guild_name(cc.ctx, guild_id);
     let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
@@ -1495,7 +1580,6 @@ impl Category {
     match self.pull_fmt(format_id, cc.ctx, guild_id, &cc.db, None).await {
       Ok(_) => {
         info!("{} Match ended with {}", log_prefix_category(&guild_name_str, &category_name), result_text);
-        self.queue_dash_update(cc.ctx, guild_id).await;
 
         let result_color = match *result {
           "red" => crate::TF_RED,
@@ -1503,7 +1587,26 @@ impl Category {
           _ => 0x888888,
         };
 
-        // Post match result embed to queue chat
+        // Respond to the runner as soon as the match is ended so the interaction doesn't show "Loading"
+        let description = match match_id {
+          Some(id) => format!("**{}** - {} (Game #{})", format_name, result_text, id),
+          None => format!("**{}** - {}", format_name, result_text),
+        };
+        let embed = CE::new().title("Match ended").description(description).color(result_color);
+
+        match tokio::time::timeout(
+          std::time::Duration::from_secs(10),
+          cc.component.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed).components(vec![]))
+        ).await {
+          Ok(Ok(_)) => {}
+          Ok(Err(e)) => warn!("dash_handle_end_match_result: failed to edit final response for fmt {}: {}", format_id, e),
+          Err(_) => warn!("dash_handle_end_match_result: timed out editing final response for fmt {}", format_id),
+        }
+
+        // Update dashboard to show players moved back to queue
+        self.queue_dash_update(cc.ctx, guild_id).await;
+
+        // Post match result embed to queue chat in the background so the category lock is released quickly
         if let Some((team_red, team_blu)) = chat_embed_data {
           let hide_elo = cc.db.config.get_bool(guild_id, "hide_elo", false).await.unwrap_or(false);
           let dynamic_elo_active = cc.db.config.get_active_elo(guild_id).await.unwrap_or(false);
@@ -1521,16 +1624,15 @@ impl Category {
           };
           chat_embed = chat_embed.footer(serenity::all::CreateEmbedFooter::new(footer_text));
 
-          let _ = queue_chat.send_message(&cc.ctx.http, CM::new().embed(chat_embed)).await;
+          let http = cc.ctx.http.clone();
+          tokio::spawn(async move {
+            match tokio::time::timeout(std::time::Duration::from_secs(10), queue_chat.send_message(&http, CM::new().embed(chat_embed))).await {
+              Ok(Ok(_)) => {}
+              Ok(Err(e)) => warn!("dash_handle_end_match_result: failed to post match result to queue chat: {}", e),
+              Err(_) => warn!("dash_handle_end_match_result: timed out posting match result to queue chat"),
+            }
+          });
         }
-
-        let description = match match_id {
-          Some(id) => format!("**{}** - {} (Game #{})", format_name, result_text, id),
-          None => format!("**{}** - {}", format_name, result_text),
-        };
-        let embed = CE::new().title("Match ended").description(description).color(result_color);
-
-        cc.component.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed).components(vec![])).await?;
 
         // Mark this ephemeral message as processed so any further duplicate/late clicks on it
         // are recognized as stale rather than re-running the end-match pipeline.
@@ -1554,7 +1656,14 @@ impl Category {
 
         let embed = CE::new().title("Failed to end match").description(format!("Error: {}", e)).color(0xFF0000);
 
-        cc.component.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed).components(vec![])).await?;
+        match tokio::time::timeout(
+          std::time::Duration::from_secs(10),
+          cc.component.edit_response(&cc.ctx.http, serenity::all::EditInteractionResponse::new().embed(embed).components(vec![]))
+        ).await {
+          Ok(Ok(_)) => {}
+          Ok(Err(err)) => warn!("dash_handle_end_match_result: failed to edit error response for fmt {}: {}", format_id, err),
+          Err(_) => warn!("dash_handle_end_match_result: timed out editing error response for fmt {}", format_id),
+        }
 
         // Release interaction lock
         cc.unlock_interaction().await;
@@ -1651,7 +1760,10 @@ impl Category {
     let fmt_id = Self::parse_fmt_id(&parts);
     let user_tag = get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
 
-    match action {
+    info!("{} {} pressed '{}' (fmt_id={})", log_prefix_category(&guild_name, &ctg_nm), user_tag, custom_id, fmt_id);
+    let handler_start = Instant::now();
+
+    let handler_result = match action {
       "join_queue" => self.dash_join_queue(cc, fmt_id).await,
       "leave_queue" => self.dash_leave_queue(cc, fmt_id).await,
       "ping_players" => {
@@ -1798,7 +1910,17 @@ impl Category {
         cc.reply_ephemeral(&format!("Unknown button action: {action}")).await?;
         Ok(())
       }
-    }
+    };
+
+    info!(
+      "{} {} finished '{}' in {}ms (ok={})",
+      log_prefix_category(&guild_name, &ctg_nm),
+      user_tag,
+      custom_id,
+      handler_start.elapsed().as_millis(),
+      handler_result.is_ok()
+    );
+    handler_result
   }
 
   /// Show expiry time options
@@ -2100,9 +2222,6 @@ impl Category {
       return Ok(());
     }
 
-    // Update cooldown
-    self.last_ping_time = Some(now);
-
     // Send the ping message to ping channel (or dashboard if not set)
     let ping_channel = if self.channels.ping_channel.get() > 1 { self.channels.ping_channel } else { self.channels.dashboard };
 
@@ -2120,6 +2239,9 @@ impl Category {
     let content = format!("{} +{} for {}\nPing by <@{}>", ping_mention, players_needed, format.name, user_id.get());
 
     if let Ok(sent) = ping_channel.send_message(&cc.ctx.http, CM::new().content(content)).await {
+      // Cooldown only applies when the ping was actually sent
+      self.last_ping_time = Some(now);
+
       let message_id = sent.id;
       let guild_name = guild_name(cc.ctx, guild_id);
       let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();

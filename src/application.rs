@@ -461,6 +461,28 @@ impl Application {
   }
 }
 
+/// Wraps a category dispatch lock guard and logs how long it was held when dropped,
+/// no matter which return path (including early `return`s) releases it. Without this,
+/// diagnosing a stuck/frozen category requires reading every branch of the calling
+/// function to find where it might return early while still holding the lock.
+struct LoggedCategoryGuard<'a> {
+  _guard: tokio::sync::MutexGuard<'a, ()>,
+  label: String,
+  start: std::time::Instant,
+}
+
+impl<'a> LoggedCategoryGuard<'a> {
+  fn new(guard: tokio::sync::MutexGuard<'a, ()>, label: String) -> Self {
+    Self { _guard: guard, label, start: std::time::Instant::now() }
+  }
+}
+
+impl Drop for LoggedCategoryGuard<'_> {
+  fn drop(&mut self) {
+    debug!("{} released category dispatch lock (held for {}ms)", self.label, self.start.elapsed().as_millis());
+  }
+}
+
 struct Handler {
   db: Arc<Database>,
   manager: Arc<Mutex<Manager>>,
@@ -1107,6 +1129,17 @@ impl EventHandler for Handler {
         // Handle captain mode interactions
         if itx.data.custom_id.starts_with("captain_") {
           if let Some(guild_id) = itx.guild_id {
+            let channel_id = itx.channel_id;
+            let category_lock = {
+              let mut manager = self.manager.lock().await;
+              manager.category_lock(guild_id, channel_id)
+            };
+            let lock_wait_start = std::time::Instant::now();
+            let _category_guard = LoggedCategoryGuard::new(category_lock.lock().await, format!("Captain '{}'", itx.data.custom_id));
+            let lock_wait = lock_wait_start.elapsed();
+            info!("Captain '{}' acquired category dispatch lock after {}ms wait (channel: {})", itx.data.custom_id, lock_wait.as_millis(), channel_id);
+            let handler_start = std::time::Instant::now();
+
             if itx.data.custom_id.starts_with("captain_pick_") {
               // captain_pick_USERID_TURN
               let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
@@ -1144,6 +1177,8 @@ impl EventHandler for Handler {
                 }
               }
             }
+
+            info!("Captain '{}' handler finished in {}ms", itx.data.custom_id, handler_start.elapsed().as_millis());
           }
           return;
         }
@@ -1280,7 +1315,7 @@ impl EventHandler for Handler {
                       warn!("Failed to queue player after skill selection: {e}");
                     } else {
                       if let Some(format) = category.format(fmt_id) {
-                        if let Err(e) = crate::log_queue_toggle(&ctx, &self.db, guild_id, category.id, format, &player, "joined", None).await {
+                        if let Err(e) = crate::log_queue_toggle(&ctx, &self.db, guild_id, category.id, format, &player, "joined", "skill", None).await {
                           warn!("Failed to log queue toggle: {e}");
                         }
                       }
@@ -1321,6 +1356,8 @@ impl EventHandler for Handler {
         let guild_id = itx.guild_id.unwrap();
         let channel_id = itx.channel_id;
 
+        info!("Button '{}' received: User: {} | Message: {} | Channel: {}", itx.data.custom_id, itx.user.id, itx.message.id, channel_id);
+
         // Serialize the clone -> handle -> write-back cycle per dashboard channel.
         // Without this, a long-running handler (e.g. end-match taking seconds) can overlap
         // with a short handler (e.g. leave_queue) whose stale clone is then written back
@@ -1331,11 +1368,10 @@ impl EventHandler for Handler {
           manager.category_lock(guild_id, channel_id)
         };
         let lock_wait_start = std::time::Instant::now();
-        let _category_guard = category_lock.lock().await;
+        let _category_guard = LoggedCategoryGuard::new(category_lock.lock().await, format!("Button '{}'", itx.data.custom_id));
         let lock_wait = lock_wait_start.elapsed();
-        if lock_wait.as_millis() > 100 {
-          debug!("Button '{}' waited {}ms for category dispatch lock (channel: {})", itx.data.custom_id, lock_wait.as_millis(), channel_id);
-        }
+        info!("Button '{}' acquired category dispatch lock after {}ms wait (channel: {})", itx.data.custom_id, lock_wait.as_millis(), channel_id);
+        let handler_start = std::time::Instant::now();
 
         // Clone the category out of the manager so the lock can be released before the handler runs.
         // The handler does async HTTP/DB work and also re-locks the manager internally, so holding
@@ -1435,6 +1471,11 @@ impl EventHandler for Handler {
 
         // Run the handler without holding the manager lock
         let result = category.dash_handle_button_interaction(&comp_ctx).await;
+        let handler_elapsed = handler_start.elapsed();
+        info!("Button '{}' handler finished in {}ms (ok={}), writing back state", itx.data.custom_id, handler_elapsed.as_millis(), result.is_ok());
+        if handler_elapsed.as_millis() > 2000 {
+          warn!("Button '{}' handler took {}ms - this holds the category dispatch lock, blocking all other interactions on this channel", itx.data.custom_id, handler_elapsed.as_millis());
+        }
 
         // Write the updated category state back into the manager
         {
@@ -1445,6 +1486,7 @@ impl EventHandler for Handler {
             }
           }
         }
+        debug!("Button '{}' releasing category dispatch lock (total handled in {}ms)", itx.data.custom_id, handler_start.elapsed().as_millis());
 
         if let Err(e) = result {
           error!(
@@ -1591,7 +1633,11 @@ impl EventHandler for Handler {
       let mut manager = self.manager.lock().await;
       manager.category_lock(guild_id, dashboard_channel)
     };
-    let _category_guard = category_lock.lock().await;
+    let lock_wait_start = std::time::Instant::now();
+    let _category_guard = LoggedCategoryGuard::new(category_lock.lock().await, format!("Voice state update ({:?}) user {}", state, user_id));
+    let lock_wait = lock_wait_start.elapsed();
+    info!("Voice state update ({:?}) for user {} acquired category dispatch lock after {}ms wait (dashboard channel: {})", state, user_id, lock_wait.as_millis(), dashboard_channel);
+    let handler_start = std::time::Instant::now();
 
     // First manager lock scope
     let left_team_vc = {
@@ -1782,7 +1828,7 @@ impl EventHandler for Handler {
                   }
 
                   let _format = &category.formats[0];
-                  if let Err(e) = log_queue_toggle(&ctx, &self.db, guild_id, category.id, &category.formats[0], &player, "joined", rank_mismatch).await {
+                  if let Err(e) = log_queue_toggle(&ctx, &self.db, guild_id, category.id, &category.formats[0], &player, "joined", "vc", rank_mismatch).await {
                     warn!("Failed to log queue toggle: {e}");
                   }
                 }
@@ -1815,6 +1861,8 @@ impl EventHandler for Handler {
         }
       }
     }
+
+    info!("Voice state update ({:?}) for user {} completed in {}ms", state, user_id, handler_start.elapsed().as_millis());
   }
 }
 
@@ -1929,7 +1977,7 @@ impl Handler {
       // Log after removal so pool count is accurate, but use position before removal
       // Resolve player for logging
       if let Ok(player) = self.db.get_player(user_id, ctx).await {
-        if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left", None).await {
+        if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left", "vc", None).await {
           warn!("Failed to log queue toggle: {e}");
         }
       }
@@ -1941,7 +1989,7 @@ impl Handler {
 
       // Resolve player for logging
       if let Ok(player) = self.db.get_player(user_id, ctx).await {
-        if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left", None).await {
+        if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left", "vc", None).await {
           warn!("Failed to log queue toggle: {e}");
         }
       }
@@ -2337,7 +2385,7 @@ impl Handler {
           match session.add_ply(player.clone(), false) {
             Ok(_position) => {
               // Player successfully added, now log
-              if let Err(e) = log_queue_toggle(ctx, &self.db, guild.id, category_id, &format, &player, "joined", rank_mismatch).await {
+              if let Err(e) = log_queue_toggle(ctx, &self.db, guild.id, category_id, &format, &player, "joined", "vc", rank_mismatch).await {
                 warn!("Failed to log queue toggle: {e}");
               }
             }

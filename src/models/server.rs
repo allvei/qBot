@@ -529,9 +529,8 @@ impl Category {
   }
 
   pub async fn get_queue_fmt(&mut self, fmt_id: u8) -> Result<&mut Session, Error> {
-    debug!("get_queue_fmt: fmt_id={}, total formats={}", fmt_id, self.formats.len());
     let sg = self.format_mut(fmt_id).ok_or_else(|| anyhow!("Format {} not found", fmt_id))?;
-    debug!("get_queue_fmt: format found, total sessions={}, session statuses: {:?}", sg.sessions.len(), sg.sessions.iter().map(|s| format!("{:?}", s.status)).collect::<Vec<_>>());
+    debug!("get_queue_fmt: fmt_id={}, total sessions={}, session statuses: {:?}", fmt_id, sg.sessions.len(), sg.sessions.iter().map(|s| format!("{:?}", s.status)).collect::<Vec<_>>());
     sg.sessions.iter_mut().find(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot).ok_or(anyhow!("No joinable session found in format {}", fmt_id))
   }
 
@@ -718,6 +717,7 @@ impl Category {
   }
 
   pub async fn hot_fmt(&mut self, format_id: u8, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>, post_game: bool) -> Result<(), Error> {
+    info!("hot_fmt: starting format {} (post_game={})", format_id, post_game);
     // Verify session has enough players before transitioning to Hot
     let quota = self.format(format_id).ok_or_else(|| anyhow!("Format {} not found", format_id))?.quota as usize;
     let session = self.get_queue_fmt(format_id).await?;
@@ -731,6 +731,7 @@ impl Category {
     let was_already_hot = session.is_hot();
 
     let _ = session.hot();
+    info!("hot_fmt: format {} transitioned session to Hot ({} players)", format_id, session.pool.len());
 
     // Create team VCs if policy is OnHot
     if self.team_vc_settings.create_policy == TeamVcCreatePolicy::OnHot {
@@ -882,6 +883,7 @@ impl Category {
   }
 
   pub async fn push_fmt(&mut self, format_id: u8, ctx: &Context, guild_id: GI, db: &DB, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
+    info!("push_fmt: starting format {}", format_id);
     // Clear any pending VC notifications since the game is starting
     self.clear_ready_notif(ctx, Some(db)).await;
 
@@ -914,10 +916,18 @@ impl Category {
       game.pool.iter().map(|p| p.player.user_id).collect()
     };
 
-    // Cancel timeouts for all players in this game (game is starting)
-    for user_id in player_ids_for_queue_expiration {
-      self.cancel_player_rejoin_expiration(ctx, guild_id, format_id, user_id).await;
-    }
+    // Cancel timeouts for all players in this game (game is starting) in the background
+    let category_id = self.id;
+    let ctx_clone = ctx.clone();
+    tokio::spawn(async move {
+      use crate::models::QueueExpirationSchedulerKey;
+      if let Some(scheduler) = ctx_clone.data.read().await.get::<QueueExpirationSchedulerKey>() {
+        let mut sched = scheduler.lock().await;
+        for user_id in player_ids_for_queue_expiration {
+          sched.cancel_queue_expiration(guild_id, category_id, format_id, user_id);
+        }
+      }
+    });
 
     // Now get mutable reference for the rest of the operation
     let sg = self.format_mut(format_id).ok_or_else(|| anyhow!("Format {} not found for push", format_id))?;
@@ -951,7 +961,7 @@ impl Category {
       })
       .collect();
 
-    // Move users to team channels in parallel
+    // Move users to team channels in parallel using EditMember to avoid a per-user member fetch
     let _start_time = Instant::now();
     let _player_count = player_moves.len();
     let move_tasks: Vec<_> = player_moves
@@ -959,11 +969,14 @@ impl Category {
       .map(|(user_id, channel_id, tag)| {
         let http = ctx.http.clone();
         tokio::spawn(async move {
-          let result = async {
-            let member = guild_id.member(&http, user_id).await?;
-            member.move_to_voice_channel(&http, channel_id).await
-          }
-          .await;
+          let edit = EditMember::new().voice_channel(channel_id);
+          let move_call = http.edit_member(guild_id, user_id, &edit, Some("Moving to team VC"));
+          // A hung Discord HTTP call here would otherwise block push_fmt forever, holding
+          // the category dispatch lock and freezing every other interaction on this category.
+          let result = match tokio::time::timeout(std::time::Duration::from_secs(10), move_call).await {
+            Ok(r) => r,
+            Err(_) => Err(serenity::Error::Other("timed out after 10s")),
+          };
           if let Err(ref e) = result {
             warn!("Failed to move user {}: {}", tag, e);
           }
@@ -1046,6 +1059,7 @@ impl Category {
     }
 
     self.queue_dash_update(ctx, guild_id).await;
+    info!("push_fmt: completed format {}", format_id);
     Ok(())
   }
 
@@ -1078,11 +1092,15 @@ impl Category {
   pub async fn ensure_team_vcs(&mut self, ctx: &Context, guild_id: GI, db: &crate::Database) -> Result<Option<TeamChannel>, Error> {
     use serenity::all::{ChannelType, CreateChannel};
 
+    info!("ensure_team_vcs: checking team VC availability for category {}", self.name.as_deref().unwrap_or("Unknown"));
     // Validate that team channels actually exist in Discord, removing any that were deleted
+    let http_timeout = std::time::Duration::from_secs(10);
     let mut teams_to_remove = Vec::new();
     for tc in &self.channels.teams {
-      let red_exists = ctx.http.get_channel(tc.red_vc).await.is_ok();
-      let blu_exists = ctx.http.get_channel(tc.blu_vc).await.is_ok();
+      // On timeout, assume the channel still exists rather than risk deleting a valid pair
+      // due to a transient Discord API stall.
+      let red_exists = tokio::time::timeout(http_timeout, ctx.http.get_channel(tc.red_vc)).await.map(|r| r.is_ok()).unwrap_or(true);
+      let blu_exists = tokio::time::timeout(http_timeout, ctx.http.get_channel(tc.blu_vc)).await.map(|r| r.is_ok()).unwrap_or(true);
       if !red_exists || !blu_exists {
         warn!("Team channel pair #{} no longer exists in Discord (red: {}, blu: {}), removing from list", tc.set_index, red_exists, blu_exists);
         teams_to_remove.push(tc.clone());
@@ -1143,12 +1161,12 @@ impl Category {
     // Create both team channels in parallel
     let _start_time = Instant::now();
     let (blu_result, red_result) = tokio::join!(
-      guild_id.create_channel(&ctx.http, CreateChannel::new(format!("🔵 BLU #{}", pair_num)).kind(ChannelType::Voice).category(category)),
-      guild_id.create_channel(&ctx.http, CreateChannel::new(format!("🔴 RED #{}", pair_num)).kind(ChannelType::Voice).category(category))
+      tokio::time::timeout(http_timeout, guild_id.create_channel(&ctx.http, CreateChannel::new(format!("🔵 BLU #{}", pair_num)).kind(ChannelType::Voice).category(category))),
+      tokio::time::timeout(http_timeout, guild_id.create_channel(&ctx.http, CreateChannel::new(format!("🔴 RED #{}", pair_num)).kind(ChannelType::Voice).category(category)))
     );
 
-    let blu_ch = blu_result.map_err(|e| anyhow!("Failed to create BLU VC: {e}"))?;
-    let red_ch = red_result.map_err(|e| anyhow!("Failed to create RED VC: {e}"))?;
+    let blu_ch = blu_result.map_err(|_| anyhow!("Timed out creating BLU VC"))?.map_err(|e| anyhow!("Failed to create BLU VC: {e}"))?;
+    let red_ch = red_result.map_err(|_| anyhow!("Timed out creating RED VC"))?.map_err(|e| anyhow!("Failed to create RED VC: {e}"))?;
     info!("Created team channels #{}", pair_num);
 
     let pair = TeamChannel::new(red_ch.id, blu_ch.id, pair_num as u32);
@@ -1165,6 +1183,7 @@ impl Category {
     let prefix = crate::log::log_prefix_category(&guild_name, category_name);
 
     info!("{} Added set {} of team channels to database.", prefix, pair_num);
+    info!("ensure_team_vcs: completed for category {}", self.name.as_deref().unwrap_or("Unknown"));
 
     Ok(Some(pair))
   }
@@ -1332,6 +1351,115 @@ impl Category {
     self.pull_fmt(0, ctx, guild_id, db, manager).await
   }
 
+  /// Move a batch of users to a target voice channel, in parallel batches with a short delay
+  /// between batches to avoid Discord client bugs when many users move at once.
+  /// Returns the set of user IDs that were successfully moved (or already present).
+  pub async fn move_users_to_vc(ctx: &Context, guild_id: GI, target_vc: CI, users: &[UI], tag_map: &std::collections::HashMap<UI, String>, reason: &str) -> std::collections::HashSet<UI> {
+    let mut successfully_moved = std::collections::HashSet::new();
+
+    for (batch_idx, batch) in users.chunks(VC_MOVE_BATCH_SIZE).enumerate() {
+      // Add delay between batches (except before first batch)
+      if batch_idx > 0 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(VC_MOVE_BATCH_DELAY_MS)).await;
+      }
+
+      // Move this batch in parallel
+      let move_tasks: Vec<_> = batch
+        .iter()
+        .map(|&user_id| {
+          let http = ctx.http.clone();
+          let gid = guild_id;
+          let cache = ctx.cache.clone();
+          let tag = tag_map.get(&user_id).cloned().unwrap_or_else(|| user_id.to_string());
+          let reason = reason.to_string();
+          tokio::spawn(async move {
+            // Check if already in the target VC
+            if let Some(guild) = cache.guild(gid) {
+              if let Some(vs) = guild.voice_states.get(&user_id) {
+                if vs.channel_id == Some(target_vc) {
+                  info!("{} is already in target VC", tag);
+                  return (user_id, true);
+                }
+              }
+            }
+
+            let edit = EditMember::new().voice_channel(target_vc);
+            let move_call = http.edit_member(gid, user_id, &edit, Some(reason.as_str()));
+            match tokio::time::timeout(std::time::Duration::from_secs(10), move_call).await {
+              Ok(Ok(_)) => {
+                info!("Moved {} to target VC", tag);
+                (user_id, true)
+              }
+              Ok(Err(e)) => {
+                warn!("Failed to move {} to target VC: {}", tag, e);
+                (user_id, false)
+              }
+              Err(_) => {
+                // A hung Discord HTTP call here would otherwise block the caller forever,
+                // holding the category dispatch lock and freezing every other interaction
+                // on this category (joins, other end-match clicks, etc).
+                warn!("Timed out moving {} to target VC after 10s", tag);
+                (user_id, false)
+              }
+            }
+          })
+        })
+        .collect();
+
+      // Wait for this batch to complete
+      for task in move_tasks {
+        if let Ok((user_id, success)) = task.await {
+          if success {
+            successfully_moved.insert(user_id);
+          }
+        }
+      }
+    }
+
+    successfully_moved
+  }
+
+  /// Release a team VC pair after a game ends or is cancelled, following the category's
+  /// configured destroy policy. If `quota_will_be_met` is true and the policy is AfterPull,
+  /// the pair is kept in `recently_freed_teams` for immediate reuse instead of being torn down.
+  pub async fn release_team_channel_pair(&mut self, ctx: &Context, guild_id: GI, manager: Option<Arc<Mutex<Manager>>>, team_channels: TeamChannel, quota_will_be_met: bool) {
+    match self.team_vc_settings.destroy_policy {
+      TeamVcDestroyPolicy::AfterPull => {
+        if quota_will_be_met {
+          self.recently_freed_teams.push(team_channels);
+          debug!("Added team channels to recently_freed_teams for immediate reuse");
+        } else {
+          self.cleanup_team_vcs(ctx, true).await;
+        }
+      }
+      TeamVcDestroyPolicy::AfterExpiration => {
+        // Spawn a timer that cleans up team VCs if no new game starts
+        if let Some(mgr) = manager.clone() {
+          let category_id = self.id;
+          let post_game_timeout_secs = self.confirm_time as u64;
+          let ctx_clone = ctx.clone();
+
+          tokio::spawn(async move {
+            use tokio::time::{sleep, Duration};
+            sleep(Duration::from_secs(post_game_timeout_secs)).await;
+
+            let mut manager_lock = mgr.lock().await;
+            if let Ok(server) = manager_lock.get_qguild(guild_id) {
+              if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
+                // Only clean up if no active games are running
+                let has_active = category.formats.iter().any(|sg| sg.sessions.iter().any(|s| s.is_active()));
+                if !has_active {
+                  category.cleanup_team_vcs(&ctx_clone, true).await;
+                }
+              }
+            }
+          });
+        }
+      }
+      _ => {} // OnLastLeave handled elsewhere
+    }
+  }
+
   pub async fn pull_fmt(&mut self, fmt_id: u8, ctx: &Context, guild_id: GI, db: &DB, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
     // Clear any pending VC notifications since the game is ending
     self.clear_ready_notif(ctx, Some(db)).await;
@@ -1412,58 +1540,7 @@ impl Category {
     // Build tag lookup for readable log messages
     let tag_map: std::collections::HashMap<UI, String> = players_to_requeue.iter().map(|p| (p.user_id, p.tag.clone())).collect();
 
-    // Move users to queue VC in batches with delays to prevent Discord client bugs
-    let mut successfully_moved = std::collections::HashSet::new();
-    
-    for (batch_idx, batch) in users_to_move.chunks(VC_MOVE_BATCH_SIZE).enumerate() {
-      // Add delay between batches (except before first batch)
-      if batch_idx > 0 {
-        tokio::time::sleep(tokio::time::Duration::from_millis(VC_MOVE_BATCH_DELAY_MS)).await;
-      }
-
-      // Move this batch in parallel
-      let move_tasks: Vec<_> = batch
-        .iter()
-        .map(|&user_id| {
-          let http = ctx.http.clone();
-          let gid = guild_id;
-          let qvc = queue_vc;
-          let cache = ctx.cache.clone();
-          let tag = tag_map.get(&user_id).cloned().unwrap_or_else(|| user_id.to_string());
-          tokio::spawn(async move {
-            // Check if already in queue VC
-            if let Some(guild) = cache.guild(gid) {
-              if let Some(vs) = guild.voice_states.get(&user_id) {
-                if vs.channel_id == Some(qvc) {
-                  info!("{} is already in queue VC", tag);
-                  return (user_id, true);
-                }
-              }
-            }
-
-            match http.edit_member(gid, user_id, &EditMember::new().voice_channel(qvc), Some("Moving user to queue VC")).await {
-              Ok(_) => {
-                info!("Moved {} to queue VC", tag);
-                (user_id, true)
-              }
-              Err(e) => {
-                warn!("Failed to move {} to queue VC: {}", tag, e);
-                (user_id, false)
-              }
-            }
-          })
-        })
-        .collect();
-
-      // Wait for this batch to complete
-      for task in move_tasks {
-        if let Ok((user_id, success)) = task.await {
-          if success {
-            successfully_moved.insert(user_id);
-          }
-        }
-      }
-    }
+    let successfully_moved = Self::move_users_to_vc(ctx, guild_id, queue_vc, &users_to_move, &tag_map, "Moving user to queue VC").await;
 
     // Log spectators moved (they go to VC but not queue)
     let spectators_moved: Vec<_> = spectators_to_move.iter().filter(|uid| successfully_moved.contains(uid)).collect();
@@ -1485,61 +1562,14 @@ impl Category {
       projected_count >= self.quota() as usize
     };
 
-    // Handle team channels based on whether we'll cleanup or not
-    let skip_cleanup = quota_will_be_met && self.team_vc_settings.destroy_policy == TeamVcDestroyPolicy::AfterPull;
-
-    if skip_cleanup {
-      // Add team channels to recently_freed_teams to prevent immediate recreation
+    // Clear team_channels from the pulled session so cleanup/reuse sees the pair as free
+    let team_channels = {
       let sg = self.format_mut(fmt_id).unwrap();
-      let team_channels = sg.sessions[active_session_idx].team_channels.clone();
-      // Clear from pulled session first
-      sg.sessions[active_session_idx].team_channels = None;
-      // Then add to recently freed teams
-      if let Some(team_channels) = team_channels {
-        self.recently_freed_teams.push(team_channels);
-        debug!("Added team channels to recently_freed_teams for immediate reuse");
-      }
-    } else {
-      // Clear team_channels from the pulled session so cleanup sees them as free
-      let sg = self.format_mut(fmt_id).unwrap();
-      sg.sessions[active_session_idx].team_channels = None;
-    }
+      sg.sessions[active_session_idx].team_channels.take()
+    };
 
-    // Clean up team VCs based on destroy policy, but avoid cleanup if quota will be met and policy is AfterPull
-    match self.team_vc_settings.destroy_policy {
-      TeamVcDestroyPolicy::AfterPull => {
-        // Only clean up if quota won't be immediately met again (to avoid delete/recreate cycle)
-        if !quota_will_be_met {
-          self.cleanup_team_vcs(ctx, true).await;
-        } else {
-          debug!("Skipping team VC cleanup - quota will be met again, avoiding unnecessary delete/recreate");
-        }
-      }
-      TeamVcDestroyPolicy::AfterExpiration => {
-        // Spawn a timer that cleans up team VCs if no new game starts
-        if let Some(mgr) = manager.clone() {
-          let category_id = self.id;
-          let post_game_timeout_secs = self.confirm_time as u64;
-          let ctx_clone = ctx.clone();
-
-          tokio::spawn(async move {
-            use tokio::time::{sleep, Duration};
-            sleep(Duration::from_secs(post_game_timeout_secs)).await;
-
-            let mut manager_lock = mgr.lock().await;
-            if let Ok(server) = manager_lock.get_qguild(guild_id) {
-              if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
-                // Only clean up if no active games are running
-                let has_active = category.formats.iter().any(|sg| sg.sessions.iter().any(|s| s.is_active()));
-                if !has_active {
-                  category.cleanup_team_vcs(&ctx_clone, true).await;
-                }
-              }
-            }
-          });
-        }
-      }
-      _ => {} // OnLastLeave handled elsewhere
+    if let Some(team_channels) = team_channels {
+      self.release_team_channel_pair(ctx, guild_id, manager.clone(), team_channels, quota_will_be_met).await;
     }
 
     // Get quota before mutable borrows
@@ -1751,12 +1781,10 @@ impl Category {
     let mut corrected: Vec<String> = Vec::new();
     for sg in &mut self.formats {
       for session in &mut sg.sessions {
-        // For Hot sessions with team channels, also check if players are in their team VCs
-        let team_vc_ids = if session.is_hot() {
-          session.team_channels.as_ref().map(|tc| (tc.red_vc.get(), tc.blu_vc.get()))
-        } else {
-          None
-        };
+        // For active sessions with team channels (Push/Live), also check if players are in their team VCs.
+        // Note: team_channels is only ever set once a session leaves Hot (see push_fmt), so this must
+        // not be gated on is_hot() or team-VC players get falsely marked as missing.
+        let team_vc_ids = session.team_channels.as_ref().map(|tc| (tc.red_vc.get(), tc.blu_vc.get()));
 
         for player in &mut session.pool {
           let user_id = player.player.user_id.get();
@@ -1775,7 +1803,6 @@ impl Category {
             corrected.push(player.player.tag.clone());
             let old_value = player.in_vc;
             player.in_vc = actual_in_vc;
-            info!("Corrected in_queue_vc for {} ({}→{})", player.player.tag, old_value, actual_in_vc);
           }
         }
       }
@@ -1924,9 +1951,7 @@ impl Category {
   }
 
   pub async fn queue_player_with_vc_status_fmt(&mut self, fmt_id: u8, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
-    debug!("queue_player_with_vc_status_fmt: user_id={}, tag={}, fmt_id={}, in_vc={}", player.user_id, player.tag, fmt_id, in_vc);
     let session = self.get_queue_fmt(fmt_id).await?;
-    debug!("queue_player_with_vc_status_fmt: got session, current pool size={}", session.pool.len());
     let was_empty = session.pool.is_empty();
     let was_idle = session.is_idle();
     let was_hot = session.is_hot();
@@ -1936,7 +1961,6 @@ impl Category {
     let player_queue_expiration = player.queue_expiration;
     let db = queue_ctx.db.unwrap();
     let _user_prefs = db.players.get_prefs(user_id).await?;
-    debug!("queue_player_with_vc_status_fmt: user_prefs loaded, calling add_ply");
 
     // Handle ping role assignment and DB consistency checks
     if let Some(guild_id) = queue_ctx.guild_id {
@@ -1988,8 +2012,23 @@ impl Category {
       }
     }
 
-    session.add_ply(player.clone(), in_vc)?;
-    debug!("queue_player_with_vc_status_fmt: add_ply succeeded, new pool size={}", session.pool.len());
+    let pool_before = session.pool.len();
+    let position = session.add_ply(player.clone(), in_vc)?;
+    info!(
+      "queue_player_with_vc_status_fmt: user {} (id={} in_vc={} exp={}m) added to {:?} session (was_idle={} was_hot={} was_empty={}) at position {}/{} (pool before: {} after: {})",
+      player.tag,
+      player.user_id,
+      in_vc,
+      player_queue_expiration,
+      session.status,
+      was_idle,
+      was_hot,
+      was_empty,
+      position,
+      session.pool.len(),
+      pool_before,
+      session.pool.len()
+    );
 
     // Schedule timeout for this player
     if let Some(guild_id) = queue_ctx.guild_id {
@@ -2282,7 +2321,8 @@ impl Category {
       let content = player_mentions.join(" ");
       let msg = CM::new().embed(embed).content(content);
       let dashboard = self.channels.dashboard;
-      if let Ok(sent) = dashboard.send_message(&ctx.http, msg).await {
+      match tokio::time::timeout(tokio::time::Duration::from_secs(10), dashboard.send_message(&ctx.http, msg)).await {
+        Ok(Ok(sent)) => {
         // Save notification to database
         if let Some(db) = db {
           let _ = db.game_ready_notifs.save_notification(dashboard.get(), sent.id.get()).await;
@@ -2292,7 +2332,7 @@ impl Category {
         // Store pending users in-memory
         self.pending_users = players_to_dm.clone();
         
-        info!("{} Match ready notification created (msg_id: {}, players: {})", full_prefix, sent.id, player_mentions.len());
+        info!("{} Match ready notification created", full_prefix);
 
         // Delete the message after confirm expiry duration
         let http = ctx.http.clone();
@@ -2311,47 +2351,55 @@ impl Category {
             }
           }
         });
-      } else {
-        warn!("{} Failed to send match ready notification", full_prefix);
       }
+      Ok(Err(e)) => warn!("{} Failed to send match ready notification: {}", full_prefix, e),
+      Err(_) => warn!("{} Timed out sending match ready notification", full_prefix),
     }
+  }
 
-    // Send DMs to users who have pm_hot_alert=true
+    // Send DMs to users who have pm_hot_alert=true in the background so end-match/queueing isn't blocked.
     if let Some(database) = db {
       let dm_tracker = ctx.data.read().await.get::<crate::models::DmTrackerKey>().cloned();
 
-      for user_id in players_to_dm {
-        // Check if user has DM notifications enabled
-        match database.players.get_pm_hot_alert(user_id).await {
-          Ok(true) => {
-            let dm_embed = CreateEmbed::new()
-              .title("PUG ready!")
-              .description(format!(
-                "A game is ready in **{}**!\nPlease join the queue channel.",
-                ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "the server".to_string())
-              ))
-              .footer(serenity::all::CreateEmbedFooter::new("Don't want to be messaged directly? Press the button below"))
-              .color(GREEN);
+      if let Some(tracker) = dm_tracker {
+        let ctx = ctx.clone();
+        let database = database.clone();
+        let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "the server".to_string());
 
-            let disable_button = serenity::all::CreateButton::new("disable_dm_notifications").label("Disable DM notifications").style(serenity::all::ButtonStyle::Secondary);
+        for user_id in players_to_dm {
+          let ctx = ctx.clone();
+          let database = database.clone();
+          let tracker = tracker.clone();
+          let guild_name = guild_name.clone();
 
-            let components = vec![serenity::all::CreateActionRow::Buttons(vec![disable_button])];
+          tokio::spawn(async move {
+            match database.players.get_pm_hot_alert(user_id).await {
+              Ok(true) => {
+                let dm_embed = CreateEmbed::new()
+                  .title("PUG ready!")
+                  .description(format!("A game is ready in **{}**!\nPlease join the queue channel.", guild_name))
+                  .footer(serenity::all::CreateEmbedFooter::new("Don't want to be messaged directly? Press the button below"))
+                  .color(GREEN);
 
-            if let Some(ref tracker) = dm_tracker {
-              if let Err(e) = tracker.send_dm(ctx, user_id, dm_embed, components).await {
-                warn!("Failed to send DM to user {}: {}", user_id, e);
+                let disable_button = serenity::all::CreateButton::new("disable_dm_notifications").label("Disable DM notifications").style(serenity::all::ButtonStyle::Secondary);
+                let components = vec![serenity::all::CreateActionRow::Buttons(vec![disable_button])];
+
+                match tokio::time::timeout(
+                  std::time::Duration::from_secs(10),
+                  tracker.send_dm(&ctx, user_id, dm_embed, components)
+                ).await {
+                  Ok(Ok(_)) => {}
+                  Ok(Err(e)) => warn!("Failed to send DM to user {}: {}", user_id, e),
+                  Err(_) => warn!("Timed out sending DM to user {}", user_id),
+                }
               }
-            } else {
-              warn!("DM tracker not available for hot alert DM to {}", user_id);
+              Ok(false) => {}
+              Err(e) => warn!("Failed to check DM status for user {}: {}", user_id, e),
             }
-          }
-          Ok(false) => {
-            // User has DMs disabled, skip
-          }
-          Err(e) => {
-            warn!("Failed to check DM status for user {}: {}", user_id, e);
-          }
+          });
         }
+      } else {
+        warn!("DM tracker not available for hot alert DMs");
       }
     }
   }
@@ -2392,12 +2440,15 @@ impl Category {
           let content = remaining_mentions.join(" ");
 
           let edit = serenity::all::EditMessage::new().embed(embed).content(content);
-          match dashboard.edit_message(&ctx.http, msg_id, edit).await {
-            Ok(_) => {
+          match tokio::time::timeout(tokio::time::Duration::from_secs(10), dashboard.edit_message(&ctx.http, msg_id, edit)).await {
+            Ok(Ok(_)) => {
               debug!("Match ready notification updated - {} joined, {} remaining (msg_id: {})", user_tag, self.pending_users.len(), msg_id);
             }
-            Err(e) => {
+            Ok(Err(e)) => {
               warn!("Failed to edit match ready notification (msg_id: {}): {}", msg_id, e);
+            }
+            Err(_) => {
+              warn!("Timed out editing match ready notification (msg_id: {})", msg_id);
             }
           }
         }
@@ -2408,12 +2459,15 @@ impl Category {
   /// Clear the pending VC notification (e.g., when game starts or ends)
   pub async fn clear_ready_notif(&mut self, ctx: &Context, db: Option<&DB>) {
     if let Some(msg_id) = self.pending_vc_notification.take() {
-      match self.channels.dashboard.delete_message(&ctx.http, msg_id).await {
-        Ok(_) => {
+      match tokio::time::timeout(tokio::time::Duration::from_secs(10), self.channels.dashboard.delete_message(&ctx.http, msg_id)).await {
+        Ok(Ok(_)) => {
           info!("Match ready notification cleared - game starting (msg_id: {}, {} players still pending)", msg_id, self.pending_users.len());
         }
-        Err(e) => {
+        Ok(Err(e)) => {
           debug!("Match ready notification already deleted (msg_id: {}): {}", msg_id, e);
+        }
+        Err(_) => {
+          warn!("Timed out deleting match ready notification (msg_id: {})", msg_id);
         }
       }
       // Delete from database

@@ -1,10 +1,11 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serenity::all::{
   ButtonStyle as BS, ComponentInteraction as CIx, Context, CreateActionRow as CAR, CreateButton as CB, CreateEmbed as CE,
   CreateInteractionResponse as CIR, CreateInteractionResponseMessage as CIRM, GuildId as GI, UserId as UI,
 };
 use std::sync::Arc;
-use tracing::info;
+use tokio::time::{timeout, Duration};
+use tracing::{info, warn};
 
 use crate::{Database, Manager, SessionStatus, Team, CYAN};
 
@@ -18,39 +19,61 @@ pub async fn handle_captain_mode(
 ) -> Result<()> {
   // Defer response
   let response = CIR::Defer(CIRM::new().ephemeral(true));
-  interaction.create_response(&ctx.http, response).await?;
+  if let Err(e) = timeout(Duration::from_secs(10), interaction.create_response(&ctx.http, response)).await {
+    warn!("Timed out deferring captain mode start: {}", e);
+  }
 
-  let mut mgr = manager.lock().await;
-  let server = mgr.get_qguild(guild_id)?;
-
-  // Find all Hot sessions across all categories and formats
-  let mut hot_formats: Vec<(u8, u8, String)> = Vec::new(); // (category_id, format_id, format_name)
-
-  for category in &server.categories {
-    for format in &category.formats {
-      if format.sessions.iter().any(|s| s.status == SessionStatus::Hot) {
-        hot_formats.push((category.id, format.id, format.name.clone()));
+  // Find all Hot sessions across all categories and formats, then release the manager lock
+  let (hot_formats, dashboard_channel) = {
+    let mut mgr = manager.lock().await;
+    let server = mgr.get_qguild(guild_id)?;
+    let mut hot_formats: Vec<(u8, u8, String)> = Vec::new(); // (category_id, format_id, format_name)
+    for category in &server.categories {
+      for format in &category.formats {
+        if format.sessions.iter().any(|s| s.status == SessionStatus::Hot) {
+          hot_formats.push((category.id, format.id, format.name.clone()));
+        }
       }
     }
-  }
+    let dashboard_channel = hot_formats
+      .first()
+      .and_then(|(cat_id, _, _)| mgr.get_category_by_id(guild_id, *cat_id).ok().map(|c| c.channels.dashboard))
+      .unwrap_or(interaction.channel_id);
+    (hot_formats, dashboard_channel)
+  };
 
   if hot_formats.is_empty() {
     let followup = serenity::all::CreateInteractionResponseFollowup::new()
       .content("No Hot games found. Captain mode can only be started when a game is ready (Hot status).")
       .ephemeral(true);
-    interaction.create_followup(&ctx.http, followup).await?;
+    if let Err(e) = timeout(Duration::from_secs(10), interaction.create_followup(&ctx.http, followup)).await {
+      warn!("Timed out responding to no-hot-games: {}", e);
+    }
     return Ok(());
   }
 
+  // Serialize the actual draft UI work on this category so it can't race with end-match / pull
+  let category_lock = {
+    let mut mgr = manager.lock().await;
+    mgr.category_lock(guild_id, dashboard_channel)
+  };
+  let _category_guard = category_lock.lock().await;
+  let handler_start = std::time::Instant::now();
+
   // If multiple Hot games, show format selection
   if hot_formats.len() > 1 {
-    show_format_selection(ctx, interaction, guild_id, &hot_formats).await?;
+    if let Err(e) = show_format_selection(ctx, interaction, guild_id, &hot_formats).await {
+      warn!("Failed to show format selection: {}", e);
+    }
   } else {
     // Single Hot game, proceed directly
     let (category_id, format_id, _) = &hot_formats[0];
-    start_captain_draft(ctx, interaction, db, manager, guild_id, *category_id, *format_id).await?;
+    if let Err(e) = start_captain_draft(ctx, interaction, db, manager, guild_id, *category_id, *format_id).await {
+      warn!("Failed to start captain draft: {}", e);
+    }
   }
 
+  info!("Captain mode handler finished in {}ms", handler_start.elapsed().as_millis());
   Ok(())
 }
 
@@ -150,9 +173,11 @@ pub async fn start_captain_draft(
   // Create draft embed with player buttons (no lock held)
   let draft_embed = create_draft_embed(&sorted_players, captain_red, captain_blu, 0, &pick_order, 0).await?;
 
-  let message = dashboard_channel
-    .send_message(&ctx.http, draft_embed)
-    .await?;
+  let message = match timeout(Duration::from_secs(10), dashboard_channel.send_message(&ctx.http, draft_embed)).await {
+    Ok(Ok(msg)) => msg,
+    Ok(Err(e)) => return Err(e.into()),
+    Err(_) => return Err(anyhow!("Timed out sending captain draft message")),
+  };
 
   let draft_message_id = message.id;
 
@@ -359,10 +384,12 @@ pub async fn handle_captain_cancel(
   let (category_id, format_id, draft_state) = find_active_draft(server)?;
 
   // Delete draft message
-  draft_state
-    .draft_channel_id
-    .delete_message(&ctx.http, draft_state.draft_message_id)
-    .await?;
+  match timeout(Duration::from_secs(10), draft_state.draft_channel_id.delete_message(&ctx.http, draft_state.draft_message_id)).await {
+    Ok(Ok(_)) => {}
+    Ok(Err(e)) => warn!("Failed to delete draft message: {}", e),
+    Err(_) => warn!("Timed out deleting draft message"),
+  }
+  //
 
   // Clear draft state
   let category = mgr.get_category_by_id(guild_id, category_id)?;
@@ -409,10 +436,12 @@ pub async fn handle_captain_start(
   let (category_id, format_id, draft_state) = find_active_draft(server)?;
 
   // Delete draft message
-  draft_state
-    .draft_channel_id
-    .delete_message(&ctx.http, draft_state.draft_message_id)
-    .await?;
+  match timeout(Duration::from_secs(10), draft_state.draft_channel_id.delete_message(&ctx.http, draft_state.draft_message_id)).await {
+    Ok(Ok(_)) => {}
+    Ok(Err(e)) => warn!("Failed to delete draft message: {}", e),
+    Err(_) => warn!("Timed out deleting draft message"),
+  }
+  //
 
   // Clear draft state
   let category = mgr.get_category_by_id(guild_id, category_id)?;
@@ -494,17 +523,19 @@ async fn update_draft_embed(
   )
   .await?;
 
-  draft_state
-    .draft_channel_id
-    .edit_message(&ctx.http, draft_state.draft_message_id, create_draft_embed_edit(
-      &hot_session.pool,
-      draft_state.captains.0,
-      draft_state.captains.1,
-      draft_state.current_turn,
-      &draft_state.pick_order,
-      draft_state.current_pick_index,
-    ).await?)
-    .await?;
+  let edit = create_draft_embed_edit(
+    &hot_session.pool,
+    draft_state.captains.0,
+    draft_state.captains.1,
+    draft_state.current_turn,
+    &draft_state.pick_order,
+    draft_state.current_pick_index,
+  ).await?;
+  match timeout(Duration::from_secs(10), draft_state.draft_channel_id.edit_message(&ctx.http, draft_state.draft_message_id, edit)).await {
+    Ok(Ok(_)) => {}
+    Ok(Err(e)) => warn!("Failed to update draft embed: {}", e),
+    Err(_) => warn!("Timed out updating draft embed"),
+  }
 
   Ok(())
 }
@@ -603,13 +634,18 @@ async fn complete_draft(
 
   let new_embed = serenity::all::EditMessage::new().embed(embed).components(buttons);
 
-  draft_state
-    .draft_channel_id
-    .edit_message(&ctx.http, draft_state.draft_message_id, new_embed)
-    .await?;
+  match timeout(Duration::from_secs(10), draft_state.draft_channel_id.edit_message(&ctx.http, draft_state.draft_message_id, new_embed)).await {
+    Ok(Ok(_)) => {}
+    Ok(Err(e)) => warn!("Failed to update draft completion embed: {}", e),
+    Err(_) => warn!("Timed out updating draft completion embed"),
+  }
 
   let response = CIR::UpdateMessage(CIRM::new().content("Draft complete! Teams are ready."));
-  interaction.create_response(&ctx.http, response).await?;
+  match timeout(Duration::from_secs(10), interaction.create_response(&ctx.http, response)).await {
+    Ok(Ok(_)) => {}
+    Ok(Err(e)) => warn!("Failed to respond to draft completion: {}", e),
+    Err(_) => warn!("Timed out responding to draft completion"),
+  }
 
   Ok(())
 }

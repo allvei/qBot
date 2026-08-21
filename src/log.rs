@@ -93,6 +93,7 @@ pub async fn log_queue_toggle(
   format: &crate::models::Format,
   player: &crate::models::Player,
   action: &str,                            // "joined" or "left"
+  trigger: &str,                           // how the toggle was triggered (e.g. "button", "vc", "skill")
   rank_mismatch: Option<(String, String)>, // (old_rank, new_rank)
 ) -> Result<(), anyhow::Error> {
   // Get format info from database using guild_id, category_id, and format_id
@@ -177,7 +178,7 @@ pub async fn log_queue_toggle(
   };
 
   // Call the original function with extrapolated data
-  log_queue_toggle_sync(&guild_name, &ctg_nm, &player.tag, queue_type, pool_size, Some(&fmt_nm), position, rank_mismatch);
+  log_queue_toggle_sync(&guild_name, &ctg_nm, &player.tag, queue_type, trigger, pool_size, Some(&fmt_nm), position, rank_mismatch);
 
   Ok(())
 }
@@ -187,17 +188,17 @@ pub fn log_queue_toggle_sync(
   category_name: &str,
   tag: &str,
   queue_type: Qtt,
+  trigger: &str,
   pool_size: Option<(usize, usize)>,
   fmt_name: Option<&str>,
   position: usize,
   rank_mismatch: Option<(String, String)>,
 ) {
-  let (action, source) = match queue_type {
-    Qtt::BJ => ("joined", None),
-    Qtt::BL => ("left", None),
-    Qtt::VJ => ("joined", Some("VC")),
-    Qtt::VL => ("left", Some("VC")),
+  let action = match queue_type {
+    Qtt::BJ | Qtt::VJ => "joined",
+    Qtt::BL | Qtt::VL => "left",
   };
+  let source = if trigger.is_empty() { None } else { Some(trigger) };
 
   let pos_part = if action != "left" { format!("#{} ", position) } else { String::new() };
   let prefix = log_prefix_format(guild_name, category_name, fmt_name.unwrap_or(""));
@@ -206,9 +207,9 @@ pub fn log_queue_toggle_sync(
 
   match (pool_size, source) {
     (Some((current, quota)), Some(src)) => info!("{} {}{} {} ({}) [{}/{}]{}", prefix, pos_part, tag, action, src, current, quota, rank_suffix),
-    (Some((current, quota)), None) => info!("{} {}{} {} [{}/{}]{}", prefix, pos_part, tag, action, current, quota, rank_suffix),
-    (None, Some(src)) => info!("{} {}{} {} ({}){}", prefix, pos_part, tag, action, src, rank_suffix),
-    (None, None) => info!("{} {}{} {}{}", prefix, pos_part, tag, action, rank_suffix),
+    (Some((current, quota)), None) =>      info!("{} {}{} {} [{}/{}]{}", prefix, pos_part, tag, action, current, quota, rank_suffix),
+    (None, Some(src)) =>                   info!("{} {}{} {} ({}){}", prefix, pos_part, tag, action, src, rank_suffix),
+    (None, None) =>                        info!("{} {}{} {}{}", prefix, pos_part, tag, action, rank_suffix),
   }
 }
 

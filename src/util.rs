@@ -2,6 +2,9 @@
 
 use chrono::Utc;
 use std::io::Write;
+use tracing::Metadata;
+use tracing_appender::rolling::{daily, RollingFileAppender};
+use tracing_subscriber::fmt::MakeWriter;
 
 /// Writer wrapper that strips ANSI escape sequences before writing
 struct StripAnsiWriter<W: Write>(W);
@@ -38,14 +41,85 @@ impl<W: Write> Write for StripAnsiWriter<W> {
 /// MakeWriter wrapper that produces StripAnsiWriter instances
 struct StripAnsiMakeWriter<M>(M);
 
-impl<'a, M> tracing_subscriber::fmt::MakeWriter<'a> for StripAnsiMakeWriter<M>
+impl<'a, M> MakeWriter<'a> for StripAnsiMakeWriter<M>
 where
-  M: tracing_subscriber::fmt::MakeWriter<'a>,
+  M: MakeWriter<'a>,
 {
   type Writer = StripAnsiWriter<M::Writer>;
 
   fn make_writer(&'a self) -> Self::Writer {
     StripAnsiWriter(self.0.make_writer())
+  }
+
+  fn make_writer_for(&'a self, meta: &Metadata<'_>) -> Self::Writer {
+    StripAnsiWriter(self.0.make_writer_for(meta))
+  }
+}
+
+/// Routes log events to a default file plus per-category files based on the `target`.
+struct LogRouter {
+  default: RollingFileAppender,
+  categories: Vec<(&'static str, RollingFileAppender)>,
+}
+
+impl LogRouter {
+  fn new() -> Self {
+    let _ = std::fs::create_dir_all("logs/sessions");
+    let _ = std::fs::create_dir_all("logs/db");
+    let _ = std::fs::create_dir_all("logs/user_preferences");
+    let _ = std::fs::create_dir_all("logs/server_config");
+
+    Self {
+      default: daily("logs", "qbot"),
+      categories: vec![
+        ("qbot::handlers::settings::user_prefs_system", daily("logs/user_preferences", "qbot")),
+        ("qbot::handlers::settings", daily("logs/server_config", "qbot")),
+        ("qbot::config_schema", daily("logs/server_config", "qbot")),
+        ("qbot::db", daily("logs/db", "qbot")),
+        ("qbot::models::session", daily("logs/sessions", "qbot")),
+        ("qbot::models::server", daily("logs/sessions", "qbot")),
+      ],
+    }
+  }
+}
+
+struct MultiWriter<'a> {
+  writers: Vec<Box<dyn Write + 'a>>,
+}
+
+impl<'a> Write for MultiWriter<'a> {
+  fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+    for w in &mut self.writers {
+      w.write_all(buf)?;
+    }
+    Ok(buf.len())
+  }
+
+  fn flush(&mut self) -> std::io::Result<()> {
+    for w in &mut self.writers {
+      w.flush()?;
+    }
+    Ok(())
+  }
+}
+
+impl<'a> MakeWriter<'a> for LogRouter {
+  type Writer = MultiWriter<'a>;
+
+  fn make_writer(&'a self) -> Self::Writer {
+    MultiWriter { writers: vec![Box::new(self.default.make_writer())] }
+  }
+
+  fn make_writer_for(&'a self, meta: &Metadata<'_>) -> Self::Writer {
+    let target = meta.target();
+    let mut writers: Vec<Box<dyn Write + 'a>> = vec![Box::new(self.default.make_writer())];
+    for (prefix, appender) in &self.categories {
+      if target.starts_with(prefix) {
+        writers.push(Box::new(appender.make_writer()));
+        break;
+      }
+    }
+    MultiWriter { writers }
   }
 }
 
@@ -124,7 +198,7 @@ pub fn init_logging(log_buffer: Option<std::sync::Arc<tokio::sync::Mutex<std::co
     .with_file(true)
     .with_line_number(true)
     .with_level(true) // Include log level in file
-    .with_writer(StripAnsiMakeWriter(tracing_appender::rolling::daily("logs", "qbot.log")))
+    .with_writer(StripAnsiMakeWriter(LogRouter::new()))
     .with_filter(file_filter);
 
   // Initialize subscriber with both layers

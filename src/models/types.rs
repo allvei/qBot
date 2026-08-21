@@ -7,7 +7,7 @@ use serenity::all::{
 use sqlx::prelude::FromRow;
 use sqlx::Row;
 use tokio::sync::Mutex;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::db::Database;
 use crate::guild_name;
@@ -108,7 +108,18 @@ pub enum PermissionType {
 impl ComponentContext<'_> {
   /// Create a standard component response
   pub async fn create_response(&self, response: CIR) -> Result<(), anyhow::Error> {
-    self.component.create_response(&self.ctx.http, response).await?;
+    let label = format!("{:?}", response);
+    let start = std::time::Instant::now();
+    let result = self.component.create_response(&self.ctx.http, response).await;
+    match result {
+      Ok(_) => {
+        debug!("Interaction {} for user {} responded with {} in {}ms", self.component.id, self.component.user.tag(), label, start.elapsed().as_millis());
+      }
+      Err(ref e) => {
+        warn!("Interaction {} for user {} failed to respond with {} in {}ms: {}", self.component.id, self.component.user.tag(), label, start.elapsed().as_millis(), e);
+      }
+    }
+    result?;
     Ok(())
   }
 
