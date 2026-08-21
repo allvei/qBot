@@ -39,9 +39,14 @@ fn run_gui() -> Result<()> {
   // Initialize logging with GUI log buffer
   init_logging(Some(log_buffer.clone()));
 
-  // Create manager and database for shared state
+  // Create manager and database for shared state.
+  // Use a single runtime for both the initial DB setup and the bot thread below:
+  // creating a throwaway runtime here and dropping it after block_on() orphans any
+  // background tasks the DB pool spawns (e.g. connection reaper), which then causes
+  // a tokio task-list assertion panic once those tasks are touched from another runtime.
   let manager = Arc::new(Mutex::new(qbot::Manager::default()));
-  let db = Arc::new(tokio::runtime::Runtime::new().expect("Failed to create tokio runtime").block_on(async { qbot::Database::new("sqlite:./qbot.db").await.unwrap() }));
+  let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+  let db = Arc::new(rt.block_on(async { qbot::Database::new("sqlite:./qbot.db").await.unwrap() }));
 
   // Create shared state for GUI
   let shared_state = Arc::new(qbot::gui::state::GuiSharedState::new(manager.clone(), db.clone(), log_buffer, cmd_tx, shutdown_tx));
@@ -55,10 +60,8 @@ fn run_gui() -> Result<()> {
   let community_updates_channel_guilds_bot = shared_state.community_updates_channel_guilds.clone();
   let shared_state_bot = shared_state.clone();
 
-  // Spawn tokio runtime in background thread
+  // Run the bot on the same runtime created above (in a background thread)
   let bot_thread = thread::spawn(move || {
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-
     rt.block_on(async {
       let app = Application::new_with_shared(manager, db).await.unwrap();
       let app = app
