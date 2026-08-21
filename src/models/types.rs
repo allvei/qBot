@@ -224,6 +224,56 @@ impl ComponentContext<'_> {
     let interaction_id = self.component.message.id;
     mgr.unlock_interaction(interaction_id);
   }
+
+  /// Try to acquire a lock for this interaction, silently acknowledging and
+  /// returning `false` if it is already being processed. Combines
+  /// `try_lock_interaction` with the acknowledge-on-failure boilerplate.
+  ///
+  /// ### Returns
+  /// * `Ok(true)` if the lock was acquired and the action should proceed
+  /// * `Ok(false)` if already being processed (acknowledged, caller should return)
+  pub async fn try_lock_interaction_or_ack(&self, action_key: &str) -> Result<bool, anyhow::Error> {
+    if !self.try_lock_interaction(action_key).await? {
+      self.reply_acknowledge().await?;
+      return Ok(false);
+    }
+    Ok(true)
+  }
+
+  /// Send an ephemeral followup message.
+  pub async fn followup_ephemeral(&self, message: &str) -> Result<(), anyhow::Error> {
+    use serenity::all::CreateInteractionResponseFollowup as CIRF;
+    let followup = CIRF::new().content(message).ephemeral(true);
+    self.component.create_followup(&self.ctx.http, followup).await?;
+    Ok(())
+  }
+
+  /// Send an ephemeral followup message with components.
+  pub async fn followup_ephemeral_with_components(&self, message: &str, components: Vec<serenity::all::CreateActionRow>) -> Result<(), anyhow::Error> {
+    use serenity::all::CreateInteractionResponseFollowup as CIRF;
+    let followup = CIRF::new().content(message).components(components).ephemeral(true);
+    self.component.create_followup(&self.ctx.http, followup).await?;
+    Ok(())
+  }
+
+  /// Check that the user has the given role, replying ephemerally with `deny_message`
+  /// and returning `false` if they do not. Returns `Err` if the role check itself fails.
+  pub async fn require_role_or_reply(&self, role: &Role, deny_message: &str) -> Result<bool, anyhow::Error> {
+    use crate::handlers::player::is_role_component;
+
+    match is_role_component(self, role).await {
+      Ok(true) => Ok(true),
+      Ok(false) => {
+        self.reply_ephemeral(deny_message).await?;
+        Ok(false)
+      }
+      Err(e) => {
+        warn!("Failed to check role {:?}: {e}", role);
+        self.reply_ephemeral("Failed to verify permissions.").await?;
+        Ok(false)
+      }
+    }
+  }
 }
 
 /// Player ELO rating (0+ scale)
@@ -264,6 +314,25 @@ impl Player {
 
   pub fn set_elo(&mut self, elo: Elo) {
     self.elo = elo;
+  }
+
+  /// Get the ELO value to display/use, choosing dynamic ELO when active and set,
+  /// falling back to the static ELO otherwise.
+  pub fn effective_elo(&self, dynamic_elo_active: bool) -> Elo {
+    if dynamic_elo_active {
+      self.dynamic_elo.unwrap_or(self.elo)
+    } else {
+      self.elo
+    }
+  }
+
+  /// Format this player as a mention, optionally prefixed with their ELO.
+  pub fn format_mention(&self, hide_elo: bool, dynamic_elo_active: bool) -> String {
+    if hide_elo {
+      format!("<@{}>", self.user_id)
+    } else {
+      format!("‹**{}**› <@{}>", self.effective_elo(dynamic_elo_active), self.user_id)
+    }
   }
 
   /// Update rank based on ELO using configurable values

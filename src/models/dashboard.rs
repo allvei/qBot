@@ -32,9 +32,7 @@ async fn format_team_display(
   let mut timers_field = String::new();
 
   for p in pool.iter() {
-    let elo_to_display = if dynamic_elo_active { p.player.dynamic_elo.unwrap_or(p.player.elo) } else { p.player.elo };
-    let elo_str = if hide_elo { String::new() } else { format!("‹**{}**› ", elo_to_display) };
-    players_field.push_str(&format!("{elo_str}<@{}>\n", p.player.user_id));
+    players_field.push_str(&format!("{}\n", p.player.format_mention(hide_elo, dynamic_elo_active)));
 
     if p.in_vc {
       timers_field.push_str("VC\n");
@@ -114,29 +112,14 @@ impl TeamDisplay {
 
 /// Helper function to calculate average ELO for a team
 fn get_avg_elo(team: &[crate::models::SessionPlayer], dynamic_elo_active: bool) -> f64 {
-  let sum: f64 = team
-    .iter()
-    .map(|p| {
-      let elo = if dynamic_elo_active { p.player.dynamic_elo.unwrap_or(p.player.elo) } else { p.player.elo };
-      elo as f64
-    })
-    .sum();
+  let sum: f64 = team.iter().map(|p| p.player.effective_elo(dynamic_elo_active) as f64).sum();
   (sum / team.len() as f64 * 10.0).round() / 10.0
 }
 
 /// Helper function to format team players as a string for embed fields
 async fn format_team_field(team: &[crate::models::SessionPlayer], db: &crate::Database, guild_id: GI, hide_elo: bool) -> String {
   let dynamic_elo_active = db.config.get_active_elo(guild_id).await.unwrap_or(false);
-  let mut lines = Vec::new();
-  for player in team {
-    if hide_elo {
-      lines.push(format!("<@{}>", player.player.user_id));
-    } else {
-      let elo = if dynamic_elo_active { player.player.dynamic_elo.unwrap_or(player.player.elo) } else { player.player.elo };
-      lines.push(format!("‹**{}**› <@{}>", elo, player.player.user_id));
-    }
-  }
-  lines.join("\n")
+  team.iter().map(|player| player.player.format_mention(hide_elo, dynamic_elo_active)).collect::<Vec<_>>().join("\n")
 }
 
 /// Helper function to split pool into teams by actual team assignments and sort by ELO descending
@@ -556,12 +539,7 @@ impl Category {
           }
           hot_info.push_str("**Missing players:**\n");
           for player in &missing_players {
-            if hide_elo {
-              hot_info.push_str(&format!("  • <@{}>\n", player.player.user_id));
-            } else {
-              let elo = if dynamic_elo_active { player.player.dynamic_elo.unwrap_or(player.player.elo) } else { player.player.elo };
-              hot_info.push_str(&format!("  • ‹**{}**› <@{}>\n", elo, player.player.user_id));
-            }
+            hot_info.push_str(&format!("  • {}\n", player.player.format_mention(hide_elo, dynamic_elo_active)));
           }
         }
 
@@ -574,19 +552,7 @@ impl Category {
           // Overflow players in the hot session
           if session.pool.len() > quota {
             let overflow_count = session.pool.len() - quota;
-            let fatkid: Vec<_> = session
-              .pool
-              .iter()
-              .skip(quota)
-              .map(|p| {
-                if hide_elo {
-                  format!("<@{}>", p.player.user_id)
-                } else {
-                  let elo = if dynamic_elo_active { p.player.dynamic_elo.unwrap_or(p.player.elo) } else { p.player.elo };
-                  format!("‹**{}**› <@{}>", elo, p.player.user_id)
-                }
-              })
-              .collect();
+            let fatkid: Vec<_> = session.pool.iter().skip(quota).map(|p| p.player.format_mention(hide_elo, dynamic_elo_active)).collect();
             embed = embed.field(format!("Waiting for next game ({overflow_count}/{quota})"), fatkid.join("\n"), false);
           }
         }
@@ -606,9 +572,7 @@ impl Category {
 
         for idle_session in &idle_sessions {
           for player in idle_session.pool.iter() {
-            let elo_to_display = if dynamic_elo_active { player.player.dynamic_elo.unwrap_or(player.player.elo) } else { player.player.elo };
-            let elo_str = if hide_elo { String::new() } else { format!("‹**{}**› ", elo_to_display) };
-            players_field.push_str(&format!("{elo_str}<@{}>\n", player.player.user_id));
+            players_field.push_str(&format!("{}\n", player.player.format_mention(hide_elo, dynamic_elo_active)));
 
             if let Some((game_guild_id, fmt_name)) = in_game_players.get(&player.player.user_id) {
               if *game_guild_id == guild_id {
@@ -843,9 +807,7 @@ impl Category {
 
     if !has_joinable_session {
       debug!("{} blocked from joining {}: no joinable session (match in progress)", user_tag, fmt_id);
-      use serenity::all::CreateInteractionResponseFollowup as CIRF;
-      let followup = CIRF::new().content("Cannot join - match is in progress. Please wait.").ephemeral(true);
-      cc.component.create_followup(&cc.ctx.http, followup).await?;
+      cc.followup_ephemeral("Cannot join - match is in progress. Please wait.").await?;
       return Ok(());
     }
 
@@ -866,15 +828,13 @@ impl Category {
             None => "For balancing reasons, please describe your skill level:".to_string(),
           };
 
-          use serenity::all::CreateInteractionResponseFollowup as CIRF;
           let buttons = vec![CAR::Buttons(vec![
             CB::new(format!("skill_select_beginner_{}_{}", self.id, fmt_id)).label("Beginner").style(BS::Secondary),
             CB::new(format!("skill_select_intermediate_{}_{}", self.id, fmt_id)).label("Intermediate").style(BS::Secondary),
             CB::new(format!("skill_select_expert_{}_{}", self.id, fmt_id)).label("Expert").style(BS::Secondary),
             CB::new(format!("skill_select_veteran_{}_{}", self.id, fmt_id)).label("Veteran").style(BS::Secondary),
           ])];
-          let followup = CIRF::new().content(prompt).components(buttons).ephemeral(true);
-          cc.component.create_followup(&cc.ctx.http, followup).await?;
+          cc.followup_ephemeral_with_components(&prompt, buttons).await?;
           return Ok(());
         }
 
@@ -882,14 +842,12 @@ impl Category {
         Ok(result) => result,
         Err(e) => {
           error!("Failed to resolve player {} for queue: {e}", user_tag);
-          use serenity::all::CreateInteractionResponseFollowup as CIRF;
           let error_message = if e.to_string().contains("No ranks configured") {
             "This server needs ranks to be created via `/setup` before joining the queue."
           } else {
             "Failed to join queue. Please try again, or contact @xcapeest to report the issue."
           };
-          let followup = CIRF::new().content(error_message).ephemeral(true);
-          cc.component.create_followup(&cc.ctx.http, followup).await?;
+          cc.followup_ephemeral(error_message).await?;
           return Ok(());
         }
       };
@@ -938,9 +896,7 @@ impl Category {
         }
       }
     } else {
-      use serenity::all::CreateInteractionResponseFollowup as CIRF;
-      let followup = CIRF::new().content("This command can only be used in a server.").ephemeral(true);
-      cc.component.create_followup(&cc.ctx.http, followup).await?;
+      cc.followup_ephemeral("This command can only be used in a server.").await?;
       return Ok(());
     }
 
@@ -962,9 +918,7 @@ impl Category {
     // Check if player is in a live match - disallow leaving
     if let Ok(session) = self.get_user_sesh_fmt(format_id, user_id) {
       if session.status == SessionStatus::Live {
-        use serenity::all::CreateInteractionResponseFollowup as CIRF;
-        let followup = CIRF::new().content("You cannot leave during a live match. Please find a substitute if needed.").ephemeral(true);
-        cc.component.create_followup(&cc.ctx.http, followup).await?;
+        cc.followup_ephemeral("You cannot leave during a live match. Please find a substitute if needed.").await?;
         return Ok(());
       }
     }
@@ -1123,34 +1077,19 @@ impl Category {
 
   /// Handles the start match button
   async fn dash_start(&mut self, cc: &ComponentContext<'_>, fmt_id: u8) -> Result<()> {
-    // Check if user has Runner role
-    use crate::handlers::player::is_role_component;
     use crate::models::Role;
 
     // Try to acquire interaction lock to prevent duplicate processing
     let action_key = format!("start_match_{}_{}", self.id, fmt_id);
-    if !cc.try_lock_interaction(&action_key).await? {
-      cc.reply_acknowledge().await?;
+    if !cc.try_lock_interaction_or_ack(&action_key).await? {
       return Ok(());
     }
 
     let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
-    match is_role_component(cc, &Role::Runner).await {
-      Ok(true) => {
-        // User has Runner role, proceed
-      }
-      Ok(false) => {
-        cc.reply_ephemeral("Only runners can start matches.").await?;
-        cc.unlock_interaction().await;
-        return Ok(());
-      }
-      Err(e) => {
-        warn!("Failed to check runner role: {e}");
-        cc.reply_ephemeral("Failed to verify permissions.").await?;
-        cc.unlock_interaction().await;
-        return Ok(());
-      }
+    if !cc.require_role_or_reply(&Role::Runner, "Only runners can start matches.").await? {
+      cc.unlock_interaction().await;
+      return Ok(());
     }
 
     // Check if there's a hot game to start in the target format
@@ -1317,21 +1256,18 @@ impl Category {
   /// `session_key` disambiguates which session to cancel when multiple sessions in the same
   /// format are Live concurrently (see `Category::pull_fmt`).
   async fn dash_cancel(&mut self, cc: &ComponentContext<'_>, fmt_id: u8, session_key: Option<u64>) -> Result<()> {
-    use crate::handlers::player::is_role_component;
     use crate::models::Role;
 
     // Try to acquire interaction lock to prevent duplicate processing
     let action_key = format!("cancel_match_{}_{}_{}", self.id, fmt_id, session_key.unwrap_or(0));
-    if !cc.try_lock_interaction(&action_key).await? {
-      cc.reply_acknowledge().await?;
+    if !cc.try_lock_interaction_or_ack(&action_key).await? {
       return Ok(());
     }
 
     let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
     // Check if user is a runner
-    if !is_role_component(cc, &Role::Runner).await? {
-      cc.reply_ephemeral("Only runners can cancel matches.").await?;
+    if !cc.require_role_or_reply(&Role::Runner, "Only runners can cancel matches.").await? {
       cc.unlock_interaction().await;
       return Ok(());
     }
@@ -1431,11 +1367,9 @@ impl Category {
 
   /// Handle end match result button click (dash_end_red/draw/blu_{category_id}_{format_id})
   async fn dash_handle_end_match_result(&mut self, cc: &ComponentContext<'_>) -> Result<()> {
-    use crate::handlers::player::is_role_component;
     use crate::models::Role;
 
-    if !is_role_component(cc, &Role::Runner).await? {
-      cc.reply_ephemeral("Only runners can end matches.").await?;
+    if !cc.require_role_or_reply(&Role::Runner, "Only runners can end matches.").await? {
       return Ok(());
     }
 
@@ -1460,8 +1394,7 @@ impl Category {
 
     // Try to acquire interaction lock to prevent duplicate processing
     let action_key = format!("end_match_result_{}_{}_{}", category_id, format_id, result);
-    if !cc.try_lock_interaction(&action_key).await? {
-      cc.reply_acknowledge().await?;
+    if !cc.try_lock_interaction_or_ack(&action_key).await? {
       return Ok(());
     }
 
@@ -1745,14 +1678,12 @@ impl Category {
 
   /// Handles the report score button - shows modal for runners to input scores
   async fn dash_report_score(&mut self, cc: &ComponentContext<'_>) -> Result<()> {
-    use crate::handlers::player::is_role_component;
     use crate::models::Role;
     use serenity::all::CreateActionRow as CAR;
     use serenity::all::{CreateInputText, CreateModal, InputTextStyle};
 
     // Check if user is a runner
-    if !is_role_component(cc, &Role::Runner).await? {
-      cc.reply_ephemeral("Only runners can report scores.").await?;
+    if !cc.require_role_or_reply(&Role::Runner, "Only runners can report scores.").await? {
       return Ok(());
     }
 

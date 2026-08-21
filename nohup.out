@@ -1,0 +1,556 @@
+[2026-08-11 00:43:00.271] [info] Using configuration file /home/mark/.config/waybar/config.jsonc
+[2026-08-11 00:43:00.273] [info] Discovered appearance 'dark'
+[2026-08-11 00:43:00.294] [info] Using CSS file /etc/xdg/waybar/style.css
+[2026-08-11 00:43:00.303] [warning] module sway/workspaces: Disabling module "sway/workspaces", Socket path is empty
+[2026-08-11 00:43:00.306] [warning] module sway/mode: Disabling module "sway/mode", Socket path is empty
+[2026-08-11 00:43:00.308] [warning] module sway/scratchpad: Disabling module "sway/scratchpad", Socket path is empty
+[2026-08-11 00:43:00.313] [error] media stopped unexpectedly, is it endless?
+[2026-08-11 00:43:00.314] [warning] module sway/window: Disabling module "sway/window", Socket path is empty
+[2026-08-11 00:43:00.317] [warning] module temperature: Disabling module "temperature", Can't open /sys/class/thermal/thermal_zone0/temp
+[2026-08-11 00:43:00.317] [warning] module backlight: Disabling module "backlight", No backlight found
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/mouse1 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event17 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event4 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't create libevdev device: EINVAL Invalid argument
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/mouse2 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event20 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event19 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event18 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event16 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event15 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event14 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event13 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event12 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event3 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event11 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event10 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event2 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event9 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/mouse0 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/mice (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event8 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event7 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event6 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event5 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event1 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] Can't open /dev/input/event0 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:00.318] [warning] module keyboard-state: Disabling module "keyboard-state", Failed to find keyboard device: EACCES Permission denied
+[2026-08-11 00:43:00.320] [warning] module sway/language: Disabling module "sway/language", Socket path is empty
+[2026-08-11 00:43:00.321] [warning] No battery named BAT2
+[2026-08-11 00:43:00.321] [warning] No batteries.
+[2026-08-11 00:43:00.322] [warning] Error while creating the menu : Failed to expand file: $HOME/.config/waybar/power_menu.xml. Menu popup not activated.
+[2026-08-11 00:43:00.563] [info] Bar configured (width: 2560, height: 30) for output: DP-2
+[2026-08-11 00:43:00.563] [error] Item '': No icon name or pixmap given.
+[2026-08-11 00:43:00.709] [error] Item '': No icon name or pixmap given.
+[2026-08-11 00:43:01.586] [info] Quitting.
+[2026-08-11 00:43:14.552] [info] Using configuration file /home/mark/.config/waybar/config.jsonc
+[2026-08-11 00:43:14.554] [info] Discovered appearance 'dark'
+[2026-08-11 00:43:14.571] [info] Using CSS file /etc/xdg/waybar/style.css
+[2026-08-11 00:43:14.579] [warning] module sway/workspaces: Disabling module "sway/workspaces", Socket path is empty
+[2026-08-11 00:43:14.581] [warning] module sway/mode: Disabling module "sway/mode", Socket path is empty
+[2026-08-11 00:43:14.583] [warning] module sway/scratchpad: Disabling module "sway/scratchpad", Socket path is empty
+[2026-08-11 00:43:14.588] [error] media stopped unexpectedly, is it endless?
+[2026-08-11 00:43:14.588] [warning] module sway/window: Disabling module "sway/window", Socket path is empty
+[2026-08-11 00:43:14.590] [warning] module temperature: Disabling module "temperature", Can't open /sys/class/thermal/thermal_zone0/temp
+[2026-08-11 00:43:14.590] [warning] module backlight: Disabling module "backlight", No backlight found
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/mouse1 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event17 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event4 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't create libevdev device: EINVAL Invalid argument
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/mouse2 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event20 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event19 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event18 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event16 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event15 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event14 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event13 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event12 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event3 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event11 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event10 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event2 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event9 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/mouse0 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/mice (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event8 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event7 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event6 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event5 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event1 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] Can't open /dev/input/event0 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:43:14.590] [warning] module keyboard-state: Disabling module "keyboard-state", Failed to find keyboard device: EACCES Permission denied
+[2026-08-11 00:43:14.593] [warning] module sway/language: Disabling module "sway/language", Socket path is empty
+[2026-08-11 00:43:14.593] [warning] No batteries.
+[2026-08-11 00:43:14.593] [warning] No battery named BAT2
+[2026-08-11 00:43:14.593] [warning] Error while creating the menu : Failed to expand file: $HOME/.config/waybar/power_menu.xml. Menu popup not activated.
+[2026-08-11 00:43:14.749] [info] Bar configured (width: 2560, height: 30) for output: DP-2
+[2026-08-11 00:43:14.749] [error] Item '': No icon name or pixmap given.
+[2026-08-11 00:43:14.806] [error] Item '': No icon name or pixmap given.
+[2026-08-11 00:43:16.347] [info] Quitting.
+[2026-08-11 00:44:32.099] [error] Error in command line: Unrecognised token: nohup.out
+[2026-08-11 00:44:39.884] [info] Using configuration file /home/mark/.config/waybar/config.jsonc
+[2026-08-11 00:44:39.887] [info] Discovered appearance 'dark'
+[2026-08-11 00:44:39.906] [info] Using CSS file /etc/xdg/waybar/style.css
+[2026-08-11 00:44:39.914] [warning] module sway/workspaces: Disabling module "sway/workspaces", Socket path is empty
+[2026-08-11 00:44:39.916] [warning] module sway/mode: Disabling module "sway/mode", Socket path is empty
+[2026-08-11 00:44:39.919] [warning] module sway/scratchpad: Disabling module "sway/scratchpad", Socket path is empty
+[2026-08-11 00:44:39.924] [error] media stopped unexpectedly, is it endless?
+[2026-08-11 00:44:39.924] [warning] module sway/window: Disabling module "sway/window", Socket path is empty
+[2026-08-11 00:44:39.925] [warning] module temperature: Disabling module "temperature", Can't open /sys/class/thermal/thermal_zone0/temp
+[2026-08-11 00:44:39.926] [warning] module backlight: Disabling module "backlight", No backlight found
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/mouse1 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event17 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event4 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't create libevdev device: EINVAL Invalid argument
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/mouse2 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event20 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event19 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event18 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event16 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event15 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event14 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event13 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event12 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event3 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event11 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event10 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event2 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event9 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/mouse0 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/mice (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event8 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event7 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event6 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event5 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event1 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] Can't open /dev/input/event0 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:39.926] [warning] module keyboard-state: Disabling module "keyboard-state", Failed to find keyboard device: EACCES Permission denied
+[2026-08-11 00:44:39.929] [warning] module sway/language: Disabling module "sway/language", Socket path is empty
+[2026-08-11 00:44:39.929] [warning] No batteries.
+[2026-08-11 00:44:39.929] [warning] No battery named BAT2
+[2026-08-11 00:44:39.930] [warning] Error while creating the menu : Failed to expand file: $HOME/.config/waybar/power_menu.xml. Menu popup not activated.
+[2026-08-11 00:44:40.087] [info] Bar configured (width: 2560, height: 30) for output: DP-2
+[2026-08-11 00:44:42.758] [info] Quitting.
+[2026-08-11 00:44:51.332] [info] Using configuration file /home/mark/.config/waybar/config.jsonc
+[2026-08-11 00:44:51.334] [info] Discovered appearance 'dark'
+[2026-08-11 00:44:51.353] [info] Using CSS file /etc/xdg/waybar/style.css
+[2026-08-11 00:44:51.361] [warning] module sway/workspaces: Disabling module "sway/workspaces", Socket path is empty
+[2026-08-11 00:44:51.364] [warning] module sway/mode: Disabling module "sway/mode", Socket path is empty
+[2026-08-11 00:44:51.365] [warning] module sway/scratchpad: Disabling module "sway/scratchpad", Socket path is empty
+[2026-08-11 00:44:51.370] [error] media stopped unexpectedly, is it endless?
+[2026-08-11 00:44:51.371] [warning] module sway/window: Disabling module "sway/window", Socket path is empty
+[2026-08-11 00:44:51.373] [warning] module temperature: Disabling module "temperature", Can't open /sys/class/thermal/thermal_zone0/temp
+[2026-08-11 00:44:51.373] [warning] module backlight: Disabling module "backlight", No backlight found
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/mouse1 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event17 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event4 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't create libevdev device: EINVAL Invalid argument
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/mouse2 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event20 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event19 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event18 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event16 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event15 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event14 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event13 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event12 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event3 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event11 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event10 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event2 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event9 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/mouse0 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/mice (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event8 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event7 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event6 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event5 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event1 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] Can't open /dev/input/event0 (are you in the input group?): EACCES Permission denied
+[2026-08-11 00:44:51.373] [warning] module keyboard-state: Disabling module "keyboard-state", Failed to find keyboard device: EACCES Permission denied
+[2026-08-11 00:44:51.376] [warning] module sway/language: Disabling module "sway/language", Socket path is empty
+[2026-08-11 00:44:51.377] [warning] No batteries.
+[2026-08-11 00:44:51.377] [warning] No battery named BAT2
+[2026-08-11 00:44:51.377] [warning] Error while creating the menu : Failed to expand file: $HOME/.config/waybar/power_menu.xml. Menu popup not activated.
+[2026-08-11 00:44:51.528] [info] Bar configured (width: 2560, height: 30) for output: DP-2
+[2026-08-11 00:44:51.528] [error] Item '': No icon name or pixmap given.
+[2026-08-11 00:44:51.581] [error] Item '': No icon name or pixmap given.
+[2026-08-11 00:44:52.263] [info] Quitting.
+[2026-08-11 01:52:34.290] [info] Using configuration file /home/mark/.config/waybar/config.jsonc
+[2026-08-11 01:52:34.293] [info] Discovered appearance 'dark'
+[2026-08-11 01:52:34.314] [info] Using CSS file /etc/xdg/waybar/style.css
+[2026-08-11 01:52:34.321] [warning] module sway/workspaces: Disabling module "sway/workspaces", Socket path is empty
+[2026-08-11 01:52:34.324] [warning] module sway/mode: Disabling module "sway/mode", Socket path is empty
+[2026-08-11 01:52:34.326] [warning] module sway/scratchpad: Disabling module "sway/scratchpad", Socket path is empty
+[2026-08-11 01:52:34.331] [error] media stopped unexpectedly, is it endless?
+[2026-08-11 01:52:34.331] [warning] module sway/window: Disabling module "sway/window", Socket path is empty
+[2026-08-11 01:52:34.334] [warning] module temperature: Disabling module "temperature", Can't open /sys/class/thermal/thermal_zone0/temp
+[2026-08-11 01:52:34.334] [warning] module backlight: Disabling module "backlight", No backlight found
+[2026-08-11 01:52:34.334] [warning] Can't open /dev/input/mouse1 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.334] [warning] Can't open /dev/input/event17 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.334] [warning] Can't open /dev/input/event4 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.334] [warning] Can't create libevdev device: EINVAL Invalid argument
+[2026-08-11 01:52:34.334] [warning] Can't open /dev/input/mouse2 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.334] [warning] Can't open /dev/input/event20 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.334] [warning] Can't open /dev/input/event19 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.334] [warning] Can't open /dev/input/event18 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.334] [warning] Can't open /dev/input/event16 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.334] [warning] Can't open /dev/input/event15 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.334] [warning] Can't open /dev/input/event14 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.334] [warning] Can't open /dev/input/event13 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.334] [warning] Can't open /dev/input/event12 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] Can't open /dev/input/event3 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] Can't open /dev/input/event11 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] Can't open /dev/input/event10 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] Can't open /dev/input/event2 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] Can't open /dev/input/event9 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] Can't open /dev/input/mouse0 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] Can't open /dev/input/mice (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] Can't open /dev/input/event8 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] Can't open /dev/input/event7 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] Can't open /dev/input/event6 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] Can't open /dev/input/event5 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] Can't open /dev/input/event1 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] Can't open /dev/input/event0 (are you in the input group?): EACCES Permission denied
+[2026-08-11 01:52:34.335] [warning] module keyboard-state: Disabling module "keyboard-state", Failed to find keyboard device: EACCES Permission denied
+[2026-08-11 01:52:34.337] [warning] module sway/language: Disabling module "sway/language", Socket path is empty
+[2026-08-11 01:52:34.337] [warning] No batteries.
+[2026-08-11 01:52:34.337] [warning] No battery named BAT2
+[2026-08-11 01:52:34.338] [warning] Error while creating the menu : Failed to expand file: $HOME/.config/waybar/power_menu.xml. Menu popup not activated.
+[2026-08-11 01:52:34.506] [info] Bar configured (width: 2560, height: 30) for output: DP-2
+[2026-08-11 01:52:34.506] [error] Item '': No icon name or pixmap given.
+[2026-08-11 14:48:03.317] [info] Bar removed from output: DP-2
+[2026-08-11 14:48:04.437] [warning] module sway/workspaces: Disabling module "sway/workspaces", Socket path is empty
+[2026-08-11 14:48:04.442] [warning] module sway/mode: Disabling module "sway/mode", Socket path is empty
+[2026-08-11 14:48:04.450] [warning] module sway/scratchpad: Disabling module "sway/scratchpad", Socket path is empty
+[2026-08-11 14:48:04.460] [warning] module sway/window: Disabling module "sway/window", Socket path is empty
+[2026-08-11 14:48:04.462] [error] media stopped unexpectedly, is it endless?
+[2026-08-11 14:48:04.464] [warning] module temperature: Disabling module "temperature", Can't open /sys/class/thermal/thermal_zone0/temp
+[2026-08-11 14:48:04.465] [warning] module backlight: Disabling module "backlight", No backlight found
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/mouse1 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event17 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event4 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't create libevdev device: EINVAL Invalid argument
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/mouse2 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event20 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event19 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event18 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event16 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event15 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event14 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event13 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event12 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event3 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event11 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event10 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event2 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event9 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/mouse0 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/mice (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event8 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event7 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event6 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event5 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event1 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] Can't open /dev/input/event0 (are you in the input group?): EACCES Permission denied
+[2026-08-11 14:48:04.466] [warning] module keyboard-state: Disabling module "keyboard-state", Failed to find keyboard device: EACCES Permission denied
+[2026-08-11 14:48:04.469] [warning] module sway/language: Disabling module "sway/language", Socket path is empty
+[2026-08-11 14:48:04.470] [warning] No batteries.
+[2026-08-11 14:48:04.470] [warning] No battery named BAT2
+[2026-08-11 14:48:04.471] [warning] Error while creating the menu : Failed to expand file: $HOME/.config/waybar/power_menu.xml. Menu popup not activated.
+[2026-08-11 14:48:04.589] [info] Bar configured (width: 2560, height: 30) for output: DP-2
+[2026-08-11 14:48:04.589] [error] Item '': No icon name or pixmap given.
+[2026-08-11 14:48:04.590] [error] Item '': No icon name or pixmap given.
+[2026-08-12 22:18:31.930] [info] Bar removed from output: DP-2
+[2026-08-12 22:18:32.964] [warning] module sway/workspaces: Disabling module "sway/workspaces", Socket path is empty
+[2026-08-12 22:18:32.966] [warning] module sway/mode: Disabling module "sway/mode", Socket path is empty
+[2026-08-12 22:18:32.969] [warning] module sway/scratchpad: Disabling module "sway/scratchpad", Socket path is empty
+[2026-08-12 22:18:32.974] [warning] module sway/window: Disabling module "sway/window", Socket path is empty
+[2026-08-12 22:18:32.976] [error] media stopped unexpectedly, is it endless?
+[2026-08-12 22:18:32.977] [warning] module temperature: Disabling module "temperature", Can't open /sys/class/thermal/thermal_zone0/temp
+[2026-08-12 22:18:32.977] [warning] module backlight: Disabling module "backlight", No backlight found
+[2026-08-12 22:18:32.977] [warning] Can't open /dev/input/mouse1 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.977] [warning] Can't open /dev/input/event17 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.977] [warning] Can't open /dev/input/event4 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't create libevdev device: EINVAL Invalid argument
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/mouse2 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event20 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event19 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event18 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event16 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event15 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event14 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event13 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event12 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event3 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event11 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event10 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event2 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event9 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/mouse0 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/mice (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event8 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event7 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event6 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event5 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event1 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] Can't open /dev/input/event0 (are you in the input group?): EACCES Permission denied
+[2026-08-12 22:18:32.978] [warning] module keyboard-state: Disabling module "keyboard-state", Failed to find keyboard device: EACCES Permission denied
+[2026-08-12 22:18:32.980] [warning] module sway/language: Disabling module "sway/language", Socket path is empty
+[2026-08-12 22:18:32.980] [warning] No batteries.
+[2026-08-12 22:18:32.980] [warning] No battery named BAT2
+[2026-08-12 22:18:32.981] [warning] Error while creating the menu : Failed to expand file: $HOME/.config/waybar/power_menu.xml. Menu popup not activated.
+[2026-08-12 22:18:33.089] [info] Bar configured (width: 2560, height: 30) for output: DP-2
+[2026-08-12 22:18:33.089] [error] Item '': No icon name or pixmap given.
+[2026-08-13 22:18:08.014] [info] Bar removed from output: DP-2
+[2026-08-13 22:18:09.206] [warning] module sway/workspaces: Disabling module "sway/workspaces", Socket path is empty
+[2026-08-13 22:18:09.209] [warning] module sway/mode: Disabling module "sway/mode", Socket path is empty
+[2026-08-13 22:18:09.212] [warning] module sway/scratchpad: Disabling module "sway/scratchpad", Socket path is empty
+[2026-08-13 22:18:09.218] [warning] module sway/window: Disabling module "sway/window", Socket path is empty
+[2026-08-13 22:18:09.219] [error] media stopped unexpectedly, is it endless?
+[2026-08-13 22:18:09.220] [warning] module temperature: Disabling module "temperature", Can't open /sys/class/thermal/thermal_zone0/temp
+[2026-08-13 22:18:09.220] [warning] module backlight: Disabling module "backlight", No backlight found
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/mouse1 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event17 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event4 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't create libevdev device: EINVAL Invalid argument
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/mouse2 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event20 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event19 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event18 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event16 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event15 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event14 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event13 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event12 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event3 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event11 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event10 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event2 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event9 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/mouse0 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/mice (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event8 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event7 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event6 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event5 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event1 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] Can't open /dev/input/event0 (are you in the input group?): EACCES Permission denied
+[2026-08-13 22:18:09.221] [warning] module keyboard-state: Disabling module "keyboard-state", Failed to find keyboard device: EACCES Permission denied
+[2026-08-13 22:18:09.223] [warning] module sway/language: Disabling module "sway/language", Socket path is empty
+[2026-08-13 22:18:09.224] [warning] No batteries.
+[2026-08-13 22:18:09.224] [warning] No battery named BAT2
+[2026-08-13 22:18:09.224] [warning] Error while creating the menu : Failed to expand file: $HOME/.config/waybar/power_menu.xml. Menu popup not activated.
+[2026-08-13 22:18:09.332] [info] Bar configured (width: 2560, height: 30) for output: DP-2
+[2026-08-13 22:18:09.332] [error] Item '': No icon name or pixmap given.
+[2026-08-13 22:18:09.332] [error] Item '': No icon name or pixmap given.
+[2026-08-14 10:19:34.041] [info] Bar removed from output: DP-2
+[2026-08-14 10:19:35.132] [warning] module sway/workspaces: Disabling module "sway/workspaces", Socket path is empty
+[2026-08-14 10:19:35.136] [warning] module sway/mode: Disabling module "sway/mode", Socket path is empty
+[2026-08-14 10:19:35.140] [warning] module sway/scratchpad: Disabling module "sway/scratchpad", Socket path is empty
+[2026-08-14 10:19:35.149] [warning] module sway/window: Disabling module "sway/window", Socket path is empty
+[2026-08-14 10:19:35.152] [error] media stopped unexpectedly, is it endless?
+[2026-08-14 10:19:35.152] [warning] module temperature: Disabling module "temperature", Can't open /sys/class/thermal/thermal_zone0/temp
+[2026-08-14 10:19:35.152] [warning] module backlight: Disabling module "backlight", No backlight found
+[2026-08-14 10:19:35.152] [warning] Can't open /dev/input/mouse1 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.152] [warning] Can't open /dev/input/event17 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.152] [warning] Can't open /dev/input/event4 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.152] [warning] Can't create libevdev device: EINVAL Invalid argument
+[2026-08-14 10:19:35.152] [warning] Can't open /dev/input/mouse2 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.152] [warning] Can't open /dev/input/event20 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.152] [warning] Can't open /dev/input/event19 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.152] [warning] Can't open /dev/input/event18 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event16 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event15 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event14 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event13 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event12 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event3 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event11 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event10 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event2 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event9 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/mouse0 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/mice (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event8 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event7 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event6 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event5 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event1 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] Can't open /dev/input/event0 (are you in the input group?): EACCES Permission denied
+[2026-08-14 10:19:35.153] [warning] module keyboard-state: Disabling module "keyboard-state", Failed to find keyboard device: EACCES Permission denied
+[2026-08-14 10:19:35.156] [warning] module sway/language: Disabling module "sway/language", Socket path is empty
+[2026-08-14 10:19:35.156] [warning] No batteries.
+[2026-08-14 10:19:35.156] [warning] No battery named BAT2
+[2026-08-14 10:19:35.156] [warning] Error while creating the menu : Failed to expand file: $HOME/.config/waybar/power_menu.xml. Menu popup not activated.
+[2026-08-14 10:19:35.264] [info] Bar configured (width: 2560, height: 30) for output: DP-2
+[2026-08-14 10:19:35.264] [error] Item '': No icon name or pixmap given.
+[2026-08-14 10:19:35.264] [error] Item '': No icon name or pixmap given.
+[2026-08-15 18:41:32.236] [info] Bar removed from output: DP-2
+[2026-08-15 18:41:33.242] [warning] module sway/workspaces: Disabling module "sway/workspaces", Socket path is empty
+[2026-08-15 18:41:33.244] [warning] module sway/mode: Disabling module "sway/mode", Socket path is empty
+[2026-08-15 18:41:33.246] [warning] module sway/scratchpad: Disabling module "sway/scratchpad", Socket path is empty
+[2026-08-15 18:41:33.252] [warning] module sway/window: Disabling module "sway/window", Socket path is empty
+[2026-08-15 18:41:33.252] [error] media stopped unexpectedly, is it endless?
+[2026-08-15 18:41:33.254] [warning] module temperature: Disabling module "temperature", Can't open /sys/class/thermal/thermal_zone0/temp
+[2026-08-15 18:41:33.254] [warning] module backlight: Disabling module "backlight", No backlight found
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/mouse1 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event17 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event4 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't create libevdev device: EINVAL Invalid argument
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/mouse2 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event20 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event19 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event18 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event16 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event15 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event14 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event13 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event12 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event3 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event11 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event10 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event2 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event9 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/mouse0 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/mice (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.254] [warning] Can't open /dev/input/event8 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.255] [warning] Can't open /dev/input/event7 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.255] [warning] Can't open /dev/input/event6 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.255] [warning] Can't open /dev/input/event5 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.255] [warning] Can't open /dev/input/event1 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.255] [warning] Can't open /dev/input/event0 (are you in the input group?): EACCES Permission denied
+[2026-08-15 18:41:33.255] [warning] module keyboard-state: Disabling module "keyboard-state", Failed to find keyboard device: EACCES Permission denied
+[2026-08-15 18:41:33.257] [warning] module sway/language: Disabling module "sway/language", Socket path is empty
+[2026-08-15 18:41:33.258] [warning] No batteries.
+[2026-08-15 18:41:33.258] [warning] No battery named BAT2
+[2026-08-15 18:41:33.258] [warning] Error while creating the menu : Failed to expand file: $HOME/.config/waybar/power_menu.xml. Menu popup not activated.
+[2026-08-15 18:41:33.368] [info] Bar configured (width: 2560, height: 30) for output: DP-2
+[2026-08-15 18:41:33.368] [error] Item '': No icon name or pixmap given.
+[2026-08-15 18:41:33.421] [error] Item '': No icon name or pixmap given.
+[2026-08-17 21:03:41.155] [info] Bar removed from output: DP-2
+[2026-08-17 21:03:42.314] [warning] module sway/workspaces: Disabling module "sway/workspaces", Socket path is empty
+[2026-08-17 21:03:42.316] [warning] module sway/mode: Disabling module "sway/mode", Socket path is empty
+[2026-08-17 21:03:42.318] [warning] module sway/scratchpad: Disabling module "sway/scratchpad", Socket path is empty
+[2026-08-17 21:03:42.324] [warning] module sway/window: Disabling module "sway/window", Socket path is empty
+[2026-08-17 21:03:42.327] [error] media stopped unexpectedly, is it endless?
+[2026-08-17 21:03:42.327] [warning] module temperature: Disabling module "temperature", Can't open /sys/class/thermal/thermal_zone0/temp
+[2026-08-17 21:03:42.328] [warning] module backlight: Disabling module "backlight", No backlight found
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/mouse1 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event17 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event4 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't create libevdev device: EINVAL Invalid argument
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/mouse2 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event20 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event19 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event18 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event16 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event15 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event14 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event13 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event12 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event3 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event11 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event10 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event2 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event9 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/mouse0 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/mice (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event8 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event7 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event6 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event5 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event1 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] Can't open /dev/input/event0 (are you in the input group?): EACCES Permission denied
+[2026-08-17 21:03:42.328] [warning] module keyboard-state: Disabling module "keyboard-state", Failed to find keyboard device: EACCES Permission denied
+[2026-08-17 21:03:42.330] [warning] module sway/language: Disabling module "sway/language", Socket path is empty
+[2026-08-17 21:03:42.331] [warning] No batteries.
+[2026-08-17 21:03:42.331] [warning] No battery named BAT2
+[2026-08-17 21:03:42.331] [warning] Error while creating the menu : Failed to expand file: $HOME/.config/waybar/power_menu.xml. Menu popup not activated.
+[2026-08-17 21:03:42.442] [info] Bar configured (width: 2560, height: 30) for output: DP-2
+[2026-08-17 21:03:42.442] [error] Item '': No icon name or pixmap given.
+[2026-08-17 21:03:42.489] [error] Item '': No icon name or pixmap given.
+[2026-08-19 14:41:44.329] [info] Bar removed from output: DP-2
+[2026-08-19 14:41:45.476] [warning] module sway/workspaces: Disabling module "sway/workspaces", Socket path is empty
+[2026-08-19 14:41:45.480] [warning] module sway/mode: Disabling module "sway/mode", Socket path is empty
+[2026-08-19 14:41:45.484] [warning] module sway/scratchpad: Disabling module "sway/scratchpad", Socket path is empty
+[2026-08-19 14:41:45.489] [warning] module sway/window: Disabling module "sway/window", Socket path is empty
+[2026-08-19 14:41:45.491] [error] media stopped unexpectedly, is it endless?
+[2026-08-19 14:41:45.492] [warning] module temperature: Disabling module "temperature", Can't open /sys/class/thermal/thermal_zone0/temp
+[2026-08-19 14:41:45.492] [warning] module backlight: Disabling module "backlight", No backlight found
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/mouse1 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event17 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event4 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't create libevdev device: EINVAL Invalid argument
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/mouse2 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event20 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event19 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event18 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event16 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event15 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event14 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event13 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event12 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event3 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event11 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event10 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event2 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event9 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/mouse0 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/mice (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event8 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event7 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event6 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event5 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event1 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] Can't open /dev/input/event0 (are you in the input group?): EACCES Permission denied
+[2026-08-19 14:41:45.493] [warning] module keyboard-state: Disabling module "keyboard-state", Failed to find keyboard device: EACCES Permission denied
+[2026-08-19 14:41:45.495] [warning] module sway/language: Disabling module "sway/language", Socket path is empty
+[2026-08-19 14:41:45.496] [warning] No batteries.
+[2026-08-19 14:41:45.496] [warning] No battery named BAT2
+[2026-08-19 14:41:45.496] [warning] Error while creating the menu : Failed to expand file: $HOME/.config/waybar/power_menu.xml. Menu popup not activated.
+[2026-08-19 14:41:45.608] [info] Bar configured (width: 2560, height: 30) for output: DP-2
+[2026-08-19 14:41:45.608] [error] Item '': No icon name or pixmap given.
+[2026-08-19 14:41:45.609] [error] Item '': No icon name or pixmap given.
+[2026-08-20 19:03:42.738] [info] Bar removed from output: DP-2
+[2026-08-20 19:03:43.734] [warning] module sway/workspaces: Disabling module "sway/workspaces", Socket path is empty
+[2026-08-20 19:03:43.743] [warning] module sway/mode: Disabling module "sway/mode", Socket path is empty
+[2026-08-20 19:03:43.746] [warning] module sway/scratchpad: Disabling module "sway/scratchpad", Socket path is empty
+[2026-08-20 19:03:43.753] [warning] module sway/window: Disabling module "sway/window", Socket path is empty
+[2026-08-20 19:03:43.755] [error] media stopped unexpectedly, is it endless?
+[2026-08-20 19:03:43.757] [warning] module temperature: Disabling module "temperature", Can't open /sys/class/thermal/thermal_zone0/temp
+[2026-08-20 19:03:43.757] [warning] module backlight: Disabling module "backlight", No backlight found
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/mouse1 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event17 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event4 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't create libevdev device: EINVAL Invalid argument
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/mouse2 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event20 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event19 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event18 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event16 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event15 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event14 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event13 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event12 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event3 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event11 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event10 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event2 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event9 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/mouse0 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/mice (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event8 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event7 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event6 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.757] [warning] Can't open /dev/input/event5 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.758] [warning] Can't open /dev/input/event1 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.758] [warning] Can't open /dev/input/event0 (are you in the input group?): EACCES Permission denied
+[2026-08-20 19:03:43.758] [warning] module keyboard-state: Disabling module "keyboard-state", Failed to find keyboard device: EACCES Permission denied
+[2026-08-20 19:03:43.760] [warning] module sway/language: Disabling module "sway/language", Socket path is empty
+[2026-08-20 19:03:43.760] [warning] No batteries.
+[2026-08-20 19:03:43.760] [warning] No battery named BAT2
+[2026-08-20 19:03:43.761] [warning] Error while creating the menu : Failed to expand file: $HOME/.config/waybar/power_menu.xml. Menu popup not activated.
+[2026-08-20 19:03:43.960] [info] Bar configured (width: 2560, height: 30) for output: DP-2
+Gdk-Message: 04:40:08.853: Error reading events from display: Connection reset by peer
