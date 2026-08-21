@@ -1151,11 +1151,13 @@ impl Category {
       return Ok(());
     }
 
-    // Check if there's already a Push or Live session (prevent starting multiple games)
-    let has_active_game = self.format(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.is_active())).unwrap_or(false);
+    // Only block starting if a match is currently being started or ended (Push/Pull).
+    // Live games can run concurrently in the same format, so a new Hot session can
+    // be started while another session is already Live.
+    let has_transitioning_game = self.format(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.status == SessionStatus::Push || s.status == SessionStatus::Pull)).unwrap_or(false);
 
-    if has_active_game {
-      cc.reply_ephemeral("A game is already in progress. Wait for it to finish.").await?;
+    if has_transitioning_game {
+      cc.reply_ephemeral("A match is still starting or ending. Wait for it to finish.").await?;
       cc.unlock_interaction().await;
       return Ok(());
     }
