@@ -1341,14 +1341,14 @@ impl Category {
     }
 
     for fmt_id in to_pull {
-      if let Err(e) = self.pull_fmt(fmt_id, ctx, guild_id, db, manager.clone()).await {
+      if let Err(e) = self.pull_fmt(fmt_id, None, ctx, guild_id, db, manager.clone()).await {
         warn!("Failed to auto-end game in format {}: {}", fmt_id, e);
       }
     }
   }
 
   pub async fn pull(&mut self, ctx: &Context, guild_id: GI, db: &DB, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
-    self.pull_fmt(0, ctx, guild_id, db, manager).await
+    self.pull_fmt(0, None, ctx, guild_id, db, manager).await
   }
 
   /// Move a batch of users to a target voice channel, in parallel batches with a short delay
@@ -1460,7 +1460,11 @@ impl Category {
     }
   }
 
-  pub async fn pull_fmt(&mut self, fmt_id: u8, ctx: &Context, guild_id: GI, db: &DB, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
+  /// `session_key` disambiguates which session to end when multiple sessions in the same
+  /// format are active concurrently. It should be the `red_vc` channel ID of the target
+  /// session's team channels. Pass `None` to fall back to the first Live (or Hot) session
+  /// found, which preserves single-session behavior.
+  pub async fn pull_fmt(&mut self, fmt_id: u8, session_key: Option<u64>, ctx: &Context, guild_id: GI, db: &DB, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
     // Clear any pending VC notifications since the game is ending
     self.clear_ready_notif(ctx, Some(db)).await;
 
@@ -1469,12 +1473,18 @@ impl Category {
 
     // Find the active game to end - prefer Live sessions over Hot (Live games should be ended first)
     let sg = self.format_mut(fmt_id).ok_or_else(|| anyhow!("Format {} not found for pull", fmt_id))?;
-    let active_session_idx = sg
-      .sessions
-      .iter()
-      .position(|s| s.status == SessionStatus::Live)
-      .or_else(|| sg.sessions.iter().position(|s| s.status == SessionStatus::Hot))
-      .ok_or(anyhow!("No active game to pull in format {}", fmt_id))?;
+    let active_session_idx = if let Some(key) = session_key {
+      sg.sessions
+        .iter()
+        .position(|s| s.team_channels.as_ref().map(|tc| tc.red_vc.get()) == Some(key))
+        .ok_or_else(|| anyhow!("Target session (key {}) not found for pull in format {}", key, fmt_id))?
+    } else {
+      sg.sessions
+        .iter()
+        .position(|s| s.status == SessionStatus::Live)
+        .or_else(|| sg.sessions.iter().position(|s| s.status == SessionStatus::Hot))
+        .ok_or(anyhow!("No active game to pull in format {}", fmt_id))?
+    };
     // Capture a status summary before taking the mutable borrow on the target session.
     let session_summaries: Vec<String> = sg.sessions.iter().map(|s| format!("{:?}({})", s.status, s.pool.len())).collect();
     let game = &mut sg.sessions[active_session_idx];

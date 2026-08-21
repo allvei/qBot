@@ -106,7 +106,7 @@ pub async fn handle_end_without_score(ctx: &Context, interaction: &CI, db: &Arc<
     let (cat_idx, _fmt_idx, _category_id, _format_id) = found_match.unwrap();
     let category = &mut server.categories[cat_idx];
 
-    match category.pull_fmt(format_id, ctx, guild_id, db, Some(manager.clone())).await {
+    match category.pull_fmt(format_id, None, ctx, guild_id, db, Some(manager.clone())).await {
       Ok(_) => {
         info!("{} Match ended without score report", log_prefix_category(&guild_name_str, &category_name));
 
@@ -214,7 +214,7 @@ pub async fn show_end_match_selection(ctx: &Context, interaction: &CI, db: &Arc<
     CAR::Buttons(vec![Eph::back("runner_menu_back")]),
   ];
 
-  let (embed, buttons) = crate::handlers::response_helpers::create_end_match_selection(&format_name, category_id, format_id, "runner_end", additional_rows);
+  let (embed, buttons) = crate::handlers::response_helpers::create_end_match_selection(&format_name, category_id, format_id, "runner_end", None, additional_rows);
 
   let response = CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons));
   interaction.create_response(&ctx.http, response).await?;
@@ -267,7 +267,7 @@ pub async fn handle_force_end_match(ctx: &Context, interaction: &CI, db: &Arc<Da
     let mut mgr = manager.lock().await;
     let server = mgr.get_qguild(guild_id)?;
     let category = server.categories.iter_mut().find(|c| c.id == category_id).ok_or_else(|| anyhow::anyhow!("Category not found"))?;
-    let pull_result = category.pull_fmt(format_id, ctx, guild_id, db, Some(manager.clone())).await;
+    let pull_result = category.pull_fmt(format_id, None, ctx, guild_id, db, Some(manager.clone())).await;
     if pull_result.is_ok() {
       category.queue_dash_update(ctx, guild_id).await;
     }
@@ -450,7 +450,7 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
 
     // pull_fmt takes &mut self (category) and may lock manager internally via the
     // AfterExpiration spawn — pass None here so it doesn't try to re-lock manager.
-    let result = category.pull_fmt(format_id, ctx, guild_id, db, None).await;
+    let result = category.pull_fmt(format_id, None, ctx, guild_id, db, None).await;
     if result.is_ok() {
       category.queue_dash_update(ctx, guild_id).await;
     }

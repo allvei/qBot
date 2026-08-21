@@ -352,7 +352,7 @@ impl Category {
       let fmt_suffix = format!(":{}", sg.id);
       let join_label = if has_multiple { format!("Join {}", sg.name) } else { "Join".to_string() };
 
-      // Row: Join {name} | [Leave | Edit timeout] | Start/End | [Shuffle]
+      // Row 1: Join {name} | [Leave | Edit timeout] | [Start | Shuffle]
       let mut row = if self.restarting {
         // When restarting, only show end button for live games
         vec![]
@@ -364,22 +364,33 @@ impl Category {
         row.push(CB::new(format!("leave_queue{fmt_suffix}")).label("Leave").style(BS::Danger));
         row.push(CB::new(format!("change_expiry{fmt_suffix}")).label("Edit timeout").style(BS::Secondary));
       }
-      if is_live {
-        // Check if match can still be cancelled (less than 5 minutes)
-        if let Some(live_session) = sg.sessions.iter().find(|s| s.is_active()) {
-          if live_session.can_cancel_match() {
-            row.push(CB::new(format!("cancel_match{fmt_suffix}")).label("Cancel game").style(BS::Danger));
-          } else {
-            let end_label = if self.enable_competitive && self.require_score_report { "End & log score" } else { "End" };
-            row.push(CB::new(format!("end_match{fmt_suffix}")).label(end_label).style(BS::Danger));
-          }
-        }
-      }
       if !self.restarting && is_hot {
         row.push(CB::new(format!("start_match{fmt_suffix}")).label("Start").style(BS::Success));
         row.push(CB::new(format!("shuffle_teams{fmt_suffix}")).label("Shuffle").style(BS::Secondary));
       }
       buttons.push(CAR::Buttons(row));
+
+      // Row 2 (only when live): one Cancel/End button per active session, scoped by session
+      // key, so each button targets the correct match when multiple sessions in the same
+      // format are active concurrently. Kept on its own row to stay under Discord's 5-buttons-
+      // per-row limit.
+      if is_live {
+        let live_sessions: Vec<_> = sg.sessions.iter().filter(|s| s.is_active()).collect();
+        let multi_live = live_sessions.len() > 1;
+        let mut end_row = Vec::new();
+        for (idx, live_session) in live_sessions.iter().enumerate() {
+          let session_key = live_session.team_channels.as_ref().map(|tc| tc.red_vc.get());
+          let key_suffix = session_key.map(|k| format!(":{}", k)).unwrap_or_default();
+          let num_suffix = if multi_live { format!(" #{}", idx + 1) } else { String::new() };
+          if live_session.can_cancel_match() {
+            end_row.push(CB::new(format!("cancel_match{fmt_suffix}{key_suffix}")).label(format!("Cancel game{}", num_suffix)).style(BS::Danger));
+          } else {
+            let end_label = if self.enable_competitive && self.require_score_report { "End & log score" } else { "End" };
+            end_row.push(CB::new(format!("end_match{fmt_suffix}{key_suffix}")).label(format!("{}{}", end_label, num_suffix)).style(BS::Danger));
+          }
+        }
+        buttons.push(CAR::Buttons(end_row));
+      }
     }
 
     // Last row: Preferences, Runner Menu, and Help
@@ -1199,14 +1210,22 @@ impl Category {
   }
 
   /// Handles the end match button - shows winner selection for consistency with runner menu
-  async fn dash_end(&mut self, cc: &ComponentContext<'_>, fmt_id: u8) -> Result<()> {
+  ///
+  /// `session_key` disambiguates which session to end when multiple sessions in the same
+  /// format are Live concurrently (see `Category::pull_fmt`).
+  async fn dash_end(&mut self, cc: &ComponentContext<'_>, fmt_id: u8, session_key: Option<u64>) -> Result<()> {
     use crate::handlers::player::is_role_component;
     use crate::models::Role;
 
     let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
-    let active_session =
-      self.format(fmt_id).and_then(|sg| sg.sessions.iter().find(|s| s.status == SessionStatus::Live).or_else(|| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot)));
+    let active_session = self.format(fmt_id).and_then(|sg| {
+      if let Some(key) = session_key {
+        sg.sessions.iter().find(|s| s.team_channels.as_ref().map(|tc| tc.red_vc.get()) == Some(key))
+      } else {
+        sg.sessions.iter().find(|s| s.status == SessionStatus::Live).or_else(|| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot))
+      }
+    });
 
     if active_session.is_none() {
       cc.reply_ephemeral("No active match to end.").await?;
@@ -1267,7 +1286,7 @@ impl Category {
     // Show winner selection buttons as ephemeral message
     let format_name = self.format(fmt_id).map(|sg| sg.name.clone()).unwrap_or_else(|| "Match".to_string());
 
-    let (embed, buttons) = crate::handlers::response_helpers::create_end_match_selection(&format_name, self.id, fmt_id, "dash_end", vec![]);
+    let (embed, buttons) = crate::handlers::response_helpers::create_end_match_selection(&format_name, self.id, fmt_id, "dash_end", session_key, vec![]);
 
     let edit = serenity::all::EditInteractionResponse::new().embed(embed).components(buttons);
     match tokio::time::timeout(std::time::Duration::from_secs(10), cc.component.edit_response(&cc.ctx.http, edit)).await {
@@ -1294,12 +1313,15 @@ impl Category {
   }
 
   /// Handles the cancel match button - reverts queue order and clears the match
-  async fn dash_cancel(&mut self, cc: &ComponentContext<'_>, fmt_id: u8) -> Result<()> {
+  ///
+  /// `session_key` disambiguates which session to cancel when multiple sessions in the same
+  /// format are Live concurrently (see `Category::pull_fmt`).
+  async fn dash_cancel(&mut self, cc: &ComponentContext<'_>, fmt_id: u8, session_key: Option<u64>) -> Result<()> {
     use crate::handlers::player::is_role_component;
     use crate::models::Role;
 
     // Try to acquire interaction lock to prevent duplicate processing
-    let action_key = format!("cancel_match_{}_{}", self.id, fmt_id);
+    let action_key = format!("cancel_match_{}_{}_{}", self.id, fmt_id, session_key.unwrap_or(0));
     if !cc.try_lock_interaction(&action_key).await? {
       cc.reply_acknowledge().await?;
       return Ok(());
@@ -1317,7 +1339,13 @@ impl Category {
     let queue_vc = self.channels.queue_vc;
 
     // Find the active session
-    let active_session = self.format_mut(fmt_id).and_then(|sg| sg.sessions.iter_mut().find(|s| s.status == SessionStatus::Live));
+    let active_session = self.format_mut(fmt_id).and_then(|sg| {
+      if let Some(key) = session_key {
+        sg.sessions.iter_mut().find(|s| s.team_channels.as_ref().map(|tc| tc.red_vc.get()) == Some(key))
+      } else {
+        sg.sessions.iter_mut().find(|s| s.status == SessionStatus::Live)
+      }
+    });
 
     if active_session.is_none() {
       cc.reply_ephemeral("No active match to cancel.").await?;
@@ -1413,12 +1441,13 @@ impl Category {
 
     let guild_id = cc.component.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
 
-    // Parse result and IDs from custom_id (format: dash_end_{result}_{category_id}_{format_id})
+    // Parse result and IDs from custom_id (format: dash_end_{result}_{category_id}_{format_id}[_{session_key}])
     let custom_id = &cc.component.data.custom_id;
     let parts: Vec<&str> = custom_id.split('_').collect();
     let result = parts.get(2).unwrap_or(&"");
     let category_id = parts.get(3).and_then(|s| s.parse::<u8>().ok());
     let format_id = parts.get(4).and_then(|s| s.parse::<u8>().ok());
+    let session_key = parts.get(5).and_then(|s| s.parse::<u64>().ok());
 
     if !matches!(*result, "red" | "draw" | "blu") || category_id.is_none() || format_id.is_none() {
       cc.reply_ephemeral("Invalid action.").await?;
@@ -1451,7 +1480,16 @@ impl Category {
     }
 
     // Guard against double-end: if the session already has score_reported set
-    let active_session_state = self.format(format_id).and_then(|sg| sg.sessions.iter().find(|s| s.is_active())).map(|s| (s.status, s.score_reported));
+    let active_session_state = self
+      .format(format_id)
+      .and_then(|sg| {
+        if let Some(key) = session_key {
+          sg.sessions.iter().find(|s| s.team_channels.as_ref().map(|tc| tc.red_vc.get()) == Some(key))
+        } else {
+          sg.sessions.iter().find(|s| s.is_active())
+        }
+      })
+      .map(|s| (s.status, s.score_reported));
 
     info!(
       "dash_end_{} click: category={} format={} interaction_id={} active_session={:?}",
@@ -1518,17 +1556,37 @@ impl Category {
     info!("{} Runner {} ended match with result: {}", log_prefix_category(&guild_name_str, &category_name), cc.component.user.tag(), result_text);
 
     // Capture session player data for ELO processing before the session is ended
-    let session_players: Vec<crate::models::session::SessionPlayer> =
-      self.format(format_id).and_then(|sg| sg.sessions.iter().find(|s| s.is_active())).map(|s| s.pool.clone()).unwrap_or_default();
+    let session_players: Vec<crate::models::session::SessionPlayer> = self
+      .format(format_id)
+      .and_then(|sg| {
+        if let Some(key) = session_key {
+          sg.sessions.iter().find(|s| s.team_channels.as_ref().map(|tc| tc.red_vc.get()) == Some(key))
+        } else {
+          sg.sessions.iter().find(|s| s.is_active())
+        }
+      })
+      .map(|s| s.pool.clone())
+      .unwrap_or_default();
 
     // Mark score as reported
-    if let Some(session) = self.format_mut(format_id).and_then(|sg| sg.sessions.iter_mut().find(|s| s.is_active())) {
+    if let Some(session) = self.format_mut(format_id).and_then(|sg| {
+      if let Some(key) = session_key {
+        sg.sessions.iter_mut().find(|s| s.team_channels.as_ref().map(|tc| tc.red_vc.get()) == Some(key))
+      } else {
+        sg.sessions.iter_mut().find(|s| s.is_active())
+      }
+    }) {
       session.score_reported = true;
     }
 
     // Record match to database before ending
-    let active_session =
-      self.format(format_id).and_then(|sg| sg.sessions.iter().find(|s| s.status == SessionStatus::Live).or_else(|| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot)));
+    let active_session = self.format(format_id).and_then(|sg| {
+      if let Some(key) = session_key {
+        sg.sessions.iter().find(|s| s.team_channels.as_ref().map(|tc| tc.red_vc.get()) == Some(key))
+      } else {
+        sg.sessions.iter().find(|s| s.status == SessionStatus::Live).or_else(|| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot))
+      }
+    });
 
     let match_id = if let Some(active_session) = active_session {
       let quota = self.format(format_id).map(|sg| sg.quota as usize).unwrap_or(0);
@@ -1551,7 +1609,13 @@ impl Category {
 
     // Update session players' ELO values in memory if changes were applied
     if let Some(changes) = elo_changes {
-      if let Some(session) = self.format_mut(format_id).and_then(|sg| sg.sessions.iter_mut().find(|s| s.is_active())) {
+      if let Some(session) = self.format_mut(format_id).and_then(|sg| {
+        if let Some(key) = session_key {
+          sg.sessions.iter_mut().find(|s| s.team_channels.as_ref().map(|tc| tc.red_vc.get()) == Some(key))
+        } else {
+          sg.sessions.iter_mut().find(|s| s.is_active())
+        }
+      }) {
         for change in &changes {
           if let Some(player) = session.pool.iter_mut().find(|p| p.player.user_id == change.user_id) {
             player.player.elo = change.new_elo;
@@ -1565,9 +1629,13 @@ impl Category {
     let queue_chat = self.channels.queue_chat;
     let reporter_tag = cc.component.user.tag();
     let (chat_embed_data, match_duration) = {
-      let active_session = self
-        .format(format_id)
-        .and_then(|sg| sg.sessions.iter().find(|s| s.status == SessionStatus::Live).or_else(|| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot)));
+      let active_session = self.format(format_id).and_then(|sg| {
+        if let Some(key) = session_key {
+          sg.sessions.iter().find(|s| s.team_channels.as_ref().map(|tc| tc.red_vc.get()) == Some(key))
+        } else {
+          sg.sessions.iter().find(|s| s.status == SessionStatus::Live).or_else(|| sg.sessions.iter().find(|s| s.status == SessionStatus::Hot))
+        }
+      });
       if let Some(session) = active_session {
         let quota = self.format(format_id).map(|sg| sg.quota as usize).unwrap_or(0);
         let (team_red, team_blu) = get_sorted_teams(&session.pool, quota);
@@ -1579,7 +1647,7 @@ impl Category {
     };
 
     // End the match - pass None to avoid deadlock with manager lock held by caller
-    match self.pull_fmt(format_id, cc.ctx, guild_id, &cc.db, None).await {
+    match self.pull_fmt(format_id, session_key, cc.ctx, guild_id, &cc.db, None).await {
       Ok(_) => {
         info!("{} Match ended with {}", log_prefix_category(&guild_name_str, &category_name), result_text);
 
@@ -1748,6 +1816,13 @@ impl Category {
     parts.get(1).and_then(|s| s.parse::<u8>().ok()).unwrap_or(0)
   }
 
+  /// Parse the optional session key from a button custom_id (format: action:sg_id:session_key).
+  /// Used to disambiguate which session an action targets when multiple sessions in the
+  /// same format are active concurrently.
+  fn parse_session_key(parts: &[&str]) -> Option<u64> {
+    parts.get(2).and_then(|s| s.parse::<u64>().ok())
+  }
+
   pub async fn dash_handle_button_interaction(&mut self, cc: &ComponentContext<'_>) -> Result<()> {
     let custom_id = &cc.component.data.custom_id;
 
@@ -1760,6 +1835,7 @@ impl Category {
     let guild_name = guild_name(cc.ctx, guild_id);
     let ctg_nm = self.name.as_deref().unwrap_or("Unknown").to_string();
     let fmt_id = Self::parse_fmt_id(&parts);
+    let session_key = Self::parse_session_key(&parts);
     let user_tag = get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
 
     info!("{} {} pressed '{}' (fmt_id={})", log_prefix_category(&guild_name, &ctg_nm), user_tag, custom_id, fmt_id);
@@ -1839,7 +1915,7 @@ impl Category {
       }
       "end_match" => {
         let fmt_name = self.format(fmt_id).map(|sg| sg.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-        let result = self.dash_end(cc, fmt_id).await;
+        let result = self.dash_end(cc, fmt_id, session_key).await;
         match &result {
           Ok(_) => {
             info!("{} {} used End", crate::log::log_prefix_format(&guild_name, &ctg_nm, &fmt_name), user_tag);
@@ -1851,7 +1927,7 @@ impl Category {
       }
       "cancel_match" => {
         let fmt_name = self.format(fmt_id).map(|sg| sg.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-        let result = self.dash_cancel(cc, fmt_id).await;
+        let result = self.dash_cancel(cc, fmt_id, session_key).await;
         match &result {
           Ok(_) => {
             info!("{} {} used Cancel", crate::log::log_prefix_format(&guild_name, &ctg_nm, &fmt_name), user_tag);

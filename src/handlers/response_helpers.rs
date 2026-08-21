@@ -242,13 +242,18 @@ macro_rules! respond_error {
 }
 
 /// Create end match selection embed and buttons
-pub fn create_end_match_selection(format_name: &str, category_id: u8, format_id: u8, prefix: &str, additional_rows: Vec<CAR>) -> (CE, Vec<CAR>) {
+///
+/// `session_key` disambiguates which session to end when multiple sessions in the same
+/// format are active concurrently (see `Category::pull_fmt`). Pass `None` to leave it
+/// unspecified, which falls back to the first Live/Hot session found.
+pub fn create_end_match_selection(format_name: &str, category_id: u8, format_id: u8, prefix: &str, session_key: Option<u64>, additional_rows: Vec<CAR>) -> (CE, Vec<CAR>) {
   let embed = CE::new().title(format!("End {} - Select winner", format_name)).description("Choose the winning team to end the match:").color(0x00AAFF);
 
+  let key_suffix = session_key.map(|k| format!("_{}", k)).unwrap_or_default();
   let mut buttons = vec![CAR::Buttons(vec![
-    CB::new(format!("{}_blu_{}_{}", prefix, category_id, format_id)).label("BLU WON").style(BS::Primary),
-    CB::new(format!("{}_draw_{}_{}", prefix, category_id, format_id)).label("DRAW").style(BS::Secondary),
-    CB::new(format!("{}_red_{}_{}", prefix, category_id, format_id)).label("RED WON").style(BS::Danger),
+    CB::new(format!("{}_blu_{}_{}{}", prefix, category_id, format_id, key_suffix)).label("BLU WON").style(BS::Primary),
+    CB::new(format!("{}_draw_{}_{}{}", prefix, category_id, format_id, key_suffix)).label("DRAW").style(BS::Secondary),
+    CB::new(format!("{}_red_{}_{}{}", prefix, category_id, format_id, key_suffix)).label("RED WON").style(BS::Danger),
   ])];
 
   buttons.extend(additional_rows);
