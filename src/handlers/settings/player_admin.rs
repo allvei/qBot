@@ -24,6 +24,14 @@ pub struct PlayerSettings {
 }
 
 impl PlayerSettings {
+  /// Build a `PlayerSettings` from a player's steam ID and their per-guild ELO record.
+  /// This is the single canonical constructor used both by the `get_player_settings!`
+  /// macro and by callers (e.g. `cmd_edit_player`) that need to override the rank
+  /// with the Discord-role-derived value before building.
+  pub fn from_guild_elo(user_id: UI, username: String, steam_id: Option<u64>, guild_elo: &crate::db::repo::elo::GuildElo) -> Self {
+    PlayerSettings { user_id, username, steam_id, elo: guild_elo.elo, dynamic_elo: guild_elo.dynamic_elo, rank: guild_elo.rank.name.clone(), games: guild_elo.games, wins: guild_elo.wins }
+  }
+
   pub fn to_display(&self) -> PlayerSettingsDisplay {
     PlayerSettingsDisplay {
       user_id: self.user_id,

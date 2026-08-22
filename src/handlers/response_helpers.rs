@@ -45,6 +45,40 @@ impl EmbedHelpers {
   }
 }
 
+/// Builder for the "**Current X Configuration:**\nkey: value\n..." text blocks used by
+/// several admin display commands, replacing repeated ad-hoc `format!` calls.
+pub struct SettingsDisplay {
+  title: String,
+  fields: Vec<(String, String)>,
+}
+
+impl SettingsDisplay {
+  /// Start a new display with a bolded title line, e.g. "Current Role Configuration".
+  pub fn new(title: impl Into<String>) -> Self {
+    SettingsDisplay { title: title.into(), fields: Vec::new() }
+  }
+
+  /// Add a `label: value` line.
+  pub fn field(mut self, label: impl Into<String>, value: impl Into<String>) -> Self {
+    self.fields.push((label.into(), value.into()));
+    self
+  }
+
+  /// Render into the final display string.
+  pub fn build(self) -> String {
+    let mut text = format!("**{}:**", self.title);
+    for (label, value) in self.fields {
+      text.push_str(&format!("\n{}: {}", label, value));
+    }
+    text
+  }
+
+  /// Format an `Option<RoleId>` as a mention or "Not set", the common pattern for role fields.
+  pub fn role_or_unset(role: Option<serenity::all::RoleId>) -> String {
+    role.map(|r| format!("<@&{}>", r.get())).unwrap_or_else(|| "Not set".to_string())
+  }
+}
+
 /// Extension trait for common response patterns on command contexts
 pub trait ResponseExt {
   /// Send an ephemeral success message
@@ -70,24 +104,6 @@ pub trait ResponseExt {
 
   /// Send a success response for component interactions
   async fn send_component_success_response(&self, message: &str) -> Result<()>;
-}
-
-/// Extension trait for component interaction responses
-pub trait ComponentResponseExt {
-  /// Update with a success embed
-  async fn update_success(&self, title: &str, description: &str) -> Result<()>;
-
-  /// Update with an error embed
-  async fn update_error(&self, title: &str, description: &str) -> Result<()>;
-
-  /// Update with a warning embed
-  async fn update_warning(&self, title: &str, description: &str) -> Result<()>;
-
-  /// Update with an info embed
-  async fn update_info(&self, title: &str, description: &str) -> Result<()>;
-
-  /// Update with plain text message
-  async fn update_message(&self, message: &str) -> Result<()>;
 }
 
 /// Extension trait for common response patterns on command contexts
@@ -149,38 +165,6 @@ impl ResponseExt for CC<'_> {
     let response = CIR::Message(CIRM::new().embed(embed).ephemeral(true));
     self.intax.create_response(&self.ctx.http, response).await?;
     Ok(())
-  }
-}
-
-/// Extension trait for component interaction responses
-impl ComponentResponseExt for CX {
-  /// Update with a success embed
-  async fn update_success(&self, title: &str, description: &str) -> Result<()> {
-    let embed = EmbedHelpers::success(title, description);
-    let _response = CIR::UpdateMessage(CIRM::new().embed(embed));
-    // Note: This needs Context, which we don't have in this trait
-    // Implementation would need to be done differently or pass Context
-    todo!("ComponentResponseExt needs Context parameter")
-  }
-
-  /// Update with an error embed
-  async fn update_error(&self, _title: &str, _description: &str) -> Result<()> {
-    todo!("ComponentResponseExt needs Context parameter")
-  }
-
-  /// Update with a warning embed
-  async fn update_warning(&self, _title: &str, _description: &str) -> Result<()> {
-    todo!("ComponentResponseExt needs Context parameter")
-  }
-
-  /// Update with an info embed
-  async fn update_info(&self, _title: &str, _description: &str) -> Result<()> {
-    todo!("ComponentResponseExt needs Context parameter")
-  }
-
-  /// Update with plain text message
-  async fn update_message(&self, _message: &str) -> Result<()> {
-    todo!("ComponentResponseExt needs Context parameter")
   }
 }
 

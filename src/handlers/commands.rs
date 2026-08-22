@@ -5,7 +5,6 @@ use tracing::info;
 use super::settings::get_guild_config;
 use crate::models::CommandContext as CC;
 use crate::models::Ephemeral;
-use crate::player::is_admin;
 use crate::{GREEN, RED, YELLOW};
 
 /// `/prefs` - Open personal settings menu as ephemeral message in current channel
@@ -25,12 +24,9 @@ pub async fn cmd_prefs(cc: &CC<'_>) -> Result<()> {
 
 /// `/config` - Open guild config menu as ephemeral message (admin only)
 pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
-  // Check admin permissions
-  if !is_admin(cc).await? {
-    return Ok(());
-  }
+  crate::require_admin!(cc);
 
-  let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+  let guild_id = cc.guild_id()?;
   let guild_name = cc.ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Server".to_string());
 
   // Get current guild config
@@ -46,11 +42,9 @@ pub async fn cmd_config(cc: &CC<'_>) -> Result<()> {
 
 /// `/migrate` - Bulk-assign ELO to all members with a given role (admin only)
 pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
-  if !is_admin(cc).await? {
-    return Ok(());
-  }
+  crate::require_admin!(cc);
 
-  let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+  let guild_id = cc.guild_id()?;
 
   // Parse options
   let role_id = cc.intax.data.options.iter().find(|o| o.name == "role").and_then(|o| o.value.as_role_id()).ok_or_else(|| anyhow!("Role option not found"))?;
@@ -61,8 +55,7 @@ pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
   let rank = match crate::Rank::from_elo(&cc.db, guild_id, elo).await {
     Ok(r) => r,
     Err(_) => {
-      let embed = CE::new().title("Migration failed").description(format!("No rank configured for ELO {}. Set up ranks first.", elo)).color(RED);
-      cc.reply_embed(embed).await?;
+      cc.reply_error("Migration failed", &format!("No rank configured for ELO {}. Set up ranks first.", elo)).await?;
       return Ok(());
     }
   };
@@ -135,14 +128,12 @@ pub async fn cmd_migrate(cc: &CC<'_>) -> Result<()> {
 
 /// `/edit` - Open player settings menu as ephemeral message (admin only)
 pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
+  use crate::handlers::player::{apply_discord_rank_override, get_user_rank_from_discord_roles};
   use crate::handlers::settings::PlayerSettings;
 
-  // Check admin permissions
-  if !is_admin(cc).await? {
-    return Ok(());
-  }
+  crate::require_admin!(cc);
 
-  let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
+  let guild_id = cc.guild_id()?;
 
   // Get target user from command options
   let target_user = cc.intax.data.options.iter().find(|o| o.name == "user").and_then(|o| o.value.as_user_id()).ok_or_else(|| anyhow!("User option not found"))?;
@@ -151,44 +142,25 @@ pub async fn cmd_edit_player(cc: &CC<'_>) -> Result<()> {
   let player = cc.db.players.check_user(target_user, None).await?;
 
   // First, try to get player's rank from Discord roles (source of truth)
-  use crate::handlers::player::get_user_rank_from_discord_roles;
   let discord_rank = get_user_rank_from_discord_roles(cc.ctx, &cc.db, guild_id, target_user).await;
 
   // Get guild ELO from database (this has the actual ELO, games, wins)
   let mut guild_elo: crate::db::repo::elo::GuildElo = match cc.db.elo.get(target_user, guild_id, &cc.db).await {
     Ok(elo) => elo,
     Err(e) if e.to_string().contains("Failed to get default rank") => {
-      let error_embed = CE::new()
-        .title("Configuration error")
-        .description("A default rank has not been set for this server.\n\nPlease configure a default rank in the guild config before editing players.")
-        .color(RED);
-      cc.reply_embed(error_embed).await?;
+      cc.reply_error("Configuration error", "A default rank has not been set for this server.\n\nPlease configure a default rank in the guild config before editing players.").await?;
       return Ok(());
     }
     Err(e) => return Err(anyhow::anyhow!("Failed to get player ELO: {}", e)),
   };
 
   // If Discord rank differs from database rank, use Discord rank but keep database ELO/games/wins
-  if let Some(discord_guild_rank) = discord_rank {
-    let discord_rank = crate::models::types::Rank { guild_id, role_id: discord_guild_rank.role_id, name: discord_guild_rank.name.clone(), elo: discord_guild_rank.elo };
-
-    // Override rank info but keep ELO/games/wins from database
-    guild_elo.rank = discord_rank;
-  }
+  apply_discord_rank_override(&mut guild_elo, discord_rank, guild_id);
 
   // Use helper for username/tag
   let username = crate::log::get_user_tag(cc.ctx, target_user, &cc.db).await;
 
-  let settings = PlayerSettings {
-    user_id: target_user,
-    username,
-    steam_id: player.steam_id,
-    elo: guild_elo.elo,
-    dynamic_elo: guild_elo.dynamic_elo,
-    rank: guild_elo.rank.name.clone(),
-    games: guild_elo.games,
-    wins: guild_elo.wins,
-  };
+  let settings = PlayerSettings::from_guild_elo(target_user, username, player.steam_id, &guild_elo);
 
   let (embed, components) = crate::handlers::settings::nav_player_settings(&settings, &cc.db, guild_id).await;
   let response = CIR::Message(CIRM::new().embed(embed).components(components).ephemeral(true));

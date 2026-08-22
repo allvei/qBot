@@ -28,6 +28,29 @@ use crate::{
 };
 
 // Helper macros and functions that need to be available
+
+/// Await a component/modal handler future and log any error, tagged with a label and the
+/// custom_id that triggered it. Replaces the repeated
+/// `let result = handler(...).await; if let Err(e) = result { error!(...) }` boilerplate
+/// found throughout the interaction dispatch below.
+macro_rules! dispatch_handler {
+  ($result:expr, $label:expr, $custom_id:expr) => {
+    if let Err(e) = $result {
+      error!("Error handling {} '{}': {}", $label, $custom_id, e);
+    }
+  };
+}
+
+/// Parse a `_`-delimited custom_id part at `$idx` into `$ty`, returning `None` if the
+/// part is missing or fails to parse. Replaces the repeated
+/// `parts.get(idx).and_then(|s| s.parse::<T>().ok())` boilerplate used when decoding
+/// custom_ids like `captain_pick_{user_id}_{turn}`.
+macro_rules! parse_id_part {
+  ($parts:expr, $idx:expr, $ty:ty) => {
+    $parts.get($idx).and_then(|s| s.parse::<$ty>().ok())
+  };
+}
+
 macro_rules! cmd {
     ($name:expr, $desc:expr) => {
         CC::new($name).description($desc)
@@ -881,15 +904,8 @@ impl EventHandler for Handler {
           let guild_id = itx.guild_id.unwrap();
           let user_id = itx.user.id;
 
-          // Check if user is an admin
-          // Try cache first (fast path)
-          let member_opt = if let Some(guild) = ctx.cache.guild(guild_id) { guild.members.get(&user_id).cloned() } else { None };
-
-          // Fallback to HTTP if not in cache
-          let member = match member_opt {
-            Some(m) => Some(m),
-            None => guild_id.member(&ctx.http, user_id).await.ok(),
-          };
+          // Check if user is an admin (cache → DB → Discord API fallback)
+          let member = crate::handlers::player::get_member_cached(&ctx, guild_id, user_id, &self.db).await;
 
           let is_admin = match member {
             Some(member) => {
@@ -968,46 +984,31 @@ impl EventHandler for Handler {
 
         // Handle settings buttons (user settings)
         if itx.data.custom_id.starts_with("settings_") {
-          let result = crate::handlers::handle_settings_button(&ctx, itx, &self.db).await;
-          if let Err(e) = result {
-            error!("Error handling settings interaction: {e}");
-          }
+          dispatch_handler!(crate::handlers::handle_settings_button(&ctx, itx, &self.db).await, "settings interaction", itx.data.custom_id);
           return;
         }
 
         // Handle category settings select menu
         if itx.data.custom_id == "category_settings_select" {
-          let result = crate::handlers::handle_category_settings_select(&ctx, itx, &self.db, &self.manager).await;
-          if let Err(e) = result {
-            error!("Error handling category settings select: {e}");
-          }
+          dispatch_handler!(crate::handlers::handle_category_settings_select(&ctx, itx, &self.db, &self.manager).await, "category settings select", itx.data.custom_id);
           return;
         }
 
         // Handle server-level team balance method select (must be before guild_config_ prefix)
         if itx.data.custom_id == "guild_config_balance" {
-          let result = crate::handlers::handle_guild_config_balance_select(&ctx, itx, &self.db, &self.manager).await;
-          if let Err(e) = result {
-            error!("Error handling guild config balance select: {e}");
-          }
+          dispatch_handler!(crate::handlers::handle_guild_config_balance_select(&ctx, itx, &self.db, &self.manager).await, "guild config balance select", itx.data.custom_id);
           return;
         }
 
         // Handle guild config buttons (including link channel flow)
         if itx.data.custom_id.starts_with("guild_config_") || itx.data.custom_id.starts_with("server_cfg_") || itx.data.custom_id.starts_with("link_ch_") {
-          let result = crate::handlers::handle_guild_config_button(&ctx, itx, &self.db, &self.manager).await;
-          if let Err(e) = result {
-            error!("Error handling guild config interaction: {e}");
-          }
+          dispatch_handler!(crate::handlers::handle_guild_config_button(&ctx, itx, &self.db, &self.manager).await, "guild config interaction", itx.data.custom_id);
           return;
         }
 
         // Handle player settings rank selection
         if itx.data.custom_id.starts_with("player_settings_rank_select_") {
-          let result = crate::handlers::handle_player_settings_rank_select(&ctx, itx, &self.db, &self.manager).await;
-          if let Err(e) = result {
-            error!("Error handling player settings rank select: {e}");
-          }
+          dispatch_handler!(crate::handlers::handle_player_settings_rank_select(&ctx, itx, &self.db, &self.manager).await, "player settings rank select", itx.data.custom_id);
           return;
         }
 
@@ -1017,19 +1018,13 @@ impl EventHandler for Handler {
           || itx.data.custom_id.starts_with("category_fmt_")
           || itx.data.custom_id.starts_with("elo_gate_")
         {
-          let result = crate::handlers::handle_category_settings_button(&ctx, itx, &self.db, &self.manager).await;
-          if let Err(e) = result {
-            error!("Error handling category settings interaction: {e}");
-          }
+          dispatch_handler!(crate::handlers::handle_category_settings_button(&ctx, itx, &self.db, &self.manager).await, "category settings interaction", itx.data.custom_id);
           return;
         }
 
         // Handle ELO change confirmation buttons
         if itx.data.custom_id.starts_with("confirm_elo_change_") || itx.data.custom_id.starts_with("cancel_elo_change_") {
-          let result = crate::handlers::handle_elo_change_confirmation(&ctx, itx, &self.db, &self.manager).await;
-          if let Err(e) = result {
-            error!("Error handling ELO change confirmation: {e}");
-          }
+          dispatch_handler!(crate::handlers::handle_elo_change_confirmation(&ctx, itx, &self.db, &self.manager).await, "ELO change confirmation", itx.data.custom_id);
           return;
         }
 
@@ -1066,20 +1061,14 @@ impl EventHandler for Handler {
 
         // Handle player settings buttons
         if itx.data.custom_id.starts_with("player_settings_") {
-          let result = crate::handlers::handle_player_settings_button(&ctx, itx, &self.db).await;
-          if let Err(e) = result {
-            error!("Error handling player settings interaction: {e}");
-          }
+          dispatch_handler!(crate::handlers::handle_player_settings_button(&ctx, itx, &self.db).await, "player settings interaction", itx.data.custom_id);
           return;
         }
 
         // Handle remove all action (must be before general runner_action_ check)
         if itx.data.custom_id == "runner_action_remove_all" {
           info!("Runner action 'remove_all' triggered by user {}", itx.user.id);
-          let result = crate::handlers::runner_menu::handle_remove_all(&ctx, itx, &self.db, &self.manager).await;
-          if let Err(e) = result {
-            error!("Error handling remove all action: {e}");
-          }
+          dispatch_handler!(crate::handlers::runner_menu::handle_remove_all(&ctx, itx, &self.db, &self.manager).await, "remove all action", itx.data.custom_id);
           return;
         }
 
@@ -1087,10 +1076,7 @@ impl EventHandler for Handler {
         if itx.data.custom_id.starts_with("runner_action_") {
           let action = itx.data.custom_id.strip_prefix("runner_action_").unwrap_or("");
           info!("Runner action '{}' triggered by {}", action, itx.user.tag());
-          let result = crate::handlers::runner_menu::handle_runner_action(&ctx, itx, &self.db, &self.manager, action).await;
-          if let Err(e) = result {
-            error!("Error handling runner action '{}': {e}", action);
-          }
+          dispatch_handler!(crate::handlers::runner_menu::handle_runner_action(&ctx, itx, &self.db, &self.manager, action).await, "runner action", action);
           return;
         }
 
@@ -1144,8 +1130,8 @@ impl EventHandler for Handler {
               // captain_pick_USERID_TURN
               let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
               if parts.len() >= 4 {
-                let user_id = parts[2].parse::<u64>().ok().map(serenity::all::UserId::new);
-                let turn = parts[3].parse::<usize>().ok();
+                let user_id = parse_id_part!(parts, 2, u64).map(serenity::all::UserId::new);
+                let turn = parse_id_part!(parts, 3, usize);
                 if let (Some(uid), Some(t)) = (user_id, turn) {
                   let result = crate::handlers::captain_mode::handle_captain_pick(&ctx, itx, &self.db, &self.manager, guild_id, uid, t).await;
                   if let Err(e) = result {
@@ -1167,8 +1153,8 @@ impl EventHandler for Handler {
               // captain_select_CATEGORYID_FORMATID
               let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
               if parts.len() >= 4 {
-                let category_id = parts[2].parse::<u8>().ok();
-                let format_id = parts[3].parse::<u8>().ok();
+                let category_id = parse_id_part!(parts, 2, u8);
+                let format_id = parse_id_part!(parts, 3, u8);
                 if let (Some(cat_id), Some(fmt_id)) = (category_id, format_id) {
                   let result = crate::handlers::captain_mode::start_captain_draft(&ctx, itx, &self.db, &self.manager, guild_id, cat_id, fmt_id).await;
                   if let Err(e) = result {
@@ -1186,10 +1172,7 @@ impl EventHandler for Handler {
         // Handle runner menu back button
         if itx.data.custom_id == "runner_menu_back" {
           let cc = crate::models::ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
-          let result = crate::handlers::runner_menu::update_runner_menu(&cc).await;
-          if let Err(e) = result {
-            error!("Error updating runner menu: {e}");
-          }
+          dispatch_handler!(crate::handlers::runner_menu::update_runner_menu(&cc).await, "runner menu update", itx.data.custom_id);
           return;
         }
 
@@ -1205,42 +1188,30 @@ impl EventHandler for Handler {
 
         // Handle score result buttons
         if itx.data.custom_id.starts_with("score_red_") || itx.data.custom_id.starts_with("score_draw_") || itx.data.custom_id.starts_with("score_blu_") {
-          let result = self.handle_score_button(&ctx, itx).await;
-          if let Err(e) = result {
-            error!("Error handling score button: {e}");
-          }
+          dispatch_handler!(self.handle_score_button(&ctx, itx).await, "score button", itx.data.custom_id);
           return;
         }
 
         // Handle runner menu end match buttons (runner_end_red/draw/blu/force_{category_id}_{format_id})
         if itx.data.custom_id.starts_with("runner_end_") {
           if itx.data.custom_id.contains("force") {
-            let result = crate::handlers::runner_menu::handle_force_end_match(&ctx, itx, &self.db, &self.manager).await;
-            if let Err(e) = result {
-              error!("Error handling runner force end match: {e}");
-            }
+            dispatch_handler!(crate::handlers::runner_menu::handle_force_end_match(&ctx, itx, &self.db, &self.manager).await, "runner force end match", itx.data.custom_id);
           } else {
-            let result = crate::handlers::runner_menu::handle_end_match_result(&ctx, itx, &self.db, &self.manager).await;
-            if let Err(e) = result {
-              error!("Error handling runner end match: {e}");
-            }
+            dispatch_handler!(crate::handlers::runner_menu::handle_end_match_result(&ctx, itx, &self.db, &self.manager).await, "runner end match", itx.data.custom_id);
           }
           return;
         }
 
         // Handle change result buttons (change_result_red/blu/draw_{match_id})
         if itx.data.custom_id.starts_with("change_result_") {
-          let result = crate::handlers::runner_menu::handle_change_result_button(&ctx, itx, &self.db, &self.manager, &itx.data.custom_id).await;
-          if let Err(e) = result {
-            error!("Error handling change result: {e}");
-          }
+          dispatch_handler!(crate::handlers::runner_menu::handle_change_result_button(&ctx, itx, &self.db, &self.manager, &itx.data.custom_id).await, "change result", itx.data.custom_id);
           return;
         }
 
         // Handle ping format selection buttons (ping_format_{category_id}_{format_id})
         if itx.data.custom_id.starts_with("ping_format_") {
           let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
-          if let (Some(cat_id), Some(fmt_id)) = (parts.get(2).and_then(|s| s.parse::<u8>().ok()), parts.get(3).and_then(|s| s.parse::<u8>().ok())) {
+          if let (Some(cat_id), Some(fmt_id)) = (parse_id_part!(parts, 2, u8), parse_id_part!(parts, 3, u8)) {
             let guild_id = itx.guild_id.unwrap();
             let category_clone = {
               let mut manager = self.manager.lock().await;
@@ -1266,9 +1237,7 @@ impl EventHandler for Handler {
         if itx.data.custom_id.starts_with("skill_select_") {
           let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
           // parts: ["skill", "select", tier, category_id, format_id]
-          if let (Some(tier_str), Some(cat_id), Some(fmt_id)) =
-            (parts.get(2).copied(), parts.get(3).and_then(|s| s.parse::<u8>().ok()), parts.get(4).and_then(|s| s.parse::<u8>().ok()))
-          {
+          if let (Some(tier_str), Some(cat_id), Some(fmt_id)) = (parts.get(2).copied(), parse_id_part!(parts, 3, u8), parse_id_part!(parts, 4, u8)) {
             let guild_id = itx.guild_id.unwrap();
             let user_id = itx.user.id;
 
@@ -1448,7 +1417,7 @@ impl EventHandler for Handler {
           // already-reported guard still sees score_reported=false on its copy.
           if itx.data.custom_id.starts_with("dash_end_") {
             let parts: Vec<&str> = itx.data.custom_id.split('_').collect();
-            if let Some(fmt_id) = parts.get(4).and_then(|s| s.parse::<u8>().ok()) {
+            if let Some(fmt_id) = parse_id_part!(parts, 4, u8) {
               if let Ok(server) = manager.get_qguild(guild_id) {
                 if let Some(existing) = server.categories.iter_mut().find(|c| c.contains_channel(channel_id)) {
                   if let Some(fmt) = existing.formats.iter_mut().find(|f| f.id == fmt_id) {
@@ -1509,48 +1478,30 @@ impl EventHandler for Handler {
       Interaction::Modal(itx) => {
         // Handle modal submissions for user settings
         if itx.data.custom_id.starts_with("settings_modal_") {
-          let result = crate::handlers::handle_settings_modal(&ctx, &itx, &self.db).await;
-          if let Err(e) = result {
-            error!("Error handling settings modal '{}': {}", itx.data.custom_id, e);
-          }
+          dispatch_handler!(crate::handlers::handle_settings_modal(&ctx, &itx, &self.db).await, "settings modal", itx.data.custom_id);
         }
         // Handle modal submissions for guild config
         if itx.data.custom_id.starts_with("guild_config_modal_")
           || itx.data.custom_id.starts_with("guild_config_rank_modal_")
           || itx.data.custom_id.starts_with("guild_config_category_modal_")
         {
-          let result = crate::handlers::handle_guild_config_modal(&ctx, &itx, &self.db, &self.manager).await;
-          if let Err(e) = result {
-            error!("Error handling guild config modal '{}': {}", itx.data.custom_id, e);
-          }
+          dispatch_handler!(crate::handlers::handle_guild_config_modal(&ctx, &itx, &self.db, &self.manager).await, "guild config modal", itx.data.custom_id);
         }
         // Handle modal submissions for category settings (including format modals)
         if itx.data.custom_id.starts_with("category_settings_modal_") || itx.data.custom_id.starts_with("category_fmt_modal_") {
-          let result = crate::handlers::handle_category_settings_modal(&ctx, &itx, &self.db, &self.manager).await;
-          if let Err(e) = result {
-            error!("Error handling category settings modal '{}': {}", itx.data.custom_id, e);
-          }
+          dispatch_handler!(crate::handlers::handle_category_settings_modal(&ctx, &itx, &self.db, &self.manager).await, "category settings modal", itx.data.custom_id);
         }
         // Handle modal submissions for linking dashboard message
         if itx.data.custom_id.starts_with("category_link_msg_modal_") {
-          let result = crate::handlers::handle_category_link_msg_modal(&ctx, &itx, &self.db, &self.manager).await;
-          if let Err(e) = result {
-            error!("Error handling category link message modal '{}': {}", itx.data.custom_id, e);
-          }
+          dispatch_handler!(crate::handlers::handle_category_link_msg_modal(&ctx, &itx, &self.db, &self.manager).await, "category link message modal", itx.data.custom_id);
         }
         // Handle modal submissions for player settings
         if itx.data.custom_id.starts_with("player_settings_modal_") {
-          let result = crate::handlers::handle_player_settings_modal(&ctx, &itx, &self.db, &self.manager).await;
-          if let Err(e) = result {
-            error!("Error handling player settings modal '{}': {}", itx.data.custom_id, e);
-          }
+          dispatch_handler!(crate::handlers::handle_player_settings_modal(&ctx, &itx, &self.db, &self.manager).await, "player settings modal", itx.data.custom_id);
         }
         // Handle modal submissions for score reporting
         if itx.data.custom_id.starts_with("report_score_modal") {
-          let result = self.handle_report_score_ephemeral(&ctx, &itx).await;
-          if let Err(e) = result {
-            error!("Error handling report score modal: {}", e);
-          }
+          dispatch_handler!(self.handle_report_score_ephemeral(&ctx, &itx).await, "report score modal", itx.data.custom_id);
         }
       }
       _ => {
@@ -2022,8 +1973,8 @@ impl Handler {
     let custom_id = &interaction.data.custom_id;
     let parts: Vec<&str> = custom_id.split('_').collect();
     let result = parts.get(1).unwrap_or(&"");
-    let category_id = parts.get(2).and_then(|s| s.parse::<i64>().ok());
-    let _format_id = parts.get(3).and_then(|s| s.parse::<i64>().ok());
+    let category_id = parse_id_part!(parts, 2, i64);
+    let _format_id = parse_id_part!(parts, 3, i64);
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
 
     // Validate result
@@ -2123,8 +2074,8 @@ impl Handler {
     // Parse category_id and format_id from modal custom_id (format: report_score_modal_CATID_FMTID)
     let custom_id = &interaction.data.custom_id;
     let parts: Vec<&str> = custom_id.split('_').collect();
-    let category_id = parts.get(3).and_then(|s| s.parse::<i64>().ok());
-    let format_id = parts.get(4).and_then(|s| s.parse::<i64>().ok());
+    let category_id = parse_id_part!(parts, 3, i64);
+    let format_id = parse_id_part!(parts, 4, i64);
     let guild_id = interaction.guild_id.ok_or_else(|| anyhow::anyhow!("Guild ID not found"))?;
 
     // Extract scores from modal

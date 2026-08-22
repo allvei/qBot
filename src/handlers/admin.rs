@@ -11,9 +11,10 @@ use tracing::{error, info, warn};
 
 use crate::db::repo::Repository;
 use crate::handlers::player::validate_system_roles;
+use crate::handlers::response_helpers::{EmbedHelpers, ResponseExt, SettingsDisplay};
 use crate::models::embeds::Ephemeral;
 use crate::models::{CommandContext as CC, QGuild, SETUP_STATE};
-use crate::player::{is_admin, is_runner};
+use crate::player::is_admin;
 use crate::{guild_name, Database, Manager, CYAN, DEFAULT_QUOTA, GREEN, ORANGE, RED};
 
 /// `/config`
@@ -21,16 +22,15 @@ use crate::{guild_name, Database, Manager, CYAN, DEFAULT_QUOTA, GREEN, ORANGE, R
 /// * `key`   - The key to modify.
 /// * `value` - The value to set for the key.
 pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String>) -> Result<()> {
-  if !is_admin(cc).await? {
-    return Ok(());
-  }
+  crate::require_admin!(cc);
 
+  let guild_id = cc.guild_id()?;
   if let Some(val) = value {
-    cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found")).await?;
+    cc.db.get_config(guild_id).await?;
     let embed = CE::new().title("Config updated").description(format!("Set `{key}` = `{val}`"));
     cc.intax.create_response(&cc.ctx.http, Ephemeral::send(embed)).await?;
   } else {
-    let config = match cc.db.get_config(cc.intax.guild_id.expect("Guild ID not found")).await {
+    let config = match cc.db.get_config(guild_id).await {
       Ok(cfg) => cfg,
       Err(e) => {
         let err_embed = CE::new().title("Failed to load config").description(format!("Error: {e}\nPlease create a config using `/config`."));
@@ -39,13 +39,11 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String>) -> Resu
       }
     };
 
-    let config_text = format!(
-      "**Current Configuration:**\n\
-                                     guild: `{}`\n\
-                                     roles: `{}`\n\
-                                     categories: `{}`",
-      config.id, config.roles.runner, config.roles.admin
-    );
+    let config_text = SettingsDisplay::new("Current Configuration")
+      .field("guild", format!("`{}`", config.id))
+      .field("roles", format!("`{}`", config.roles.runner))
+      .field("categories", format!("`{}`", config.roles.admin))
+      .build();
     let embed = CE::new().title("Bot configuration").description(config_text);
     cc.intax.create_response(&cc.ctx.http, Ephemeral::send(embed)).await?;
   }
@@ -59,25 +57,19 @@ pub async fn cmd_config(cc: &CC<'_>, key: String, value: Option<String>) -> Resu
 /// * `role_type` - The role type to manage ("runner" or "admin")
 /// * `role` - The Discord role mention/ID to assign
 pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> Result<()> {
-  // Check admin permissions
-  if !is_admin(cc).await? {
-    return Ok(());
-  }
+  crate::require_admin!(cc);
 
-  let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+  let guild_id = cc.guild_id()?;
 
   // If no parameters, show current role configuration
   if role_type.is_empty() && role.is_none() {
     let runner_role = cc.db.config.get_runner_role_id(guild_id).await?;
     let admin_role = cc.db.config.get_admin_role_id(guild_id).await?;
 
-    let role_text = format!(
-      "**Current Role Configuration:**\n\
-             Runner Role: {}\n\
-             Admin Role: {}",
-      runner_role.map(|r| format!("<@&{}>", r.get())).unwrap_or_else(|| "Not set".to_string()),
-      admin_role.map(|r| format!("<@&{}>", r.get())).unwrap_or_else(|| "Not set".to_string())
-    );
+    let role_text = SettingsDisplay::new("Current Role Configuration")
+      .field("Runner Role", SettingsDisplay::role_or_unset(runner_role))
+      .field("Admin Role", SettingsDisplay::role_or_unset(admin_role))
+      .build();
 
     let embed = CE::new().title("Role configuration").description(role_text);
 
@@ -120,11 +112,9 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
     // Show current value for this role type
     let current_role = if is_runner { cc.db.config.get_runner_role_id(guild_id).await? } else { cc.db.config.get_admin_role_id(guild_id).await? };
 
-    let embed = CE::new().title(format!("{role_type} Role")).description(format!(
-      "Current {} role: {}",
-      role_type.to_lowercase(),
-      current_role.map(|r| format!("<@&{}>", r.get())).unwrap_or_else(|| "Not set".to_string())
-    ));
+    let embed = CE::new()
+      .title(format!("{role_type} Role"))
+      .description(SettingsDisplay::new("Current role").field(role_type.to_lowercase(), SettingsDisplay::role_or_unset(current_role)).build());
 
     cc.intax.create_response(&cc.ctx.http, Ephemeral::send(embed)).await?;
   }
@@ -344,12 +334,10 @@ pub async fn create_category_channels(
 ///
 /// Creates or updates the dashboard in the current channel
 pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut QGuild) -> Result<()> {
-  if !is_runner(cc).await? && !is_admin(cc).await? {
-    return Ok(());
-  }
+  crate::require_runner_or_admin!(cc);
 
   let channel = cc.intax.channel_id;
-  let guild_id = cc.intax.guild_id.ok_or_else(|| anyhow!("This command must be used in a server"))?;
+  let guild_id = cc.guild_id()?;
   let category = guild.get_category(channel)?;
 
   // Create and send dashboard
@@ -364,11 +352,9 @@ pub async fn cmd_dashboard(cc: &CC<'_>, guild: &mut QGuild) -> Result<()> {
 ///
 /// Sets up the bot for a guild using an interactive ephemeral message flow
 pub async fn cmd_setup(cc: &CC<'_>) -> Result<()> {
-  if !is_admin(cc).await? {
-    return Ok(());
-  }
+  crate::require_admin!(cc);
 
-  let guild_id: GI = cc.intax.guild_id.expect("Guild ID not found");
+  let guild_id: GI = cc.guild_id()?;
   let user_id: UI = cc.intax.user.id;
 
   // Start the setup flow with ephemeral message
@@ -956,11 +942,9 @@ async fn handle_init_admin_selection(
 
 /// `/check_ranks` - Check and offer to create missing rank roles
 pub async fn cmd_check_ranks(cc: &CC<'_>) -> Result<()> {
-  if !is_admin(cc).await? {
-    return Ok(());
-  }
+  crate::require_admin!(cc);
 
-  let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+  let guild_id = cc.guild_id()?;
 
   // Check for missing system roles (Runner and Admin)
   let missing_system_roles = match validate_system_roles(cc.ctx, &cc.db, guild_id).await {
@@ -1270,7 +1254,7 @@ async fn handle_categorylink_blue_selection(
 ///
 /// * `user` - The Discord user (mention or ID, optional - defaults to command user)
 pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) -> Result<()> {
-  let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+  let guild_id = cc.guild_id()?;
   let user_id = user.as_ref().map(|u| u.id).unwrap_or(cc.intax.user.id);
   let is_self = user_id == cc.intax.user.id;
 
@@ -1331,51 +1315,35 @@ pub async fn cmd_get_player_elo(cc: &CC<'_>, user: Option<serenity::all::User>) 
 
 /// `/enableactiveelo` - Enable automatic ELO adjustments from match results
 pub async fn cmd_enable_active_elo(cc: &CC<'_>) -> Result<()> {
-  // Check admin permissions
-  if !is_admin(cc).await? {
-    return Ok(());
-  }
+  crate::require_admin!(cc);
 
-  let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+  let guild_id = cc.guild_id()?;
 
   // Enable active ELO in config
   cc.db.config.set_active_elo(guild_id, true).await?;
 
-  let success_embed = CE::new()
-    .title("Active ELO enabled")
-    .description("Automatic ELO adjustments from match results are now **enabled**.\n\n*Note: This requires webhooks and game server API to be configured to actually work.*")
-    .color(GREEN);
-
-  cc.intax.create_response(&cc.ctx.http, Ephemeral::send(success_embed)).await?;
+  cc.reply_success("Active ELO enabled", "Automatic ELO adjustments from match results are now **enabled**.\n\n*Note: This requires webhooks and game server API to be configured to actually work.*").await?;
   Ok(())
 }
 
 /// `/disableactiveelo` - Disable automatic ELO adjustments from match results
 pub async fn cmd_disable_active_elo(cc: &CC<'_>) -> Result<()> {
-  // Check admin permissions
-  if !is_admin(cc).await? {
-    return Ok(());
-  }
+  crate::require_admin!(cc);
 
-  let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+  let guild_id = cc.guild_id()?;
 
   // Disable active ELO in config
   cc.db.config.set_active_elo(guild_id, false).await?;
 
-  let success_embed = CE::new().title("Active ELO disabled").description("Automatic ELO adjustments from match results are now **disabled**.").color(ORANGE);
-
-  cc.intax.create_response(&cc.ctx.http, Ephemeral::send(success_embed)).await?;
+  cc.reply_embed(EmbedHelpers::with_color("Active ELO disabled", "Automatic ELO adjustments from match results are now **disabled**.", ORANGE as u32)).await?;
   Ok(())
 }
 
 /// `/activeelostatus` - Check if automatic ELO adjustments are enabled
 pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
-  // Check admin permissions
-  if !is_admin(cc).await? {
-    return Ok(());
-  }
+  crate::require_admin!(cc);
 
-  let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+  let guild_id = cc.guild_id()?;
 
   // Check current status
   let is_enabled = match cc.db.config.get_active_elo(guild_id).await {
@@ -1407,11 +1375,9 @@ pub async fn cmd_active_elo_status(cc: &CC<'_>) -> Result<()> {
 /// * `user_id` - The user ID to buffer.
 /// * `server` - The server (already has manager lock held by caller)
 pub async fn cmd_buffer(cc: &CC<'_>, server: &mut QGuild, user_id: UI) -> Result<()> {
-  if !is_runner(cc).await? {
-    return Ok(());
-  }
+  crate::require_runner!(cc);
 
-  let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+  let guild_id = cc.guild_id()?;
   let guild_name = guild_name(cc.ctx, guild_id);
 
   info!("[{}] Getting category from channel {}", guild_name, cc.intax.channel_id);
@@ -1486,11 +1452,9 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut QGuild, user_id: UI) -> Result
 /// * `user_id` - The user ID to fatkid (move to end of queue).
 /// * `server` - The server (already has manager lock held by caller)
 pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut QGuild, user_id: UI) -> Result<()> {
-  if !is_runner(cc).await? {
-    return Ok(());
-  }
+  crate::require_runner!(cc);
 
-  let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+  let guild_id = cc.guild_id()?;
   let guild_name = guild_name(cc.ctx, guild_id);
 
   info!("[{}] Getting category from channel {}", guild_name, cc.intax.channel_id);
@@ -1562,11 +1526,9 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut QGuild, user_id: UI) -> Result
 /// Works in any category channel (queue chat, dashboard, team VCs, etc.)
 /// Handles all formats, not just the first one
 pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut QGuild, user_option: Option<&CommandDataOption>) -> Result<()> {
-  if !is_runner(cc).await? {
-    return Ok(());
-  }
+  crate::require_runner!(cc);
 
-  let guild_id = cc.intax.guild_id.expect("Guild ID not found");
+  let guild_id = cc.guild_id()?;
 
   // Get the category from the current channel (works in any category channel)
   let category = match server.get_category(cc.intax.channel_id) {

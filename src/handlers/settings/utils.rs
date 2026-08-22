@@ -13,16 +13,7 @@ macro_rules! get_player_settings {
     let guild_elo = $db.elo.get($target_uid, $guild_id, $db).await?;
     let username = $ctx.http.get_user($target_uid).await.map(|u| u.name.clone()).unwrap_or_else(|_| $target_user_id.to_string());
 
-    PlayerSettings {
-      user_id: $target_uid,
-      username,
-      steam_id: player.steam_id,
-      elo: guild_elo.elo,
-      dynamic_elo: guild_elo.dynamic_elo,
-      rank: guild_elo.rank.name.clone(),
-      games: guild_elo.games,
-      wins: guild_elo.wins,
-    }
+    PlayerSettings::from_guild_elo($target_uid, username, player.steam_id, &guild_elo)
   }};
 }
 

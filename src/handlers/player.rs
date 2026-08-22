@@ -9,7 +9,7 @@ use crate::models::{CommandContext as CmC, QGuild, Rank, Role, SessionPlayer as 
 use crate::{guild_name, ComponentContext as CC, Database as DB};
 
 /// Helper: Get member with cache → DB → Discord API fallback strategy
-async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI, db: &DB) -> Option<Member> {
+pub(crate) async fn get_member_cached(ctx: &Ctx, guild_id: GI, user_id: UI, db: &DB) -> Option<Member> {
   // 1. Try cache first (fast path, no API call)
   if let Some(guild) = ctx.cache.guild(guild_id) {
     if let Some(member) = guild.members.get(&user_id).cloned() {
@@ -278,6 +278,47 @@ pub async fn is_runner(cc: &CmC<'_>) -> Result<bool> {
     return Ok(true);
   }
   is_role(cc, &Role::Runner).await
+}
+
+/// Guard clause for admin-only commands: returns `Ok(())` early if the caller is not
+/// an admin, otherwise falls through. Replaces the repeated
+/// `if !is_admin(cc).await? { return Ok(()); }` boilerplate.
+#[macro_export]
+macro_rules! require_admin {
+  ($cc:expr) => {
+    if !$crate::player::is_admin($cc).await? {
+      return Ok(());
+    }
+  };
+}
+
+/// Guard clause for runner-or-admin-only commands, same shape as `require_admin!`.
+#[macro_export]
+macro_rules! require_runner_or_admin {
+  ($cc:expr) => {
+    if !$crate::player::is_runner($cc).await? && !$crate::player::is_admin($cc).await? {
+      return Ok(());
+    }
+  };
+}
+
+/// Guard clause for runner-only commands (admins implicitly pass via `is_runner`).
+#[macro_export]
+macro_rules! require_runner {
+  ($cc:expr) => {
+    if !$crate::player::is_runner($cc).await? {
+      return Ok(());
+    }
+  };
+}
+
+/// Override a guild ELO record's rank with the Discord-role-derived rank (if present),
+/// while keeping the database's ELO/games/wins stats intact. Discord roles are treated
+/// as the source of truth for rank identity; stats always come from the database.
+pub fn apply_discord_rank_override(guild_elo: &mut crate::db::repo::elo::GuildElo, discord_guild_rank: Option<crate::db::repo::rank::GuildRank>, guild_id: GI) {
+  if let Some(discord_guild_rank) = discord_guild_rank {
+    guild_elo.rank = Rank { guild_id, role_id: discord_guild_rank.role_id, name: discord_guild_rank.name, elo: discord_guild_rank.elo };
+  }
 }
 
 /// Checks if a user has the specified role (for component interactions).
