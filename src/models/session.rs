@@ -113,6 +113,10 @@ impl Session {
     tracing::info!("session transition: {:?} -> Hot ({} players)", self.status, self.pool.len());
     self.status = SessionStatus::Hot;
     self.ready_at = Some(SystemTime::now());
+    // Refresh the post-game flag timestamp so the join deadline isn't stale
+    if self.match_ended_at.is_some() {
+      self.match_ended_at = Some(SystemTime::now());
+    }
     // Create an embed message for the game ready notification
 
     CE::new().title("GAME READY!").description(format!("A match is ready to start with {} players!", self.pool.len())).footer(CEF::new("Awaiting team generation..."))
@@ -289,8 +293,9 @@ impl Session {
       return false;
     }
 
-    // Use match_ended_at if available (post-game scenario), otherwise ready_at
-    let base_time = self.match_ended_at.or(self.ready_at);
+    // Use ready_at (time the game went hot) as the base for the confirm timer;
+    // match_ended_at only flags a post-game scenario and should not override it.
+    let base_time = self.ready_at.or(self.match_ended_at);
 
     if let Some(base_time) = base_time {
       if let Ok(elapsed) = SystemTime::now().duration_since(base_time) {
@@ -306,8 +311,9 @@ impl Session {
       return 0;
     }
 
-    // Use match_ended_at if available (post-game scenario), otherwise ready_at
-    let base_time = self.match_ended_at.or(self.ready_at);
+    // Use ready_at (time the game went hot) as the base for the confirm timer;
+    // match_ended_at only flags a post-game scenario and should not override it.
+    let base_time = self.ready_at.or(self.match_ended_at);
 
     if let Some(base_time) = base_time {
       if let Ok(elapsed) = SystemTime::now().duration_since(base_time) {

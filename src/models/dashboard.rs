@@ -528,7 +528,7 @@ impl Category {
         let missing_players: Vec<_> = session.pool.iter().take(quota).filter(|p| !p.in_vc).collect();
 
         if !missing_players.is_empty() {
-          let base_time = session.match_ended_at.or(session.ready_at);
+          let base_time = session.ready_at.or(session.match_ended_at);
           if let Some(base_time) = base_time {
             let confirm_time_deadline = if session.match_ended_at.is_some() { post_game_confirm_time } else { confirm_time_seconds };
             if let Ok(d) = base_time.duration_since(SystemTime::UNIX_EPOCH) {
