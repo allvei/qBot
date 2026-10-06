@@ -23,6 +23,7 @@ The pre-push hook enforces the following requirements before allowing a push:
 
 1. **CHANGELOG.md must be updated** - Every push must include changes to the changelog
 2. **Version must be bumped** - The version in `Cargo.toml` must be incremented
+3. **Changelog must be jargon-free** - The newest entry's "Users & Admins" and "New Commands" sections must pass `scripts/validate-changelog.sh` (developer sections and older entries are not checked)
 
 ### What it checks
 
