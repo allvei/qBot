@@ -1,3 +1,40 @@
+# v0.16.0
+
+__06.10.26__
+
+## Users & Admins
+
+__Added__
+
+- __Concurrent matches__ - A new match can now be started from the dashboard while another is still being played. Each live match gets its own Cancel and End buttons, so the right match is always the one affected.
+
+__Improved__
+
+- __Canceling a match__ - Players and spectators are now moved back to the queue voice channel and the team channels are freed, just like when a match ends normally.
+- __Announcements__ - System messages and community updates now reach every server with a configured channel, not only the ones the bot had recently seen.
+- __Competitive mode setting__ - The category toggle now shows its real on/off state and includes a short explanation in the help text.
+
+__Fixed__
+
+- __Join timer__ - Fixed the time to join a new match being cut short when it followed a previous match.
+- __Missing players__ - Players sitting in their team voice channel are no longer wrongly shown as missing during a live match.
+- __Ending matches__ - Fixed fast or repeated clicks on End or the winner buttons ending a match twice or undoing other changes.
+- __Player ratings__ - Editing a player's rank or rating no longer overwrites their live rating when dynamic ratings are enabled.
+- __Rank removal__ - Ranks still assigned to players can no longer be deleted, preventing those players from losing their rank.
+- __Duplicate channel check__ - Fixed the startup check for duplicate dashboard, chat, and queue channels not working.
+
+## Developers
+
+__Fixed__
+
+- __Desktop app crash__ - Fixed the desktop app aborting shortly after startup due to background tasks being split across two runtimes.
+
+__Refactored__
+
+- __Handler boilerplate__ - New macros for handler dispatch, custom identifier parsing, and admin/runner access checks; shared helpers for private replies, interaction locks, and player rating/mention formatting.
+- __Dashboard diagnostics__ - Per-category locks around dashboard updates, per-category log files, timeouts on more Discord calls, and session transition logging.
+- __Broadcast targets__ - Announcement recipients are now read from stored server settings instead of the list of servers the bot had recently seen.
+
 # v0.15.0
 
 __26.07.26__

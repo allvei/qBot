@@ -363,4 +363,24 @@ impl ConfigRepository {
     .await?;
     Ok(())
   }
+
+  /// Get all guild IDs that have a non-null system_message_channel.
+  /// This pulls the authoritative list directly from the DB instead of relying
+  /// on the Discord cache or the in-memory Manager state.
+  pub async fn get_guilds_with_system_message_channel(&self) -> Result<Vec<GI>> {
+    let rows: Vec<i64> =
+      sqlx::query_scalar("SELECT guild_id FROM config WHERE system_message_channel IS NOT NULL")
+        .fetch_all(&self.pool)
+        .await?;
+    Ok(rows.into_iter().map(|id| GI::new(id as u64)).collect())
+  }
+
+  /// Get all guild IDs that have a non-null community_updates_channel.
+  pub async fn get_guilds_with_community_updates_channel(&self) -> Result<Vec<GI>> {
+    let rows: Vec<i64> =
+      sqlx::query_scalar("SELECT guild_id FROM config WHERE community_updates_channel IS NOT NULL")
+        .fetch_all(&self.pool)
+        .await?;
+    Ok(rows.into_iter().map(|id| GI::new(id as u64)).collect())
+  }
 }

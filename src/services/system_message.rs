@@ -74,9 +74,11 @@ pub async fn send_system_message(ctx: &Context, db: &Database, guild_id: GuildId
   }
 }
 
-/// Send a system message to all guilds that have a system message channel configured
+/// Send a system message to all guilds that have a system message channel configured.
+/// The guild list is pulled from the DB (not from the Discord cache) so guilds that
+/// are not currently cached still receive the message.
 pub async fn broadcast_system_message(ctx: &Context, db: &Database, content: &str) -> Result<Vec<(GuildId, Result<()>)>> {
-  let guilds: Vec<GuildId> = ctx.cache.guilds().to_vec();
+  let guilds = db.config.get_guilds_with_system_message_channel().await?;
   let mut results = Vec::new();
 
   for guild_id in guilds {
@@ -87,10 +89,16 @@ pub async fn broadcast_system_message(ctx: &Context, db: &Database, content: &st
   Ok(results)
 }
 
-/// Validate that all guilds have a valid system message channel configured
-/// Returns a list of (guild_id, guild_name, error) for guilds with issues
+/// Validate that all guilds have a valid system message channel configured.
+/// Pulls the list of configured guilds from the DB instead of the Discord cache.
 pub async fn validate_system_message_channels(ctx: &Context, db: &Database) -> Vec<(String, String)> {
-  let guilds: Vec<GuildId> = ctx.cache.guilds().to_vec();
+  let guilds = match db.config.get_guilds_with_system_message_channel().await {
+    Ok(guilds) => guilds,
+    Err(e) => {
+      error!("Failed to pull system message channel guilds from DB: {}", e);
+      return vec![("Database".to_string(), format!("Failed to pull channels: {}", e))];
+    }
+  };
   let mut errors = Vec::new();
 
   for guild_id in guilds {
@@ -108,6 +116,8 @@ pub async fn validate_system_message_channels(ctx: &Context, db: &Database) -> V
         }
       }
       Ok(None) => {
+        // DB list said the column is non-null but per-guild lookup came back empty;
+        // this should not happen, but report it rather than silently ignoring.
         errors.push((guild_name, "System messages channel is unset".to_string()));
       }
       Err(e) => {
@@ -189,9 +199,11 @@ pub async fn send_community_update(ctx: &Context, db: &Database, guild_id: Guild
   }
 }
 
-/// Send a community update to all guilds that have a community updates channel configured
+/// Send a community update to all guilds that have a community updates channel configured.
+/// The guild list is pulled from the DB (not from the Discord cache) so guilds that
+/// are not currently cached still receive the update.
 pub async fn broadcast_community_update(ctx: &Context, db: &Database, content: &str) -> Result<Vec<(GuildId, Result<()>)>> {
-  let guilds: Vec<GuildId> = ctx.cache.guilds().to_vec();
+  let guilds = db.config.get_guilds_with_community_updates_channel().await?;
   let mut results = Vec::new();
 
   for guild_id in guilds {
@@ -202,10 +214,16 @@ pub async fn broadcast_community_update(ctx: &Context, db: &Database, content: &
   Ok(results)
 }
 
-/// Validate that all guilds have a valid community updates channel configured
-/// Returns a list of (guild_id, guild_name, error) for guilds with issues
+/// Validate that all guilds have a valid community updates channel configured.
+/// Pulls the list of configured guilds from the DB instead of the Discord cache.
 pub async fn validate_community_updates_channels(ctx: &Context, db: &Database) -> Vec<(GuildId, String, String)> {
-  let guilds: Vec<GuildId> = ctx.cache.guilds().to_vec();
+  let guilds = match db.config.get_guilds_with_community_updates_channel().await {
+    Ok(guilds) => guilds,
+    Err(e) => {
+      error!("Failed to pull community updates channel guilds from DB: {}", e);
+      return vec![(GuildId::new(0), "Database".to_string(), format!("Failed to pull channels: {}", e))];
+    }
+  };
   let mut errors = Vec::new();
 
   for guild_id in guilds {

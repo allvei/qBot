@@ -428,33 +428,32 @@ impl Application {
                 continue; // Skip this snapshot if lock is held
               };
 
-              // Extract guild IDs before moving manager_clone
-              let guild_ids: Vec<u64> = manager_clone.qguilds.iter().map(|g| g.id.get()).collect();
-
               // Update snapshot
               let mut latest = latest_manager.write().await;
               *latest = Some(manager_clone);
 
               // Update system message channel guilds if configured
               if let Some(sys_msg_guilds) = &system_message_channel_guilds {
-                let mut guilds_with_channel = std::collections::HashSet::new();
-                for guild_id in &guild_ids {
-                  if let Ok(Some(_)) = db.config.get_system_message_channel((*guild_id).into()).await {
-                    guilds_with_channel.insert(*guild_id);
+                let guilds_with_channel = match db.config.get_guilds_with_system_message_channel().await {
+                  Ok(guilds) => guilds.into_iter().map(|id| id.get()).collect::<std::collections::HashSet<u64>>(),
+                  Err(e) => {
+                    error!("Failed to pull system message channel guilds from DB: {}", e);
+                    std::collections::HashSet::new()
                   }
-                }
+                };
                 let mut sys_msg_guilds_write = sys_msg_guilds.write().await;
                 *sys_msg_guilds_write = guilds_with_channel;
               }
 
               // Update community updates channel guilds if configured
               if let Some(comm_updates_guilds) = &community_updates_channel_guilds {
-                let mut guilds_with_channel = std::collections::HashSet::new();
-                for guild_id in &guild_ids {
-                  if let Ok(Some(_)) = db.config.get_community_updates_channel((*guild_id).into()).await {
-                    guilds_with_channel.insert(*guild_id);
+                let guilds_with_channel = match db.config.get_guilds_with_community_updates_channel().await {
+                  Ok(guilds) => guilds.into_iter().map(|id| id.get()).collect::<std::collections::HashSet<u64>>(),
+                  Err(e) => {
+                    error!("Failed to pull community updates channel guilds from DB: {}", e);
+                    std::collections::HashSet::new()
                   }
-                }
+                };
                 let mut comm_updates_guilds_write = comm_updates_guilds.write().await;
                 *comm_updates_guilds_write = guilds_with_channel;
               }
