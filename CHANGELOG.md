@@ -1,3 +1,20 @@
+# v0.16.1
+
+__06.10.26__
+
+## Users & Admins
+
+__Fixed__
+
+- __Queue size__ - The queue no longer fills past the player limit. Extra players now form the queue for the next match instead of being stuck in an oversized one.
+- __Stuck queues__ - Players waiting for the next match are now pulled into the current queue when someone leaves, times out or is removed, so a full lobby can no longer sit idle without starting.
+
+## Developers
+
+__Refactored__
+
+- __Queue sessions__ - Waiting players are packed into quota-sized sessions by a single rebalance step that every queue mutation (join, leave, removal, timeout, match start/end) now runs, replacing the scattered overflow and quota checks.
+
 # v0.16.0
 
 __06.10.26__

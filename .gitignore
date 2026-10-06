@@ -16,3 +16,4 @@ qbot.code-workspace
 rustfmt.toml
 trends_api.md
 nohup.out
+AGENTS.md

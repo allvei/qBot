@@ -1962,6 +1962,13 @@ impl Handler {
     if should_regenerate {
       category.generate_teams(ctx, guild_id, Some(&self.db)).await;
     }
+
+    // Pull players waiting for the next game forward if this leave opened a slot
+    if should_remove_player {
+      if let Err(e) = category.rebalance(ctx, Some(guild_id), Some(&self.db), Some(self.manager.clone())).await {
+        warn!("Failed to rebalance queues after VC leave: {e}");
+      }
+    }
   }
 
   /// Handle score result button click (RED WON/DRAW/BLU WON)
@@ -2348,11 +2355,9 @@ impl Handler {
 
       let users_added = players_to_add.len();
       if users_added > 0 {
-        // NOW check quota once after all players added
-        if category.is_quota() {
-          if let Err(e) = category.hot(ctx, Some(guild.id), Some(&self.db), Some(self.manager.clone())).await {
-            error!("Failed to transition to hot: {e}");
-          }
+        // NOW pack the queues once after all players added, starting any that are full
+        if let Err(e) = category.rebalance(ctx, Some(guild.id), Some(&self.db), Some(self.manager.clone())).await {
+          error!("Failed to rebalance queues after adding existing VC users: {e}");
         }
 
         // Update the dashboard to reflect the new users

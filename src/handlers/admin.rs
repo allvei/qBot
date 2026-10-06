@@ -1614,13 +1614,11 @@ pub async fn cmd_remove_queue(cc: &CC<'_>, server: &mut QGuild, user_option: Opt
             }
 
             // After removal: regenerate teams if the hot session is still valid,
-            // or try to pull waiting players if it dropped to idle
+            // otherwise pull players waiting for the next game forward
             if hot_session_still_hot {
               category.generate_teams_fmt(fmt_idx as u8, cc.ctx, guild_id, Some(&*cc.db)).await;
-            } else if category.is_quota_fmt(fmt_idx as u8) {
-              if let Err(e) = category.hot_fmt(fmt_idx as u8, cc.ctx, Some(guild_id), Some(&*cc.db), None, false).await {
-                warn!("Failed to transition to hot after player removal: {}", e);
-              }
+            } else if let Err(e) = category.rebalance_fmt(fmt_idx as u8, cc.ctx, Some(guild_id), Some(&*cc.db), Some(cc.manager.clone()), false).await {
+              warn!("Failed to rebalance queues after player removal: {}", e);
             }
           }
 

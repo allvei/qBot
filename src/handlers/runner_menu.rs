@@ -480,6 +480,11 @@ pub async fn handle_player_selection(
         // This ensures the dashboard shows correct VC status after player reordering
         category.verify_vc(ctx, guild_id).await;
 
+        // Keep queues within quota and pull waiting players forward after a removal
+        if let Err(e) = category.rebalance(ctx, Some(guild_id), Some(db.as_ref()), Some(Arc::clone(manager))).await {
+          tracing::warn!("Failed to rebalance queues after runner action: {e}");
+        }
+
         // Collect format IDs that need team regeneration
         let hot_fmt_ids: Vec<u8> = category.formats.iter().filter(|f| f.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= f.quota as usize)).map(|f| f.id).collect();
 

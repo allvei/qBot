@@ -53,7 +53,8 @@ impl QueueExpirationScheduler {
 
     let duration = Duration::from_secs(queue_expiration_minutes as u64 * 60);
     let manager = self.manager.clone();
-    let _db = self.db.clone();
+    let rebalance_manager = self.manager.clone();
+    let db = self.db.clone();
     let ctx = self.ctx.clone();
 
     // Capture player data for the async block
@@ -73,6 +74,7 @@ impl QueueExpirationScheduler {
 
         for category in &mut server.categories {
           let category_clone = category.clone();
+          let mut touched_fmts: Vec<u8> = Vec::new();
           for format in &mut category.formats {
             let format_clone = format.clone();
             for session in &mut format.sessions {
@@ -83,6 +85,7 @@ impl QueueExpirationScheduler {
                 session.pool.remove(pos);
                 removed = true;
                 should_update_dashboard = true;
+                touched_fmts.push(format.id);
 
                 let guild_name = crate::models::constants::guild_name(&ctx, guild_id);
                 info!(
@@ -102,6 +105,13 @@ impl QueueExpirationScheduler {
                 }
                 break;
               }
+            }
+          }
+
+          // Pull players waiting for the next game forward into the queue we just shrank
+          for fmt_id in touched_fmts {
+            if let Err(e) = category.rebalance_fmt(fmt_id, &ctx, Some(guild_id), Some(&db), Some(rebalance_manager.clone()), false).await {
+              tracing::warn!("Failed to rebalance queues after timeout: {e}");
             }
           }
 

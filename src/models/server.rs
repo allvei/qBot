@@ -301,19 +301,54 @@ impl Format {
     self.sessions.get_player(user_id)
   }
 
-  /// Remove empty Idle sessions, ensuring at least one Idle session remains
-  /// Returns the number of sessions removed
-  pub fn cleanup_empty_idle_sessions(&mut self) -> usize {
-    let before = self.sessions.len();
-    self.sessions.retain(|s| !(s.is_idle() && s.pool.is_empty()));
-    let removed = before - self.sessions.len();
-    
-    // Ensure at least one Idle session exists
-    if !self.sessions.iter().any(|s| s.is_idle()) {
-      self.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
+  /// Pack waiting players so no queue holds more than `quota` players.
+  ///
+  /// Queue order is preserved: players from later Idle sessions are pulled forward to fill
+  /// earlier ones and everyone past `quota` spills into the next Idle session (the following
+  /// game). Emptied Idle sessions are dropped, keeping a single open queue. Hot/Push/Live/Pull
+  /// sessions are left untouched.
+  ///
+  /// Returns true when the layout changed.
+  pub fn pack_idle_sessions(&mut self) -> bool {
+    let quota = (self.quota as usize).max(1);
+    let idle_idxs: Vec<usize> = self.sessions.iter().enumerate().filter(|(_, s)| s.is_idle()).map(|(i, _)| i).collect();
+    if idle_idxs.is_empty() {
+      return false;
     }
-    
-    removed
+
+    let layout = |sessions: &[Session]| -> Vec<Vec<UI>> {
+      sessions.iter().filter(|s| s.is_idle()).map(|s| s.pool.iter().map(|p| p.player.user_id).collect()).collect()
+    };
+    let before = layout(&self.sessions);
+
+    // Collect every waiting player in queue order, then hand them back out in quota-sized chunks
+    let mut waiting: Vec<SessionPlayer> = Vec::new();
+    for &i in &idle_idxs {
+      waiting.append(&mut self.sessions[i].pool);
+    }
+    let mut waiting = waiting.into_iter().peekable();
+
+    for &i in &idle_idxs {
+      self.sessions[i].pool = waiting.by_ref().take(quota).collect();
+    }
+    while waiting.peek().is_some() {
+      let pool: Vec<SessionPlayer> = waiting.by_ref().take(quota).collect();
+      self.sessions.push(Session::new(SessionStatus::Idle, pool));
+    }
+
+    // Drop the sessions that were emptied, keeping one open queue to join
+    let has_open_queue = self.sessions.iter().any(|s| s.is_idle() && !s.pool.is_empty() && s.pool.len() < quota);
+    let mut keep_empty = !has_open_queue;
+    self.sessions.retain(|s| {
+      if !(s.is_idle() && s.pool.is_empty()) {
+        return true;
+      }
+      let keep = keep_empty;
+      keep_empty = false;
+      keep
+    });
+
+    layout(&self.sessions) != before
   }
 }
 
@@ -513,11 +548,12 @@ impl Category {
 
   pub fn create_session_format(&mut self, fmt_id: u8) -> Result<&mut Session> {
     let sg = self.format_mut(fmt_id).ok_or_else(|| anyhow!("Format {} not found", fmt_id))?;
-    // Only prevent creation if there's an Idle session (not Hot)
-    // Hot sessions can have overflow players that need a new Idle session
-    let has_idle = sg.sessions.iter().any(|s| s.is_idle());
-    if has_idle {
-      return Err(anyhow!("Cannot create new session: idle session already exists"));
+    // Only prevent creation if there's an Idle session with room left; a full queue needs
+    // another session so the extra players form the next game
+    let quota = sg.quota as usize;
+    let has_open_queue = sg.sessions.iter().any(|s| s.is_idle() && s.pool.len() < quota);
+    if has_open_queue {
+      return Err(anyhow!("Cannot create new session: open idle session already exists"));
     }
     sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
     let sg = self.format_mut(fmt_id).unwrap();
@@ -528,10 +564,26 @@ impl Category {
     self.get_queue_fmt(0).await
   }
 
+  /// The queue new players join: the first Idle/Hot session that is still under quota.
+  /// Opens a new queue (next game) when every joinable session is already full, so a queue
+  /// never grows past the quota.
   pub async fn get_queue_fmt(&mut self, fmt_id: u8) -> Result<&mut Session, Error> {
     let sg = self.format_mut(fmt_id).ok_or_else(|| anyhow!("Format {} not found", fmt_id))?;
-    debug!("get_queue_fmt: fmt_id={}, total sessions={}, session statuses: {:?}", fmt_id, sg.sessions.len(), sg.sessions.iter().map(|s| format!("{:?}", s.status)).collect::<Vec<_>>());
-    sg.sessions.iter_mut().find(|s| s.status == SessionStatus::Idle || s.status == SessionStatus::Hot).ok_or(anyhow!("No joinable session found in format {}", fmt_id))
+    let quota = sg.quota as usize;
+    debug!(
+      "get_queue_fmt: fmt_id={}, total sessions={}, session pools: {:?}",
+      fmt_id,
+      sg.sessions.len(),
+      sg.sessions.iter().map(|s| format!("{:?}({})", s.status, s.pool.len())).collect::<Vec<_>>()
+    );
+    match sg.sessions.iter().position(|s| (s.is_idle() || s.is_hot()) && s.pool.len() < quota) {
+      Some(idx) => Ok(&mut sg.sessions[idx]),
+      None => {
+        info!("All queues in format {} are full, opening a new one for the next game", fmt_id);
+        sg.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
+        sg.sessions.last_mut().ok_or_else(|| anyhow!("Failed to open a new queue in format {}", fmt_id))
+      }
+    }
   }
 
   pub fn get_inactives(&self) -> Vec<&Session> {
@@ -718,14 +770,19 @@ impl Category {
 
   pub async fn hot_fmt(&mut self, format_id: u8, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>, post_game: bool) -> Result<(), Error> {
     info!("hot_fmt: starting format {} (post_game={})", format_id, post_game);
-    // Verify session has enough players before transitioning to Hot
-    let quota = self.format(format_id).ok_or_else(|| anyhow!("Format {} not found", format_id))?.quota as usize;
-    let session = self.get_queue_fmt(format_id).await?;
-
-    if session.pool.len() < quota {
-      // Not enough players, don't transition to Hot
+    // Pick the first full queue; other sessions may be waiting below quota for the next game
+    let sg = self.format_mut(format_id).ok_or_else(|| anyhow!("Format {} not found", format_id))?;
+    let quota = sg.quota as usize;
+    let full_idx = sg
+      .sessions
+      .iter()
+      .position(|s| s.is_idle() && s.pool.len() >= quota)
+      .or_else(|| sg.sessions.iter().position(|s| s.is_hot() && s.pool.len() >= quota));
+    let Some(full_idx) = full_idx else {
+      // No queue has enough players, don't transition to Hot
       return Ok(());
-    }
+    };
+    let session = &mut sg.sessions[full_idx];
 
     // Check if session is already Hot to prevent duplicate notifications (race condition)
     let was_already_hot = session.is_hot();
@@ -784,10 +841,11 @@ impl Category {
         sleep(Duration::from_secs(confirm_time as u64)).await;
 
         // Check if players have joined, remove those who haven't
+        let mgr_for_rebalance = mgr.clone();
         let mut manager_lock = mgr.lock().await;
         if let Ok(server) = manager_lock.get_qguild(guild_id) {
           if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
-            if category.check_hot_confirm_time(&ctx_clone, guild_id, post_game_confirm_time).await {
+            if category.check_hot_confirm_time(&ctx_clone, guild_id, post_game_confirm_time, Some(mgr_for_rebalance)).await {
               info!("Deadline timer fired: removed timed-out players from category {}", category_id);
               category.queue_dash_update(&ctx_clone, guild_id).await;
             }
@@ -799,9 +857,65 @@ impl Category {
     Ok(())
   }
 
+  /// Keep the queues of a format within quota and start every queue that is full.
+  ///
+  /// Waiting players are packed into quota-sized queues (extras forming the next game) and
+  /// each full queue is transitioned to Hot. Call this after any queue mutation - joins,
+  /// leaves, removals, timeouts and match ends - so a queue never shows more players than
+  /// the quota and a filled queue never sits idle.
+  pub async fn rebalance_fmt(
+    &mut self,
+    fmt_id: u8,
+    ctx: &Context,
+    guild_id: Option<GI>,
+    db: Option<&DB>,
+    manager: Option<Arc<Mutex<Manager>>>,
+    post_game: bool,
+  ) -> Result<(), Error> {
+    let full_queues = {
+      let Some(sg) = self.format_mut(fmt_id) else {
+        return Ok(());
+      };
+      if sg.pack_idle_sessions() {
+        let layout: Vec<String> = sg.sessions.iter().map(|s| format!("{:?}({})", s.status, s.pool.len())).collect();
+        info!("rebalance_fmt: packed format {} queues into {}", fmt_id, layout.join(", "));
+      }
+      let quota = sg.quota as usize;
+      sg.sessions.iter().filter(|s| s.is_idle() && s.pool.len() >= quota).count()
+    };
+    for _ in 0..full_queues {
+      self.hot_fmt(fmt_id, ctx, guild_id, db, manager.clone(), post_game).await?;
+    }
+
+    Ok(())
+  }
+
+  /// [`Self::rebalance`] as a boxed future.
+  ///
+  /// The hot deadline timer is spawned, so its future must be `Send`; boxing breaks the
+  /// `hot_fmt -> check_hot_confirm_time -> rebalance -> hot_fmt` auto-trait inference cycle.
+  fn rebalance_boxed<'a>(
+    &'a mut self,
+    ctx: &'a Context,
+    guild_id: Option<GI>,
+    db: Option<&'a DB>,
+    manager: Option<Arc<Mutex<Manager>>>,
+  ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Error>> + Send + 'a>> {
+    Box::pin(self.rebalance(ctx, guild_id, db, manager))
+  }
+
+  /// Rebalance every format of the category
+  pub async fn rebalance(&mut self, ctx: &Context, guild_id: Option<GI>, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>) -> Result<(), Error> {
+    let fmt_ids: Vec<u8> = self.formats.iter().map(|sg| sg.id).collect();
+    for fmt_id in fmt_ids {
+      self.rebalance_fmt(fmt_id, ctx, guild_id, db, manager.clone(), false).await?;
+    }
+    Ok(())
+  }
+
   /// Check hot sessions for timeout and handle accordingly
   /// Returns true if any changes were made that require dashboard update
-  pub async fn check_hot_confirm_time(&mut self, ctx: &Context, guild_id: GI, post_game_confirm_time: Option<u16>) -> bool {
+  pub async fn check_hot_confirm_time(&mut self, ctx: &Context, guild_id: GI, post_game_confirm_time: Option<u16>, manager: Option<Arc<Mutex<Manager>>>) -> bool {
     let mut changes_made = false;
 
     // Sync VC status with actual Discord state before making timeout decisions
@@ -872,6 +986,11 @@ impl Category {
       let hot_fmt_ids: Vec<u8> = self.formats.iter().filter(|sg| sg.sessions.iter().any(|s| s.is_hot() && s.pool.len() >= sg.quota as usize)).map(|sg| sg.id).collect();
       for fmt_id in hot_fmt_ids {
         self.generate_teams_fmt(fmt_id, ctx, guild_id, None).await;
+      }
+
+      // Removals can leave a reverted queue short while players wait in the next one
+      if let Err(e) = self.rebalance_boxed(ctx, Some(guild_id), None, manager).await {
+        warn!("Failed to rebalance queues after confirm time: {e}");
       }
     }
 
@@ -1052,11 +1171,8 @@ impl Category {
     // Clean up excess free team VCs (e.g., higher-numbered sets when a lower one is now in use)
     self.cleanup_team_vcs(ctx, true).await;
 
-    // Check if the new idle session already has enough players for another game (concurrent games)
-    if self.is_quota_fmt(format_id) {
-      info!("Overflow players met quota for format {} - firing next game", format_id);
-      self.hot_fmt(format_id, ctx, Some(guild_id), Some(db), manager, false).await?;
-    }
+    // Pack the remaining queue and fire the next game if it is already full (concurrent games)
+    self.rebalance_fmt(format_id, ctx, Some(guild_id), Some(db), manager, false).await?;
 
     self.queue_dash_update(ctx, guild_id).await;
     info!("push_fmt: completed format {}", format_id);
@@ -1666,7 +1782,7 @@ impl Category {
 
     // Remove the finished session
     let sg = self.format_mut(fmt_id).unwrap();
-    let queue_size = sg.sessions.iter().find(|s| s.status == SessionStatus::Idle).map(|s| s.pool.len()).unwrap_or(0);
+    let queue_size: usize = sg.sessions.iter().filter(|s| s.is_idle()).map(|s| s.pool.len()).sum();
     sg.sessions.retain(|s| s.status != SessionStatus::Pull);
 
     info!(
@@ -1676,10 +1792,15 @@ impl Category {
       sg.sessions.iter().map(|s| format!("{:?}({})", s.status, s.pool.len())).collect::<Vec<_>>().join(", ")
     );
 
-    // Check if the queue now meets quota and transition to Hot if needed
-    if self.is_quota_fmt(fmt_id) {
+    // Pack the re-queued players into quota-sized queues (extras wait for the next game)
+    // and transition every full queue to Hot
+    let queue_filled = {
+      let sg = self.format(fmt_id).ok_or_else(|| anyhow!("Format {} not found", fmt_id))?;
+      sg.sessions.iter().filter(|s| s.is_idle()).map(|s| s.pool.len()).sum::<usize>() >= sg.quota as usize
+    };
+    if queue_filled {
       info!("pull_fmt: format {} meets quota after re-queue, transitioning to Hot", fmt_id);
-      self.hot_fmt(fmt_id, ctx, Some(guild_id), Some(db), manager, true).await?;
+      self.rebalance_fmt(fmt_id, ctx, Some(guild_id), Some(db), manager, true).await?;
     } else if post_game {
       // If this is post-game but quota isn't met, still notify players who are waiting
       // This is for the case where some players finished a game but not enough to start a new one
@@ -1954,9 +2075,7 @@ impl Category {
       }
     }
 
-    if self.is_quota() {
-      self.hot(queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager).await?;
-    }
+    self.rebalance_fmt(0, queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager, false).await?;
     Ok(())
   }
 
@@ -2056,63 +2175,8 @@ impl Category {
       }
     }
 
-    // Clone manager early to avoid move issues
-    let manager_for_hot = queue_ctx.manager.clone();
-    let manager_for_overflow = queue_ctx.manager.clone();
-
-    // Only check quota if session was Idle - Hot sessions already met quota
-    if was_idle && self.is_quota_fmt(fmt_id) {
-      self.hot_fmt(fmt_id, queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, manager_for_hot, false).await?;
-    }
-
-    // Handle overflow in Hot sessions - create new Idle session for 2nd game
-    if was_hot {
-      let quota = self.format(fmt_id).map(|sg| sg.quota as usize).unwrap_or(8);
-      
-      // Check if Hot session has overflow
-      let has_overflow = {
-        let hot_sessions = self.get_seshs_by_status_fmt(fmt_id, &SessionStatus::Hot);
-        !hot_sessions.is_empty() && hot_sessions[0].pool.len() > quota
-      };
-      
-      if has_overflow {
-        // Try to create new Idle session
-        match self.create_session_format(fmt_id) {
-          Ok(_) => {
-            // Move overflow players to new Idle session
-            let mut hot_sessions_mut = self.get_seshs_by_status_fmt_mut(fmt_id, &SessionStatus::Hot);
-            if !hot_sessions_mut.is_empty() {
-              let overflow_count = hot_sessions_mut[0].pool.len() - quota;
-              let overflow_players: Vec<_> = hot_sessions_mut[0].pool.drain(quota..).collect();
-              drop(hot_sessions_mut); // Release borrow before next mutable borrow
-              
-              // Get the newly created Idle session (last in the vector)
-              let idle_session = self.format_mut(fmt_id).and_then(|sg| sg.sessions.last_mut()).ok_or_else(|| anyhow!("Failed to get new Idle session"))?;
-              for overflow_player in overflow_players {
-                idle_session.pool.push(overflow_player);
-              }
-              
-              info!("Created new Idle session and moved {} overflow players from Hot session in format {}", overflow_count, fmt_id);
-
-              // Update dashboard to reflect overflow session creation
-              if let Some(gid) = queue_ctx.guild_id {
-                self.queue_dash_update(queue_ctx.ctx, gid).await;
-              }
-
-              // Check if the new Idle session now meets quota for a 2nd simultaneous game
-              if self.is_quota_fmt(fmt_id) {
-                info!("New Idle session meets quota, transitioning to Hot for 2nd simultaneous game");
-                self.hot_fmt(fmt_id, queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, manager_for_overflow, false).await?;
-              }
-            }
-          }
-          Err(_) => {
-            // Idle session already exists, overflow players stay in Hot session
-            // This is expected and not an error
-          }
-        }
-      }
-    }
+    // Keep queues within quota (extras open the next game) and fire any queue that just filled
+    self.rebalance_fmt(fmt_id, queue_ctx.ctx, queue_ctx.guild_id, queue_ctx.db, queue_ctx.manager, false).await?;
 
     Ok(())
   }
@@ -2130,7 +2194,7 @@ impl Category {
     let queue_vc = self.channels.queue_vc;
 
     // Get current queue count from idle sessions
-    let current_count = self.formats[0].sessions.iter().find(|s| s.status == SessionStatus::Idle).map(|s| s.pool.len()).unwrap_or(0);
+    let current_count: usize = self.formats[0].sessions.iter().filter(|s| s.is_idle()).map(|s| s.pool.len()).sum();
 
     // Get current channel name
 
@@ -2229,26 +2293,12 @@ impl Category {
     self.is_quota_fmt(0)
   }
 
+  /// Whether any queue of the format is full and ready to start
   pub fn is_quota_fmt(&self, fmt_id: u8) -> bool {
-    let g = self.get_seshs_by_status_fmt(fmt_id, &SessionStatus::Idle);
-    if g.is_empty() {
-      warn!("No idle sessions found when checking quota for format {}", fmt_id);
+    let Some(sg) = self.format(fmt_id) else {
       return false;
-    }
-    // Check all idle sessions - any one meeting quota should return true for concurrent games
-    let q = self.format(fmt_id).map(|sg| sg.quota as usize).unwrap_or(0);
-    for session in g {
-      let l = session.pool.len();
-      match l.cmp(&q) {
-        std::cmp::Ordering::Equal => return true,
-        std::cmp::Ordering::Greater => {
-          warn!("Quota met late, more players than quota in format {}", fmt_id);
-          return true;
-        }
-        std::cmp::Ordering::Less => continue,
-      }
-    }
-    false
+    };
+    sg.sessions.iter().any(|s| s.is_idle() && s.pool.len() >= sg.quota as usize)
   }
 
   /// Notifies the queue chat that quota has been met

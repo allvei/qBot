@@ -423,6 +423,10 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut QGuild) -> Result<()> {
 
     if found {
       cc.reply(&format!("Left the queue! ({queue_count}/{} players)", category.quota())).await?;
+      // Pull players waiting for the next game forward into the queue we just shrank
+      if let Err(e) = category.rebalance(cc.ctx, cc.intax.guild_id, Some(&cc.db), Some(cc.manager.clone())).await {
+        warn!("Failed to rebalance queues after leave: {e}");
+      }
     }
 
     category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;
@@ -522,13 +526,10 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut QGuild) -> Result<()> {
 
   let category = guild.get_category(channel)?;
 
-  // Check if we have an idle session
-  let idle_sessions = category.get_seshs_by_status(&SS::Idle);
-  if idle_sessions.is_empty() {
+  // Check if we have an idle session (several are valid: extra players queue for the next game)
+  if category.get_seshs_by_status(&SS::Idle).is_empty() {
     cc.reply("No queue available. A match is currently in progress.").await?;
     return Ok(());
-  } else if idle_sessions.len() > 1 {
-    return Err(anyhow!("Found more than one idle game ({}). This is unexpected.", idle_sessions.len()));
   }
 
   // Check if player is already in game
@@ -547,11 +548,8 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut QGuild) -> Result<()> {
     queue.add_ply(player, false)?;
 
     let current_queue = queue.pool.len();
-    let quota_reached = current_queue >= category.quota() as usize;
 
-    if quota_reached {
-      category.hot(cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone())).await?;
-    }
+    category.rebalance_fmt(0, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone()), false).await?;
 
     cc.reply(&format!("Joined the queue! ({current_queue}/{} players)", category.quota())).await?;
     category.queue_dash_update(cc.ctx, cc.intax.guild_id.unwrap()).await;

@@ -599,7 +599,12 @@ impl Category {
           }
         }
 
-        embed = embed.field(format!("{fmt_label} - Idle ({total_idle_players}/{quota})"), players_field, true);
+        // Players past the quota are queued for the next game, not for this one
+        let count_label = match total_idle_players.saturating_sub(quota) {
+          0 => format!("{total_idle_players}/{quota}"),
+          next => format!("{quota}/{quota} +{next} next"),
+        };
+        embed = embed.field(format!("{fmt_label} - Idle ({count_label})"), players_field, true);
         embed = embed.field("Status", timers_field, true);
       } else if live_sessions.is_empty() && hot_sessions.is_empty() {
         // No active/hot/idle players — show empty queue
@@ -1032,6 +1037,11 @@ impl Category {
     // Check if team VCs should be cleaned up (OnLastLeave policy)
     self.check_team_vc_cleanup_on_leave(cc.ctx).await;
 
+    // Pull players waiting for the next game forward to fill the queue this player left
+    if let Err(e) = self.rebalance_fmt(format_id, cc.ctx, cc.component.guild_id, Some(&cc.db), Some(cc.manager.clone()), false).await {
+      warn!("Failed to rebalance queues after leave: {e}");
+    }
+
     // Update dashboard to reflect changes (queue count now only shown in dashboard)
     self.queue_dash_update(cc.ctx, cc.component.guild_id.unwrap()).await;
     Ok(())
@@ -1317,23 +1327,14 @@ impl Category {
     // Reset the session to idle
     session.idle();
 
-    // Clean up any empty Idle sessions (e.g., overflow sessions created during start_match)
-    // This prevents multiple Idle sessions from interfering with quota checks
-    if let Some(fmt) = self.format_mut(fmt_id) {
-      let removed = fmt.cleanup_empty_idle_sessions();
-      if removed > 0 {
-        info!("Cleaned up {} empty Idle session(s) after match cancellation", removed);
-      }
+    // Merge the restored players back into the queue (dropping the empty overflow sessions
+    // created during start_match) and start the game again if the queue is still full
+    if let Err(e) = self.rebalance_fmt(fmt_id, cc.ctx, Some(guild_id), Some(&cc.db), Some(cc.manager.clone()), false).await {
+      warn!("Failed to rebalance queues after match cancellation: {e}");
     }
 
-    // Check if queue meets quota and regenerate teams if needed
-    let quota = self.format(fmt_id).map(|sg| sg.quota as usize).unwrap_or(0);
-    let pool_len = self.format(fmt_id).and_then(|sg| sg.sessions.iter().find(|s| s.status == SessionStatus::Idle)).map(|s| s.pool.len()).unwrap_or(0);
-    let quota_met = pool_len >= quota;
-    if quota_met {
-      info!("Queue meets quota after cancellation, regenerating teams");
-      self.generate_teams_fmt(fmt_id, cc.ctx, guild_id, Some(&cc.db)).await;
-    }
+    // Keep the team VC pair around when a game is ready to start again
+    let quota_met = self.format(fmt_id).map(|sg| sg.sessions.iter().any(|s| s.is_hot())).unwrap_or(false);
 
     // Move players (and any spectators) back from the team VCs to the queue VC
     if let Some(team_channels) = team_channels {
