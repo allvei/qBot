@@ -1,10 +1,17 @@
 use anyhow::Result;
 use sqlx::{Pool, Row, Sqlite};
-use std::time::UNIX_EPOCH;
-use tracing::{debug, info};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
+use tracing::{debug, info, warn};
 
 use crate::state_transfer::{BotState, StateTransfer};
 use crate::Manager;
+
+const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(5);
+const AUTOSAVE_HEARTBEAT: Duration = Duration::from_secs(300);
 
 #[derive(Clone)]
 pub struct StateRepository {
@@ -35,22 +42,64 @@ impl StateRepository {
     }
     Ok(None)
   }
+
+  async fn write_json(&self, json: &str, version: &str, saved_at: SystemTime) -> Result<()> {
+    let saved_at = saved_at.duration_since(UNIX_EPOCH)?.as_secs() as i64;
+    sqlx::query("INSERT OR REPLACE INTO bot_state (id, manager_json, saved_at, version) VALUES (1, ?, ?, ?)")
+      .bind(json)
+      .bind(saved_at)
+      .bind(version)
+      .execute(&self.pool)
+      .await?;
+    Ok(())
+  }
+
+  /// Continuously persist queue/session state so a crash or kill loses at most `AUTOSAVE_INTERVAL`.
+  /// Writes only when the serialized state changed, plus a heartbeat so `saved_at` stays inside
+  /// the restore age limit while the queue is idle. Must be started after state restoration,
+  /// otherwise the not-yet-restored (empty) manager would overwrite the saved state.
+  pub async fn run_autosave(self, manager: Arc<Mutex<Manager>>) {
+    let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + AUTOSAVE_INTERVAL, AUTOSAVE_INTERVAL);
+    let mut last: Option<(u64, Instant)> = None;
+
+    loop {
+      ticker.tick().await;
+
+      let json = {
+        let Ok(manager) = manager.try_lock() else { continue };
+        match serde_json::to_string(&*manager) {
+          Ok(json) => json,
+          Err(e) => {
+            warn!("Autosave: failed to serialize manager state: {}", e);
+            continue;
+          }
+        }
+      };
+
+      let mut hasher = DefaultHasher::new();
+      json.hash(&mut hasher);
+      let hash = hasher.finish();
+
+      if matches!(last, Some((h, at)) if h == hash && at.elapsed() < AUTOSAVE_HEARTBEAT) {
+        continue;
+      }
+
+      match self.write_json(&json, env!("CARGO_PKG_VERSION"), SystemTime::now()).await {
+        Ok(_) => {
+          debug!("Autosaved bot state ({} bytes)", json.len());
+          last = Some((hash, Instant::now()));
+        }
+        Err(e) => warn!("Autosave: failed to write manager state: {}", e),
+      }
+    }
+  }
 }
 
 #[async_trait::async_trait]
 impl StateTransfer for StateRepository {
   async fn save(&self, state: &BotState) -> Result<()> {
     let json = serde_json::to_string(&state.manager)?;
-    let version = &state.version;
-    let saved_at = state.saved_at.duration_since(UNIX_EPOCH)?.as_secs() as i64;
-
-    sqlx::query("INSERT OR REPLACE INTO bot_state (id, manager_json, saved_at, version) VALUES (1, ?, ?, ?)")
-      .bind(&json)
-      .bind(saved_at)
-      .bind(version)
-      .execute(&self.pool)
-      .await?;
-
+    self.write_json(&json, &state.version, state.saved_at).await?;
     debug!("Saved bot state ({} guilds, {} bytes)", state.manager.qguilds.len(), json.len());
     Ok(())
   }

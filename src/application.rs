@@ -21,7 +21,6 @@ use crate::gui::command_handler;
 use crate::gui::commands::GuiCommand;
 use crate::handlers::{admin, InteractionHelpers};
 use crate::models::server::QueueContext;
-use crate::state_transfer::StateTransfer;
 use crate::{
   guild_name, log_prefix_category, log_prefix_format, log_queue_toggle, ButtonType, Category, CommandContext, ComponentContext, DashboardQueueKey, DashboardUpdateQueue, Database,
   DmMessageTracker, DmTrackerKey, Manager, Player, QGuild, Roles, SessionStatus, VoiceStateUpdate, RED,
@@ -258,6 +257,7 @@ impl Application {
         manager: self.manager.clone(),
         dashboard_queue: self.dashboard_queue.clone(),
         shared_state: self.shared_state.clone(),
+        initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
       }).await?;
 
     // Set the manager in the client data for global access
@@ -510,6 +510,7 @@ struct Handler {
   manager: Arc<Mutex<Manager>>,
   dashboard_queue: Arc<tokio::sync::Mutex<Option<DashboardUpdateQueue>>>,
   shared_state: Option<Arc<crate::gui::state::GuiSharedState>>,
+  initialized: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Handler {
@@ -584,9 +585,7 @@ impl Handler {
           }
         });
 
-        if let Err(e) = self.db.state.clear().await {
-          warn!("Failed to clear saved state after restoration: {}", e);
-        }
+        // Not cleared: the autosave overwrites this row within seconds, and keeping it lets a crash right after boot recover
       }
       Ok(None) => {
         debug!("No saved state found or state too old, starting fresh");
@@ -612,7 +611,15 @@ impl EventHandler for Handler {
       }
     }
 
-    self.restore_state_if_available(&ctx).await;
+    if !self.initialized.swap(true, std::sync::atomic::Ordering::SeqCst) {
+      self.restore_state_if_available(&ctx).await;
+
+      let manager = self.manager.clone();
+      let state_repo = self.db.state.clone();
+      tokio::spawn(async move {
+        state_repo.run_autosave(manager).await;
+      });
+    }
 
     // Initialize dashboard update queue (done once on ready)
     {

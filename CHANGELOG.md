@@ -1,3 +1,19 @@
+# v0.16.2
+
+__11.10.26__
+
+## Users & Admins
+
+__Fixed__
+
+- __Lost queues__ - Queues and live games are now saved every few seconds, so a crash or unexpected shutdown no longer wipes them out. Saved state is also kept after a restart, so a crash right after the bot comes back still recovers everything.
+
+## Developers
+
+__Improved__
+
+- __State persistence__ - Queue state is autosaved every 5s (only when it changes, with a heartbeat every 5 minutes) instead of only on graceful shutdown. Restore runs once per process, before autosave starts, and no longer clears the saved row.
+
 # v0.16.1
 
 __06.10.26__
