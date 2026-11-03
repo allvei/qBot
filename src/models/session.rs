@@ -252,7 +252,7 @@ impl Session {
       let still_in_correct_vc = guild.voice_states.get(&user_id).and_then(|vs| vs.channel_id).map(|ch| ch == expected_vc).unwrap_or(false);
 
       if !still_in_correct_vc {
-        debug!("Team switch invalidated - player {} not in expected VC", user_id);
+        debug!("Team switch invalidated - player {} not in expected VC", crate::log::cached_user_tag(&ctx.cache, user_id));
         self.pending_team_switch = None;
         return false;
       }

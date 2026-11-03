@@ -1,4 +1,4 @@
-use serenity::all::{CommandInteraction, Context, UserId as UI};
+use serenity::all::{Cache, CommandInteraction, Context, UserId as UI};
 use sqlx::Row;
 use tracing::info;
 
@@ -68,9 +68,18 @@ macro_rules! cdebug {
 
 use crate::models::constants::guild_name;
 
-/// Get user tag for logging purposes - tries database first, then Discord API
+/// Cache-only user tag for logs; falls back to the user ID. Use where no DB/async is available.
+pub fn cached_user_tag(cache: &Cache, user_id: UI) -> String {
+  cache.user(user_id).map(|u| u.tag()).unwrap_or_else(|| user_id.to_string())
+}
+
+/// Get user tag for logging purposes - tries cache, then database, then Discord API
 pub async fn get_user_tag(ctx: &Context, user_id: UI, db: &crate::Database) -> String {
-  // Try database first (most efficient)
+  if let Some(user) = ctx.cache.user(user_id) {
+    return user.tag();
+  }
+
+  // Try database next (most efficient)
   if let Ok(player) = db.get_player(user_id, ctx).await {
     if !player.tag.is_empty() {
       return player.tag;
@@ -92,15 +101,14 @@ pub async fn log_queue_toggle(
   category_id: u8,
   format: &crate::models::Format,
   player: &crate::models::Player,
-  action: &str,                            // "joined" or "left"
-  trigger: &str,                           // how the toggle was triggered (e.g. "button", "vc", "skill")
+  queue_type: Qtt,
   rank_mismatch: Option<(String, String)>, // (old_rank, new_rank)
 ) -> Result<(), anyhow::Error> {
   // Get format info from database using guild_id, category_id, and format_id
   // If the format doesn't exist in the database (e.g., default format with ID 0),
   // fall back to using the in-memory format info and guild name from context
   let (guild_name, ctg_nm, fmt_nm) = match sqlx::query(
-    "SELECT f.id, g.name as guild_name, c.name as category_name, f.name as format_name
+    "SELECT f.id, COALESCE(g.nick, g.name) as guild_name, c.name as category_name, f.name as format_name
          FROM formats f
          JOIN categories c ON f.guild_id = c.guild_id AND f.category_id = c.category_id
          JOIN guilds g ON f.guild_id = g.guild_id
@@ -120,7 +128,7 @@ pub async fn log_queue_toggle(
     }
     Ok(None) => {
       // Format not in database (e.g., default format with ID 0), use in-memory info
-      let guild_name = crate::guild_name(ctx, guild_id);
+      let guild_name = crate::guild_name(ctx, db, guild_id).await;
       let category_name = "Unknown".to_string();
       let format_name = format.name.clone();
       (guild_name, category_name, format_name)
@@ -128,7 +136,7 @@ pub async fn log_queue_toggle(
     Err(e) => {
       // Database error, try to fall back to in-memory info
       cwarn!("Failed to query format info from database, using in-memory fallback: {e}");
-      let guild_name = crate::guild_name(ctx, guild_id);
+      let guild_name = crate::guild_name(ctx, db, guild_id).await;
       let category_name = "Unknown".to_string();
       let format_name = format.name.clone();
       (guild_name, category_name, format_name)
@@ -147,7 +155,7 @@ pub async fn log_queue_toggle(
   };
 
   // Calculate position based on actual player position in session
-  let position = if action == "joined" {
+  let position = if matches!(queue_type, Qtt::BJ | Qtt::VJ) {
     // For joins, find the player's actual position in the session after they would be added
     format
       .sessions
@@ -170,15 +178,8 @@ pub async fn log_queue_toggle(
       .unwrap_or(0)
   };
 
-  // Determine queue type based on action
-  let queue_type = match action {
-    "joined" => Qtt::BJ,
-    "left" => Qtt::BL,
-    _ => Qtt::BJ, // default
-  };
-
   // Call the original function with extrapolated data
-  log_queue_toggle_sync(&guild_name, &ctg_nm, &player.tag, queue_type, trigger, pool_size, Some(&fmt_nm), position, rank_mismatch);
+  log_queue_toggle_sync(&guild_name, &ctg_nm, &player.tag, queue_type, pool_size, Some(&fmt_nm), position, rank_mismatch);
 
   Ok(())
 }
@@ -188,29 +189,23 @@ pub fn log_queue_toggle_sync(
   category_name: &str,
   tag: &str,
   queue_type: Qtt,
-  trigger: &str,
   pool_size: Option<(usize, usize)>,
   fmt_name: Option<&str>,
   position: usize,
   rank_mismatch: Option<(String, String)>,
 ) {
-  let action = match queue_type {
-    Qtt::BJ | Qtt::VJ => "joined",
-    Qtt::BL | Qtt::VL => "left",
+  let (action, is_join) = match queue_type {
+    Qtt::BJ => ("joined", true),
+    Qtt::VJ => ("joined via VJ", true),
+    Qtt::BL => ("left", false),
+    Qtt::VL => ("left via VL", false),
   };
-  let source = if trigger.is_empty() { None } else { Some(trigger) };
-
-  let pos_part = if action != "left" { format!("#{} ", position) } else { String::new() };
+  let pos_part = if is_join { format!("#{} ", position) } else { String::new() };
+  let pool_part = pool_size.map(|(current, quota)| format!(" [{}/{}]", current, quota)).unwrap_or_default();
   let prefix = log_prefix_format(guild_name, category_name, fmt_name.unwrap_or(""));
-
   let rank_suffix = if let Some((old_rank, new_rank)) = rank_mismatch { format!(" Corrected rank from {} to {} in database", old_rank, new_rank) } else { String::new() };
 
-  match (pool_size, source) {
-    (Some((current, quota)), Some(src)) => info!("{} {}{} {} ({}) [{}/{}]{}", prefix, pos_part, tag, action, src, current, quota, rank_suffix),
-    (Some((current, quota)), None) =>      info!("{} {}{} {} [{}/{}]{}", prefix, pos_part, tag, action, current, quota, rank_suffix),
-    (None, Some(src)) =>                   info!("{} {}{} {} ({}){}", prefix, pos_part, tag, action, src, rank_suffix),
-    (None, None) =>                        info!("{} {}{} {}{}", prefix, pos_part, tag, action, rank_suffix),
-  }
+  info!("{} {}{} {}{}{}", prefix, pos_part, tag, action, pool_part, rank_suffix);
 }
 
 /// Generate log prefix in format [GUILD_NAME]
@@ -230,11 +225,12 @@ pub fn log_prefix_format(guild_name: &str, category_name: &str, format_name: &st
 }
 
 /// Generate log prefix from Context and IDs
-pub async fn log_prefix_from_context(ctx: &Context, guild_id: serenity::all::GuildId, category_name: &str, format_name: &str) -> String {
-  let guild_name = guild_name(ctx, guild_id);
+pub async fn log_prefix_from_context(ctx: &Context, db: &crate::Database, guild_id: serenity::all::GuildId, category_name: &str, format_name: &str) -> String {
+  let guild_name = guild_name(ctx, db, guild_id).await;
   log_prefix_format(&guild_name, category_name, format_name)
 }
 
+#[derive(Clone, Copy)]
 pub enum QueueToggleType {
   BJ, // Button Join
   BL, // Button Leave
@@ -253,7 +249,7 @@ pub async fn log_command_usage(
   target_user: Option<UI>,
   additional_params: Option<&str>,
 ) {
-  let guild_name = guild_name(ctx, interaction.guild_id.unwrap());
+  let guild_name = guild_name(ctx, db, interaction.guild_id.unwrap()).await;
   let user_tag = get_user_tag(ctx, interaction.user.id, db).await;
 
   let mut message = format!("[{}] {} used /{}", guild_name, user_tag, command_name);
@@ -273,8 +269,8 @@ pub async fn log_command_usage(
 }
 
 /// Simplified command logging without database (for commands that don't need user tags)
-pub fn log_command_usage_simple(ctx: &Context, interaction: &CommandInteraction, command_name: &str, additional_params: Option<&str>) {
-  let guild_name = guild_name(ctx, interaction.guild_id.unwrap());
+pub async fn log_command_usage_simple(ctx: &Context, db: &crate::Database, interaction: &CommandInteraction, command_name: &str, additional_params: Option<&str>) {
+  let guild_name = guild_name(ctx, db, interaction.guild_id.unwrap()).await;
   let user_tag = interaction.user.tag();
 
   let mut message = format!("[{}] {} used /{}", guild_name, user_tag, command_name);

@@ -128,6 +128,7 @@ pub async fn cmd_roles(cc: &CC<'_>, role_type: String, role: Option<String>) -> 
 /// Returns: (category_id, dashboard_id, queue_chat_id, queue_vc_id, ping_channel_id)
 pub async fn create_category_channels(
   ctx: &Context,
+  db: &crate::Database,
   guild_id: GI,
   category_name: &str,
   channel_prefix: &str,
@@ -137,7 +138,7 @@ pub async fn create_category_channels(
   use serenity::all::{CreateChannel, CreateEmbed, CreateMessage, PermissionOverwrite, PermissionOverwriteType, Permissions};
 
   let guild = guild_id.to_partial_guild(&ctx.http).await?;
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
 
   // Get bot's user ID and find bot's integration role
   let bot_user_id = ctx.cache.current_user().id;
@@ -1029,7 +1030,7 @@ async fn save_and_create_category(
   }
 
   // Initialize default ranks
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
   info!("[{}] Initializing default ranks", guild_name);
   if let Err(e) = db.ranks.init_default_ranks(guild_id).await {
     warn!("[{}] Failed to initialize default ranks: {}", guild_name, e);
@@ -1058,7 +1059,7 @@ async fn save_and_create_category(
 
 /// Helper function to finalize category setup by loading it into manager and immediately updating dashboard
 async fn finalize_category_setup(ctx: &Context, db: &Arc<Database>, manager: &Arc<Mutex<Manager>>, guild_id: GI, dashboard_msg_id: u64) -> Result<()> {
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
 
   // Load the category from database
   match db.categories.get_categories_for_guild(guild_id).await {
@@ -1104,7 +1105,7 @@ async fn handle_categorylink_blue_selection(
 ) -> Result<()> {
   let user_id = interaction.user.id;
   let guild_id = interaction.guild_id.ok_or_else(|| anyhow!("Guild ID not found"))?;
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
 
   SETUP_STATE.update_setup(user_id, guild_id, |config| {
     config.blue_channel = Some(channel_id);
@@ -1378,7 +1379,7 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut QGuild, user_id: UI) -> Result
   crate::require_runner!(cc);
 
   let guild_id = cc.guild_id()?;
-  let guild_name = guild_name(cc.ctx, guild_id);
+  let guild_name = guild_name(cc.ctx, &cc.db, guild_id).await;
 
   info!("[{}] Getting category from channel {}", guild_name, cc.intax.channel_id);
   // Get the category from the current channel
@@ -1393,52 +1394,21 @@ pub async fn cmd_buffer(cc: &CC<'_>, server: &mut QGuild, user_id: UI) -> Result
     }
   };
 
-  let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
-  info!("[{}] Finding session for user {}", guild_name, user_tag);
-  // Find the session containing the player
-  let session = match category.get_user_sesh(user_id).await {
-    Ok(s) => s,
-    Err(e) => {
-      let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
-      warn!("[{}] User {} not found in any session: {}", guild_name, user_tag, e);
-      let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in any queue.")).color(RED);
-
-      cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
-      return Ok(());
+  let fmt_ids: Vec<u8> = category.formats.iter().map(|f| f.id).collect();
+  let mut moved = false;
+  for fmt_id in fmt_ids {
+    if category.move_in_queue_fmt(fmt_id, user_id, true, cc.ctx, guild_id, Some(&cc.db)).await.is_some() {
+      moved = true;
+      break;
     }
-  };
+  }
+  if !moved {
+    let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
+    warn!("[{}] User {} not found in any queue", guild_name, user_tag);
+    let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in any queue.")).color(RED);
 
-  // Find the player's index in the pool
-  let player_idx = match session.pool.iter().position(|p| p.player.user_id == user_id) {
-    Some(idx) => idx,
-    None => {
-      let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
-      error!("[{}] Player {} not found in pool despite being in session", guild_name, user_tag);
-      let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in the queue pool.")).color(RED);
-
-      cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
-      return Ok(());
-    }
-  };
-
-  // Remove the player from their current position
-  let player = session.pool.remove(player_idx);
-
-  // Insert the player at the front of the queue (index 0)
-  session.pool.insert(0, player);
-
-  let is_hot = session.is_hot();
-
-  // Validate VC status to sync in_queue_vc flags with actual Discord state
-  category.verify_vc(cc.ctx, guild_id).await;
-
-  // If session is hot, regenerate teams with new order
-  // Note: generate_teams() already handles dashboard update
-  if is_hot {
-    category.generate_teams(cc.ctx, guild_id, Some(&cc.db)).await;
-  } else {
-    // Only update dashboard if not hot (since generate_teams() handles it for hot sessions)
-    category.queue_dash_update(cc.ctx, guild_id).await;
+    cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
+    return Ok(());
   }
 
   let success_embed = CE::new().title("Player buffered").description(format!("<@{user_id}> moved to front of queue.")).color(GREEN);
@@ -1455,7 +1425,7 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut QGuild, user_id: UI) -> Result
   crate::require_runner!(cc);
 
   let guild_id = cc.guild_id()?;
-  let guild_name = guild_name(cc.ctx, guild_id);
+  let guild_name = guild_name(cc.ctx, &cc.db, guild_id).await;
 
   info!("[{}] Getting category from channel {}", guild_name, cc.intax.channel_id);
   // Get the category from the current channel
@@ -1470,51 +1440,22 @@ pub async fn cmd_fatkid(cc: &CC<'_>, server: &mut QGuild, user_id: UI) -> Result
     }
   };
 
-  let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
-  info!("[{}] Finding session for user {}", guild_name, user_tag);
-  // Find the session containing the player
-  let session = match category.get_user_sesh(user_id).await {
-    Ok(s) => s,
-    Err(e) => {
-      let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
-      warn!("[{}] User {} not found in any session: {}", guild_name, user_tag, e);
-      let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in any queue.")).color(RED);
-
-      cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
-      return Ok(());
+  let fmt_ids: Vec<u8> = category.formats.iter().map(|f| f.id).collect();
+  let mut moved = false;
+  for fmt_id in fmt_ids {
+    if category.move_in_queue_fmt(fmt_id, user_id, false, cc.ctx, guild_id, Some(&cc.db)).await.is_some() {
+      moved = true;
+      break;
     }
-  };
-
-  // Find the player's index in the pool
-  let player_idx = match session.pool.iter().position(|p| p.player.user_id == user_id) {
-    Some(idx) => idx,
-    None => {
-      let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
-      error!("[{}] Player {} not found in pool despite being in session", guild_name, user_tag);
-      let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in the queue pool.")).color(RED);
-
-      cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
-      return Ok(());
-    }
-  };
-
-  // Remove the player from their current position
-  let player = session.pool.remove(player_idx);
-
-  // Insert the player at the end of the queue
-  session.pool.push(player);
-
-  let is_hot = session.is_hot();
-
-  // Validate VC status to sync in_queue_vc flags with actual Discord state
-  category.verify_vc(cc.ctx, guild_id).await;
-
-  // If session is hot, regenerate teams with new order
-  if is_hot {
-    category.generate_teams(cc.ctx, guild_id, Some(&cc.db)).await;
   }
+  if !moved {
+    let user_tag = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
+    warn!("[{}] User {} not found in any queue", guild_name, user_tag);
+    let error_embed = CE::new().title("Player not found").description(format!("<@{user_id}> is not in any queue.")).color(RED);
 
-  category.queue_dash_update(cc.ctx, guild_id).await;
+    cc.intax.create_response(&cc.ctx.http, Ephemeral::send(error_embed)).await?;
+    return Ok(());
+  }
 
   let success_embed = CE::new().title("Player fatkidded").description(format!("<@{user_id}> moved to end of queue.")).color(GREEN);
 

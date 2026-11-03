@@ -24,7 +24,7 @@ pub async fn send_system_message(ctx: &Context, db: &Database, guild_id: GuildId
           info!("Channel {} is text channel: {}", channel_id, is_text_channel);
 
           if !is_text_channel {
-            let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+            let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
             error!("[{}] System message channel {} is not a guild text channel", guild_name, channel_id);
             return Err(anyhow!("System message channel {} is not a guild text channel", channel_id));
           }
@@ -32,18 +32,18 @@ pub async fn send_system_message(ctx: &Context, db: &Database, guild_id: GuildId
           // Check bot permissions in the channel
           if let Channel::Guild(guild_channel) = channel {
             let bot_id = ctx.cache.current_user().id;
-            info!("Checking permissions for bot {} in channel {}", bot_id, channel_id);
+            info!("Checking permissions for bot {} in channel {}", crate::log::cached_user_tag(&ctx.cache, bot_id), channel_id);
             let permissions = guild_channel.permissions_for_user(ctx, bot_id);
 
             if let Ok(perms) = permissions {
               info!("Bot permissions: {:?}", perms);
               if !perms.contains(Permissions::SEND_MESSAGES) {
-                let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+                let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
                 error!("[{}] Bot lacks SEND_MESSAGES permission in system message channel {}", guild_name, channel_id);
                 return Err(anyhow!("Bot lacks SEND_MESSAGES permission in channel {}", channel_id));
               }
             } else {
-              let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+              let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
               error!("[{}] Failed to check permissions in system message channel {}: {:?}", guild_name, channel_id, permissions);
               return Err(anyhow!("Failed to check permissions in channel {}", channel_id));
             }
@@ -51,23 +51,23 @@ pub async fn send_system_message(ctx: &Context, db: &Database, guild_id: GuildId
 
           // Send message
           info!("Attempting to send message to channel {}", channel_id);
-          channel_id.send_message(&ctx.http, CreateMessage::new().content(content)).await.map_err(|e| {
-            let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+          if let Err(e) = channel_id.send_message(&ctx.http, CreateMessage::new().content(content)).await {
+            let guild_name = crate::models::constants::guild_name(ctx, db, guild_id).await;
             error!("[{}] Failed to send system message to channel {}: {}", guild_name, channel_id, e);
-            anyhow!("Failed to send system message to channel {}: {}", channel_id, e)
-          })?;
+            return Err(anyhow!("Failed to send system message to channel {}: {}", channel_id, e));
+          }
           info!("Sent system message to guild {} channel {}", guild_id, channel_id);
           Ok(())
         }
         Err(e) => {
-          let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+          let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
           error!("[{}] System message channel {} not found or inaccessible: {}", guild_name, channel_id, e);
           Err(anyhow!("System message channel {} not found for guild {}", channel_id, guild_id))
         }
       }
     }
     None => {
-      let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+      let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
       warn!("[{}] System messages channel is not set", guild_name);
       Err(anyhow!("System messages channel is not set for guild {}", guild_id))
     }
@@ -149,7 +149,7 @@ pub async fn send_community_update(ctx: &Context, db: &Database, guild_id: Guild
           info!("Channel {} is text channel: {}", channel_id, is_text_channel);
 
           if !is_text_channel {
-            let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+            let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
             error!("[{}] Community updates channel {} is not a guild text channel", guild_name, channel_id);
             return Err(anyhow!("Community updates channel {} is not a guild text channel", channel_id));
           }
@@ -157,18 +157,18 @@ pub async fn send_community_update(ctx: &Context, db: &Database, guild_id: Guild
           // Check bot permissions in the channel
           if let Channel::Guild(guild_channel) = channel {
             let bot_id = ctx.cache.current_user().id;
-            info!("Checking permissions for bot {} in channel {}", bot_id, channel_id);
+            info!("Checking permissions for bot {} in channel {}", crate::log::cached_user_tag(&ctx.cache, bot_id), channel_id);
             let permissions = guild_channel.permissions_for_user(ctx, bot_id);
 
             if let Ok(perms) = permissions {
               info!("Bot permissions: {:?}", perms);
               if !perms.contains(Permissions::SEND_MESSAGES) {
-                let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+                let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
                 error!("[{}] Bot lacks SEND_MESSAGES permission in community updates channel {}", guild_name, channel_id);
                 return Err(anyhow!("Bot lacks SEND_MESSAGES permission in channel {}", channel_id));
               }
             } else {
-              let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+              let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
               error!("[{}] Failed to check permissions in community updates channel {}: {:?}", guild_name, channel_id, permissions);
               return Err(anyhow!("Failed to check permissions in channel {}", channel_id));
             }
@@ -176,23 +176,23 @@ pub async fn send_community_update(ctx: &Context, db: &Database, guild_id: Guild
 
           // Send message
           info!("Attempting to send message to channel {}", channel_id);
-          channel_id.send_message(&ctx.http, CreateMessage::new().content(content)).await.map_err(|e| {
-            let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+          if let Err(e) = channel_id.send_message(&ctx.http, CreateMessage::new().content(content)).await {
+            let guild_name = crate::models::constants::guild_name(ctx, db, guild_id).await;
             error!("[{}] Failed to send community update to channel {}: {}", guild_name, channel_id, e);
-            anyhow!("Failed to send community update to channel {}: {}", channel_id, e)
-          })?;
+            return Err(anyhow!("Failed to send community update to channel {}: {}", channel_id, e));
+          }
           info!("Sent community update to guild {} channel {}", guild_id, channel_id);
           Ok(())
         }
         Err(e) => {
-          let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+          let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
           error!("[{}] Community updates channel {} not found or inaccessible: {}", guild_name, channel_id, e);
           Err(anyhow!("Community updates channel {} not found for guild {}", channel_id, guild_id))
         }
       }
     }
     None => {
-      let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+      let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
       warn!("[{}] No community updates channel configured", guild_name);
       Err(anyhow!("No community updates channel configured for guild {}", guild_id))
     }
@@ -227,7 +227,7 @@ pub async fn validate_community_updates_channels(ctx: &Context, db: &Database) -
   let mut errors = Vec::new();
 
   for guild_id in guilds {
-    let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+    let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
 
     match db.config.get_community_updates_channel(guild_id).await {
       Ok(Some(channel_id)) => {

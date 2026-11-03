@@ -65,6 +65,7 @@ pub async fn handle_command(
   ctx: Option<Arc<serenity::all::Context>>,
 ) -> Result<Option<u64>> {
   let affected_guild = command.guild_id();
+  let user_tag = |id: u64| ctx.as_ref().map_or_else(|| id.to_string(), |c| crate::log::cached_user_tag(&c.cache, UI::new(id)));
   let result: Result<Option<u64>, anyhow::Error> = match command {
     // ── Snapshot ──────────────────────────────────────────────────────────
     GuiCommand::RefreshSnapshot => {
@@ -90,11 +91,11 @@ pub async fn handle_command(
       for session in &mut fmt.sessions {
         if session.pool.iter().any(|p| p.player.user_id == uid) {
           session.remove_player(uid);
-          info!("RemovePlayer {} from g={} c={} f={}", user_id, guild_id, category_id, fmt_id);
+          info!("RemovePlayer {} from g={} c={} f={}", user_tag(user_id), guild_id, category_id, fmt_id);
           return Ok(None);
         }
       }
-      warn!("RemovePlayer {} not found in g={} c={} f={}", user_id, guild_id, category_id, fmt_id);
+      warn!("RemovePlayer {} not found in g={} c={} f={}", user_tag(user_id), guild_id, category_id, fmt_id);
       Ok(None)
     }
 
@@ -118,10 +119,10 @@ pub async fn handle_command(
       // Delete guild-specific ELO record
       match db.elo.delete_for_guild(uid, GI::new(guild_id)).await {
         Ok(_) => {
-          info!("DeletePlayerFromDb {} g={} — removed from {} queue(s) and deleted guild ELO record", user_id, guild_id, removed_count);
+          info!("DeletePlayerFromDb {} g={} — removed from {} queue(s) and deleted guild ELO record", user_tag(user_id), guild_id, removed_count);
         }
         Err(e) => {
-          warn!("DeletePlayerFromDb {} g={} — removed from {} queue(s) but failed to delete guild ELO record: {}", user_id, guild_id, removed_count, e);
+          warn!("DeletePlayerFromDb {} g={} — removed from {} queue(s) but failed to delete guild ELO record: {}", user_tag(user_id), guild_id, removed_count, e);
         }
       }
       Ok(None)
@@ -130,30 +131,20 @@ pub async fn handle_command(
     GuiCommand::BufferPlayer { guild_id, category_id, fmt_id, user_id } => {
       let uid = UI::new(user_id);
       let fmt = find_format(manager, guild_id, category_id, fmt_id)?;
-      for session in fmt.sessions.iter_mut().filter(|s| s.is_idle()) {
-        if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == uid) {
-          let sp = session.pool.remove(pos);
-          session.pool.insert(0, sp);
-          info!("BufferPlayer {} → front g={} c={} f={}", user_id, guild_id, category_id, fmt_id);
-          return Ok(None);
-        }
+      match fmt.move_in_queue(uid, true) {
+        Some(_) => info!("BufferPlayer {} → front g={} c={} f={}", user_tag(user_id), guild_id, category_id, fmt_id),
+        None => warn!("BufferPlayer {} not found in queue", user_tag(user_id)),
       }
-      warn!("BufferPlayer {} not found in idle sessions", user_id);
       Ok(None)
     }
 
     GuiCommand::FatkidPlayer { guild_id, category_id, fmt_id, user_id } => {
       let uid = UI::new(user_id);
       let fmt = find_format(manager, guild_id, category_id, fmt_id)?;
-      for session in fmt.sessions.iter_mut().filter(|s| s.is_idle()) {
-        if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == uid) {
-          let sp = session.pool.remove(pos);
-          session.pool.push(sp);
-          info!("FatkidPlayer {} → end g={} c={} f={}", user_id, guild_id, category_id, fmt_id);
-          return Ok(None);
-        }
+      match fmt.move_in_queue(uid, false) {
+        Some(_) => info!("FatkidPlayer {} → end g={} c={} f={}", user_tag(user_id), guild_id, category_id, fmt_id),
+        None => warn!("FatkidPlayer {} not found in queue", user_tag(user_id)),
       }
-      warn!("FatkidPlayer {} not found in idle sessions", user_id);
       Ok(None)
     }
 
@@ -165,11 +156,11 @@ pub async fn handle_command(
           let sp = session.pool.remove(pos);
           let insert_at = new_position.min(session.pool.len());
           session.pool.insert(insert_at, sp);
-          info!("ReorderQueue {} → pos {} g={} c={} f={}", user_id, insert_at, guild_id, category_id, fmt_id);
+          info!("ReorderQueue {} → pos {} g={} c={} f={}", user_tag(user_id), insert_at, guild_id, category_id, fmt_id);
           return Ok(None);
         }
       }
-      warn!("ReorderQueue {} not found in idle sessions", user_id);
+      warn!("ReorderQueue {} not found in idle sessions", user_tag(user_id));
       Ok(None)
     }
 
@@ -186,7 +177,7 @@ pub async fn handle_command(
       };
       let dst = fmt.sessions.get_mut(to_session).ok_or_else(|| anyhow!("to_session {} out of range", to_session))?;
       dst.pool.push(sp);
-      info!("MovePlayer {} from session {} to {}", user_id, from_session, to_session);
+      info!("MovePlayer {} from session {} to {}", user_tag(user_id), from_session, to_session);
       Ok(None)
     }
 
@@ -254,11 +245,11 @@ pub async fn handle_command(
       let fmt = find_format(manager, guild_id, category_id, fmt_id)?;
       let session = fmt.sessions.iter_mut().find(|s| s.is_idle()).ok_or_else(|| anyhow!("No idle session to add player to"))?;
       if session.pool.iter().any(|p| p.player.user_id == uid) {
-        warn!("AddPlayer {} already in session", user_id);
+        warn!("AddPlayer {} already in session", user_tag(user_id));
         return Ok(None);
       }
       session.add_ply(player, false)?;
-      info!("AddPlayer {} added to g={} c={} f={}", user_id, guild_id, category_id, fmt_id);
+      info!("AddPlayer {} added to g={} c={} f={}", user_tag(user_id), guild_id, category_id, fmt_id);
       Ok(None)
     }
 
@@ -401,12 +392,12 @@ pub async fn handle_command(
         for session in &mut fmt.sessions {
           if let Some(sp) = session.pool.iter_mut().find(|p| p.player.user_id == uid) {
             sp.vc_off();
-            info!("FixPlayerVCState {} — in_vc cleared", user_id);
+            info!("FixPlayerVCState {} — in_vc cleared", user_tag(user_id));
             return Ok(None);
           }
         }
       }
-      warn!("FixPlayerVCState {} not found", user_id);
+      warn!("FixPlayerVCState {} not found", user_tag(user_id));
       Ok(None)
     }
 
@@ -507,8 +498,8 @@ pub async fn handle_command(
     GuiCommand::UpdateUserTag { user_id, tag } => {
       let uid = UI::new(user_id);
       match db.players.update_discord_tag(uid, &tag).await {
-        Ok(_) => info!("UpdateUserTag {} → '{}'", user_id, tag),
-        Err(e) => warn!("UpdateUserTag {} failed: {}", user_id, e),
+        Ok(_) => info!("UpdateUserTag {} → '{}'", user_tag(user_id), tag),
+        Err(e) => warn!("UpdateUserTag {} failed: {}", user_tag(user_id), e),
       }
       Ok(None)
     }
@@ -516,8 +507,8 @@ pub async fn handle_command(
     GuiCommand::UpdateUserSteamId { user_id, steam_id } => {
       let uid = UI::new(user_id);
       match db.players.update_steam_id(&uid, steam_id).await {
-        Ok(_) => info!("UpdateUserSteamId {} → {:?}", user_id, steam_id),
-        Err(e) => warn!("UpdateUserSteamId {} failed: {}", user_id, e),
+        Ok(_) => info!("UpdateUserSteamId {} → {:?}", user_tag(user_id), steam_id),
+        Err(e) => warn!("UpdateUserSteamId {} failed: {}", user_tag(user_id), e),
       }
       Ok(None)
     }
@@ -525,8 +516,8 @@ pub async fn handle_command(
     GuiCommand::UpdateUserQueueExpiration { user_id, queue_expiration } => {
       let uid = UI::new(user_id);
       match db.players.update_prefs_field(uid, "queue_expiration", queue_expiration as i64).await {
-        Ok(_) => info!("UpdateUserQueueExpiration {} → {}", user_id, queue_expiration),
-        Err(e) => warn!("UpdateUserQueueExpiration {} failed: {}", user_id, e),
+        Ok(_) => info!("UpdateUserQueueExpiration {} → {}", user_tag(user_id), queue_expiration),
+        Err(e) => warn!("UpdateUserQueueExpiration {} failed: {}", user_tag(user_id), e),
       }
       Ok(None)
     }
@@ -538,10 +529,10 @@ pub async fn handle_command(
           let count = results.len();
           let mut gd_lock = user_guild_data.write().await;
           *gd_lock = results;
-          info!("GetUserGuildData {} — {} guild(s)", user_id, count);
+          info!("GetUserGuildData {} — {} guild(s)", user_tag(user_id), count);
         }
         Err(e) => {
-          warn!("GetUserGuildData {} failed: {}", user_id, e);
+          warn!("GetUserGuildData {} failed: {}", user_tag(user_id), e);
           let mut gd_lock = user_guild_data.write().await;
           gd_lock.clear();
         }
@@ -553,8 +544,8 @@ pub async fn handle_command(
       let uid = UI::new(user_id);
       let gid = GI::new(guild_id);
       match db.elo.update_elo(uid, gid, elo, db).await {
-        Ok(_) => info!("UpdateUserElo {} g={} → {}", user_id, guild_id, elo),
-        Err(e) => warn!("UpdateUserElo {} g={} failed: {}", user_id, guild_id, e),
+        Ok(_) => info!("UpdateUserElo {} g={} → {}", user_tag(user_id), guild_id, elo),
+        Err(e) => warn!("UpdateUserElo {} g={} failed: {}", user_tag(user_id), guild_id, e),
       }
       Ok(None)
     }
@@ -563,8 +554,8 @@ pub async fn handle_command(
       let uid = UI::new(user_id);
       let gid = GI::new(guild_id);
       match db.elo.set_dynamic_elo(uid, gid, dynamic_elo).await {
-        Ok(_) => info!("UpdateUserDynamicElo {} g={} → {:?}", user_id, guild_id, dynamic_elo),
-        Err(e) => warn!("UpdateUserDynamicElo {} g={} failed: {}", user_id, guild_id, e),
+        Ok(_) => info!("UpdateUserDynamicElo {} g={} → {:?}", user_tag(user_id), guild_id, dynamic_elo),
+        Err(e) => warn!("UpdateUserDynamicElo {} g={} failed: {}", user_tag(user_id), guild_id, e),
       }
       Ok(None)
     }
@@ -706,11 +697,11 @@ pub async fn handle_command(
 
     // ── Voice Channel (needs Discord API — log only) ───────────────────────
     GuiCommand::MovePlayerToVC { guild_id, user_id, channel_id } => {
-      info!("MovePlayerToVC u={} → ch={} g={} — requires Discord HTTP, not implemented in GUI handler", user_id, channel_id, guild_id);
+      info!("MovePlayerToVC u={} → ch={} g={} — requires Discord HTTP, not implemented in GUI handler", user_tag(user_id), channel_id, guild_id);
       Ok(None)
     }
     GuiCommand::KickFromVC { guild_id, user_id } => {
-      info!("KickFromVC u={} g={} — requires Discord HTTP, not implemented in GUI handler", user_id, guild_id);
+      info!("KickFromVC u={} g={} — requires Discord HTTP, not implemented in GUI handler", user_tag(user_id), guild_id);
       Ok(None)
     }
     GuiCommand::SyncVCState { guild_id, category_id } => {

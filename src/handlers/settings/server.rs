@@ -275,7 +275,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       // Handle rank selection from dropdown (value is role ID)
       if let CIDK::StringSelect { values } = &interaction.data.kind {
         if let Some(role_id_str) = values.first() {
-          let guild_name = guild_name(ctx, guild_id);
+          let guild_name = guild_name(ctx, &db, guild_id).await;
 
           if let Ok(role_id) = role_id_str.parse::<u64>() {
             let rid = RoleId::new(role_id);
@@ -384,7 +384,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       info!("{} linked rank {} to role {}", user_tag, rank_name, role_display);
 
       // Refresh the rank config display
-      let guild_name = guild_name(ctx, guild_id);
+      let guild_name = guild_name(ctx, &db, guild_id).await;
       if let Ok(Some(guild_rank)) = db.ranks.get_rank_by_name(guild_id, rank_name).await {
         let display = RankRoleConfigDisplay { guild_name, rank_name: guild_rank.name.clone(), rank_key: rank_name.to_string(), elo: guild_rank.elo, role_id: guild_rank.role_id };
 
@@ -644,7 +644,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
     }
     "guild_config_create_roles" => {
       // Create runner, admin, and rank roles
-      let guild_name = guild_name(ctx, guild_id);
+      let guild_name = guild_name(ctx, &db, guild_id).await;
 
       // Create Runner role if not configured
       let runner_role = db.config.get_runner_role_id(guild_id).await?;
@@ -704,7 +704,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
     "guild_config_link_category" => {
       // Show category selection dropdown to link existing category
 
-      let guild_name = guild_name(ctx, guild_id);
+      let guild_name = guild_name(ctx, &db, guild_id).await;
 
       // Get all categories in the guild - extract data before any awaits
       let mut categories: Vec<(CI, String)> = {
@@ -757,7 +757,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
         if let Some(category_id_str) = values.first() {
           if let Ok(category_id_u64) = category_id_str.parse::<u64>() {
             let category_id = CI::new(category_id_u64);
-            let guild_name = guild_name(ctx, guild_id);
+            let guild_name = guild_name(ctx, &db, guild_id).await;
 
             // Find channels in this category - extract data before any awaits
             let (dashboard_channel, queue_channel, ping_channel, queue_vc_channel, red_channel, blue_channel) = {
@@ -1117,7 +1117,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
         quota: crate::DEFAULT_QUOTA,
       };
 
-      let guild_name = guild_name(ctx, guild_id);
+      let guild_name = guild_name(ctx, &db, guild_id).await;
 
       match db.categories.add_category(guild_id, &guild_name, dashboard_msg_id, category_config).await {
         Ok(db_category) => {
@@ -1186,7 +1186,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
         vec![],
       );
 
-      let guild_name = guild_name(ctx, guild_id);
+      let guild_name = guild_name(ctx, &db, guild_id).await;
 
       // Publish the dashboard to get the actual message ID
       match temp_category.dash_publish(ctx, dashboard_channel, db, guild_id).await {
@@ -1289,7 +1289,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
               (dashboard_channel, queue_channel, ping_channel, queue_vc_channel, red_channel, blue_channel)
             {
               // All channels selected - create the category
-              let guild_name = guild_name(ctx, guild_id);
+              let guild_name = guild_name(ctx, &db, guild_id).await;
 
               use crate::models::{Category, Channels, TeamChannel};
 
@@ -1374,7 +1374,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
               // by crafting the state as if we just selected the category
 
               // Get guild name
-              let guild_name = guild_name(ctx, guild_id);
+              let guild_name = guild_name(ctx, &db, guild_id).await;
 
               // Continue with manual channel selection flow (same code as above)
 
@@ -1473,7 +1473,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       let blue_channel = parse_cid(parts[4])?;
       let dashboard_msg_id = u64::from_str_radix(parts[5], 16)?;
 
-      let guild_name = guild_name(ctx, guild_id);
+      let guild_name = guild_name(ctx, &db, guild_id).await;
 
       // Find and remove duplicate category
       let existing_categories = db.categories.get_categories_for_guild(guild_id).await?;
@@ -1561,7 +1561,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       let red_channel = parse_cid(parts[3])?;
       let blue_channel = parse_cid(parts[4])?;
 
-      let guild_name = guild_name(ctx, guild_id);
+      let guild_name = guild_name(ctx, &db, guild_id).await;
 
       // Find and remove duplicate category
       let existing_categories = db.categories.get_categories_for_guild(guild_id).await?;
@@ -1673,7 +1673,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
     "guild_config_remove_category" => {
       // Show category selection dropdown for removal
 
-      let guild_name = guild_name(ctx, guild_id);
+      let guild_name = guild_name(ctx, &db, guild_id).await;
       let categories = db.categories.get_categories_for_guild(guild_id).await?;
 
       if categories.is_empty() {
@@ -1716,7 +1716,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       if let CIDK::StringSelect { values } = &interaction.data.kind {
         if let Some(category_id_str) = values.first() {
           if let Ok(category_id) = category_id_str.parse::<u8>() {
-            let guild_name = guild_name(ctx, guild_id);
+            let guild_name = guild_name(ctx, &db, guild_id).await;
 
             // Get category info and channel list
             let (category_name, channel_list) = {
@@ -1774,7 +1774,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       // Confirm removal with channel deletion
       let category_id_str = button_id.strip_prefix("guild_config_remove_confirm_delete_").unwrap();
       if let Ok(category_id) = category_id_str.parse::<u8>() {
-        let guild_name = guild_name(ctx, guild_id);
+        let guild_name = guild_name(ctx, &db, guild_id).await;
 
         // Get category info and channels before deletion
         let (category_name, channels_to_delete) = {
@@ -1868,7 +1868,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       // Confirm removal without channel deletion
       let category_id_str = button_id.strip_prefix("guild_config_remove_confirm_keep_").unwrap();
       if let Ok(category_id) = category_id_str.parse::<u8>() {
-        let guild_name = guild_name(ctx, guild_id);
+        let guild_name = guild_name(ctx, &db, guild_id).await;
 
         // Get category info before deletion
         let category_name = {
@@ -1947,7 +1947,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       // Handle link message button - search for existing dashboard messages for this specific category
       let category_id_str = button_id.strip_prefix("category_settings_link_message_").unwrap();
       if let Ok(category_id) = category_id_str.parse::<u8>() {
-        let guild_name = guild_name(ctx, guild_id);
+        let guild_name = guild_name(ctx, &db, guild_id).await;
 
         // Get the category to find its dashboard channel
         let categories = db.categories.get_categories_for_guild(guild_id).await?;
@@ -2036,7 +2036,7 @@ pub async fn handle_guild_config_button(ctx: &Context, interaction: &CoI, db: &A
       let category_id = parts[0].parse::<u8>()?;
       let dashboard_msg_id = parse_mid(parts[1])?;
 
-      let guild_name = guild_name(ctx, guild_id);
+      let guild_name = guild_name(ctx, &db, guild_id).await;
 
       // Update the category's dashboard_msg in database
       match db.categories.update_dashboard_msg_by_category_id(guild_id, category_id, dashboard_msg_id).await {
@@ -2200,7 +2200,7 @@ pub async fn handle_guild_config_modal(
     }
 
     // Create a new Discord role for this rank
-    let guild_name = guild_name(ctx, guild_id);
+    let guild_name = guild_name(ctx, &db, guild_id).await;
     let role_name = name.to_string();
 
     let role_id = match guild_id
@@ -2452,10 +2452,10 @@ pub async fn handle_guild_config_modal(
     // Defer the response so we have time to create channels
     interaction.create_response(&ctx.http, CIR::Defer(CIRM::new().ephemeral(true))).await?;
 
-    let guild_name = guild_name(ctx, guild_id);
+    let guild_name = guild_name(ctx, &db, guild_id).await;
 
     // Create channels (runner_role will be None for manual category creation)
-    match crate::handlers::admin::create_category_channels(ctx, guild_id, &guild_category_name, &channel_prefix, bot_only_dashboard.as_str() == "yes", None).await {
+    match crate::handlers::admin::create_category_channels(ctx, db, guild_id, &guild_category_name, &channel_prefix, bot_only_dashboard.as_str() == "yes", None).await {
       Ok((category_id, dashboard_channel, queue_channel, queue_vc_channel, ping_channel)) => {
         use crate::models::{Category, Channels};
 

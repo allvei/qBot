@@ -55,7 +55,7 @@ pub async fn handle_player_settings_rank_select(ctx: &Context, interaction: &CI,
 
   let target_uid = UI::new(target_user_id);
   let guild_id = interaction.guild_id.expect("Guild ID not found");
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
   let target_tag = get_user_tag(ctx, target_uid, db).await;
   // Get the selected role ID from the select menu
   let selected_role_id_str = match &interaction.data.kind {
@@ -396,7 +396,7 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
           }
         }
       } else {
-        let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+        let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
         warn!("[{}] Failed to get server when checking if player {} is queued", guild_name, target_tag);
       }
 
@@ -446,7 +446,7 @@ pub async fn handle_player_settings_modal(ctx: &Context, interaction: &MI, db: &
           }
         }
       } else {
-        let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+        let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
         warn!("[{}] Failed to get server when checking if player {} is queued", guild_name, target_tag);
       }
 

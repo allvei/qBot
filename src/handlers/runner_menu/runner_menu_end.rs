@@ -85,7 +85,7 @@ pub async fn handle_end_without_score(ctx: &Context, interaction: &CI, db: &Arc<
     };
 
     let category = &server.categories[cat_idx];
-    let guild_name_str = guild_name(ctx, guild_id);
+    let guild_name_str = guild_name(ctx, &db, guild_id).await;
     let category_name = category.name.as_deref().unwrap_or("Unknown").to_string();
     let format_name = category.formats[fmt_idx].name.clone();
 
@@ -256,7 +256,7 @@ pub async fn handle_force_end_match(ctx: &Context, interaction: &CI, db: &Arc<Da
     let server = mgr.get_qguild(guild_id)?;
     let category = server.categories.iter().find(|c| c.id == category_id).ok_or_else(|| anyhow::anyhow!("Category not found"))?;
     let format = category.formats.iter().find(|f| f.id == format_id).ok_or_else(|| anyhow::anyhow!("Format not found"))?;
-    (guild_name(ctx, guild_id), category.name.as_deref().unwrap_or("Unknown").to_string(), format.name.clone())
+    (guild_name(ctx, &db, guild_id).await, category.name.as_deref().unwrap_or("Unknown").to_string(), format.name.clone())
   };
 
   info!("{} Runner {} force-ended match (no score)", log_prefix_category(&guild_name_str, &category_name), interaction.user.tag());
@@ -347,7 +347,7 @@ pub async fn handle_end_match_result(ctx: &Context, interaction: &CI, db: &Arc<D
     let server = mgr.get_qguild(guild_id)?;
     let category = server.categories.iter().find(|c| c.id == category_id).ok_or_else(|| anyhow::anyhow!("Category not found"))?;
     let format = category.formats.iter().find(|f| f.id == format_id).ok_or_else(|| anyhow::anyhow!("Format not found"))?;
-    (guild_name(ctx, guild_id), category.name.as_deref().unwrap_or("Unknown").to_string(), format.name.clone())
+    (guild_name(ctx, &db, guild_id).await, category.name.as_deref().unwrap_or("Unknown").to_string(), format.name.clone())
   };
 
   let result_text = match *result {

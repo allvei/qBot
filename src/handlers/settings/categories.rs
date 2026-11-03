@@ -451,7 +451,7 @@ pub async fn handle_category_settings_button(ctx: &Context, interaction: &CI, db
     drop(manager_lock);
   } else if button_id.starts_with("category_settings_link_message_") {
     // Handle link message button - search for existing dashboard messages
-    let guild_name = guild_name(ctx, guild_id);
+    let guild_name = guild_name(ctx, &db, guild_id).await;
 
     // Get the category to find its dashboard channel
     let categories = db.categories.get_categories_for_guild(guild_id).await?;

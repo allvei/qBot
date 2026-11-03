@@ -119,7 +119,7 @@ pub fn schedule_alert(
 
     // If nothing remains, the player toggled and net effect is zero
     if join_names.is_empty() && leave_names.is_empty() {
-      debug!("Alert cancelled for user {} in category {} (join/leave cancelled out)", alert.user_id, category_id);
+      debug!("Alert cancelled for user {} in category {} (join/leave cancelled out)", crate::log::cached_user_tag(&alert.ctx.cache, alert.user_id), category_id);
       return;
     }
 
@@ -137,7 +137,7 @@ pub fn schedule_alert(
         timestamps.pop_front();
       }
       if timestamps.len() >= MAX_ALERTS_PER_WINDOW {
-        debug!("Rate limited alert for user {} in category {}", alert.user_id, category_id);
+        debug!("Rate limited alert for user {} in category {}", crate::log::cached_user_tag(&alert.ctx.cache, alert.user_id), category_id);
         return;
       }
       timestamps.push_back(Instant::now());

@@ -75,7 +75,7 @@ pub async fn handle_change_result_button(ctx: &Context, interaction: &CI, db: &A
 
         // Revert the ELO change
         if let Err(e) = db.elo.revert_match_elo(user_id, guild_id, player.elo_before as u16, old_won).await {
-          tracing::warn!("Failed to revert ELO for user {}: {}", player.user_id, e);
+          tracing::warn!("Failed to revert ELO for user {}: {}", crate::log::get_user_tag(ctx, user_id, db).await, e);
         } else {
           reverted_count += 1;
         }
@@ -117,7 +117,7 @@ pub async fn handle_change_result_button(ctx: &Context, interaction: &CI, db: &A
     }
   }
 
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
   info!(
     "{} Runner changed match {} result from {:?} to {} (reverted ELO for {} players)",
     log_prefix_guild(&guild_name),
@@ -343,6 +343,8 @@ pub async fn handle_player_selection(
   // Track success/failure counts
   let mut success_count = 0;
   let mut failure_count = 0;
+  // (category index, format id) whose ready game roster changed and needs a new ready ping
+  let mut ready_changes: Vec<(usize, u8)> = Vec::new();
 
   for user_id_str in user_ids {
     let user_id = match user_id_str.parse::<u64>() {
@@ -369,7 +371,7 @@ pub async fn handle_player_selection(
                   let mut sched = scheduler.lock().await;
                   sched.cancel_queue_expiration(guild_id, category.id, format.id, user_id);
                 }
-                let guild_name = guild_name(ctx, guild_id);
+                let guild_name = guild_name(ctx, &db, guild_id).await;
                 let category_name = category.name.as_deref().unwrap_or("Unknown");
                 let format_name = &format.name;
                 info!("{} Runner removed player {} from queue", crate::log::log_prefix_format(&guild_name, category_name, format_name), player_tag);
@@ -395,51 +397,27 @@ pub async fn handle_player_selection(
           Err(anyhow::anyhow!("Player not found in any queue"))
         }
       }
-      "buffer" => {
-        // Move player to front of queue
+      "buffer" | "fatkid" => {
+        let to_front = action == "buffer";
         let mut found = false;
         for (cat_idx, category) in server.categories.iter_mut().enumerate() {
           for format in &mut category.formats {
-            for session in &mut format.sessions {
-              if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == user_id) {
-                let player_tag = session.pool[pos].player.tag.clone();
-                let player = session.pool.remove(pos);
-                session.pool.insert(0, player);
-                found = true;
-                let guild_name = guild_name(ctx, guild_id);
-                let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
-                let fmt_nm = &format.name;
-                info!("{} Runner buffered player {} to front of queue", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player_tag);
-                last_action_info = Some((cat_idx, format!("buffered {} player(s)", success_count + 1)));
-              }
+            let player_tag = format.sessions.iter().flat_map(|s| s.pool.iter()).find(|p| p.player.user_id == user_id).map(|p| p.player.tag.clone());
+            let Some(hot_changed) = format.move_in_queue(user_id, to_front) else { continue };
+            found = true;
+            let guild_name = guild_name(ctx, &db, guild_id).await;
+            let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
+            let fmt_nm = &format.name;
+            let player_tag = player_tag.unwrap_or_default();
+            if to_front {
+              info!("{} Runner buffered player {} to front of queue", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player_tag);
+              last_action_info = Some((cat_idx, format!("buffered {} player(s)", success_count + 1)));
+            } else {
+              info!("{} Runner fatkidded player {} to end of queue", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player_tag);
+              last_action_info = Some((cat_idx, format!("fatkidded {} player(s)", success_count + 1)));
             }
-          }
-        }
-        if found {
-          success_count += 1;
-          Ok(())
-        } else {
-          failure_count += 1;
-          Err(anyhow::anyhow!("Player not found in any queue"))
-        }
-      }
-      "fatkid" => {
-        // Move player to end of queue
-        let mut found = false;
-        for (cat_idx, category) in server.categories.iter_mut().enumerate() {
-          for format in &mut category.formats {
-            for session in &mut format.sessions {
-              if let Some(pos) = session.pool.iter().position(|p| p.player.user_id == user_id) {
-                let player_tag = session.pool[pos].player.tag.clone();
-                let player = session.pool.remove(pos);
-                session.pool.push(player);
-                found = true;
-                let guild_name = guild_name(ctx, guild_id);
-                let ctg_nm = category.name.as_deref().unwrap_or("Unknown");
-                let fmt_nm = &format.name;
-                info!("{} Runner fatkidded player {} to end of queue", crate::log::log_prefix_format(&guild_name, ctg_nm, fmt_nm), player_tag);
-                last_action_info = Some((cat_idx, format!("fatkidded {} player(s)", success_count + 1)));
-              }
+            if hot_changed && !ready_changes.contains(&(cat_idx, format.id)) {
+              ready_changes.push((cat_idx, format.id));
             }
           }
         }
@@ -475,7 +453,7 @@ pub async fn handle_player_selection(
     if action == "buffer" || action == "fatkid" || action == "remove" {
       let mut mgr = manager.lock().await;
       let server = mgr.get_qguild(guild_id)?;
-      for category in &mut server.categories {
+      for (cat_idx, category) in server.categories.iter_mut().enumerate() {
         // Validate VC status to sync in_queue_vc flags with actual Discord state
         // This ensures the dashboard shows correct VC status after player reordering
         category.verify_vc(ctx, guild_id).await;
@@ -491,6 +469,10 @@ pub async fn handle_player_selection(
         // Regenerate teams for each hot format
         for fmt_id in hot_fmt_ids {
           category.generate_teams_fmt(fmt_id, ctx, guild_id, Some(db)).await;
+        }
+
+        for &(_, fmt_id) in ready_changes.iter().filter(|(i, _)| *i == cat_idx) {
+          category.notify_fmt(fmt_id, ctx, guild_id, Some(db.as_ref()), false).await;
         }
       }
       drop(mgr);
@@ -627,18 +609,11 @@ async fn handle_clear_queue(ctx: &Context, interaction: &CI, db: &Arc<Database>,
 
   let mut removed_count = 0;
 
-  // Remove all players from all idle sessions only
   for category in &mut server.categories {
-    for format in &mut category.formats {
-      for session in &mut format.sessions {
-        if session.is_idle() {
-          removed_count += session.pool.len();
-          session.pool.clear();
-        }
-      }
-    }
-    if removed_count > 0 {
+    let cleared = category.clear_waiting(ctx, guild_id, Some(db.as_ref()), Some(Arc::clone(manager))).await;
+    if cleared > 0 {
       category.set_last_action(runner_tag.clone(), "cleared the queue");
+      removed_count += cleared;
     }
   }
 
@@ -654,7 +629,7 @@ async fn handle_clear_queue(ctx: &Context, interaction: &CI, db: &Arc<Database>,
     drop(mgr);
   }
 
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
   info!("{} Runner cleared queue ({} players)", log_prefix_guild(&guild_name), removed_count);
 
   let title =
@@ -706,7 +681,7 @@ pub async fn handle_remove_all(ctx: &Context, interaction: &CI, db: &Arc<Databas
     drop(mgr);
   }
 
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
   info!("{} Runner removed all players from queue ({} players)", log_prefix_guild(&guild_name), removed_count);
 
   let title = if removed_count > 0 {

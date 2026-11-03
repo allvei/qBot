@@ -13,7 +13,7 @@ use crate::{
 };
 use anyhow::{anyhow, Error, Result};
 use serde::{Deserialize, Serialize};
-use serenity::all::{ChannelId as CI, Context, CreateEmbed, CreateMessage as CM, EditMember, GuildId as GI, MessageId as MI, RoleId as RI, UserId as UI};
+use serenity::all::{ChannelId as CI, Context, CreateAllowedMentions, CreateEmbed, CreateMessage as CM, EditMember, GuildId as GI, MessageId as MI, RoleId as RI, UserId as UI};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
@@ -349,6 +349,66 @@ impl Format {
     });
 
     layout(&self.sessions) != before
+  }
+  /// Buffer (`to_front`) or fatkid a player within the waiting queue. The waiting queue is every Hot
+  /// session followed by every Idle session, so buffering can pull a waiting player into a ready game
+  /// and fatkidding can push a ready player out; the displaced player moves to the next queue. Ready
+  /// games keep their size and active sessions are never touched.
+  ///
+  /// Returns `Some(true)` when the set of players in a Hot session changed, `Some(false)` when only the
+  /// queue order changed, and `None` (without mutating anything) when the player is not waiting here.
+  pub fn move_in_queue(&mut self, user_id: UI, to_front: bool) -> Option<bool> {
+    let hot_idxs: Vec<usize> = self.sessions.iter().enumerate().filter(|(_, s)| s.is_hot()).map(|(i, _)| i).collect();
+    let idle_idxs: Vec<usize> = self.sessions.iter().enumerate().filter(|(_, s)| s.is_idle()).map(|(i, _)| i).collect();
+    let queued = hot_idxs.iter().chain(&idle_idxs).any(|&i| self.sessions[i].pool.iter().any(|p| p.player.user_id == user_id));
+    if !queued {
+      return None;
+    }
+
+    let hot_ids_before: Vec<std::collections::HashSet<UI>> = hot_idxs.iter().map(|&i| self.sessions[i].pool.iter().map(|p| p.player.user_id).collect()).collect();
+    let hot_sizes: Vec<usize> = hot_idxs.iter().map(|&i| self.sessions[i].pool.len()).collect();
+
+    let mut waiting: Vec<SessionPlayer> = Vec::new();
+    for &i in hot_idxs.iter().chain(&idle_idxs) {
+      waiting.append(&mut self.sessions[i].pool);
+    }
+    let pos = waiting.iter().position(|p| p.player.user_id == user_id).expect("player was checked as queued above");
+    let player = waiting.remove(pos);
+    if to_front {
+      waiting.insert(0, player);
+    } else {
+      waiting.push(player);
+    }
+
+    let mut waiting = waiting.into_iter();
+    for (&i, &size) in hot_idxs.iter().zip(&hot_sizes) {
+      self.sessions[i].pool = waiting.by_ref().take(size).collect();
+    }
+    let remainder: Vec<SessionPlayer> = waiting.collect();
+    if !remainder.is_empty() {
+      let idle_idx = match idle_idxs.first() {
+        Some(&i) => i,
+        None => {
+          self.sessions.push(Session::new(SessionStatus::Idle, Vec::new()));
+          self.sessions.len() - 1
+        }
+      };
+      self.sessions[idle_idx].pool = remainder;
+    }
+
+    let hot_changed = hot_idxs.iter().zip(&hot_ids_before).any(|(&i, before)| {
+      let after: std::collections::HashSet<UI> = self.sessions[i].pool.iter().map(|p| p.player.user_id).collect();
+      &after != before
+    });
+
+    self.pack_idle_sessions();
+    for session in self.sessions.iter_mut().filter(|s| s.is_idle()) {
+      for player in &mut session.pool {
+        player.team = None;
+      }
+    }
+
+    Some(hot_changed)
   }
 }
 
@@ -833,6 +893,7 @@ impl Category {
 
       // Get post-game timeout before spawning task
       let post_game_confirm_time = if let Some(database) = db { database.config.get_post_game_confirm_time(guild_id).await.ok() } else { None };
+      let db_owned = db.cloned();
 
       tokio::spawn(async move {
         use tokio::time::{sleep, Duration};
@@ -845,7 +906,7 @@ impl Category {
         let mut manager_lock = mgr.lock().await;
         if let Ok(server) = manager_lock.get_qguild(guild_id) {
           if let Some(category) = server.categories.iter_mut().find(|g| g.id == category_id) {
-            if category.check_hot_confirm_time(&ctx_clone, guild_id, post_game_confirm_time, Some(mgr_for_rebalance)).await {
+            if category.check_hot_confirm_time(&ctx_clone, guild_id, db_owned.as_ref(), post_game_confirm_time, Some(mgr_for_rebalance)).await {
               info!("Deadline timer fired: removed timed-out players from category {}", category_id);
               category.queue_dash_update(&ctx_clone, guild_id).await;
             }
@@ -887,6 +948,10 @@ impl Category {
       self.hot_fmt(fmt_id, ctx, guild_id, db, manager.clone(), post_game).await?;
     }
 
+    if !self.formats.iter().any(|f| f.sessions.iter().any(|s| s.status == SessionStatus::Hot)) {
+      self.clear_ready_notif(ctx, db).await;
+    }
+
     Ok(())
   }
 
@@ -915,7 +980,7 @@ impl Category {
 
   /// Check hot sessions for timeout and handle accordingly
   /// Returns true if any changes were made that require dashboard update
-  pub async fn check_hot_confirm_time(&mut self, ctx: &Context, guild_id: GI, post_game_confirm_time: Option<u16>, manager: Option<Arc<Mutex<Manager>>>) -> bool {
+  pub async fn check_hot_confirm_time(&mut self, ctx: &Context, guild_id: GI, db: Option<&DB>, post_game_confirm_time: Option<u16>, manager: Option<Arc<Mutex<Manager>>>) -> bool {
     let mut changes_made = false;
 
     // Sync VC status with actual Discord state before making timeout decisions
@@ -960,7 +1025,10 @@ impl Category {
         // Create list of player names for logging
         let player_names: Vec<String> = timed_out_players.iter().map(|p| p.player.tag.clone()).collect();
 
-        let guild_name = guild_name(ctx, guild_id);
+        let guild_name = match db {
+          Some(db) => guild_name(ctx, db, guild_id).await,
+          None => crate::models::constants::cached_guild_name(ctx, guild_id),
+        };
         let full_prefix = log_prefix_format(&guild_name, self.name.as_deref().unwrap_or("unknown"), &sg.name);
 
         info!("{} Removing {} timed-out players: {}", full_prefix, timed_out_players.len(), player_names.join(", "));
@@ -1225,7 +1293,7 @@ impl Category {
     for tc in teams_to_remove {
       self.channels.teams.retain(|t| t.red_vc != tc.red_vc && t.blu_vc != tc.blu_vc);
       // Also remove from database
-      let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+      let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
       let category_name = self.name.as_deref().unwrap_or("Unknown");
       if let Err(e) = db.teams.remove_team(guild_id, tc.red_vc, tc.blu_vc, &guild_name, category_name).await {
         warn!("Failed to remove deleted team channels from database: {}", e);
@@ -1294,7 +1362,7 @@ impl Category {
     }
 
     // Log with user-friendly message
-    let guild_name = crate::models::constants::guild_name(ctx, guild_id);
+    let guild_name = crate::models::constants::guild_name(ctx, &db, guild_id).await;
     let category_name = self.name.as_deref().unwrap_or("Unknown");
     let prefix = crate::log::log_prefix_category(&guild_name, category_name);
 
@@ -1486,7 +1554,7 @@ impl Category {
           let http = ctx.http.clone();
           let gid = guild_id;
           let cache = ctx.cache.clone();
-          let tag = tag_map.get(&user_id).cloned().unwrap_or_else(|| user_id.to_string());
+          let tag = tag_map.get(&user_id).cloned().unwrap_or_else(|| crate::log::cached_user_tag(&ctx.cache, user_id));
           let reason = reason.to_string();
           tokio::spawn(async move {
             // Check if already in the target VC
@@ -2082,8 +2150,6 @@ impl Category {
   pub async fn queue_player_with_vc_status_fmt(&mut self, fmt_id: u8, player: Player, _rank: Rank, queue_ctx: QueueContext<'_>, in_vc: bool) -> Result<()> {
     let session = self.get_queue_fmt(fmt_id).await?;
     let was_empty = session.pool.is_empty();
-    let was_idle = session.is_idle();
-    let was_hot = session.is_hot();
 
     let user_id = player.user_id;
     let _player_tag = player.tag.clone();
@@ -2115,23 +2181,23 @@ impl Category {
               // User has role but DB shows 0 (opted out) - remove role
               (true, Some(false)) => {
                 let _ = member.remove_role(&ctx.http, role_id).await;
-                debug!("Removed ping role from user {} (DB shows opted out)", user_id);
+                debug!("Removed ping role from user {} (DB shows opted out)", crate::log::cached_user_tag(&ctx.cache, user_id));
               }
               // User doesn't have role and DB shows 1 (opted in) - add role
               (false, Some(true)) => {
                 let _ = member.add_role(&ctx.http, role_id).await;
-                debug!("Added ping role to user {} (DB shows opted in)", user_id);
+                debug!("Added ping role to user {} (DB shows opted in)", crate::log::cached_user_tag(&ctx.cache, user_id));
               }
               // User doesn't have role and DB is NULL - give role and set DB to 1
               (false, None) => {
                 let _ = member.add_role(&ctx.http, role_id).await;
                 let _ = db.user_server_prefs.set_ping_notification_enabled(user_id, guild_id, Some(true)).await;
-                debug!("Added ping role to user {} and set DB to opted in (was NULL)", user_id);
+                debug!("Added ping role to user {} and set DB to opted in (was NULL)", crate::log::cached_user_tag(&ctx.cache, user_id));
               }
               // User has role and DB is NULL - set DB to 1 (consistency)
               (true, None) => {
                 let _ = db.user_server_prefs.set_ping_notification_enabled(user_id, guild_id, Some(true)).await;
-                debug!("Set DB to opted in for user {} (has role, was NULL)", user_id);
+                debug!("Set DB to opted in for user {} (has role, was NULL)", crate::log::cached_user_tag(&ctx.cache, user_id));
               }
               // Other cases are consistent, no action needed
               _ => {}
@@ -2141,23 +2207,7 @@ impl Category {
       }
     }
 
-    let pool_before = session.pool.len();
-    let position = session.add_ply(player.clone(), in_vc)?;
-    info!(
-      "queue_player_with_vc_status_fmt: user {} (id={} in_vc={} exp={}m) added to {:?} session (was_idle={} was_hot={} was_empty={}) at position {}/{} (pool before: {} after: {})",
-      player.tag,
-      player.user_id,
-      in_vc,
-      player_queue_expiration,
-      session.status,
-      was_idle,
-      was_hot,
-      was_empty,
-      position,
-      session.pool.len(),
-      pool_before,
-      session.pool.len()
-    );
+    session.add_ply(player.clone(), in_vc)?;
 
     // Schedule timeout for this player
     if let Some(guild_id) = queue_ctx.guild_id {
@@ -2301,88 +2351,117 @@ impl Category {
     sg.sessions.iter().any(|s| s.is_idle() && s.pool.len() >= sg.quota as usize)
   }
 
-  /// Notifies the queue chat that quota has been met
-  /// Pings ALL players in the first 'quota' players, not just those missing from VC
-  /// Only pings the first 'quota' players, not extras queued for next match
-  /// Also sends DMs to players who have pm_hot_alert=true
-  ///
-  /// If `post_game` is true, only pings players who are NOT in voice chat (to avoid pinging players who just finished)
+  fn is_in_queue_vc(&self, ctx: &Context, guild_id: GI, user_id: UI) -> bool {
+    ctx.cache.guild(guild_id).and_then(|guild| guild.voice_states.get(&user_id).and_then(|vs| vs.channel_id)).map(|ch_id| ch_id == self.channels.queue_vc).unwrap_or(false)
+  }
+
+  /// Buffer or fatkid a waiting player in one format (see [`Format::move_in_queue`]). A ready game whose
+  /// roster changed gets its teams and ready ping refreshed. Returns `None` when the player is not waiting here.
+  pub async fn move_in_queue_fmt(&mut self, fmt_id: u8, user_id: UI, to_front: bool, ctx: &Context, guild_id: GI, db: Option<&DB>) -> Option<bool> {
+    let hot_changed = self.format_mut(fmt_id)?.move_in_queue(user_id, to_front)?;
+    if hot_changed {
+      self.verify_vc(ctx, guild_id).await;
+      self.generate_teams_fmt(fmt_id, ctx, guild_id, db).await;
+      self.notify_fmt(fmt_id, ctx, guild_id, db, false).await;
+    }
+    self.queue_dash_update(ctx, guild_id).await;
+    Some(hot_changed)
+  }
+
+  /// Remove every waiting player in every format, including the players of ready games. Active games are
+  /// untouched. Returns the number of players removed; rebalancing also drops the ready ping once nothing is Hot.
+  pub async fn clear_waiting(&mut self, ctx: &Context, guild_id: GI, db: Option<&DB>, manager: Option<Arc<Mutex<Manager>>>) -> usize {
+    let mut removed: Vec<(u8, UI)> = Vec::new();
+    for format in &mut self.formats {
+      let fmt_id = format.id;
+      for session in format.sessions.iter_mut().filter(|s| s.is_hot() || s.is_idle()) {
+        if session.is_hot() {
+          session.idle();
+        }
+        removed.extend(session.pool.drain(..).map(|p| (fmt_id, p.player.user_id)));
+      }
+    }
+
+    if let Some(scheduler) = ctx.data.read().await.get::<crate::QueueExpirationSchedulerKey>() {
+      let mut sched = scheduler.lock().await;
+      for &(fmt_id, user_id) in &removed {
+        sched.cancel_queue_expiration(guild_id, self.id, fmt_id, user_id);
+      }
+    }
+
+    let count = removed.len();
+    if let Err(e) = self.rebalance(ctx, Some(guild_id), db, manager).await {
+      warn!("Failed to rebalance queues after clearing the queue: {e}");
+    }
+    count
+  }
+
+  /// Notifies the queue chat that the game is ready.
+  /// Pings each missing player once per ready game; re-notifies replace the previous message.
+  /// Also sends DMs to newly pinged players who have pm_hot_alert=true
   pub async fn notify(&mut self, ctx: &Context, guild_id: GI, db: Option<&DB>, post_game: bool) {
     self.notify_fmt(0, ctx, guild_id, db, post_game).await;
   }
 
-  /// Notify players in a specific format that the game is ready
-  /// Also sends DMs to players who have pm_hot_alert=true
-  ///
-  /// If `post_game` is true, only pings players who are NOT in voice chat (to avoid pinging players who just finished)
-  pub async fn notify_fmt(&mut self, fmt_id: u8, ctx: &Context, guild_id: GI, db: Option<&DB>, post_game: bool) {
+  /// Notify players that a game is ready. Lists the players missing from the queue VC across every
+  /// Hot session in the category, but only pings those not already pinged for the current message.
+  /// Re-notifies replace the previous message. Also sends DMs to newly pinged players who have pm_hot_alert=true
+  pub async fn notify_fmt(&mut self, fmt_id: u8, ctx: &Context, guild_id: GI, db: Option<&DB>, _post_game: bool) {
     // Validate VC status before sending notifications to prevent desync
     self.verify_vc(ctx, guild_id).await;
-    let mut player_mentions = Vec::new();
-    let mut players_to_dm = Vec::new();
 
     let Some(format) = self.format(fmt_id) else {
       warn!("Format {} not found when trying to notify players", fmt_id);
       return;
     };
+    let fmt_name = format.name.clone();
 
-    let quota = format.quota as usize;
-
-    // Get the HOT session specifically, not the last session
-    // This ensures we notify the correct players when quota is met
-    if let Some(hot_session) = format.sessions.iter().find(|s| s.status == SessionStatus::Hot) {
-      // Ping players based on post_game flag
-      for player in hot_session.pool.iter().take(quota) {
-        // In post-game scenarios, only ping players NOT in queue VC
-        if post_game {
-          // Check if player is specifically in the queue VC
-          let in_queue_vc = if let Some(guild) = ctx.cache.guild(guild_id) {
-            guild.voice_states.get(&player.player.user_id).and_then(|vs| vs.channel_id).map(|ch_id| ch_id == self.channels.queue_vc).unwrap_or(false)
-          } else {
-            false
-          };
-
-          // Only ping if NOT in queue VC
-          if !in_queue_vc {
-            player_mentions.push(format!("<@{}>", player.player.user_id));
-            players_to_dm.push(player.player.user_id);
-          }
-        } else {
-          // Normal pre-game behavior: only ping players NOT already in queue VC
-          let in_queue_vc = if let Some(guild) = ctx.cache.guild(guild_id) {
-            guild.voice_states.get(&player.player.user_id).and_then(|vs| vs.channel_id).map(|ch_id| ch_id == self.channels.queue_vc).unwrap_or(false)
-          } else {
-            false
-          };
-
-          // Only ping if NOT in queue VC
-          if !in_queue_vc {
-            player_mentions.push(format!("<@{}>", player.player.user_id));
-            players_to_dm.push(player.player.user_id);
-          }
-        }
-      }
-    } else {
+    let any_hot = self.formats.iter().any(|f| f.sessions.iter().any(|s| s.status == SessionStatus::Hot));
+    if !any_hot {
       warn!("No hot session found in format {} when trying to notify players", fmt_id);
       return;
     }
 
-    // Only send notification if there are actually players to notify
-    if !player_mentions.is_empty() {
-      let guild_name = guild_name(ctx, guild_id);
-      let fmt_name = &format.name;
-      let full_prefix = log_prefix_format(&guild_name, self.name.as_deref().unwrap_or("unknown"), fmt_name);
+    let already_pinged: std::collections::HashSet<UI> = if self.pending_vc_notification.is_some() {
+      self.pending_users.iter().copied().collect()
+    } else {
+      std::collections::HashSet::new()
+    };
 
-      info!("{} Quota met - notifying all {} players in match", full_prefix, player_mentions.len());
+    let mut missing: Vec<UI> = Vec::new();
+    for f in &self.formats {
+      let quota = f.quota as usize;
+      for player in f.sessions.iter().filter(|s| s.status == SessionStatus::Hot).flat_map(|s| s.pool.iter().take(quota)) {
+        let user_id = player.player.user_id;
+        if !missing.contains(&user_id) && !self.is_in_queue_vc(ctx, guild_id, user_id) {
+          missing.push(user_id);
+        }
+      }
+    }
+    let newcomers: Vec<UI> = missing.iter().copied().filter(|u| !already_pinged.contains(u)).collect();
 
-      // Use embed for header and raw pings in message content to properly ping users
-      let embed = CreateEmbed::new().title("PUG starting").description("Please join the queue channel!");
+    self.clear_ready_notif(ctx, db).await;
 
-      let content = player_mentions.join(" ");
-      let msg = CM::new().embed(embed).content(content);
-      let dashboard = self.channels.dashboard;
-      match tokio::time::timeout(tokio::time::Duration::from_secs(10), dashboard.send_message(&ctx.http, msg)).await {
-        Ok(Ok(sent)) => {
+    if missing.is_empty() {
+      return;
+    }
+
+    let guild_name = match db {
+      Some(db) => guild_name(ctx, db, guild_id).await,
+      None => crate::models::constants::cached_guild_name(ctx, guild_id),
+    };
+    let full_prefix = log_prefix_format(&guild_name, self.name.as_deref().unwrap_or("unknown"), &fmt_name);
+
+    info!("{} Quota met - notifying all {} players in match ({} newly pinged)", full_prefix, missing.len(), newcomers.len());
+
+    // Use embed for header and raw pings in message content to properly ping users
+    let embed = CreateEmbed::new().title("PUG starting").description("Please join the queue channel!");
+
+    let content = missing.iter().map(|u| format!("<@{}>", u)).collect::<Vec<_>>().join(" ");
+    let msg = CM::new().embed(embed).content(content).allowed_mentions(CreateAllowedMentions::new().users(newcomers.clone()));
+    let dashboard = self.channels.dashboard;
+    match tokio::time::timeout(tokio::time::Duration::from_secs(10), dashboard.send_message(&ctx.http, msg)).await {
+      Ok(Ok(sent)) => {
         // Save notification to database
         if let Some(db) = db {
           let _ = db.game_ready_notifs.save_notification(dashboard.get(), sent.id.get()).await;
@@ -2390,8 +2469,8 @@ impl Category {
         // Store message_id in-memory
         self.pending_vc_notification = Some(sent.id);
         // Store pending users in-memory
-        self.pending_users = players_to_dm.clone();
-        
+        self.pending_users = missing;
+
         info!("{} Match ready notification created", full_prefix);
 
         // Delete the message after confirm expiry duration
@@ -2415,7 +2494,6 @@ impl Category {
       Ok(Err(e)) => warn!("{} Failed to send match ready notification: {}", full_prefix, e),
       Err(_) => warn!("{} Timed out sending match ready notification", full_prefix),
     }
-  }
 
     // Send DMs to users who have pm_hot_alert=true in the background so end-match/queueing isn't blocked.
     if let Some(database) = db {
@@ -2426,7 +2504,7 @@ impl Category {
         let database = database.clone();
         let guild_name = ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "the server".to_string());
 
-        for user_id in players_to_dm {
+        for user_id in newcomers {
           let ctx = ctx.clone();
           let database = database.clone();
           let tracker = tracker.clone();
@@ -2449,12 +2527,12 @@ impl Category {
                   tracker.send_dm(&ctx, user_id, dm_embed, components)
                 ).await {
                   Ok(Ok(_)) => {}
-                  Ok(Err(e)) => warn!("Failed to send DM to user {}: {}", user_id, e),
-                  Err(_) => warn!("Timed out sending DM to user {}", user_id),
+                  Ok(Err(e)) => warn!("Failed to send DM to user {}: {}", crate::log::cached_user_tag(&ctx.cache, user_id), e),
+                  Err(_) => warn!("Timed out sending DM to user {}", crate::log::cached_user_tag(&ctx.cache, user_id)),
                 }
               }
               Ok(false) => {}
-              Err(e) => warn!("Failed to check DM status for user {}: {}", user_id, e),
+              Err(e) => warn!("Failed to check DM status for user {}: {}", crate::log::cached_user_tag(&ctx.cache, user_id), e),
             }
           });
         }
@@ -2487,7 +2565,7 @@ impl Category {
       if let Some(pos) = self.pending_users.iter().position(|&u| u == user_id) {
         self.pending_users.remove(pos);
         
-        let user_tag = ctx.cache.user(user_id).map(|u| u.tag()).unwrap_or_else(|| user_id.to_string());
+        let user_tag = crate::log::cached_user_tag(&ctx.cache, user_id);
 
         let dashboard = self.channels.dashboard;
 

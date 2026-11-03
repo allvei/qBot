@@ -170,15 +170,15 @@ fn create_paragraph_input_constrained(label: &str, id: &str, placeholder: &str, 
 /// Build a CIR navigating back to the main guild config page
 pub async fn nav_guild_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
   let settings = get_guild_config(db, guild_id).await?;
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
   let embed = build_guild_config_embed(&settings, &guild_name);
   let buttons = build_guild_config_buttons(&settings, &guild_name);
   Ok(CIR::UpdateMessage(CIRM::new().embed(embed).components(buttons)))
 }
 
 /// Build a CIR navigating back to the server configuration page
-pub async fn nav_server_config(ctx: &Context, _db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
-  let guild_name = guild_name(ctx, guild_id);
+pub async fn nav_server_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
+  let guild_name = guild_name(ctx, &db, guild_id).await;
   let system = get_menu_system();
   system.build_response(MenuPage::ServerConfig, &guild_name)
     .ok_or_else(|| anyhow::anyhow!("Failed to build server config response"))
@@ -186,7 +186,7 @@ pub async fn nav_server_config(ctx: &Context, _db: &Arc<Database>, guild_id: GI)
 
 /// Build a CIR for the roles configuration sub-menu
 pub async fn nav_roles_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
   let settings = get_guild_config(db, guild_id).await?;
   let system = get_menu_system();
 
@@ -213,7 +213,7 @@ pub async fn nav_roles_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -
 
 /// Build a CIR for the ELO configuration sub-menu
 pub async fn nav_elo_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, _page: usize) -> Result<CIR> {
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
   let system = get_menu_system();
 
   // Get toggle states for ELO settings (filter SERVER_CONFIG_TOGGLES for ELO-related columns)
@@ -256,7 +256,7 @@ pub async fn nav_elo_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, _pa
 
 /// Build a CIR for the general configuration sub-menu
 pub async fn nav_general_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
   let settings = get_guild_config(db, guild_id).await?;
   let system = get_menu_system();
 
@@ -296,7 +296,7 @@ pub async fn nav_general_config(ctx: &Context, db: &Arc<Database>, guild_id: GI)
 
 /// Build a CIR for the VC configuration sub-menu
 pub async fn nav_vc_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, _page: usize) -> Result<CIR> {
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
   let system = get_menu_system();
 
   // Get toggle states for VC settings (filter SERVER_CONFIG_TOGGLES for VC-related columns)
@@ -335,7 +335,7 @@ pub async fn nav_vc_config(ctx: &Context, db: &Arc<Database>, guild_id: GI, _pag
 
 /// Build a CIR navigating back to the rank configuration page
 pub async fn nav_rank_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
   let rank_roles = get_all_rank_roles(db, guild_id).await?;
   let (toggle_states, default_rank_role) = get_rank_settings(db, guild_id).await?;
   let display = RankConfigDisplay { guild_name: guild_name.clone(), rank_roles, toggle_states, default_rank_role };
@@ -346,7 +346,7 @@ pub async fn nav_rank_config(ctx: &Context, db: &Arc<Database>, guild_id: GI) ->
 
 /// Build a CIR navigating back to the category list page
 pub async fn nav_category_list(ctx: &Context, db: &Arc<Database>, guild_id: GI) -> Result<CIR> {
-  let guild_name = guild_name(ctx, guild_id);
+  let guild_name = guild_name(ctx, &db, guild_id).await;
   let categories = db.categories.get_categories_for_guild(guild_id).await?;
   let display = CategoryListDisplay { guild_name, categories };
   let embed = display.build_embed();

@@ -87,7 +87,7 @@ impl QueueExpirationScheduler {
                 should_update_dashboard = true;
                 touched_fmts.push(format.id);
 
-                let guild_name = crate::models::constants::guild_name(&ctx, guild_id);
+                let guild_name = crate::models::constants::guild_name(&ctx, &db, guild_id).await;
                 info!(
                   "{} Timeout {} after {}m",
                   crate::log::log_prefix_format(&guild_name, category_clone.name().as_str(), format_clone.name()),

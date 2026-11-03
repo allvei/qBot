@@ -825,19 +825,19 @@ impl EventHandler for Handler {
         // Handle commands that don't need a server/category first
         let result = match cd.name.as_str() {
           "prefs" => {
-            crate::log::log_command_usage_simple(&ctx, &itx, "prefs", None);
+            crate::log::log_command_usage_simple(&ctx, &self.db, &itx, "prefs", None).await;
             commands::cmd_prefs(&cmd_ctx).await
           }
           "config" => {
-            crate::log::log_command_usage_simple(&ctx, &itx, "config", None);
+            crate::log::log_command_usage_simple(&ctx, &self.db, &itx, "config", None).await;
             commands::cmd_config(&cmd_ctx).await
           }
           "edit" => {
-            crate::log::log_command_usage_simple(&ctx, &itx, "edit", None);
+            crate::log::log_command_usage_simple(&ctx, &self.db, &itx, "edit", None).await;
             commands::cmd_edit_player(&cmd_ctx).await
           }
           "migrate" => {
-            crate::log::log_command_usage_simple(&ctx, &itx, "migrate", None);
+            crate::log::log_command_usage_simple(&ctx, &self.db, &itx, "migrate", None).await;
             commands::cmd_migrate(&cmd_ctx).await
           }
           _ => {
@@ -854,7 +854,7 @@ impl EventHandler for Handler {
                   crate::log::log_command_usage(&ctx, &itx, &self.db, "buffer", Some(user_id), None).await;
                   admin::cmd_buffer(&cmd_ctx, server, user_id).await
                 } else {
-                  crate::log::log_command_usage_simple(&ctx, &itx, "buffer", None);
+                  crate::log::log_command_usage_simple(&ctx, &self.db, &itx, "buffer", None).await;
                   Ok(())
                 }
               }
@@ -863,12 +863,12 @@ impl EventHandler for Handler {
                   crate::log::log_command_usage(&ctx, &itx, &self.db, "fatkid", Some(user_id), None).await;
                   admin::cmd_fatkid(&cmd_ctx, server, user_id).await
                 } else {
-                  crate::log::log_command_usage_simple(&ctx, &itx, "fatkid", None);
+                  crate::log::log_command_usage_simple(&ctx, &self.db, &itx, "fatkid", None).await;
                   Ok(())
                 }
               }
               "remove" => {
-                crate::log::log_command_usage_simple(&ctx, &itx, "remove", None);
+                crate::log::log_command_usage_simple(&ctx, &self.db, &itx, "remove", None).await;
                 admin::cmd_remove_queue(&cmd_ctx, server, cdo.first()).await
               }
               "elo" => {
@@ -883,7 +883,7 @@ impl EventHandler for Handler {
                       }
                     }
                   } else {
-                    crate::log::log_command_usage_simple(&ctx, &itx, "elo", Some("invalid user"));
+                    crate::log::log_command_usage_simple(&ctx, &self.db, &itx, "elo", Some("invalid user")).await;
                     let _ = send_error_response(&itx, &ctx, "Invalid user specified").await;
                     Ok(())
                   }
@@ -903,7 +903,7 @@ impl EventHandler for Handler {
         }
       }
       Interaction::Component(ref itx) => {
-        debug!("Component interaction received: '{}' from user {}", itx.data.custom_id, itx.user.id);
+        debug!("Component interaction received: '{}' from user {}", itx.data.custom_id, itx.user.tag());
         let button_type = ButtonType::parse_button(&itx.data.custom_id);
 
         if matches!(button_type, ButtonType::ConfirmPermissions) {
@@ -1052,10 +1052,10 @@ impl EventHandler for Handler {
               if let Err(e) = itx.create_response(&ctx.http, response).await {
                 error!("Failed to send disable DM response: {e}");
               }
-              info!("User {} disabled DM notifications", user_id);
+              info!("User {} disabled DM notifications", itx.user.tag());
             }
             Err(e) => {
-              error!("Failed to disable DM notifications for user {}: {}", user_id, e);
+              error!("Failed to disable DM notifications for user {}: {}", itx.user.tag(), e);
               let response = serenity::all::CreateInteractionResponse::Message(
                 serenity::all::CreateInteractionResponseMessage::new().content("Failed to disable DM notifications. Please try again later.").ephemeral(true),
               );
@@ -1073,7 +1073,7 @@ impl EventHandler for Handler {
 
         // Handle remove all action (must be before general runner_action_ check)
         if itx.data.custom_id == "runner_action_remove_all" {
-          info!("Runner action 'remove_all' triggered by user {}", itx.user.id);
+          info!("Runner action 'remove_all' triggered by user {}", itx.user.tag());
           dispatch_handler!(crate::handlers::runner_menu::handle_remove_all(&ctx, itx, &self.db, &self.manager).await, "remove all action", itx.data.custom_id);
           return;
         }
@@ -1256,7 +1256,7 @@ impl EventHandler for Handler {
                   player.tag = itx.user.tag();
 
                   if let Err(e) = self.db.elo.set_initial_dynamic_elo(user_id, guild_id, tier).await {
-                    error!("Failed to set initial dynamic ELO for {}: {e}", user_id);
+                    error!("Failed to set initial dynamic ELO for {}: {e}", itx.user.tag());
                   } else {
                     // Update in-memory player ELO to the chosen tier value
                     let anchor = crate::DYNAMIC_ELO_ANCHOR;
@@ -1290,7 +1290,7 @@ impl EventHandler for Handler {
                       warn!("Failed to queue player after skill selection: {e}");
                     } else {
                       if let Some(format) = category.format(fmt_id) {
-                        if let Err(e) = crate::log_queue_toggle(&ctx, &self.db, guild_id, category.id, format, &player, "joined", "skill", None).await {
+                        if let Err(e) = crate::log_queue_toggle(&ctx, &self.db, guild_id, category.id, format, &player, crate::QueueToggleType::BJ, None).await {
                           warn!("Failed to log queue toggle: {e}");
                         }
                       }
@@ -1320,7 +1320,7 @@ impl EventHandler for Handler {
                   }
                 }
                 Err(e) => {
-                  error!("Failed to resolve player after skill selection for {}: {e}", user_id);
+                  error!("Failed to resolve player after skill selection for {}: {e}", itx.user.tag());
                 }
               }
             }
@@ -1331,8 +1331,6 @@ impl EventHandler for Handler {
         let guild_id = itx.guild_id.unwrap();
         let channel_id = itx.channel_id;
 
-        info!("Button '{}' received: User: {} | Message: {} | Channel: {}", itx.data.custom_id, itx.user.id, itx.message.id, channel_id);
-
         // Serialize the clone -> handle -> write-back cycle per dashboard channel.
         // Without this, a long-running handler (e.g. end-match taking seconds) can overlap
         // with a short handler (e.g. leave_queue) whose stale clone is then written back
@@ -1342,10 +1340,7 @@ impl EventHandler for Handler {
           let mut manager = self.manager.lock().await;
           manager.category_lock(guild_id, channel_id)
         };
-        let lock_wait_start = std::time::Instant::now();
         let _category_guard = LoggedCategoryGuard::new(category_lock.lock().await, format!("Button '{}'", itx.data.custom_id));
-        let lock_wait = lock_wait_start.elapsed();
-        info!("Button '{}' acquired category dispatch lock after {}ms wait (channel: {})", itx.data.custom_id, lock_wait.as_millis(), channel_id);
         let handler_start = std::time::Instant::now();
 
         // Clone the category out of the manager so the lock can be released before the handler runs.
@@ -1361,7 +1356,7 @@ impl EventHandler for Handler {
             Ok(category) => category.clone(),
             Err(_) => {
               // Category not in manager - try to recover from database
-              let guild_name = guild_name(&ctx, guild_id);
+              let guild_name = guild_name(&ctx, &self.db, guild_id).await;
               let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| format!("#{channel_id}"));
               info!("[{}] Category not found in manager for #{}, attempting recovery from database", guild_name, channel_name);
 
@@ -1442,12 +1437,11 @@ impl EventHandler for Handler {
 
         let comp_ctx = ComponentContext { ctx: &ctx, component: itx, db: self.db.clone(), manager: &self.manager };
 
-        debug!("Handling button interaction: '{}' | User: {} | Message: {}", itx.data.custom_id, itx.user.id, itx.message.id);
+        debug!("Handling button interaction: '{}' | User: {} | Message: {}", itx.data.custom_id, itx.user.tag(), itx.message.id);
 
         // Run the handler without holding the manager lock
         let result = category.dash_handle_button_interaction(&comp_ctx).await;
         let handler_elapsed = handler_start.elapsed();
-        info!("Button '{}' handler finished in {}ms (ok={}), writing back state", itx.data.custom_id, handler_elapsed.as_millis(), result.is_ok());
         if handler_elapsed.as_millis() > 2000 {
           warn!("Button '{}' handler took {}ms - this holds the category dispatch lock, blocking all other interactions on this channel", itx.data.custom_id, handler_elapsed.as_millis());
         }
@@ -1468,7 +1462,7 @@ impl EventHandler for Handler {
             "Error handling button '{}': {} | User: {} | Guild: {} | Message: {}",
             itx.data.custom_id,
             e,
-            itx.user.id,
+            itx.user.tag(),
             itx.guild_id.unwrap_or_default(),
             itx.message.id
           );
@@ -1478,7 +1472,7 @@ impl EventHandler for Handler {
             error!("Interaction no longer valid for button '{}'", itx.data.custom_id);
           }
         } else {
-          debug!("Successfully handled button '{}': User: {} | Message: {}", itx.data.custom_id, itx.user.id, itx.message.id);
+          debug!("Successfully handled button '{}': User: {} | Message: {}", itx.data.custom_id, itx.user.tag(), itx.message.id);
         }
       }
       Interaction::Modal(itx) => {
@@ -1591,9 +1585,9 @@ impl EventHandler for Handler {
       manager.category_lock(guild_id, dashboard_channel)
     };
     let lock_wait_start = std::time::Instant::now();
-    let _category_guard = LoggedCategoryGuard::new(category_lock.lock().await, format!("Voice state update ({:?}) user {}", state, user_id));
+    let _category_guard = LoggedCategoryGuard::new(category_lock.lock().await, format!("Voice state update ({:?}) user {}", state, tag));
     let lock_wait = lock_wait_start.elapsed();
-    info!("Voice state update ({:?}) for user {} acquired category dispatch lock after {}ms wait (dashboard channel: {})", state, user_id, lock_wait.as_millis(), dashboard_channel);
+    info!("Voice state update ({:?}) for user {} acquired category dispatch lock after {}ms wait (dashboard channel: {})", state, tag, lock_wait.as_millis(), dashboard_channel);
     let handler_start = std::time::Instant::now();
 
     // First manager lock scope
@@ -1733,7 +1727,7 @@ impl EventHandler for Handler {
               let user_prefs = self.db.players.get_prefs(user_id).await.unwrap_or_default();
               if !user_prefs.vc_auto_join {
                 // User has disabled VC auto-queue, log that they joined VC but didn't join queue
-                let guild_name = guild_name(&ctx, guild_id);
+                let guild_name = guild_name(&ctx, &self.db, guild_id).await;
                 let category_name = category.name.as_deref().unwrap_or("Unknown");
                 info!("{} {} joined VC (spec)", log_prefix_category(&guild_name, category_name), tag);
                 return;
@@ -1744,7 +1738,7 @@ impl EventHandler for Handler {
                 warn!("No idle sessions present when player {} joined VC, creating one", tag);
                 if let Err(e) = category.create_session() {
                   error!("Failed to create session for player {}: {}", tag, e);
-                  let guild_name = guild_name(&ctx, guild_id);
+                  let guild_name = guild_name(&ctx, &self.db, guild_id).await;
                   let category_name = category.name.as_deref().unwrap_or("Unknown");
                   error!("{} {} joined VC but could not be added to queue (failed to create session)", log_prefix_category(&guild_name, category_name), tag);
                   return;
@@ -1768,7 +1762,7 @@ impl EventHandler for Handler {
                 if let Err(e) = category.queue_player_fmt(player.clone(), discord_rank, queue_ctx, true).await {
                   error!("Failed to add player to queue: {e}");
                 } else {
-                  let guild_name = guild_name(&ctx, guild_id);
+                  let guild_name = guild_name(&ctx, &self.db, guild_id).await;
                   let category_name = category.name.as_deref().unwrap_or("Unknown");
                   let pool_len: usize = category.formats[0].sessions.iter().map(|s| s.pool.len()).sum();
                   let _fmt_name = category.formats.first().map(|fmt| fmt.name.as_str());
@@ -1785,7 +1779,7 @@ impl EventHandler for Handler {
                   }
 
                   let _format = &category.formats[0];
-                  if let Err(e) = log_queue_toggle(&ctx, &self.db, guild_id, category.id, &category.formats[0], &player, "joined", "vc", rank_mismatch).await {
+                  if let Err(e) = log_queue_toggle(&ctx, &self.db, guild_id, category.id, &category.formats[0], &player, crate::QueueToggleType::VJ, rank_mismatch).await {
                     warn!("Failed to log queue toggle: {e}");
                   }
                 }
@@ -1819,7 +1813,7 @@ impl EventHandler for Handler {
       }
     }
 
-    info!("Voice state update ({:?}) for user {} completed in {}ms", state, user_id, handler_start.elapsed().as_millis());
+    info!("Voice state update ({:?}) for user {} completed in {}ms", state, tag, handler_start.elapsed().as_millis());
   }
 }
 
@@ -1828,7 +1822,7 @@ impl Handler {
   /// Checks auto-leave preference, removes or resets queue expiration time, and regenerates teams if needed.
   async fn handle_player_leave_vc(&self, ctx: &Context, category: &mut Category, guild_id: GuildId, user_id: UserId, _tag: &str) {
     let _queue_ctx = QueueContext { ctx, guild_id: Some(guild_id), db: Some(&self.db), manager: Some(self.manager.clone()) };
-    let guild_name = guild_name(ctx, guild_id);
+    let guild_name = guild_name(ctx, &self.db, guild_id).await;
     let ctg_nm = category.name.as_deref().unwrap_or("Unknown").to_string();
     let fmt_nm = category.get_user_fmt_name(user_id);
     let quota = category.quota() as usize;
@@ -1934,7 +1928,7 @@ impl Handler {
       // Log after removal so pool count is accurate, but use position before removal
       // Resolve player for logging
       if let Ok(player) = self.db.get_player(user_id, ctx).await {
-        if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left", "vc", None).await {
+        if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, crate::QueueToggleType::VL, None).await {
           warn!("Failed to log queue toggle: {e}");
         }
       }
@@ -1946,7 +1940,7 @@ impl Handler {
 
       // Resolve player for logging
       if let Ok(player) = self.db.get_player(user_id, ctx).await {
-        if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, "left", "vc", None).await {
+        if let Err(e) = log_queue_toggle(ctx, &self.db, guild_id, category_id, &format, &player, crate::QueueToggleType::VL, None).await {
           warn!("Failed to log queue toggle: {e}");
         }
       }
@@ -2313,7 +2307,7 @@ impl Handler {
         // Check if user is in this queue voice channel
         if voice_state.channel_id == Some(queue_vc_id) {
           if category.get_user_sesh(*user_id).await.is_ok() {
-            info!("User {} already in session, skipping", user_id);
+            info!("User {} already in session, skipping", crate::log::get_user_tag(ctx, *user_id, &self.db).await);
             continue;
           }
 
@@ -2340,7 +2334,7 @@ impl Handler {
           let (player, rank_mismatch) = match resolve_player_for_queue(ctx, &self.db, guild.id, user_id).await {
             Ok((p, _rank, rank_mismatch)) => (p, rank_mismatch),
             Err(e) => {
-              error!("Failed to resolve player {} for queue: {e}", user_id);
+              error!("Failed to resolve player {} for queue: {e}", crate::log::get_user_tag(ctx, user_id, &self.db).await);
               continue;
             }
           };
@@ -2349,12 +2343,12 @@ impl Handler {
           match session.add_ply(player.clone(), false) {
             Ok(_position) => {
               // Player successfully added, now log
-              if let Err(e) = log_queue_toggle(ctx, &self.db, guild.id, category_id, &format, &player, "joined", "vc", rank_mismatch).await {
+              if let Err(e) = log_queue_toggle(ctx, &self.db, guild.id, category_id, &format, &player, crate::QueueToggleType::VJ, rank_mismatch).await {
                 warn!("Failed to log queue toggle: {e}");
               }
             }
             Err(e) => {
-              error!("Failed to add player {} to queue: {e}", user_id);
+              error!("Failed to add player {} to queue: {e}", player.tag);
             }
           }
         }
@@ -2489,7 +2483,7 @@ impl Handler {
 
       // Create dashboard for each category's dashboard channel
       let channel_name = channel_id.name(&ctx.http).await.unwrap_or_else(|_| "Unknown".to_string());
-      let guild_name = guild_name(ctx, guild.id);
+      let guild_name = guild_name(ctx, &self.db, guild.id).await;
       let category_name = category.name.clone().unwrap_or_else(|| "Unknown".to_string());
 
       // Create dashboard in the dashboard channel

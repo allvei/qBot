@@ -212,8 +212,8 @@ impl PlayerRepository {
   }
 
   /// Get player with rank determined from guild-specific ELO and Discord roles
-  pub async fn get_with_guild_rank(&self, user_id: UserId, _ctx: &Context, guild_id: GuildId, db: &Database) -> Result<Player> {
-    info!("DEBUG: get_player_with_guild_rank called for user {} in guild {}", user_id, guild_id);
+  pub async fn get_with_guild_rank(&self, user_id: UserId, ctx: &Context, guild_id: GuildId, db: &Database) -> Result<Player> {
+    info!("DEBUG: get_player_with_guild_rank called for user {} in guild {}", crate::log::cached_user_tag(&ctx.cache, user_id), guild_id);
 
     // Get base player data from users table
     let result = sqlx::query("SELECT user_id, steam_id, discord_tag, queue_expiration FROM users WHERE user_id = ?").bind(user_id.get() as i64).fetch_one(&self.pool).await?;
@@ -257,9 +257,9 @@ impl PlayerRepository {
 
       // Initialize their guild ELO
       if let Err(e) = db.elo.set(user_id, guild_id, player.elo, player.rank.clone().unwrap()).await {
-        error!("Failed to initialize guild ELO for player {}: {}", user_id, e);
+        error!("Failed to initialize guild ELO for player {}: {}", crate::log::cached_user_tag(&ctx.cache, user_id), e);
       } else {
-        info!("Initialized guild ELO for player {} to {} (rank: {})", user_id, player.elo, assigned_rank.name);
+        info!("Initialized guild ELO for player {} to {} (rank: {})", crate::log::cached_user_tag(&ctx.cache, user_id), player.elo, assigned_rank.name);
       }
     }
 

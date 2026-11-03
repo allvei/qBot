@@ -7,7 +7,7 @@ use serenity::all::{
 use std::{
   collections::{HashMap, HashSet},
   sync::Arc,
-  time::{Duration, Instant, SystemTime},
+  time::{Duration, SystemTime},
 };
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -561,7 +561,7 @@ impl Category {
       // --- Idle sessions (queue for next game) ---
       let total_idle_players: usize = idle_sessions.iter().map(|s| s.pool.len()).sum();
 
-      if total_idle_players > 0 && (has_concurrent || !live_sessions.is_empty()) {
+      if total_idle_players > 0 && !(live_sessions.is_empty() && hot_sessions.is_empty()) {
         // There are active/hot games — show all idle players as waiting for next game
         let all_idle_players: Vec<_> = idle_sessions.iter().flat_map(|s| s.pool.iter().cloned()).collect();
         embed = format_team_display(embed, &all_idle_players, "Waiting for next game", hide_elo, dynamic_elo_active).await;
@@ -865,7 +865,7 @@ impl Category {
       let player_rank = discord_rank.clone();
 
       // Log the queue join attempt BEFORE adding to queue to fix race condition
-      let _server_name = guild_name(cc.ctx, guild_id);
+      let _server_name = guild_name(cc.ctx, &cc.db, guild_id).await;
       let _category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
       let _username = crate::log::get_user_tag(cc.ctx, user_id, &cc.db).await;
 
@@ -889,7 +889,7 @@ impl Category {
       } else {
         // Log AFTER queue operation so position and count are accurate
         if let Some(format) = self.format(fmt_id) {
-          if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, self.id, format, &player, "joined", "button", None).await {
+          if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, self.id, format, &player, crate::QueueToggleType::BJ, None).await {
             warn!("Failed to log queue toggle: {e}");
           }
         }
@@ -977,12 +977,12 @@ impl Category {
 
       // Log with server and category context
       let guild_id = cc.component.guild_id.unwrap();
-      let _server_name = guild_name(cc.ctx, guild_id);
+      let _server_name = guild_name(cc.ctx, &cc.db, guild_id).await;
 
       // Resolve player for logging
       if let Ok(player) = cc.db.get_player(user_id, cc.ctx).await {
         if let Some(ref format) = format {
-          if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, category_id, format, &player, "left", "button", None).await {
+          if let Err(e) = crate::log_queue_toggle(cc.ctx, &cc.db, guild_id, category_id, format, &player, crate::QueueToggleType::BL, None).await {
             warn!("Failed to log queue toggle: {e}");
           }
         }
@@ -1250,7 +1250,7 @@ impl Category {
     let session_status = active_session.map(|s| format!("{:?}", s.status)).unwrap_or_default();
     info!(
       "{} {} opened winner-selection for category={} format={} (ephemeral interaction_id: {}, active session status: {})",
-      log_prefix_category(&guild_name(cc.ctx, guild_id), self.name.as_deref().unwrap_or("Unknown")),
+      log_prefix_category(&guild_name(cc.ctx, &cc.db, guild_id).await, self.name.as_deref().unwrap_or("Unknown")),
       cc.component.user.tag(),
       self.id,
       fmt_id,
@@ -1476,7 +1476,7 @@ impl Category {
       warn!("dash_handle_end_match_result: failed/timeout removing winner-selection buttons for fmt {}: {:?}", format_id, e);
     }
 
-    let guild_name_str = guild_name(cc.ctx, guild_id);
+    let guild_name_str = guild_name(cc.ctx, &cc.db, guild_id).await;
     let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
     let format_name = self.format(format_id).map(|sg| sg.name.clone()).unwrap_or_else(|| "Match".to_string());
 
@@ -1764,23 +1764,19 @@ impl Category {
     // Get server and category names for logging - store channel ID before any mut borrows
     let guild_id = cc.component.guild_id.unwrap();
     let _dashboard_channel = self.channels.dashboard;
-    let guild_name = guild_name(cc.ctx, guild_id);
+    let guild_name = guild_name(cc.ctx, &cc.db, guild_id).await;
     let ctg_nm = self.name.as_deref().unwrap_or("Unknown").to_string();
     let fmt_id = Self::parse_fmt_id(&parts);
     let session_key = Self::parse_session_key(&parts);
     let user_tag = get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
-
-    info!("{} {} pressed '{}' (fmt_id={})", log_prefix_category(&guild_name, &ctg_nm), user_tag, custom_id, fmt_id);
-    let handler_start = Instant::now();
 
     let handler_result = match action {
       "join_queue" => self.dash_join_queue(cc, fmt_id).await,
       "leave_queue" => self.dash_leave_queue(cc, fmt_id).await,
       "ping_players" => {
         let result = self.dash_ping(cc).await;
-        match &result {
-          Ok(_) => info!("{} {} used Ping", log_prefix_category(&guild_name, &ctg_nm), user_tag),
-          Err(e) => warn!("{} {} failed to ping: {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, e),
+        if let Err(e) = &result {
+          warn!("{} {} failed to ping: {}", log_prefix_category(&guild_name, &ctg_nm), user_tag, e);
         }
         result
       }
@@ -1922,14 +1918,6 @@ impl Category {
       }
     };
 
-    info!(
-      "{} {} finished '{}' in {}ms (ok={})",
-      log_prefix_category(&guild_name, &ctg_nm),
-      user_tag,
-      custom_id,
-      handler_start.elapsed().as_millis(),
-      handler_result.is_ok()
-    );
     handler_result
   }
 
@@ -2253,12 +2241,12 @@ impl Category {
       self.last_ping_time = Some(now);
 
       let message_id = sent.id;
-      let guild_name = guild_name(cc.ctx, guild_id);
+      let guild_name = guild_name(cc.ctx, &cc.db, guild_id).await;
       let category_name = self.name.as_deref().unwrap_or("Unknown").to_string();
       let format_name = format.name.clone();
       let log_prefix = log_prefix_format(&guild_name, &category_name, &format_name);
-      
-      info!("{} Sent ping by {} for {}", log_prefix, user_tag, format_name);
+
+      info!("{} Ping sent by {}", log_prefix, user_tag);
 
       // Delete the message after 15 minutes
       let http = cc.ctx.http.clone();

@@ -274,12 +274,12 @@ pub async fn process_match_elo(
   // Apply changes to database (writes dynamic_elo only, legacy elo untouched)
   for change in &changes {
     if let Err(e) = db.elo.record_dynamic_game(change.user_id, guild_id, change.won, change.new_elo, db).await {
-      warn!("Failed to record dynamic ELO change for {}: {}", change.user_id, e);
+      warn!("Failed to record dynamic ELO change for {}: {}", crate::log::get_user_tag(ctx, change.user_id, db).await, e);
     }
 
     // Update elo_after in match_players
     if let Err(e) = db.matches.update_player_elo_after(match_id, change.user_id, change.new_elo as i64).await {
-      warn!("Failed to update elo_after for {}: {}", change.user_id, e);
+      warn!("Failed to update elo_after for {}: {}", crate::log::get_user_tag(ctx, change.user_id, db).await, e);
     }
   }
 

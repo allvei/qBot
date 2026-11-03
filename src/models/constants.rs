@@ -4,9 +4,17 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serenity::all::{Context, GuildId, VoiceState};
 
-/// Resolve a guild's display name from cache, with a fallback.
-pub fn guild_name(ctx: &Context, guild_id: GuildId) -> String {
+/// Discord guild name from cache, or "Unknown".
+pub fn cached_guild_name(ctx: &Context, guild_id: GuildId) -> String {
   ctx.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string())
+}
+
+/// Log name for a guild: DB nickname if set, otherwise the cached Discord name.
+pub async fn guild_name(ctx: &Context, db: &crate::Database, guild_id: GuildId) -> String {
+  if let Ok(Some(name)) = db.guilds.get_display_name(guild_id).await {
+    return name;
+  }
+  cached_guild_name(ctx, guild_id)
 }
 
 pub const DEFAULT_ALERT_COLOR:            u32  = 3447003; 

@@ -1,3 +1,22 @@
+# v0.16.3
+
+__03.11.26__
+
+## Users & Admins
+
+__Fixed__
+
+- __Waiting for next game__ - After a game ends, players sent to the back of the queue are now listed under the new team preview instead of only appearing once the next game starts.
+- __Duplicate pings__ - Players missing from the queue channel are no longer pinged again when someone leaves a ready game or when two games are ready at once.
+- __Runner queue actions on a ready game__ - Buffer, fatkid and clear queue now work while a game is ready to start: buffering a waiting player moves them into the game, fatkidding a player in the game moves them to the back of the queue, and clearing the queue also clears the ready game.
+
+## Developers
+
+__Improved__
+
+- __Readable logs__ - Logs now show user names instead of user IDs, falling back to the ID only when the name can't be found.
+- __Queue and ping logs__ - Join and leave logs are shorter (e.g. `#2 name joined [2/8]`), voice joins and leaves are marked `via VJ` / `via VL`, ping logs read `Ping sent by`, and guild names use the nickname when one is set.
+
 # v0.16.2
 
 __11.10.26__

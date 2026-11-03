@@ -76,8 +76,11 @@ impl CommandContext<'_> {
   }
 
   /// Get guild name with fallback
-  pub fn guild_name(&self) -> String {
-    self.intax.guild_id.map(|gid| guild_name(self.ctx, gid)).unwrap_or_else(|| "Unknown".to_string())
+  pub async fn guild_name(&self) -> String {
+    match self.intax.guild_id {
+      Some(gid) => guild_name(self.ctx, &self.db, gid).await,
+      None => "Unknown".to_string(),
+    }
   }
 
   /// Check if user has specific permissions
@@ -152,8 +155,11 @@ impl ComponentContext<'_> {
   }
 
   /// Get guild name with fallback
-  pub fn guild_name(&self) -> String {
-    self.component.guild_id.map(|gid| guild_name(self.ctx, gid)).unwrap_or_else(|| "Unknown".to_string())
+  pub async fn guild_name(&self) -> String {
+    match self.component.guild_id {
+      Some(gid) => guild_name(self.ctx, &self.db, gid).await,
+      None => "Unknown".to_string(),
+    }
   }
 
   /// Check if user has specific permissions

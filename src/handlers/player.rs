@@ -46,7 +46,7 @@ pub async fn get_user_rank_from_discord_roles(ctx: &Ctx, db: &DB, guild_id: GI, 
   // Find the highest rank the user has (ranks are sorted by ELO ascending, so check in reverse)
   for rank in ranks.iter().rev() {
     if member.roles.contains(&rank.role_id) {
-      debug!("User {} has Discord role '{}' (role_id: {}, ELO: {})", user_id, rank.name, rank.role_id, rank.elo);
+      debug!("User {} has Discord role '{}' (role_id: {}, ELO: {})", crate::log::cached_user_tag(&ctx.cache, user_id), rank.name, rank.role_id, rank.elo);
       return Some(rank.clone());
     }
   }
@@ -220,7 +220,7 @@ pub async fn validate_system_roles(ctx: &Ctx, db: &DB, guild_id: GI) -> Result<V
 
 async fn deny_command(cc: &CmC<'_>, role: &Role) -> Result<()> {
   let user_tag = crate::log::get_user_tag(cc.ctx, cc.intax.user.id, &cc.db).await;
-  info!("[{}] User {} does not have {} role", cc.guild_name(), user_tag, role.name());
+  info!("[{}] User {} does not have {} role", cc.guild_name().await, user_tag, role.name());
   cc.reply_ephemeral(&format!("This command is reserved for {}s", role.name().to_lowercase())).await?;
   Ok(())
 }
@@ -235,7 +235,7 @@ pub async fn is_role(cc: &CmC<'_>, role: &Role) -> Result<bool> {
       Some(m) => m,
       None => {
         let user_tag = crate::log::get_user_tag(cc.ctx, cc.intax.user.id, &cc.db).await;
-        warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), user_tag);
+        warn!("[{}] Failed to fetch member for user {}", cc.guild_name().await, user_tag);
         return Ok(false);
       }
     };
@@ -331,7 +331,7 @@ pub async fn is_role_component(cc: &CC<'_>, role: &Role) -> Result<bool> {
       Some(m) => m,
       None => {
         let user_tag = crate::log::get_user_tag(cc.ctx, cc.component.user.id, &cc.db).await;
-        warn!("[{}] Failed to fetch member for user {}", cc.guild_name(), user_tag);
+        warn!("[{}] Failed to fetch member for user {}", cc.guild_name().await, user_tag);
         return Ok(false);
       }
     };
@@ -368,7 +368,7 @@ pub async fn is_role_component(cc: &CC<'_>, role: &Role) -> Result<bool> {
       // User has the role if they have ANY of the configured roles
       return Ok(role_ids.iter().any(|role_id| member.roles.contains(role_id)));
     } else {
-      let guild_name = guild_name(cc.ctx, guild_id);
+      let guild_name = guild_name(cc.ctx, &cc.db, guild_id).await;
       info!("[{}] Role {} not configured", guild_name, role.name());
     }
   }
@@ -461,7 +461,7 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut QGuild) -> Result<()> {
       if elo_ranks_linked {
         // Linked: ELO and rank are coupled
         if player.elo == 0 {
-          info!("DEBUG: Player {} has ELO 0, setting to {} from Discord rank {}", user, rank.elo, rank.name);
+          info!("DEBUG: Player {} has ELO 0, setting to {} from Discord rank {}", cc.intax.user.tag(), rank.elo, rank.name);
           player.elo = rank.elo;
           player.rank = Some(rank.clone());
           if let Err(e) = cc.db.elo.set(user, guild_id, player.elo, player.rank.clone().unwrap()).await {
@@ -472,18 +472,18 @@ pub async fn queue<'a>(cc: &'a CmC<'a>, guild: &mut QGuild) -> Result<()> {
           let elo_mismatch = player.elo <= 30 && rank.elo > 30;
 
           if elo_mismatch {
-            warn!("ELO MISMATCH DETECTED in queue: Player {} has ELO {} but Discord rank {} (default ELO {}). Auto-correcting...", user, player.elo, rank.name, rank.elo);
+            warn!("ELO MISMATCH DETECTED in queue: Player {} has ELO {} but Discord rank {} (default ELO {}). Auto-correcting...", cc.intax.user.tag(), player.elo, rank.name, rank.elo);
 
             player.elo = rank.elo;
             player.rank = Some(rank.clone());
 
             if let Err(e) = cc.db.elo.set(user, guild_id, player.elo, player.rank.clone().unwrap()).await {
-              error!("Failed to auto-correct ELO for player {} in queue: {}", user, e);
+              error!("Failed to auto-correct ELO for player {} in queue: {}", cc.intax.user.tag(), e);
             } else {
-              info!("Successfully auto-corrected ELO for player {} in queue to {} (rank: {})", user, player.elo, rank.name);
+              info!("Successfully auto-corrected ELO for player {} in queue to {} (rank: {})", cc.intax.user.tag(), player.elo, rank.name);
             }
           } else {
-            info!("DEBUG: Player {} has custom ELO {}, keeping it instead of Discord rank ELO {}", user, player.elo, rank.elo);
+            info!("DEBUG: Player {} has custom ELO {}, keeping it instead of Discord rank ELO {}", cc.intax.user.tag(), player.elo, rank.elo);
             player.update_rank_from_elo(&cc.db, guild_id).await;
           }
         }
