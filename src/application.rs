@@ -282,6 +282,10 @@ impl Application {
       shutdown_flag_signal.store(true, std::sync::atomic::Ordering::Relaxed);
     });
 
+    // Fired by the command task once a stop/restart has finished cleanup
+    let (exit_tx, exit_rx) = oneshot::channel::<()>();
+    let mut exit_tx = Some(exit_tx);
+
     // Spawn command handler if cmd_rx is set
     if let Some(mut cmd_rx) = self.cmd_rx.take() {
       let manager = self.manager.clone();
@@ -309,47 +313,22 @@ impl Application {
             cmd = cmd_rx.recv() => {
               match cmd {
                 Some(command) => {
-                  // Handle GracefulShutdown specially - trigger cleanup then exit
-                  if matches!(command, GuiCommand::GracefulShutdown) {
-                    info!("GracefulShutdown — performing cleanup and exiting");
-                    let shutdown_handler = crate::shutdown::ShutdownHandler::new(
-                      manager.clone(),
-                      dashboard_queue_cmd.clone(),
-                      cache_cmd.clone(),
-                      http_cmd.clone(),
-                      db.clone(),
-                    );
-                    shutdown_handler.cleanup().await;
+                  // Stop/restart end the bot: run the matching cleanup, then release `run()`
+                  if let GuiCommand::GracefulShutdown(notice) | GuiCommand::GracefulRestart(notice) = &command {
+                    let is_restart = matches!(command, GuiCommand::GracefulRestart(_));
+                    info!("{} — performing cleanup and exiting", if is_restart { "GracefulRestart" } else { "GracefulShutdown" });
+                    let shutdown_handler = crate::shutdown::ShutdownHandler::new(manager.clone(), dashboard_queue_cmd.clone(), cache_cmd.clone(), http_cmd.clone(), db.clone());
+                    if is_restart {
+                      shutdown_handler.restart(notice).await;
+                    } else {
+                      shutdown_handler.cleanup(notice).await;
+                    }
                     shutdown_flag_cmd.store(true, std::sync::atomic::Ordering::Relaxed);
-                    // Signal GUI that shutdown is complete
                     if let Some(gui_state) = shared_state_cmd.as_ref() {
                       gui_state.shutdown_complete.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
-                    break;
-                  }
-
-                  // Handle GracefulRestart specially - same as shutdown but skip mark_dashboards_offline
-                  if matches!(command, GuiCommand::GracefulRestart) {
-                    info!("GracefulRestart — performing cleanup (save state, cleanup team VCs) and exiting");
-                    let shutdown_handler = crate::shutdown::ShutdownHandler::new(
-                      manager.clone(),
-                      dashboard_queue_cmd.clone(),
-                      cache_cmd.clone(),
-                      http_cmd.clone(),
-                      db.clone(),
-                    );
-                    shutdown_handler.save_manager_state().await;
-                    {
-                      let mut queue_lock = dashboard_queue_cmd.lock().await;
-                      let _ = queue_lock.take();
-                    }
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                    shutdown_handler.cleanup_team_vcs().await;
-                    shutdown_handler.mark_dashboards_restarting().await;
-                    shutdown_flag_cmd.store(true, std::sync::atomic::Ordering::Relaxed);
-                    // Signal GUI that shutdown is complete
-                    if let Some(gui_state) = shared_state_cmd.as_ref() {
-                      gui_state.shutdown_complete.store(true, std::sync::atomic::Ordering::Relaxed);
+                    if let Some(tx) = exit_tx.take() {
+                      let _ = tx.send(());
                     }
                     break;
                   }
@@ -473,9 +452,11 @@ impl Application {
       result = client.start() => {
         if let Err(why) = result {
           error!("Client error: {:?}", why);
+          return Err(why.into());
         }
       }
       _ = shutdown_rx => {}
+      _ = exit_rx => {}
       _ = async { if let Some(rx) = gui_rx { let _ = rx.await; } else { std::future::pending::<()>().await; } } => {}
     }
 

@@ -2,6 +2,7 @@
 
 pub mod application;
 pub mod config_schema;
+pub mod control;
 pub mod db;
 pub mod gui;
 pub mod handlers;

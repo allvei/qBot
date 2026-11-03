@@ -1,6 +1,7 @@
 //! Commands that can be sent from GUI to bot
 
 use crate::models::SessionStatus;
+use crate::shutdown::ShutdownNotice;
 
 /// Commands that can be sent from the GUI to the tokio thread
 pub enum GuiCommand {
@@ -29,8 +30,8 @@ pub enum GuiCommand {
   ViewSessionDetails { guild_id: u64, category_id: u8, fmt_id: u8, session_index: usize },
 
   // System Control
-  GracefulRestart,
-  GracefulShutdown,
+  GracefulRestart(ShutdownNotice),
+  GracefulShutdown(ShutdownNotice),
 
   // Recovery from Bugs
   ClearAllTeamVCs { guild_id: u64, category_id: u8 },
@@ -101,8 +102,8 @@ impl GuiCommand {
       GuiCommand::ViewSessionDetails { .. } => None,
       GuiCommand::TestBalanceMethods { .. } => None,
       GuiCommand::ToggleDebugMode { .. } => None,
-      GuiCommand::GracefulRestart => None,
-      GuiCommand::GracefulShutdown => None,
+      GuiCommand::GracefulRestart(_) => None,
+      GuiCommand::GracefulShutdown(_) => None,
       _ => match self {
         GuiCommand::ForceEndGame { guild_id, .. } => Some(*guild_id),
         GuiCommand::ClearQueue { guild_id, .. } => Some(*guild_id),

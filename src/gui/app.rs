@@ -146,10 +146,10 @@ impl eframe::App for MyApp {
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
           if ui.button("Quit").clicked() {
-            self.state.send_cmd(crate::gui::commands::GuiCommand::GracefulShutdown);
+            self.state.send_cmd(crate::gui::commands::GuiCommand::GracefulShutdown(Default::default()));
           }
           if ui.button("Restart").clicked() {
-            self.state.send_cmd(crate::gui::commands::GuiCommand::GracefulRestart);
+            self.state.send_cmd(crate::gui::commands::GuiCommand::GracefulRestart(Default::default()));
           }
           if ui.button("Refresh").clicked() {
             self.refresh_data();

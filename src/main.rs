@@ -8,25 +8,40 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 /// Main entry point for the PUG bot application.
 /// Launches the egui management panel by default.
 /// Pass `-nogui` to run headless (terminal only).
+/// Pass `ctl <command>` to control a running headless bot (see `qbot ctl help`).
 fn main() -> Result<()> {
-  let nogui = std::env::args().any(|a| a == "-nogui" || a == "--nogui");
+  let args: Vec<String> = std::env::args().skip(1).collect();
 
-  if nogui {
+  if args.first().map(String::as_str) == Some("ctl") {
+    return qbot::control::run_ctl(&args[1..]);
+  }
+
+  if args.iter().any(|a| a == "-nogui" || a == "--nogui") {
     return run_headless();
   }
 
   run_gui()
 }
 
-/// Headless mode: tokio runtime on the main thread, no GUI.
+/// Headless mode: tokio runtime on the main thread, no GUI. Stop/restart arrive via the control socket.
 fn run_headless() -> Result<()> {
   init_logging(None);
 
   let rt = tokio::runtime::Runtime::new()?;
   rt.block_on(async {
-    let app = Application::new().await?;
-    app.run().await
-  })
+    let (cmd_tx, cmd_rx) = mpsc::channel::<qbot::gui::commands::GuiCommand>(100);
+    let app = Application::new().await?.with_cmd_rx(cmd_rx);
+    tokio::spawn(qbot::control::serve(cmd_tx));
+
+    let result = app.run().await;
+    let _ = std::fs::remove_file(qbot::control::SOCKET_PATH);
+    result
+  })?;
+
+  if qbot::shutdown::RESTART_REQUESTED.load(std::sync::atomic::Ordering::Relaxed) {
+    std::process::exit(qbot::shutdown::RESTART_EXIT_CODE);
+  }
+  Ok(())
 }
 
 /// GUI mode: egui on the main thread, bot in a background thread.

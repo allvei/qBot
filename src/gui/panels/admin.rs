@@ -360,7 +360,7 @@ pub fn show_admin_panel(ui: &mut egui::Ui, state: &GuiSharedState) {
       egui::Grid::new("adm_sys").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
         ui.label("Restart bot gracefully:");
         if ui.button("🔄 Graceful Restart").clicked() {
-          send(GuiCommand::GracefulRestart);
+          send(GuiCommand::GracefulRestart(Default::default()));
         }
         ui.end_row();
         ui.label("");

@@ -1,3 +1,30 @@
+# v0.17.0
+
+__03.11.26__
+
+## Admins
+
+__Added__
+
+- __Remote control__ - A running headless bot can now be controlled from the command line: `qbot ctl status`, `qbot ctl stop` and `qbot ctl restart`. Run `qbot ctl help` for all options.
+- __Reason and ETA__ - `stop` and `restart` accept `--reason "<text>"` and `--eta <duration>` (e.g. `5m`), shown on the dashboards so players know why the bot is down and when it should be back.
+
+__Changed__
+
+- __Ctrl+C no longer stops the bot__ - Use `qbot ctl stop` instead. Service stops (SIGTERM) still shut down cleanly.
+- __Restart keeps team VCs__ - A restart saves state and keeps team voice channels, which are restored on boot. A stop still removes empty team VCs.
+
+## Developers
+
+__Added__
+
+- __Systemd unit__ - `deploy/qbot.service` runs the bot headless as a service. Restarts requested via `qbot ctl restart` exit with code 75 and are brought back up by systemd; stops stay down.
+
+__Changed__
+
+- __Headless command channel__ - Headless mode now routes stop/restart through the same command task as the GUI.
+- __Client errors__ - A Discord client failure now exits with an error instead of a clean exit, so systemd restarts the service.
+
 # v0.16.3
 
 __03.11.26__

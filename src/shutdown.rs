@@ -12,9 +12,37 @@ use tracing::{info, warn};
 use crate::{
   log_prefix_category,
   models::{DashboardUpdateQueue, Manager},
-  util::{timestamp_now, Style},
+  util::{timestamp_from_unix, timestamp_now, Style},
   Database,
 };
+
+/// Exit code used when a restart was requested; the systemd unit treats it as a restart trigger.
+pub const RESTART_EXIT_CODE: i32 = 75;
+
+/// Set when a restart (not a stop) was requested, so the process exits with `RESTART_EXIT_CODE`.
+pub static RESTART_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Optional reason and expected return time shown on dashboards during a stop or restart.
+#[derive(Debug, Default, Clone)]
+pub struct ShutdownNotice {
+  pub reason: Option<String>,
+  /// Unix timestamp (seconds) of when the bot is expected back online.
+  pub eta: Option<i64>,
+}
+
+impl ShutdownNotice {
+  /// Dashboard description lines for the reason and ETA, empty when neither is set.
+  fn describe(&self) -> String {
+    let mut lines = String::new();
+    if let Some(reason) = &self.reason {
+      lines.push_str(&format!("\nReason: {reason}"));
+    }
+    if let Some(eta) = self.eta {
+      lines.push_str(&format!("\nExpected back {}", timestamp_from_unix(eta, Style::Relative)));
+    }
+    lines
+  }
+}
 
 /// Handles graceful shutdown procedures
 pub struct ShutdownHandler {
@@ -34,78 +62,75 @@ impl ShutdownHandler {
   pub async fn handle_signals(&self, shutdown_tx: oneshot::Sender<()>) {
     use tokio::signal;
 
-    // Wait for either SIGINT (Ctrl+C) or SIGTERM
-    let sigint = async {
-      signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");
-    };
-
-    let sigterm = async {
-      #[cfg(unix)]
-      {
-        use tokio::signal::unix::{signal, SignalKind};
-        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
-        sigterm.recv().await;
+    // Ctrl+C is ignored on purpose to avoid accidental stops; use `qbot ctl stop` instead
+    tokio::spawn(async {
+      while signal::ctrl_c().await.is_ok() {
+        warn!("Ctrl+C is ignored. Use `qbot ctl stop` to stop the bot.");
       }
-      #[cfg(not(unix))]
-      {
-        // On non-Unix systems, we'll never receive SIGTERM
-        std::future::pending::<()>().await;
-      }
-    };
+    });
 
-    // Wait for either signal
-    tokio::select! {
-        _ = sigint => {
-            info!("Shutting down...");
-        }
-        _ = sigterm => {
-            info!("Terminating...");
-        }
+    // SIGTERM (e.g. `systemctl stop`) performs a graceful stop
+    #[cfg(unix)]
+    {
+      use tokio::signal::unix::{signal, SignalKind};
+      let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+      sigterm.recv().await;
     }
+    #[cfg(not(unix))]
+    std::future::pending::<()>().await;
 
-    // Perform cleanup
-    self.cleanup().await;
+    info!("Terminating...");
+    self.cleanup(&ShutdownNotice::default()).await;
 
     // Send shutdown signal to main task
     let _ = shutdown_tx.send(());
   }
 
-  /// Perform cleanup operations before shutdown
-  pub async fn cleanup(&self) {
+  /// Stop the bot: save state, remove empty team VCs and mark dashboards offline
+  pub async fn cleanup(&self, notice: &ShutdownNotice) {
     use tokio::time::{sleep, Duration};
-    use tracing::info;
 
-    info!("Starting graceful shutdown sequence...");
-
-    self.mark_dashboards_restarting().await;
-
-    // Don't wait for active sessions - save state and shut down immediately
-    // self.wait_for_active_sessions(Duration::from_secs(300)).await;
+    info!("Starting graceful stop sequence...");
 
     self.save_manager_state().await;
-
-    {
-      let mut queue_lock = self.dashboard_queue.lock().await;
-      let _ = queue_lock.take();
-    }
-
+    self.take_dashboard_queue().await;
     sleep(Duration::from_millis(500)).await;
 
     self.cleanup_team_vcs().await;
+    self.mark_dashboards_offline(notice).await;
 
-    self.mark_dashboards_offline().await;
+    info!("Graceful stop complete");
+  }
 
-    info!("Graceful shutdown complete");
+  /// Restart the bot: save state and keep team VCs so they can be re-adopted on boot
+  pub async fn restart(&self, notice: &ShutdownNotice) {
+    use tokio::time::{sleep, Duration};
+
+    info!("Starting graceful restart sequence...");
+
+    self.save_manager_state().await;
+    self.take_dashboard_queue().await;
+    sleep(Duration::from_millis(500)).await;
+
+    self.mark_dashboards_restarting(notice).await;
+    RESTART_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
+
+    info!("Graceful restart complete");
+  }
+
+  /// Stop batching dashboard updates so no further Discord edits race with shutdown
+  async fn take_dashboard_queue(&self) {
+    let mut queue_lock = self.dashboard_queue.lock().await;
+    let _ = queue_lock.take();
   }
 
   /// Mark all dashboards with a restarting indicator
-  pub async fn mark_dashboards_restarting(&self) {
+  pub async fn mark_dashboards_restarting(&self, notice: &ShutdownNotice) {
     if let Ok(mut manager_lock) = self.manager.try_lock() {
       info!("Marking dashboards as restarting...");
 
       let mut tasks = tokio::task::JoinSet::new();
-      let expected_online_time = chrono::Utc::now() + chrono::Duration::minutes(3);
-      let timestamp = expected_online_time.timestamp();
+      let description = format!("Queues and live games will be restored.{}", notice.describe());
 
       for server in &mut manager_lock.qguilds {
         let guild_id = server.id;
@@ -114,10 +139,7 @@ impl ShutdownHandler {
         for category in &mut server.categories {
           category.restarting = true;
 
-          let restart_embed = CreateEmbed::new()
-            .title("🟠 qBot is restarting...")
-            .description(format!("Queues and live games will be restored.\nBot should be online <t:{}:R> or less.", timestamp))
-            .color(0xFFA500);
+          let restart_embed = CreateEmbed::new().title("🟠 qBot is restarting...").description(description.clone()).color(0xFFA500);
 
           let chn_id = category.channels.dashboard;
           let msg_id = category.dashboard_msg;
@@ -249,19 +271,20 @@ impl ShutdownHandler {
   }
 
   /// Mark all dashboards as offline before shutting down
-  async fn mark_dashboards_offline(&self) {
+  async fn mark_dashboards_offline(&self, notice: &ShutdownNotice) {
     if let Ok(manager_lock) = self.manager.try_lock() {
       info!("Marking all dashboards as offline...");
 
       // Collect all dashboard update tasks for parallel execution
       let mut tasks = tokio::task::JoinSet::new();
+      let description = format!("Shutdown {}{}", timestamp_now(Style::Relative), notice.describe());
 
       for server in &manager_lock.qguilds {
         let guild_id = server.id;
         let guild_name = self.cache.guild(guild_id).map(|g| g.name.clone()).unwrap_or_else(|| "Unknown".to_string());
 
         for category in &server.categories {
-          let offline_embed = CreateEmbed::new().title("🔴 qBot is offline...").description(format!("Shutdown {}", timestamp_now(Style::Relative))).color(0xFF0000);
+          let offline_embed = CreateEmbed::new().title("🔴 qBot is offline...").description(description.clone()).color(0xFF0000);
 
           let chn_id = category.channels.dashboard;
           let msg_id = category.dashboard_msg;

@@ -1,0 +1,21 @@
+[Unit]
+Description=qBot PUG bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qbot
+WorkingDirectory=/opt/qbot
+ExecStart=/opt/qbot/qbot -nogui
+# Exit 0 (qbot ctl stop, systemctl stop) stays down; exit 75 (qbot ctl restart) comes back up
+Restart=on-failure
+RestartForceExitStatus=75
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

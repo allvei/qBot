@@ -720,11 +720,11 @@ pub async fn handle_command(
       info!("ToggleDebugMode g={} c={} enabled={} — not implemented", guild_id, category_id, enabled);
       Ok(None)
     }
-    GuiCommand::GracefulRestart => {
+    GuiCommand::GracefulRestart(_) => {
       info!("GracefulRestart — handled by application.rs command task");
       Ok(None)
     }
-    GuiCommand::GracefulShutdown => {
+    GuiCommand::GracefulShutdown(_) => {
       info!("GracefulShutdown — handled by application.rs command task");
       Ok(None)
     }
