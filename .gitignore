@@ -1,19 +1,17 @@
-.cargo/
+# Secrets and local state
 .env
-.env.example
-.qbot_history
 *.db
+/logs/
+nohup.out
+gui_settings.json
+
+# Local tooling and IDE config
+.cargo/
 /.devin
 /.windsurf
-/logs/
-/target
-add.bat
-bch.md
-Cargo.lock
-CHANGELOG_TEMPLATE.md
-gui_settings.json
+.qbot_history
 qbot.code-workspace
-rustfmt.toml
-trends_api.md
-nohup.out
-AGENTS.md
+/.local
+
+# Build output
+/target

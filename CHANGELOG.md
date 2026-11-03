@@ -18,7 +18,7 @@ __Changed__
 
 __Added__
 
-- __Systemd unit__ - `deploy/qbot.service` runs the bot headless as a service. Restarts requested via `qbot ctl restart` exit with code 75 and are brought back up by systemd; stops stay down.
+- __Systemd unit__ - `deploy/qbot@.service` runs the bot headless as a service, one instance per service user (`qbot@<user>`). Restarts requested via `qbot ctl restart` exit with code 75 and are brought back up by systemd; stops stay down.
 
 __Changed__
 

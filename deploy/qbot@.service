@@ -1,13 +1,15 @@
 [Unit]
-Description=qBot PUG bot
+Description=qBot PUG bot (%i)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=qbot
-WorkingDirectory=/opt/qbot
-ExecStart=/opt/qbot/qbot -nogui
+# Instance name is the service user: systemctl enable --now qbot@<user>
+# The bot is expected in ~/qbot of that user (binary at target/release/qbot, .env and qbot.db alongside)
+User=%i
+WorkingDirectory=~
+ExecStart=/bin/sh -c 'cd "$HOME/qbot" && exec ./target/release/qbot -nogui'
 # Exit 0 (qbot ctl stop, systemctl stop) stays down; exit 75 (qbot ctl restart) comes back up
 Restart=on-failure
 RestartForceExitStatus=75
